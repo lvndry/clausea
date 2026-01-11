@@ -8,8 +8,17 @@ from src.core.database import get_db
 from src.core.db_indexes import ensure_all_indexes
 from src.core.logging import setup_logging
 from src.core.middleware import AuthMiddleware
-from src.routes import conversations, list, paddle, products, promotion, q, subscription
-from src.routes import user as user_routes
+from src.routes import (
+    conversations,
+    extension,
+    list,
+    paddle,
+    products,
+    promotion,
+    q,
+    subscription,
+    users,
+)
 
 setup_logging()
 
@@ -48,9 +57,10 @@ routes = [
     conversations.router,
     list.router,
     promotion.router,
-    user_routes.router,
+    users.router,
     paddle.router,
     subscription.router,
+    extension.router,
 ]
 
 for route in routes:

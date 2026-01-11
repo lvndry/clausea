@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -463,19 +464,37 @@ export default function ProductsPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48 p-1 rounded-lg">
               <DropdownMenuItem
-                onClick={() => setSortBy("name")}
+                onClick={() => {
+                  setSortBy("name");
+                  posthog.capture("product_sort_changed", {
+                    sort_by: "name",
+                    products_count: filteredProducts.length,
+                  });
+                }}
                 className="rounded-md cursor-pointer"
               >
                 Name (A-Z)
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => setSortBy("risk")}
+                onClick={() => {
+                  setSortBy("risk");
+                  posthog.capture("product_sort_changed", {
+                    sort_by: "risk",
+                    products_count: filteredProducts.length,
+                  });
+                }}
                 className="rounded-md cursor-pointer"
               >
                 Risk Level
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => setSortBy("recent")}
+                onClick={() => {
+                  setSortBy("recent");
+                  posthog.capture("product_sort_changed", {
+                    sort_by: "recent",
+                    products_count: filteredProducts.length,
+                  });
+                }}
                 className="rounded-md cursor-pointer"
               >
                 Recently Updated

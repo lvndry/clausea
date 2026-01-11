@@ -3,11 +3,16 @@
 import {
   AlertTriangle,
   CheckCircle,
+  Share2,
   Shield,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
+import { useParams } from "next/navigation";
 
+import { useState } from "react";
+
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface VerdictHeroProps {
@@ -70,9 +75,12 @@ export function VerdictHero({
   summary,
   keypoints,
 }: VerdictHeroProps) {
+  const params = useParams();
+  const slug = params.slug as string;
   const config = verdictConfig[verdict];
   const Icon = config.icon;
   const topKeypoints = keypoints?.slice(0, 3) || [];
+  const [shareText, setShareText] = useState("Share");
 
   const getRiskLabel = () => {
     if (riskScore <= 3) return "Low";
@@ -84,6 +92,42 @@ export function VerdictHero({
     if (riskScore <= 3) return "text-emerald-600 dark:text-emerald-400";
     if (riskScore <= 6) return "text-amber-600 dark:text-amber-400";
     return "text-red-600 dark:text-red-400";
+  };
+
+  const handleShare = async () => {
+    const shareUrl = `https://clausea.co/products/${slug}`;
+    const shareMessage = `${productName} is rated "${config.label}" for privacy (${riskScore}/10 risk). Check out the full analysis:`;
+
+    // Try native share API first (mobile)
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `${productName} Privacy Analysis - Clausea`,
+          text: shareMessage,
+          url: shareUrl,
+        });
+        return;
+      } catch {
+        // User cancelled or share failed, fall through to clipboard
+      }
+    }
+
+    // Fallback to clipboard
+    try {
+      await navigator.clipboard.writeText(`${shareMessage} ${shareUrl}`);
+      setShareText("Copied!");
+      setTimeout(() => setShareText("Share"), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = `${shareMessage} ${shareUrl}`;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setShareText("Copied!");
+      setTimeout(() => setShareText("Share"), 2000);
+    }
   };
 
   return (
@@ -121,12 +165,12 @@ export function VerdictHero({
         </div>
 
         {/* Summary - Readable size */}
-        <div className="pl-11 px-24">
+        <div className="pl-11 pr-4 md:pr-24">
           <p className="text-base text-foreground leading-relaxed">{summary}</p>
         </div>
 
-        {/* Risk Info - Clean, aligned */}
-        <div className="flex items-center gap-6 pl-11 pt-1">
+        {/* Risk Info + Share - Clean, aligned */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pl-11 pt-1 gap-3 sm:gap-0">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               Risk
@@ -135,12 +179,21 @@ export function VerdictHero({
               {getRiskLabel()}
             </span>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleShare}
+            className="gap-2"
+          >
+            <Share2 className="h-4 w-4" />
+            {shareText}
+          </Button>
         </div>
       </div>
 
       {/* Key Insights - Clean, readable */}
       {topKeypoints.length > 0 && (
-        <div className="space-y-3 pt-6 border-t border-border/50 pl-11">
+        <div className="space-y-3 pt-6 border-t border-border/50 pl-11 pr-4">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Key Insights
           </h3>

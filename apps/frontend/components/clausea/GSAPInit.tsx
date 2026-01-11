@@ -18,13 +18,13 @@ export function GSAPInit() {
     // Only register once (handles React Strict Mode double-mount)
     if (!isRegistered.current) {
       gsap.registerPlugin(ScrollTrigger);
-      
+
       // Configure ScrollTrigger defaults for consistency
       ScrollTrigger.defaults({
         toggleActions: "play none none reverse",
         markers: false,
       });
-      
+
       isRegistered.current = true;
     }
 

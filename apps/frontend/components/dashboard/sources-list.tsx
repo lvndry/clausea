@@ -9,6 +9,7 @@ import {
   Link as LinkIcon,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import posthog from "posthog-js";
 
 import { useState } from "react";
 
@@ -137,14 +138,24 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
     Record<string, boolean>
   >({});
 
-  function toggleExpanded(docId: string) {
+  function toggleExpanded(docId: string, docTitle?: string | null) {
     const newExpanded = new Set(expandedDocs);
+    const isExpanding = !newExpanded.has(docId);
     if (newExpanded.has(docId)) {
       newExpanded.delete(docId);
     } else {
       newExpanded.add(docId);
     }
     setExpandedDocs(newExpanded);
+
+    // Track document source clicked when expanding
+    if (isExpanding) {
+      posthog.capture("document_source_clicked", {
+        document_id: docId,
+        document_title: docTitle || "Untitled Document",
+        product_slug: productSlug,
+      });
+    }
   }
 
   function toggleKeypoint(docId: string, idx: number) {
@@ -249,7 +260,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
               {/* Document Header */}
               <div
                 className={cn("p-4", hasSummary && "cursor-pointer")}
-                onClick={() => hasSummary && toggleExpanded(doc.id)}
+                onClick={() => hasSummary && toggleExpanded(doc.id, doc.title)}
               >
                 <div className="flex items-start gap-3">
                   {/* Icon */}
@@ -340,7 +351,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            toggleExpanded(doc.id);
+                            toggleExpanded(doc.id, doc.title);
                           }}
                           className={cn(
                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all shrink-0",

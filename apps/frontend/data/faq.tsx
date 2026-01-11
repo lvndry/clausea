@@ -15,7 +15,7 @@ const faq = {
     },
     {
       q: "What types of legal documents do you analyze?",
-          a: "We analyze terms of service, privacy policies, user agreements, and other legal documents from thousands of products. Our AI provides clear summaries and answers to your specific questions about these documents.",
+      a: "We analyze terms of service, privacy policies, user agreements, and other legal documents from thousands of products. Our AI provides clear summaries and answers to your specific questions about these documents.",
     },
     {
       q: "How accurate is the AI analysis?",

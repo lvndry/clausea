@@ -1,6 +1,8 @@
 // Custom hook for billing portal access
 "use client";
 
+import posthog from "posthog-js";
+
 import { useState } from "react";
 
 import { subscriptionApi } from "@/lib/api/subscriptions";
@@ -15,6 +17,11 @@ export function useBillingPortal() {
     setIsLoading(true);
     setError(null);
 
+    // Track billing portal opened event
+    posthog.capture("billing_portal_opened", {
+      source: "dashboard",
+    });
+
     try {
       const response = await subscriptionApi.getBillingPortal();
 
@@ -24,6 +31,12 @@ export function useBillingPortal() {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to open billing portal";
       setError(errorMessage);
+
+      // Track billing portal error
+      posthog.capture("billing_portal_error", {
+        error: errorMessage,
+      });
+      posthog.captureException(err);
     } finally {
       setIsLoading(false);
     }

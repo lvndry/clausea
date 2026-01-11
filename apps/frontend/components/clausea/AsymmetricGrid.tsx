@@ -98,15 +98,15 @@ export default function AsymmetricGrid() {
         </motion.div>
 
         {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 auto-rows-[260px] md:auto-rows-[280px]">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 md:gap-6 md:auto-rows-[260px] lg:auto-rows-[280px]">
           {features.map((feature, index) => (
             <motion.div
               key={index}
               initial={{ opacity: 0, y: 40 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.6, delay: index * 0.1 }}
-              className={`group relative p-6 md:p-8 rounded-2xl bg-card border border-border hover:border-primary/30 transition-all duration-500 cursor-pointer overflow-hidden ${
-                feature.size === "lg" ? "md:col-span-2" : "md:col-span-1"
+              className={`group relative p-6 md:p-8 rounded-2xl bg-card border border-border hover:border-primary/30 transition-all duration-500 cursor-pointer overflow-hidden min-h-[220px] ${
+                feature.size === "lg" ? "lg:col-span-2" : ""
               }`}
             >
               {/* Card content */}

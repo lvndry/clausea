@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiEndpoints } from "@lib/config";
 import { httpJson } from "@lib/http";
 
-
 export async function POST(_request: NextRequest) {
   try {
     const result = await httpJson(

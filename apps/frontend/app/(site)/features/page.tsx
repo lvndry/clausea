@@ -1,8 +1,54 @@
 import { Cpu, Lock, Shield, Zap } from "lucide-react";
+import type { Metadata } from "next";
 
 import AsymmetricGrid from "@/components/clausea/AsymmetricGrid";
 import { Header } from "@/components/clausea/Header";
 import { Footer } from "@/components/clausea/PricingAndFooter";
+
+const siteUrl = (
+  process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
+).replace(/\/$/, "");
+
+export const metadata: Metadata = {
+  title: "Features - Advanced Legal Infrastructure | Clausea AI",
+  description:
+    "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second RAG, SOC2 Type II security, and model-agnostic architecture. Built for enterprise legal and compliance.",
+  keywords: [
+    "legal document analysis features",
+    "RAG legal documents",
+    "enterprise legal AI",
+    "SOC2 legal software",
+    "privacy policy analysis",
+    "legal document intelligence",
+  ],
+  openGraph: {
+    title: "Features - Advanced Legal Infrastructure | Clausea AI",
+    description:
+      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second RAG, SOC2 Type II security, and model-agnostic architecture.",
+    url: `${siteUrl}/features`,
+    siteName: "Clausea AI",
+    images: [
+      {
+        url: `${siteUrl}/og`,
+        width: 1200,
+        height: 630,
+        alt: "Clausea AI Features",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Features - Advanced Legal Infrastructure | Clausea AI",
+    description:
+      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second RAG, SOC2 Type II security.",
+    images: [`${siteUrl}/og`],
+  },
+  alternates: {
+    canonical: `${siteUrl}/features`,
+  },
+};
 
 export default function FeaturesPage() {
   return (

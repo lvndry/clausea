@@ -4,8 +4,9 @@ import { ArrowLeft, Calendar, FileText, LayoutDashboard } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import posthog from "posthog-js";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { DataStory } from "@/components/dashboard/overview/data-story";
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
@@ -391,7 +392,17 @@ export default function CompanyPage() {
       </motion.div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview" className="space-y-8">
+      <Tabs
+        defaultValue="overview"
+        className="space-y-8"
+        onValueChange={(value) => {
+          posthog.capture("product_tab_changed", {
+            tab_name: value,
+            product_slug: slug,
+            product_name: data.product_name,
+          });
+        }}
+      >
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}

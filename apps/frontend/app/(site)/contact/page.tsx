@@ -2,6 +2,7 @@
 
 import * as z from "zod";
 import { Mail, MapPin, Send } from "lucide-react";
+import posthog from "posthog-js";
 import { useForm } from "react-hook-form";
 
 import { Header } from "@/components/clausea/Header";
@@ -28,6 +29,13 @@ export default function ContactPage() {
   });
 
   const onSubmit = async (data: ContactFormValues) => {
+    // Track contact form submission
+    posthog.capture("contact_form_submitted", {
+      has_company: !!data.company,
+      message_length: data.message.length,
+      email_domain: data.email.split("@")[1],
+    });
+
     // Simulate API call
     await new Promise((resolve) => setTimeout(resolve, 1500));
     alert("Message sent! We'll get back to you soon.");

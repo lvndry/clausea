@@ -1,5 +1,11 @@
 import { Fraunces, Inter, Plus_Jakarta_Sans } from "next/font/google";
 
+import {
+  OrganizationStructuredData,
+  SoftwareApplicationStructuredData,
+  WebsiteStructuredData,
+} from "@/components/seo/structured-data";
+
 import "./globals.css";
 import { Provider } from "./provider";
 
@@ -98,6 +104,7 @@ export default function Layout(props: { children: React.ReactNode }) {
       suppressHydrationWarning
     >
       <head>
+        {/* Favicons */}
         <link
           rel="apple-touch-icon"
           sizes="76x76"
@@ -115,6 +122,23 @@ export default function Layout(props: { children: React.ReactNode }) {
           sizes="16x16"
           href="/static/favicons/favicon-16x16.png"
         />
+        {/* Verification tags - Add these in your environment variables */}
+        {process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION && (
+          <meta
+            name="google-site-verification"
+            content={process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION}
+          />
+        )}
+        {process.env.NEXT_PUBLIC_BING_VERIFICATION && (
+          <meta
+            name="msvalidate.01"
+            content={process.env.NEXT_PUBLIC_BING_VERIFICATION}
+          />
+        )}
+        {/* Structured Data */}
+        <OrganizationStructuredData siteUrl={siteUrl} />
+        <WebsiteStructuredData siteUrl={siteUrl} />
+        <SoftwareApplicationStructuredData siteUrl={siteUrl} />
       </head>
       <body className="antialiased selection:bg-secondary/30">
         <div className="noise-overlay" />

@@ -4,6 +4,7 @@ import { AlertCircle, ArrowLeft, MessageSquare } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import posthog from "posthog-js";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -80,6 +81,14 @@ export default function ChatPage() {
   async function handleSendMessage(content: string) {
     if (!conversation) return;
 
+    // Track chat message sent event
+    posthog.capture("chat_message_sent", {
+      conversation_id: conversation.id,
+      product_name: conversation.product_name,
+      message_length: content.length,
+      messages_count: messages.length + 1,
+    });
+
     const userMsg: Message = {
       id: Date.now().toString(),
       role: "user",
@@ -113,6 +122,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
       console.error(err);
+      posthog.captureException(err);
     } finally {
       setSending(false);
     }

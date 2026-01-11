@@ -3,10 +3,11 @@
 import { CheckCircle2, Mail } from "lucide-react";
 import { motion, useInView } from "motion/react";
 import Link from "next/link";
+import posthog from "posthog-js";
 import { FaGithub } from "react-icons/fa";
 import { FaTwitter } from "react-icons/fa6";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/data/logo";
@@ -151,6 +152,14 @@ export function Pricing() {
                     ? "bg-primary text-primary-foreground hover:bg-primary/90"
                     : "border-border hover:bg-primary/5 hover:border-primary/30"
                 }`}
+                onClick={() => {
+                  posthog.capture("pricing_plan_clicked", {
+                    plan_name: tier.name,
+                    plan_price: tier.price,
+                    is_popular: tier.popular,
+                    cta_text: tier.cta,
+                  });
+                }}
               >
                 {tier.cta}
               </Button>
@@ -166,6 +175,18 @@ export function Pricing() {
  * Footer Component - Warm Theme
  */
 export function Footer() {
+  const [newsletterEmail, setNewsletterEmail] = useState("");
+
+  const handleNewsletterSubmit = () => {
+    if (newsletterEmail && newsletterEmail.includes("@")) {
+      posthog.capture("newsletter_subscribed", {
+        email_domain: newsletterEmail.split("@")[1],
+        source: "footer",
+      });
+      setNewsletterEmail("");
+    }
+  };
+
   return (
     <footer className="bg-background text-foreground pt-20 pb-10 px-4 md:px-8 border-t border-border overflow-hidden relative">
       {/* Subtle wave pattern */}
@@ -292,12 +313,20 @@ export function Footer() {
               <input
                 type="email"
                 placeholder="your@email.com"
+                value={newsletterEmail}
+                onChange={(e) => setNewsletterEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleNewsletterSubmit();
+                  }
+                }}
                 className="bg-transparent px-4 py-2 text-sm flex-1 outline-none text-foreground placeholder:text-muted-foreground/50"
                 aria-label="Email address"
               />
               <Button
                 size="icon"
                 className="rounded-full w-9 h-9 bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
+                onClick={handleNewsletterSubmit}
               >
                 <Mail className="w-4 h-4" />
               </Button>

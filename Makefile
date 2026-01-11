@@ -1,7 +1,7 @@
 # Clausea Makefile
 # Provides convenient commands for setting up and running the development environment
 
-.PHONY: help setup dev clean install-deps setup-backend setup-frontend setup-precommit run-backend run-frontend test lint format check-deps docker-build-streamlit docker-run-streamlit docker-stop-streamlit docker-rm-streamlit docker-restart-streamlit docker-logs-streamlit
+.PHONY: help setup dev clean install-deps setup-backend setup-frontend setup-extension setup-precommit setup-env run-backend run-frontend extension-dev extension-build extension-zip test lint format check-deps docker-build-streamlit docker-run-streamlit docker-stop-streamlit docker-rm-streamlit docker-restart-streamlit docker-logs-streamlit
 
 # Default target
 help:
@@ -13,12 +13,16 @@ help:
 	@echo "  make install-deps   - Install all dependencies (backend + frontend)"
 	@echo "  make setup-backend  - Setup backend only"
 	@echo "  make setup-frontend - Setup frontend only"
+	@echo "  make setup-extension - Setup extension only"
 	@echo "  make setup-precommit - Setup pre-commit hooks"
 	@echo ""
 	@echo "Development Commands:"
 	@echo "  make dev            - Start development servers (frontend + backend)"
 	@echo "  make run-backend    - Start backend server only"
 	@echo "  make run-frontend   - Start frontend server only"
+	@echo "  make extension-dev  - Start extension development mode"
+	@echo "  make extension-build - Build extension for production"
+	@echo "  make extension-zip  - Create zip file for extension distribution"
 	@echo ""
 	@echo "Utility Commands:"
 	@echo "  make test           - Run tests"
@@ -37,7 +41,7 @@ help:
 	@echo ""
 
 # Complete project setup
-setup: check-deps setup-permissions install-deps setup-precommit
+setup: check-deps setup-permissions setup-env install-deps setup-precommit
 	@echo "✅ Clausea setup complete!"
 	@echo "Run 'make dev' to start the development environment"
 
@@ -57,10 +61,29 @@ setup-frontend:
 	@cd apps/frontend && bun install
 	@echo "✅ Frontend setup complete"
 
+# Setup extension dependencies
+setup-extension:
+	@echo "🔧 Setting up extension..."
+	@cd apps/extension && bun install
+	@echo "✅ Extension setup complete"
+
 # Setup pre-commit hooks
 setup-precommit: setup-permissions
 	@echo "🔧 Setting up pre-commit hooks..."
 	@./dev/setup-precommit.sh
+
+# Setup environment files
+setup-env:
+	@echo "🔧 Setting up environment..."
+	@if [ ! -f apps/backend/.env ]; then \
+		echo "Creating backend .env file..."; \
+		cp apps/backend/.env.example apps/backend/.env 2>/dev/null || echo "# Backend environment variables" > apps/backend/.env; \
+	fi
+	@if [ ! -f apps/frontend/.env.local ]; then \
+		echo "Creating frontend .env.local file..."; \
+		cp apps/frontend/.env.example apps/frontend/.env.local 2>/dev/null || echo "# Frontend environment variables" > apps/frontend/.env.local; \
+	fi
+	@echo "✅ Environment files created"
 
 # Set executable permissions on scripts
 setup-permissions:
@@ -84,6 +107,23 @@ run-backend: check-deps
 run-frontend: check-deps
 	@echo "🚀 Starting frontend server..."
 	@cd apps/frontend && bun run dev
+
+# Start extension development mode
+extension-dev: check-deps
+	@echo "🚀 Starting extension development mode..."
+	@cd apps/extension && bun run dev
+
+# Build extension for production
+extension-build: check-deps
+	@echo "🏗️  Building extension..."
+	@cd apps/extension && bun run build
+	@echo "✅ Extension build complete"
+
+# Create zip file for extension distribution
+extension-zip: check-deps
+	@echo "📦 Creating extension zip file..."
+	@cd apps/extension && bun run zip
+	@echo "✅ Extension zip file created"
 
 # Run tests
 test:
@@ -115,6 +155,8 @@ clean:
 	@rm -rf apps/backend/.venv
 	@rm -rf apps/frontend/node_modules
 	@rm -rf apps/frontend/.next
+	@rm -rf apps/extension/node_modules
+	@rm -rf apps/extension/.output
 	@echo "✅ Cleanup complete"
 
 # Check if required dependencies are installed
@@ -142,7 +184,7 @@ build:
 	@cd apps/backend && source .venv/bin/activate && python -m build
 	@cd apps/frontend && bun run build
 
-# Docker commands (if using Docker)
+# Docker commands
 docker-build:
 	@echo "🐳 Building Docker images..."
 	@docker build -t clausea-backend apps/backend/
@@ -218,21 +260,8 @@ logs:
 	@echo "📋 Showing logs..."
 	@tail -f apps/backend/logs/*.log 2>/dev/null || echo "No log files found"
 
-# Environment setup
-env-setup:
-	@echo "🔧 Setting up environment..."
-	@if [ ! -f apps/backend/.env ]; then \
-		echo "Creating backend .env file..."; \
-		cp apps/backend/.env.example apps/backend/.env 2>/dev/null || echo "# Backend environment variables" > apps/backend/.env; \
-	fi
-	@if [ ! -f apps/frontend/.env.local ]; then \
-		echo "Creating frontend .env.local file..."; \
-		cp apps/frontend/.env.example apps/frontend/.env.local 2>/dev/null || echo "# Frontend environment variables" > apps/frontend/.env.local; \
-	fi
-	@echo "✅ Environment files created"
-
 # Quick start for new developers
-quick-start: env-setup setup dev
+quick-start: setup dev
 	@echo "🎉 Quick start complete! Development servers should be running."
 	@echo "Frontend: http://localhost:3000"
 	@echo "Backend:  http://localhost:8000"

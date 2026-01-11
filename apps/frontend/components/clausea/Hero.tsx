@@ -3,6 +3,7 @@
 import { ArrowRight } from "lucide-react";
 import { motion, useInView } from "motion/react";
 import Link from "next/link";
+import posthog from "posthog-js";
 
 import { useRef } from "react";
 
@@ -68,6 +69,13 @@ export default function Hero() {
             <Button
               size="lg"
               className="group h-14 px-8 rounded-full text-base font-medium transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg relative overflow-hidden cursor-pointer"
+              onClick={() => {
+                posthog.capture("cta_hero_clicked", {
+                  cta_text: "Start Exploring",
+                  cta_destination: "/products",
+                  cta_type: "primary",
+                });
+              }}
             >
               <span className="relative z-10 flex items-center">
                 Start Exploring
@@ -81,6 +89,13 @@ export default function Hero() {
               size="lg"
               variant="outline"
               className="h-14 px-8 rounded-full text-base font-medium border-border hover:border-primary/50 hover:bg-primary/5 transition-all duration-300"
+              onClick={() => {
+                posthog.capture("cta_hero_clicked", {
+                  cta_text: "See How It Works",
+                  cta_destination: "/features",
+                  cta_type: "secondary",
+                });
+              }}
             >
               See How It Works
             </Button>
@@ -92,31 +107,33 @@ export default function Hero() {
           initial={{ opacity: 0, y: 20 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.8, delay: 0.5, ease: "easeOut" }}
-          className="mt-12 md:mt-16 flex items-center justify-center gap-8 md:gap-12 border-t border-border/50 pt-10 max-w-2xl mx-auto"
+          className="mt-12 md:mt-16 flex flex-col sm:flex-row items-stretch sm:items-center sm:justify-center gap-6 sm:gap-8 md:gap-12 border-t border-border/50 pt-10 w-full max-w-3xl mx-auto"
         >
-          <div className="text-center">
+          <div className="flex flex-col items-center text-center gap-2 w-full">
             <p className="text-3xl md:text-4xl font-display font-bold text-foreground">
               10<span className="text-primary">s</span>
             </p>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mt-1">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
               Avg. Analysis
             </p>
           </div>
-          <div className="h-10 w-px bg-border" />
-          <div className="text-center">
+          <div className="hidden sm:block h-10 w-px bg-border" />
+          <div className="sm:hidden w-16 h-px bg-border/70 mx-auto" />
+          <div className="flex flex-col items-center text-center gap-2 w-full">
             <p className="text-3xl md:text-4xl font-display font-bold text-foreground">
               99.8<span className="text-primary">%</span>
             </p>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mt-1">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
               Accuracy
             </p>
           </div>
-          <div className="h-10 w-px bg-border" />
-          <div className="text-center">
+          <div className="hidden sm:block h-10 w-px bg-border" />
+          <div className="sm:hidden w-16 h-px bg-border/70 mx-auto" />
+          <div className="flex flex-col items-center text-center gap-2 w-full">
             <p className="text-3xl md:text-4xl font-display font-bold text-secondary">
               5k<span className="text-primary">+</span>
             </p>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mt-1">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
               Products
             </p>
           </div>

@@ -53,3 +53,10 @@ build/
 
 # debug
 bun-debug.log*
+
+### Extension
+.output
+.wxt
+
+### misc
+data/

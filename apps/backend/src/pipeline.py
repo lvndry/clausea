@@ -1180,6 +1180,9 @@ class LegalDocumentPipeline:
             Number of documents actually stored (new + updated)
         """
         stored_count = 0
+        updated_count = 0
+        duplicate_count = 0
+        error_count = 0
 
         async with get_db() as db:
             document_service = create_document_service()
@@ -1199,9 +1202,13 @@ class LegalDocumentPipeline:
                             document.id = existing_doc.id  # Preserve original ID
                             await document_service.update_document(db, document)
                             stored_count += 1
+                            updated_count += 1
                         else:
-                            logger.debug(f"Skipping unchanged document: {document.url}")
+                            logger.info(
+                                f"⏭️ Skipping unchanged document (duplicate): {document.url}"
+                            )
                             self.stats.duplicates_skipped += 1
+                            duplicate_count += 1
                     else:
                         # Create new document
                         logger.info(f"Creating new document: {document.url}")
@@ -1209,7 +1216,15 @@ class LegalDocumentPipeline:
                         stored_count += 1
 
                 except Exception as e:
-                    logger.error(f"Failed to store document {document.url}: {e}")
+                    logger.error(f"❌ Failed to store document {document.url}: {e}", exc_info=True)
+                    error_count += 1
+
+        # Log summary of storage operation
+        if len(documents) > 0:
+            logger.info(
+                f"📦 Storage summary: {stored_count} stored ({len(documents) - stored_count - error_count} new, "
+                f"{updated_count} updated), {duplicate_count} duplicates skipped, {error_count} errors"
+            )
 
         return stored_count
 

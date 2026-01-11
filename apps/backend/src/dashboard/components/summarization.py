@@ -65,16 +65,13 @@ def run_summarization_async(
 async def generate_overview_async(product_slug: str) -> AsyncGenerator[str, None]:
     """Generate product overview for a product"""
     db = await get_dashboard_db()
-    try:
-        product_svc = create_product_service()
-        document_svc = create_document_service()
-        result = await generate_product_overview(
-            db.db, product_slug, product_svc=product_svc, document_svc=document_svc
-        )
-        summary_content = str(result)  # or format as needed
-        yield summary_content
-    finally:
-        await db.disconnect()
+    product_svc = create_product_service()
+    document_svc = create_document_service()
+    result = await generate_product_overview(
+        db.db, product_slug, product_svc=product_svc, document_svc=document_svc
+    )
+    summary_content = str(result)  # or format as needed
+    yield summary_content
 
 
 def show_summarization() -> None:

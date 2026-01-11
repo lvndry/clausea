@@ -1,6 +1,8 @@
 // Custom hook for checkout flow
 "use client";
 
+import posthog from "posthog-js";
+
 import { useState } from "react";
 
 import { type CheckoutRequest, subscriptionApi } from "@/lib/api/subscriptions";
@@ -14,6 +16,12 @@ export function useCheckout() {
   const startCheckout = async (priceId: string) => {
     setIsLoading(true);
     setError(null);
+
+    // Track checkout started event
+    posthog.capture("checkout_started", {
+      price_id: priceId,
+      source: "pricing_page",
+    });
 
     try {
       const request: CheckoutRequest = {
@@ -31,6 +39,13 @@ export function useCheckout() {
         err instanceof Error ? err.message : "Failed to start checkout";
       setError(errorMessage);
       setIsLoading(false);
+
+      // Track checkout error
+      posthog.capture("checkout_error", {
+        price_id: priceId,
+        error: errorMessage,
+      });
+      posthog.captureException(err);
     }
   };
 

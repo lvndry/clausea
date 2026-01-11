@@ -56,6 +56,22 @@ class ProductRepository(BaseRepository):
             return None
         return Product(**product_data)
 
+    async def find_by_domain(self, db: AgnosticDatabase, domain: str) -> Product | None:
+        """Get a product by one of its domains.
+
+        Args:
+            db: Database instance
+            domain: Domain to search for (e.g., "netflix.com", "slack.com")
+
+        Returns:
+            Product or None if not found
+        """
+        # Search for domain in the domains array
+        product_data = await db.products.find_one({"domains": domain})
+        if not product_data:
+            return None
+        return Product(**product_data)
+
     async def find_all(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 

@@ -1,6 +1,5 @@
 import posthog from "posthog-js";
 
-// User identification
 export function identifyUser(user: any) {
   if (!user) return;
 
@@ -47,6 +46,7 @@ export const trackUserJourney = {
 
   signOut() {
     posthog.capture("user_signed_out");
+    posthog.reset();
   },
 
   // Product interactions

@@ -6,19 +6,50 @@ from src.dashboard.db_utils import create_product_isolated, get_product_by_slug_
 from src.dashboard.utils import run_async_with_retry
 from src.models.product import Product
 
+# Session state keys for form fields
+FORM_FIELD_KEYS = [
+    "product_name_input",
+    "company_name_input",
+    "product_slug_input",
+    "domains_input",
+    "categories_input",
+    "crawl_urls_input",
+]
 
-def _reset_product_form_fields() -> None:
-    """Clear all product form inputs so the user can immediately create another."""
-    defaults: dict[str, str | list[str]] = {
-        "product_name_input": "",
-        "company_name_input": "",
-        "product_slug_input": "",
-        "domains_input": [],
-        "categories_input": [],
-        "crawl_urls_input": [],
-    }
-    for key, default in defaults.items():
-        st.session_state[key] = default.copy() if isinstance(default, list) else default
+# Session state keys for success message
+SUCCESS_KEYS = [
+    "product_created",
+    "product_created_name",
+    "product_created_id",
+    "product_created_slug",
+]
+
+
+def _clear_form_fields() -> None:
+    """Clear all product form inputs from session state.
+
+    This must be called BEFORE widgets are created, otherwise Streamlit will raise an error
+    about modifying session state after widget instantiation.
+
+    We delete the keys entirely so Streamlit widgets will use their default/placeholder values.
+    """
+    current_counter = st.session_state.get("form_counter", 0)
+    for base_key in FORM_FIELD_KEYS:
+        # Clear the current counter version
+        key = f"{base_key}_{current_counter}"
+        if key in st.session_state:
+            del st.session_state[key]
+        # Also clear the previous counter version to avoid stale data
+        prev_key = f"{base_key}_{current_counter - 1}"
+        if prev_key in st.session_state:
+            del st.session_state[prev_key]
+
+
+def _clear_success_state() -> None:
+    """Clear success message state from session state."""
+    for key in SUCCESS_KEYS:
+        if key in st.session_state:
+            del st.session_state[key]
 
 
 def _render_tags(key: str, label: str, suggestions: list[str]) -> list[str]:
@@ -33,101 +64,64 @@ def _render_tags(key: str, label: str, suggestions: list[str]) -> list[str]:
     )
 
 
-def _restore_preserved_values() -> None:
-    """Restore preserved form values before widgets are created (avoids widget key mutation)."""
-    if not st.session_state.get("preserve_form_values"):
-        return
-
-    if "preserved_product_name" in st.session_state:
-        st.session_state.product_name_input = st.session_state.preserved_product_name
-    if "preserved_company_name" in st.session_state:
-        st.session_state.company_name_input = st.session_state.preserved_company_name
-    if "preserved_product_slug" in st.session_state:
-        st.session_state.product_slug_input = st.session_state.preserved_product_slug
-    if "preserved_domains" in st.session_state:
-        st.session_state.domains_input = st.session_state.preserved_domains.copy()
-    if "preserved_categories" in st.session_state:
-        st.session_state.categories_input = st.session_state.preserved_categories.copy()
-    if "preserved_crawl_urls" in st.session_state:
-        st.session_state.crawl_urls_input = st.session_state.preserved_crawl_urls.copy()
-
-    # Clear the preserve flag and preserved values
-    del st.session_state.preserve_form_values
-    for k in (
-        "preserved_product_name",
-        "preserved_company_name",
-        "preserved_product_slug",
-        "preserved_domains",
-        "preserved_categories",
-        "preserved_crawl_urls",
-    ):
-        if k in st.session_state:
-            del st.session_state[k]
-
-
-def _preserve_form_values(
-    product_id: str,
-    product_name: str,
-    company_name: str | None,
-    product_slug: str,
-    domains: list[str],
-    categories: list[str],
-    crawl_urls: list[str],
-) -> None:
-    """Save product success metadata and preserve form values across a rerun."""
-    st.session_state.product_created = True
-    st.session_state.product_created_name = product_name.strip()
-    st.session_state.product_created_id = product_id
-    st.session_state.product_created_slug = product_slug
-
-    st.session_state.preserve_form_values = True
-    st.session_state.preserved_product_name = product_name.strip()
-    st.session_state.preserved_company_name = company_name.strip() if company_name else ""
-    st.session_state.preserved_product_slug = product_slug.strip()
-    st.session_state.preserved_domains = domains
-    st.session_state.preserved_categories = categories
-    st.session_state.preserved_crawl_urls = crawl_urls
-
-
 def show_product_creation() -> None:
     st.title("Create New Product")
 
-    # Restore any preserved values before widgets are created
-    _restore_preserved_values()
+    # Handle pending success state from form submission (set outside form context)
+    if st.session_state.get("_pending_success"):
+        success_data = st.session_state._pending_success
+        st.session_state.product_created = success_data["product_created"]
+        st.session_state.product_created_name = success_data["product_created_name"]
+        st.session_state.product_created_id = success_data["product_created_id"]
+        st.session_state.product_created_slug = success_data["product_created_slug"]
+        del st.session_state._pending_success
 
     # Show success message if product was just created
-    if "product_created" in st.session_state and st.session_state.product_created:
+    if st.session_state.get("product_created", False):
         st.success(f"✅ Product '{st.session_state.product_created_name}' created successfully!")
         st.info(f"**Product ID:** `{st.session_state.product_created_id}`")
         st.info(f"**Product Slug:** `{st.session_state.product_created_slug}`")
 
-        if st.button("Create Other", type="secondary"):
-            _reset_product_form_fields()
+        if st.button("Create Other", type="secondary", key="create_other_btn"):
+            # Request form clearing on next render
+            st.session_state.clear_form_requested = True
+            _clear_success_state()
             st.rerun()
 
-        # Clear the success state after showing
-        del st.session_state.product_created
-        del st.session_state.product_created_name
-        del st.session_state.product_created_id
-        del st.session_state.product_created_slug
+    # Handle "Create Other" button click - must be checked before form is rendered
+    if st.session_state.get("clear_form_requested", False):
+        _clear_form_fields()
+        _clear_success_state()
+        st.session_state.clear_form_requested = False
+        # Increment form counter to force Streamlit to create a new form instance
+        st.session_state.form_counter = st.session_state.get("form_counter", 0) + 1
 
-    with st.form("product_form"):
+    # Use form counter to force new form instance when clearing
+    form_counter = st.session_state.get("form_counter", 0)
+    form_key = f"product_form_{form_counter}"
+
+    def get_widget_key(base_key: str) -> str:
+        return f"{base_key}_{form_counter}"
+
+    with st.form(form_key, clear_on_submit=False):
         name = st.text_input(
-            "Product Name", placeholder="Enter product name...", key="product_name_input"
+            "Product Name",
+            placeholder="Enter product name...",
+            key=get_widget_key("product_name_input"),
         )
         company_name = st.text_input(
             "Company Name",
             placeholder="Enter company name (optional)...",
-            key="company_name_input",
+            key=get_widget_key("company_name_input"),
         )
         slug = st.text_input(
             "Product Slug",
             placeholder="Enter slug (optional, will auto-generate)",
-            key="product_slug_input",
+            key=get_widget_key("product_slug_input"),
         )
-        domains = _render_tags("domains_input", "Domains", ["example.com", "www.example.com"])
+        domains = _render_tags(get_widget_key("domains_input"), "Domains", ["example.com", "www.example.com"])
         categories = _render_tags(
-            "categories_input",
+            get_widget_key("categories_input"),
             "Categories",
             [
                 "Technology",
@@ -141,7 +135,7 @@ def show_product_creation() -> None:
             ],
         )
         crawl_base_urls = _render_tags(
-            "crawl_urls_input",
+            get_widget_key("crawl_urls_input"),
             "Crawl Base URLs",
             ["https://example.com/privacy", "https://example.com/terms"],
         )
@@ -149,8 +143,27 @@ def show_product_creation() -> None:
         submitted = st.form_submit_button("Create Product", type="primary")
 
         if submitted:
+            # Parse form data first
+            domains_list = [domain.strip() for domain in domains if domain.strip()]
+            categories_list = [category.strip() for category in categories if category.strip()]
+            crawl_base_urls_list: list[str] = [
+                url.strip() for url in (crawl_base_urls or []) if url.strip()
+            ]
+            company_name_value = company_name.strip() if company_name.strip() else None
+
+            # Validate required fields
+            errors = []
+
             if not name.strip():
-                st.error("Product name is required!")
+                errors.append("Product name is required!")
+
+            # At least one of domains or crawl_base_urls should be provided
+            if not domains_list and not crawl_base_urls_list:
+                errors.append("At least one domain or crawl base URL is required!")
+
+            if errors:
+                for error in errors:
+                    st.error(error)
                 return
 
             try:
@@ -173,15 +186,6 @@ def show_product_creation() -> None:
                     )
                     return
 
-                # Parse form data
-                # st_tags returns a list directly, no need to split
-                domains_list = [domain.strip() for domain in domains if domain.strip()]
-                categories_list = [category.strip() for category in categories if category.strip()]
-                crawl_base_urls_list: list[str] = [
-                    url.strip() for url in (crawl_base_urls or []) if url.strip()
-                ]
-                company_name_value = company_name.strip() if company_name.strip() else None
-
                 product = Product(
                     id=shortuuid.uuid(),
                     name=name.strip(),
@@ -197,18 +201,15 @@ def show_product_creation() -> None:
                     success = run_async_with_retry(create_product_isolated(product))
 
                 if success:
-                    # Store success state and preserve values across rerun
-                    _preserve_form_values(
-                        product.id,
-                        name,
-                        company_name,
-                        slug,
-                        domains_list,
-                        categories_list,
-                        crawl_base_urls_list,
-                    )
-
-                    # Rerun to show success message (form values will be preserved)
+                    # Store success state - use a temporary flag to set values after form context
+                    st.session_state._pending_success = {
+                        "product_created": True,
+                        "product_created_name": product.name,
+                        "product_created_id": product.id,
+                        "product_created_slug": product.slug,
+                    }
+                    # Rerun to show success message
+                    # Form fields will remain filled until user clicks "Create Other"
                     st.rerun()
                 else:
                     st.error("Failed to create product. Please try again.")

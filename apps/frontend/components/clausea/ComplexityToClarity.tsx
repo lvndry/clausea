@@ -4,7 +4,7 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { Sparkles } from "lucide-react";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useGSAP } from "@gsap/react";
 
@@ -15,9 +15,20 @@ if (typeof window !== "undefined") {
 
 export default function ComplexityToClarity() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   useGSAP(
     () => {
+      if (!isDesktop) return;
       const scramble = containerRef.current?.querySelector(".scramble-text");
       const clear = containerRef.current?.querySelector(".clear-text");
       const beams = containerRef.current?.querySelectorAll(".beam") || [];
@@ -86,13 +97,13 @@ export default function ComplexityToClarity() {
 
       // useGSAP handles cleanup automatically via revert()
     },
-    { scope: containerRef },
+    { scope: containerRef, dependencies: [isDesktop] },
   );
 
   return (
     <section
       ref={containerRef}
-      className="h-[200vh] bg-background text-foreground flex flex-col items-center justify-center relative overflow-hidden"
+      className="relative bg-background text-foreground flex flex-col items-center justify-center overflow-hidden py-16 md:py-0 min-h-[120vh] md:min-h-0 md:h-[200vh]"
     >
       {/* Ambient glow - warm tones */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-[180px] pointer-events-none" />
@@ -111,7 +122,7 @@ export default function ComplexityToClarity() {
       {/* Content Container */}
       <div className="relative z-10 max-w-5xl text-center px-4">
         {/* Scrambled/Complex State */}
-        <div className="scramble-text">
+        <div className="scramble-text hidden md:block">
           <h2 className="text-4xl md:text-6xl lg:text-7xl font-display font-bold mb-8 leading-[1.1] tracking-tight">
             <span className="text-foreground">Dense. Overwhelming.</span> <br />
             <span className="text-muted-foreground/60 font-serif italic font-normal tracking-normal">
@@ -127,7 +138,7 @@ export default function ComplexityToClarity() {
         </div>
 
         {/* Clear/Illuminated State */}
-        <div className="clear-text absolute inset-0 flex flex-col items-center justify-center opacity-0 pointer-events-none">
+        <div className="clear-text hidden md:flex absolute inset-0 flex-col items-center justify-center opacity-0 pointer-events-none">
           <div className="clarity-badge mb-10 flex items-center gap-3 bg-primary/10 border border-primary/20 px-6 py-2.5 rounded-full backdrop-blur-xl">
             <Sparkles className="w-5 h-5 text-primary" />
             <span className="text-xs font-medium tracking-wider uppercase text-primary">
@@ -166,6 +177,40 @@ export default function ComplexityToClarity() {
               Trusted by{" "}
               <span className="text-primary font-semibold">5,000+</span> Legal
               Teams
+            </p>
+          </div>
+        </div>
+
+        {/* Mobile Static State */}
+        <div className="md:hidden space-y-6 text-center mt-10">
+          <div className="inline-flex items-center gap-3 bg-primary/10 border border-primary/20 px-5 py-2 rounded-full text-primary text-xs font-semibold tracking-widest uppercase">
+            <Sparkles className="h-4 w-4" /> Clarity Mode
+          </div>
+          <h2 className="text-3xl font-display font-bold leading-tight">
+            Legal speak, translated into{" "}
+            <span className="text-gradient-warm font-serif italic">
+              real words
+            </span>
+            .
+          </h2>
+          <p className="text-muted-foreground text-base leading-relaxed">
+            Clausea highlights the risks, commitments, and rights so you can
+            make confident decisions without reading a 40-page PDF on your
+            phone.
+          </p>
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex -space-x-3">
+              {["JD", "AS", "MK", "LP"].map((initials) => (
+                <div
+                  key={initials}
+                  className="w-10 h-10 rounded-full border-2 border-background bg-linear-to-br from-primary/30 to-secondary/20 flex items-center justify-center text-xs font-bold text-primary"
+                >
+                  {initials}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Trusted by 5,000+ legal teams
             </p>
           </div>
         </div>

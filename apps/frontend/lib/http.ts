@@ -2,8 +2,10 @@ import { auth } from "@clerk/nextjs/server";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-export interface HttpOptions<TBody = unknown>
-  extends Omit<RequestInit, "body"> {
+export interface HttpOptions<TBody = unknown> extends Omit<
+  RequestInit,
+  "body"
+> {
   retry?: number;
   retryDelayMs?: number;
   log?: boolean;

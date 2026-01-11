@@ -1,5 +1,50 @@
+import type { Metadata } from "next";
+
 import { Header } from "@/components/clausea/Header";
 import { Footer, Pricing } from "@/components/clausea/PricingAndFooter";
+
+const siteUrl = (
+  process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
+).replace(/\/$/, "");
+
+export const metadata: Metadata = {
+  title: "Pricing - Legal Document Analysis Plans | Clausea AI",
+  description:
+    "Choose the right plan for your legal document analysis needs. From Standard to Enterprise, Clausea AI offers flexible pricing for individuals, teams, and organizations.",
+  keywords: [
+    "legal document analysis pricing",
+    "privacy policy analyzer pricing",
+    "legal AI pricing",
+    "enterprise legal software pricing",
+  ],
+  openGraph: {
+    title: "Pricing - Legal Document Analysis Plans | Clausea AI",
+    description:
+      "Choose the right plan for your legal document analysis needs. From Standard to Enterprise, flexible pricing for individuals, teams, and organizations.",
+    url: `${siteUrl}/pricing`,
+    siteName: "Clausea AI",
+    images: [
+      {
+        url: `${siteUrl}/og`,
+        width: 1200,
+        height: 630,
+        alt: "Clausea AI Pricing",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Pricing - Legal Document Analysis Plans | Clausea AI",
+    description:
+      "Choose the right plan for your legal document analysis needs. Flexible pricing for individuals, teams, and organizations.",
+    images: [`${siteUrl}/og`],
+  },
+  alternates: {
+    canonical: `${siteUrl}/pricing`,
+  },
+};
 
 export default function PricingPage() {
   return (

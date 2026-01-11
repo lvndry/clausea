@@ -73,11 +73,11 @@ def run_crawl_async(product: Product, stop_event: Event | None = None) -> Proces
                 monitor_task: asyncio.Task | None = None
                 if stop_event is not None:
 
-                    async def monitor_stop_signal() -> None:
-                        while not stop_event.is_set():
+                    async def monitor_stop_signal(event: Event) -> None:
+                        while not event.is_set():
                             await asyncio.sleep(0.2)
 
-                    monitor_task = asyncio.create_task(monitor_stop_signal())
+                    monitor_task = asyncio.create_task(monitor_stop_signal(stop_event))
 
                 try:
                     return await pipeline.run([product])
@@ -104,12 +104,9 @@ async def run_summarization_async_internal(product_slug: str) -> bool:
     """Run document summarization in an isolated async context."""
     try:
         db = await get_dashboard_db()
-        try:
-            document_svc = create_document_service()
-            await summarize_all_product_documents(db.db, product_slug, document_svc)
-            return True
-        finally:
-            await db.disconnect()
+        document_svc = create_document_service()
+        await summarize_all_product_documents(db.db, product_slug, document_svc)
+        return True
     except Exception as e:
         st.error(f"Summarization error: {str(e)}")
         return False
@@ -145,19 +142,16 @@ async def run_overview_async_internal(product_slug: str) -> bool:
     """Run overview generation in an isolated async context."""
     try:
         db = await get_dashboard_db()
-        try:
-            product_svc = create_product_service()
-            document_svc = create_document_service()
-            await generate_product_overview(
-                db.db,
-                product_slug,
-                force_regenerate=True,
-                product_svc=product_svc,
-                document_svc=document_svc,
-            )
-            return True
-        finally:
-            await db.disconnect()
+        product_svc = create_product_service()
+        document_svc = create_document_service()
+        await generate_product_overview(
+            db.db,
+            product_slug,
+            force_regenerate=True,
+            product_svc=product_svc,
+            document_svc=document_svc,
+        )
+        return True
     except Exception as e:
         st.error(f"Overview generation error: {str(e)}")
         return False
@@ -303,12 +297,9 @@ def show_complete_workflow() -> None:
     # Check if overview exists
     async def check_overview_exists() -> bool:
         db = await get_dashboard_db()
-        try:
-            product_svc = create_product_service()
-            overview = await product_svc.get_product_overview(db.db, selected_product.slug)
-            return overview is not None
-        finally:
-            await db.disconnect()
+        product_svc = create_product_service()
+        overview = await product_svc.get_product_overview(db.db, selected_product.slug)
+        return overview is not None
 
     overview_exists = run_async(check_overview_exists())
 
@@ -339,47 +330,249 @@ def show_complete_workflow() -> None:
             "cancelled": False,
         }
 
+    # Initialize batch workflow state
+    if "batch_workflow" not in st.session_state:
+        st.session_state.batch_workflow = {
+            "running": False,
+            "current_index": 0,
+            "products": [],
+            "results": [],
+            "stop_requested": False,
+            "current_step": None,
+        }
+
+    batch_workflow_state = st.session_state.batch_workflow
+
     workflow_state = st.session_state[workflow_key]
 
-    # Start workflow button
-    if st.button("🚀 Start Complete Workflow", type="primary", key="start_workflow_btn"):
-        # Clear any previous workflow session state
-        if "selected_product_for_workflow" in st.session_state:
-            del st.session_state["selected_product_for_workflow"]
+    col1, col2 = st.columns(2)
+    with col1:
+        # Start workflow button for single product
+        if st.button("🚀 Start Complete Workflow", type="primary", key="start_workflow_btn"):
+            # Clear any previous workflow session state
+            if "selected_product_for_workflow" in st.session_state:
+                del st.session_state["selected_product_for_workflow"]
 
-        # Determine log file path before starting
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f"{timestamp}_{selected_product.slug}_workflow.log"
-        expected_log_path = Path("logs") / log_filename
+            # Determine log file path before starting
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = f"{timestamp}_{selected_product.slug}_workflow.log"
+            expected_log_path = Path("logs") / log_filename
 
-        # Initialize workflow state
-        workflow_state["running"] = True
-        workflow_state["current_step"] = "crawling"
-        workflow_state["step_progress"] = {
-            "crawling": {"status": "running", "message": "Starting crawl..."},
-            "summarization": {"status": "pending", "message": "Waiting for crawl to complete..."},
-            "overview": {
-                "status": "pending",
-                "message": "Waiting for summarization to complete...",
-            },
-        }
-        workflow_state["log_path"] = str(expected_log_path)
-        workflow_state["log_position"] = 0
-        workflow_state["log_content"] = ""
-        workflow_state["crawl_stats"] = None
-        workflow_state["stop_event"] = Event()
-        workflow_state["stop_requested"] = False
-        workflow_state["cancelled"] = False
+            # Initialize workflow state
+            workflow_state["running"] = True
+            workflow_state["current_step"] = "crawling"
+            workflow_state["step_progress"] = {
+                "crawling": {"status": "running", "message": "Starting crawl..."},
+                "summarization": {
+                    "status": "pending",
+                    "message": "Waiting for crawl to complete...",
+                },
+                "overview": {
+                    "status": "pending",
+                    "message": "Waiting for summarization to complete...",
+                },
+            }
+            workflow_state["log_path"] = str(expected_log_path)
+            workflow_state["log_position"] = 0
+            workflow_state["log_content"] = ""
+            workflow_state["crawl_stats"] = None
+            workflow_state["stop_event"] = Event()
+            workflow_state["stop_requested"] = False
+            workflow_state["cancelled"] = False
 
-        # Start crawling in a thread
-        executor = concurrent.futures.ThreadPoolExecutor()
-        future = executor.submit(
-            run_crawl_async,
-            selected_product,
-            workflow_state["stop_event"],
-        )
-        workflow_state["crawl_future"] = future
-        workflow_state["crawl_executor"] = executor
+            # Start crawling in a thread
+            executor = concurrent.futures.ThreadPoolExecutor()
+            future = executor.submit(
+                run_crawl_async,
+                selected_product,
+                workflow_state["stop_event"],
+            )
+            workflow_state["crawl_future"] = future
+            workflow_state["crawl_executor"] = executor
+    with col2:
+        # Start workflow button for all products
+        if st.button(
+            "🔄 Run Workflow for All Products", type="secondary", key="start_batch_workflow_btn"
+        ):
+            batch_workflow_state["running"] = True
+            batch_workflow_state["current_index"] = 0
+            batch_workflow_state["products"] = products_with_urls
+            batch_workflow_state["results"] = []
+            batch_workflow_state["stop_requested"] = False
+            batch_workflow_state["current_step"] = (
+                f"Starting workflow for {len(products_with_urls)} products..."
+            )
+
+    # Display batch workflow progress
+    if batch_workflow_state.get("running"):
+        products = batch_workflow_state.get("products", [])
+        current_index = batch_workflow_state.get("current_index", 0)
+
+        if not isinstance(products, list) or not isinstance(current_index, int):
+            st.error("Invalid batch workflow state")
+            return
+
+        if current_index >= len(products):
+            batch_workflow_state["running"] = False
+            st.rerun()
+            return
+
+        current_product = products[current_index]
+        total_products = len(products)
+        completed_count = current_index
+
+        with st.status(
+            f"🔄 Batch Workflow: Processing {completed_count}/{total_products} products",
+            expanded=True,
+        ):
+            st.write(f"### Current Product: {current_product.name}")
+            st.write(f"**Step:** {batch_workflow_state.get('current_step', 'Initializing...')}")
+
+            # Progress bar
+            st.progress(
+                completed_count / total_products,
+                text=f"Overall Progress: {completed_count}/{total_products}",
+            )
+
+            # Process current product
+            if not batch_workflow_state.get("stop_requested"):
+                if current_index < len(products):
+                    product = products[current_index]
+
+                    # Step 1: Crawl
+                    batch_workflow_state["current_step"] = f"Crawling {product.name}..."
+                    st.info(f"🔍 Crawling {product.name}...")
+                    st.rerun()
+
+                    # Initialize individual workflow state for this product
+                    individual_workflow_key = f"workflow_{product.slug}"
+                    if individual_workflow_key not in st.session_state:
+                        st.session_state[individual_workflow_key] = {
+                            "running": True,
+                            "current_step": "crawling",
+                            "step_progress": {
+                                "crawling": {"status": "running", "message": "Starting crawl..."},
+                                "summarization": {"status": "pending"},
+                                "overview": {"status": "pending"},
+                            },
+                            "crawl_stats": None,
+                        }
+
+                    individual_state = st.session_state[individual_workflow_key]
+
+                    # Run crawl
+                    if individual_state["step_progress"]["crawling"]["status"] == "running":
+                        crawl_stats = run_crawl_async(product)
+                        if crawl_stats:
+                            individual_state["step_progress"]["crawling"] = {
+                                "status": "complete",
+                                "message": f"Found {crawl_stats.legal_documents_stored} documents",
+                            }
+                            individual_state["crawl_stats"] = crawl_stats
+                        else:
+                            individual_state["step_progress"]["crawling"] = {
+                                "status": "failed",
+                                "message": "Crawl failed",
+                            }
+                        st.rerun()
+
+                    # Step 2: Summarize
+                    if individual_state["step_progress"]["crawling"]["status"] == "complete":
+                        batch_workflow_state["current_step"] = (
+                            f"Summarizing documents for {product.name}..."
+                        )
+                        st.info(f"📝 Summarizing {product.name}...")
+                        individual_state["step_progress"]["summarization"] = {"status": "running"}
+
+                        success = run_summarization_async(product.slug)
+                        if success:
+                            individual_state["step_progress"]["summarization"] = {
+                                "status": "complete"
+                            }
+                        else:
+                            individual_state["step_progress"]["summarization"] = {
+                                "status": "failed"
+                            }
+                        st.rerun()
+
+                    # Step 3: Overview
+                    if individual_state["step_progress"]["summarization"]["status"] == "complete":
+                        batch_workflow_state["current_step"] = (
+                            f"Generating overview for {product.name}..."
+                        )
+                        st.info(f"📊 Generating overview for {product.name}...")
+                        individual_state["step_progress"]["overview"] = {"status": "running"}
+
+                        success = run_overview_async(product.slug)
+                        if success:
+                            individual_state["step_progress"]["overview"] = {"status": "complete"}
+                        else:
+                            individual_state["step_progress"]["overview"] = {"status": "failed"}
+                        st.rerun()
+
+                    # Check if product is complete
+                    all_steps_complete = all(
+                        step.get("status") in ["complete", "failed"]
+                        for step in individual_state["step_progress"].values()
+                    )
+
+                    if all_steps_complete:
+                        # Store result
+                        results = batch_workflow_state.get("results", [])
+                        if isinstance(results, list):
+                            results.append(
+                                {
+                                    "product": product.name,
+                                    "slug": product.slug,
+                                    "status": "complete"
+                                    if all(
+                                        step.get("status") == "complete"
+                                        for step in individual_state["step_progress"].values()
+                                    )
+                                    else "failed",
+                                    "steps": individual_state["step_progress"],
+                                }
+                            )
+                            batch_workflow_state["results"] = results
+
+                        # Move to next product
+                        batch_workflow_state["current_index"] = current_index + 1
+                        del st.session_state[individual_workflow_key]
+                        st.rerun()
+            else:
+                st.warning("Stop requested. Finishing current product...")
+
+        # Check if batch is complete
+        if current_index >= len(products):
+            batch_workflow_state["running"] = False
+
+            # Show final results
+            results = batch_workflow_state.get("results", [])
+            results_count = len(results) if isinstance(results, list) else 0
+            st.success(f"✅ Batch workflow completed! Processed {results_count} products")
+
+            st.write("### Results Summary")
+            if isinstance(results, list):
+                for result in results:
+                    status_icon = "✅" if result["status"] == "complete" else "❌"
+                    st.write(f"{status_icon} **{result['product']}** ({result['slug']})")
+                    with st.expander(f"View details for {result['product']}"):
+                        for step_name, step_info in result["steps"].items():
+                            step_display = {
+                                "crawling": "Crawling",
+                                "summarization": "Summarization",
+                                "overview": "Overview",
+                            }.get(step_name, step_name)
+                            status = "✅" if step_info.get("status") == "complete" else "❌"
+                            st.write(
+                                f"{status} {step_display}: {step_info.get('message', step_info.get('status'))}"
+                            )
+
+            # Clear batch workflow state
+            batch_workflow_state["running"] = False
+            batch_workflow_state["results"] = []
+            batch_workflow_state["current_index"] = 0
+            st.rerun()
 
     # Display workflow status and progress
     if workflow_state.get("running") or workflow_state.get("crawl_future"):

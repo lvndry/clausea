@@ -2,8 +2,9 @@
 
 import { CheckCircle } from "lucide-react";
 import Link from "next/link";
+import posthog from "posthog-js";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { SubscriptionResponse } from "@/lib/api/subscriptions";
 import { subscriptionApi } from "@/lib/api/subscriptions";
@@ -13,13 +14,28 @@ export default function CheckoutSuccessPage() {
     null,
   );
   const [isLoading, setIsLoading] = useState(true);
+  const hasTrackedRef = useRef(false);
 
   useEffect(() => {
     // Fetch subscription after checkout
     subscriptionApi
       .getSubscription()
-      .then(setSubscription)
-      .catch(console.error)
+      .then((sub) => {
+        setSubscription(sub);
+        // Track checkout completed event only once when subscription is loaded
+        if (sub && !hasTrackedRef.current) {
+          hasTrackedRef.current = true;
+          posthog.capture("checkout_completed", {
+            tier: sub.tier,
+            subscription_status: sub.status,
+            current_period_end: sub.current_period_end,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        posthog.captureException(err);
+      })
       .finally(() => setIsLoading(false));
   }, []);
 

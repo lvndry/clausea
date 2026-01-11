@@ -77,6 +77,18 @@ class ProductService:
         """
         return await self._product_repo.find_by_id(db, product_id)
 
+    async def get_product_by_domain(self, db: AgnosticDatabase, domain: str) -> Product | None:
+        """Get a product by one of its domains.
+
+        Args:
+            db: Database instance
+            domain: Domain to search for (e.g., "netflix.com", "slack.com")
+
+        Returns:
+            Product or None if not found
+        """
+        return await self._product_repo.find_by_domain(db, domain)
+
     async def get_all_products(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 
