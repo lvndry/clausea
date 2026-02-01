@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     gcc \
     libffi-dev \
-    # Playwright dependencies (for browser automation in crawler)
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -38,9 +37,6 @@ COPY uv.lock ./
 
 # Install dependencies
 RUN uv sync --no-dev --frozen
-
-# Install Playwright browsers (needed for crawler browser automation)
-RUN uv run playwright install --with-deps chromium
 
 # Copy application code
 COPY . .

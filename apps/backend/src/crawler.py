@@ -18,7 +18,8 @@ from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 import aiohttp
 import markdownify
 from bs4 import BeautifulSoup
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from camoufox import AsyncCamoufox
+from playwright.async_api import BrowserContext, Page
 from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -1041,7 +1042,7 @@ class ClauseaCrawler:
             self._setup_file_logging()
 
         # Browser state
-        self.browser_instance: Browser | None = None
+        self.browser_instance: AsyncCamoufox | None = None
         self.browser_context: BrowserContext | None = None
         self.browser_lock = asyncio.Lock()
 
@@ -1059,11 +1060,12 @@ class ClauseaCrawler:
 
         # Compile skip patterns once for efficiency
         # PDFs are optionally crawlable via `enable_binary_crawling`.
-        binary_exclusions = "jpg|jpeg|png|gif|css|js|ico|xml"
+        # Note: We allow plain XML files (sitemaps, RSS) as they can be parsed for links
+        binary_exclusions = "jpg|jpeg|png|gif|css|js|ico"
         first_pattern = (
             rf"\.(?:{binary_exclusions})$"
             if self.enable_binary_crawling
-            else r"\.(?:pdf|jpg|jpeg|png|gif|css|js|ico|xml)$"
+            else r"\.(?:pdf|jpg|jpeg|png|gif|css|js|ico)$"
         )
         self.compiled_skip_patterns = [
             re.compile(pattern, re.IGNORECASE)
@@ -1076,6 +1078,12 @@ class ClauseaCrawler:
                 r"/search\?",
                 r"/api/",
                 r"/ajax/",
+                # Skip compressed files and archives (we can't easily parse these)
+                r"\.(gz|zip|tar|bz2|7z|rar|xz)$",
+                # Skip common binary/media files
+                r"\.(mp4|mp3|avi|mov|wmv|flv|wav|ogg|webm)$",
+                # Skip document formats we don't support
+                r"\.(doc|docx|xls|xlsx|ppt|pptx)$",
             ]
         ]
 
@@ -1175,35 +1183,48 @@ class ClauseaCrawler:
             finally:
                 self.file_handler = None
 
-    async def _setup_browser(self) -> tuple[Browser, BrowserContext]:
-        """Initialize and return a Playwright browser and context."""
+    async def _setup_browser(self) -> tuple[AsyncCamoufox, BrowserContext]:  # type: ignore[return-value, name-defined]
+        """Initialize and return a Camoufox browser and context."""
         async with self.browser_lock:
             if self.browser_instance is None:
-                pw = await async_playwright().start()
-                # Choose browser (chromium is most reliable for legal sites)
-                self.browser_instance = await pw.chromium.launch(headless=True)
+                # Configure Camoufox with fingerprint spoofing and anti-detection
+                config = {
+                    "navigator.userAgent": self.user_agent,
+                    "window.innerWidth": 1280,
+                    "window.innerHeight": 800,
+                    "window.outerWidth": 1280,
+                    "window.outerHeight": 800,
+                }
 
-                # Configure context with resource blocking
-                context_args = {
-                    "user_agent": self.user_agent,
-                    "viewport": {"width": 1280, "height": 800},
+                # Prepare Camoufox initialization arguments
+                init_kwargs: dict[str, Any] = {
+                    "config": config,
+                    "headless": True,
                 }
 
                 if self.proxy:
-                    context_args["proxy"] = {"server": self.proxy}
+                    # Camoufox supports proxy configuration directly
+                    init_kwargs["proxy"] = {"server": self.proxy}
 
-                self.browser_context = await self.browser_instance.new_context(**context_args)  # type: ignore[arg-type]
+                # Create Camoufox browser instance
+                self.browser_instance = AsyncCamoufox(**init_kwargs)
+                await self.browser_instance.__aenter__()  # Manually enter context manager
+
+                # Get the browser context (Camoufox's AsyncCamoufox acts as both browser and context)
+                self.browser_context = self.browser_instance  # type: ignore[assignment]
 
             return self.browser_instance, self.browser_context  # type: ignore[return-value]
 
     async def _cleanup_browser(self) -> None:
-        """Clean up Playwright resources."""
+        """Clean up Camoufox resources."""
         async with self.browser_lock:
             if self.browser_instance:
-                await self.browser_instance.close()
+                await self.browser_instance.__aexit__(
+                    None, None, None
+                )  # Manually exit context manager
                 self.browser_instance = None
                 self.browser_context = None
-                logger.debug("🌐 Playwright browser closed")
+                logger.debug("🌐 Camoufox browser closed")
 
     async def _fetch_with_browser(self, url: str) -> CrawlResult:
         """
@@ -1218,7 +1239,8 @@ class ClauseaCrawler:
         by the caller to fall back to static HTML parsing.
         """
         browser, context = await self._setup_browser()
-        page: Page = await context.new_page()
+        # Camoufox's AsyncCamoufox instance can create pages directly
+        page: Page = await browser.new_page()  # type: ignore[assignment, name-defined]
 
         try:
             # Block heavy resources for performance
@@ -1969,8 +1991,15 @@ class ClauseaCrawler:
 
                 content_type = response.headers.get("content-type", "").lower()
 
-                # Process both HTML and plain text content
-                if "text/html" not in content_type and "text/plain" not in content_type:
+                # Process HTML, plain text, and XML content
+                if (
+                    "text/html" not in content_type
+                    and "text/plain" not in content_type
+                    and "text/xml" not in content_type
+                    and "application/xml" not in content_type
+                    and "application/rss+xml" not in content_type
+                    and "application/atom+xml" not in content_type
+                ):
                     # Optionally support binary parsing (PDF/Office) when enabled
                     if self.enable_binary_crawling and (
                         "application/pdf" in content_type or content_type.startswith("application/")
@@ -2177,7 +2206,44 @@ class ClauseaCrawler:
                     # No links can be extracted from plain text
                     discovered_links = []
 
-                # Analyze content for legal relevance (works for both HTML and plain text)
+                # Handle XML content (sitemaps, RSS/Atom feeds)
+                elif (
+                    "text/xml" in content_type
+                    or "application/xml" in content_type
+                    or "application/rss+xml" in content_type
+                    or "application/atom+xml" in content_type
+                ):
+                    # Parse XML to extract URLs
+                    discovered_links = []
+                    text_content = ""
+                    title_text = ""
+
+                    try:
+                        # Try parsing as sitemap first
+                        sitemap_urls = self._parse_sitemap_xml(text_response)
+                        if sitemap_urls:
+                            logger.info(
+                                f"📄 Parsed sitemap/RSS feed, found {len(sitemap_urls)} URLs"
+                            )
+                            discovered_links = [
+                                {"url": self.normalize_url(url), "text": ""} for url in sitemap_urls
+                            ]
+                            title_text = "XML Sitemap or Feed"
+                            text_content = f"Contains {len(sitemap_urls)} URLs"
+                    except Exception as e:
+                        logger.debug(f"Failed to parse XML content from {url}: {e}")
+                        # Fallback to treating as plain text
+                        text_content = text_response.strip()
+                        title_text = "XML Document"
+
+                    # Basic metadata for XML
+                    metadata = {
+                        "content-type": content_type,
+                        "estimated_title": title_text,
+                        "link_count": len(discovered_links),
+                    }
+
+                # Analyze content for legal relevance (works for HTML, plain text, and XML)
                 is_legal, legal_score, indicators = self.content_analyzer.analyze_content(
                     text_content, title_text, metadata
                 )
@@ -2334,6 +2400,7 @@ class ClauseaCrawler:
             "/terms-of-use",
             "/tos",
             "/cookies",
+            "/gdpr",
             "/cookie-policy",
             "/legal/privacy-policy",
             "/legal/terms-of-service",

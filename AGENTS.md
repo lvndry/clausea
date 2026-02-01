@@ -6,8 +6,8 @@ You are a product engineer building Clausea AI, the definitive legal document in
 
 **Backend**: Python 3.11+, FastAPI, `uv` package manager
 **Frontend**: TypeScript, Next.js 14+, React, `bun` package manager
-**Database**: PostgreSQL
-**LLM**: OpenAI GPT-4, Anthropic Claude
+**Database**: MongoDB
+**LLM**: LiteLLM
 **Testing**: pytest (backend), Jest/Vitest (frontend)
 
 ## Commands
@@ -26,9 +26,6 @@ uv run ruff check
 
 # Run tests
 uv run pytest
-
-# Run specific test file
-uv run pytest tests/unit/test_example.py
 
 # Start development server
 uv run python main.py
@@ -52,7 +49,7 @@ bun run dev
 # Build for production
 bun run build
 
-# Run tests (if configured)
+# Run tests
 bun run test
 ```
 
@@ -70,44 +67,6 @@ uv run pytest
 # Frontend
 cd apps/frontend
 bun run lint
-# TypeScript type checking happens automatically in IDE
-```
-
-## Project Structure
-
-```
-clausea/
-├── apps/
-│   ├── backend/          # Python FastAPI backend
-│   │   ├── src/
-│   │   │   ├── routes/   # API endpoints
-│   │   │   ├── services/ # Business logic
-│   │   │   ├── models/   # Data models
-│   │   │   ├── core/     # Core functionality
-│   │   │   └── utils/    # Utility functions
-│   │   └── tests/        # Backend tests
-│   └── frontend/         # Next.js frontend
-│       ├── app/          # Next.js app router
-│       ├── components/   # React components
-│       │   ├── ui/       # Base design system
-│       │   ├── legal/    # Legal-specific components
-│       │   └── dashboard/# Dashboard components
-│       ├── lib/          # Utility libraries
-│       └── hooks/        # React hooks
-```
-
-### Component Organization
-
-```typescript
-// ✅ Good: Organized by domain
-components / ui / Button.tsx;
-legal / RiskBadge.tsx;
-analysis / DocumentViewer.tsx;
-
-// ❌ Bad: Flat structure
-components / Button.tsx;
-RiskBadge.tsx;
-DocumentViewer.tsx;
 ```
 
 ### Backend Service Pattern
@@ -127,133 +86,6 @@ def analyze():
     # Don't put business logic directly in routes
     pass
 ```
-
-## Code Style
-
-### Python Style Guide
-
-```python
-# ✅ Good: Type hints, clear naming
-from typing import Optional
-from src.models.document import Document
-
-def analyze_privacy_policy(
-    document: Document,
-    user_context: Optional[UserContext] = None
-) -> AnalysisResult:
-    """Analyze privacy policy with optional user context."""
-    # Implementation
-    pass
-
-# ❌ Bad: No types, unclear names
-def analyze(doc, ctx=None):
-    # Implementation
-    pass
-```
-
-### TypeScript Style Guide
-
-```typescript
-// ✅ Good: Explicit types, clear interfaces
-interface AnalysisResult {
-  riskScore: number;
-  findings: Finding[];
-  confidence: number;
-}
-
-async function analyzeDocument(
-  documentId: string,
-  options?: AnalysisOptions
-): Promise<AnalysisResult> {
-  // Implementation
-}
-
-// ❌ Bad: Any types, implicit returns
-function analyze(docId: any, opts?: any) {
-  // Implementation
-}
-```
-
-### Naming Conventions
-
-```python
-# Python: snake_case for functions/variables, PascalCase for classes
-def calculate_risk_score():
-    pass
-
-class DocumentAnalyzer:
-    pass
-```
-
-```typescript
-// TypeScript: camelCase for functions/variables, PascalCase for components
-function calculateRiskScore() {}
-
-const DocumentAnalyzer: React.FC = () => {};
-```
-
-### Error Handling
-
-```python
-# ✅ Good: Specific exceptions
-from src.exceptions import DocumentProcessingError
-
-try:
-    result = process_document(document)
-except DocumentProcessingError as e:
-    logger.error(f"Failed to process document: {e}")
-    raise
-
-# ❌ Bad: Generic exceptions
-try:
-    result = process_document(document)
-except Exception as e:
-    print(e)
-```
-
-## Testing
-
-### Backend Testing
-
-```python
-# tests/unit/test_document_service.py
-import pytest
-from src.services.document_service import DocumentService
-
-def test_analyze_privacy_policy():
-    service = DocumentService()
-    result = service.analyze_privacy_policy(sample_document)
-    assert result.risk_score >= 0
-    assert result.risk_score <= 100
-    assert len(result.findings) > 0
-
-def test_analyze_with_user_context():
-    service = DocumentService()
-    user_context = UserContext(user_type="business")
-    result = service.analyze_privacy_policy(sample_document, user_context)
-    assert result.business_impact is not None
-```
-
-### Frontend Testing
-
-```typescript
-// components/legal/__tests__/RiskBadge.test.tsx
-import { render, screen } from "@testing-library/react";
-import { RiskBadge } from "../RiskBadge";
-
-describe("RiskBadge", () => {
-  it("displays high risk correctly", () => {
-    render(<RiskBadge level="high" score={85} />);
-    expect(screen.getByText("High Risk")).toBeInTheDocument();
-  });
-});
-```
-
-### Test Coverage Requirements
-
-- **Backend**: Maintain 90%+ test coverage
-- **Frontend**: Test all user-facing components and critical business logic
-- **Legal accuracy**: Test against expert-validated legal document analyses
 
 ## Boundaries & Constraints
 

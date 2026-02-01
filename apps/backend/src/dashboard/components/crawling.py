@@ -246,10 +246,32 @@ def run_crawl_all_products_async(products: list[Product], max_parallel: int = 2)
 
 
 def show_crawling() -> None:
-    st.title("🕷️ Start Crawling")
+    # Title with refresh button
+    col_title, col_refresh = st.columns([10, 1])
+    with col_title:
+        st.title("🕷️ Start Crawling")
+    with col_refresh:
+        if st.button("🔄", help="Refresh products list", key="refresh_products_btn"):
+            st.session_state["refresh_products_crawling"] = True
+            st.rerun()
 
-    # Get all products
-    products = run_async(get_all_products_isolated())
+    # Cache products in session state to avoid re-fetching on every rerun
+    # This prevents DB reconnection when the crawl button is clicked
+    cache_key = "cached_products_for_crawling"
+    refresh_key = "refresh_products_crawling"
+
+    # Check if we need to refresh products
+    if refresh_key not in st.session_state:
+        st.session_state[refresh_key] = False
+
+    # Fetch products only if not cached or if refresh was requested
+    if cache_key not in st.session_state or st.session_state[refresh_key]:
+        products = run_async(get_all_products_isolated())
+        if products is not None:
+            st.session_state[cache_key] = products
+        st.session_state[refresh_key] = False
+    else:
+        products = st.session_state[cache_key]
 
     if products is None:
         st.error("Failed to load products from database")
