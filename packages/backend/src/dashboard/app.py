@@ -49,7 +49,7 @@ def main() -> None:
 
     # Only show Promotion page in development/localhost
     if config.app.is_development:
-        page_options.append({"id": "promotion", "display_name": "Promotion"})
+        page_options.append({"id": "promotion", "display_name": "Promotion & Download"})
 
     # Check if we have a current page in session state
     current_page_id = st.session_state.get("current_page", "view_products")
@@ -68,6 +68,7 @@ def main() -> None:
         "Deep Analysis & Overview": "deep_analysis",
         "RAG": "rag",
         "Promotion": "promotion",
+        "Promotion & Download": "promotion",
     }
 
     # If current_page_id is a legacy display name, convert it to page ID

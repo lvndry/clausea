@@ -72,6 +72,20 @@ class ProductRepository(BaseRepository):
             return None
         return Product(**product_data)
 
+    async def create(self, db: AgnosticDatabase, product: Product) -> Product:
+        """Create a new product.
+
+        Args:
+            db: Database instance
+            product: Product to create
+
+        Returns:
+            The created Product
+        """
+        await db.products.insert_one(product.model_dump())
+        logger.debug(f"Created product {product.slug}")
+        return product
+
     async def find_all(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 

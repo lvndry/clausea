@@ -1,6 +1,6 @@
 """Product routes using Repository pattern with context manager."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.core.database import get_db
 from src.core.logging import get_logger
@@ -14,11 +14,20 @@ from src.models.document import (
 from src.models.product import Product
 from src.services.extraction_service import extract_document_facts
 from src.services.service_factory import create_product_service, create_services
+from src.services.usage_service import UsageService
 from src.summarizer import generate_product_deep_analysis, generate_product_overview
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+def _get_user_id(request: Request) -> str | None:
+    """Extract user_id from request state (set by auth middleware)."""
+    user = getattr(request.state, "user", None)
+    if user and isinstance(user, dict):
+        return user.get("user_id")
+    return None
 
 
 @router.get("", response_model=list[Product])
@@ -43,7 +52,7 @@ async def get_all_products(
 
 
 @router.get("/{slug}/overview", response_model=ProductOverview)
-async def get_product_overview(slug: str) -> ProductOverview:
+async def get_product_overview(slug: str, request: Request) -> ProductOverview:
     """Get a quick decision-making overview for a product (Level 1).
     Generates the overview on-the-fly if it doesn't exist yet.
     """
@@ -56,10 +65,23 @@ async def get_product_overview(slug: str) -> ProductOverview:
             if not product:
                 raise HTTPException(status_code=404, detail="Product not found")
 
-            # Try to get existing overview
+            # Try to get existing overview (cached - no usage counted)
             overview = await service.get_product_overview(db, slug)
             if overview:
                 return overview
+
+            # Overview needs generation - check usage limits
+            user_id = _get_user_id(request)
+            if user_id and user_id not in ("localhost_dev", "service_account"):
+                allowed, usage_info = await UsageService.check_usage_limit(db, user_id)
+                if not allowed:
+                    raise HTTPException(
+                        status_code=429,
+                        detail={
+                            "message": "Monthly analysis limit reached. Upgrade to Pro for unlimited analyses.",
+                            "usage": usage_info,
+                        },
+                    )
 
             # Overview doesn't exist - generate it JIT
             logger.info(f"Overview not found for {slug}, generating on-the-fly...")
@@ -70,7 +92,11 @@ async def get_product_overview(slug: str) -> ProductOverview:
                     db, slug, product_svc=product_svc, document_svc=doc_svc
                 )
 
-                # After successful generation, retrieve the overview
+                # After successful generation, increment usage
+                if user_id and user_id not in ("localhost_dev", "service_account"):
+                    await UsageService.increment_usage(db, user_id, endpoint="product_overview")
+
+                # Retrieve the generated overview
                 overview = await service.get_product_overview(db, slug)
                 if overview:
                     return overview

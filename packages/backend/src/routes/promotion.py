@@ -136,3 +136,74 @@ async def promote_users_to_tier_system_only(request: PromotionRequest) -> Promot
     except Exception as e:
         logger.error(f"Error in user tier promotion: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# Download endpoints (production -> local)
+
+
+@router.post("/download", response_model=PromotionResponse)
+async def download_all(request: PromotionRequest) -> PromotionResponse:
+    """Download all data from production to local."""
+    try:
+        result = await promotion_service.download_all(dry_run=request.dry_run)
+
+        action = "dry run" if request.dry_run else "actual"
+        return PromotionResponse(
+            success=True,
+            message=f"{action.capitalize()} download completed successfully",
+            data=result,
+        )
+    except Exception as e:
+        logger.error(f"Error in download execution: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/download-products", response_model=PromotionResponse)
+async def download_products_only(request: PromotionRequest) -> PromotionResponse:
+    """Download only products from production to local."""
+    try:
+        result = await promotion_service.download_products(dry_run=request.dry_run)
+
+        action = "dry run" if request.dry_run else "actual"
+        return PromotionResponse(
+            success=True,
+            message=f"Products {action} download completed successfully",
+            data=result,
+        )
+    except Exception as e:
+        logger.error(f"Error in products download: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/download-documents", response_model=PromotionResponse)
+async def download_documents_only(request: PromotionRequest) -> PromotionResponse:
+    """Download only documents from production to local."""
+    try:
+        result = await promotion_service.download_documents(dry_run=request.dry_run)
+
+        action = "dry run" if request.dry_run else "actual"
+        return PromotionResponse(
+            success=True,
+            message=f"Documents {action} download completed successfully",
+            data=result,
+        )
+    except Exception as e:
+        logger.error(f"Error in documents download: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/download-product-overviews", response_model=PromotionResponse)
+async def download_product_overviews_only(request: PromotionRequest) -> PromotionResponse:
+    """Download only product overviews from production to local."""
+    try:
+        result = await promotion_service.download_product_overviews(dry_run=request.dry_run)
+
+        action = "dry run" if request.dry_run else "actual"
+        return PromotionResponse(
+            success=True,
+            message=f"Product overviews {action} download completed successfully",
+            data=result,
+        )
+    except Exception as e:
+        logger.error(f"Error in product overviews download: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e

@@ -1,5 +1,6 @@
 """
-This module contains the PromotionManager class, which is used to promote data from the local database to the production database.
+This module contains the PromotionManager class, which is used to promote data from the local database
+to the production database and download data from production to local.
 """
 
 import os
@@ -363,6 +364,187 @@ class PromotionManager:
             if len(self.production_uri) > 20
             else self.production_uri,
         }
+
+    async def download_products(self, dry_run: bool = True) -> dict[str, Any]:
+        """Download products from production to local by completely replacing local collection."""
+        try:
+            if self.local_db is None or self.production_db is None:
+                raise ValueError("Database connections not established")
+
+            products = await self.production_db.products.find().to_list(length=None)
+            production_count = len(products)
+            deleted_count = 0
+            inserted_count = 0
+            errors = []
+
+            if not dry_run:
+                # Delete all existing products in local
+                delete_result = await self.local_db.products.delete_many({})
+                deleted_count = delete_result.deleted_count
+                logger.info(f"Deleted {deleted_count} products from local")
+
+                # Insert all products from production
+                if products:
+                    try:
+                        await self.local_db.products.insert_many(products)
+                        inserted_count = len(products)
+                        logger.info(f"Inserted {inserted_count} products into local")
+                    except Exception as e:
+                        errors.append(f"Error inserting products: {str(e)}")
+            else:
+                # In dry run, just count what would be deleted
+                local_count = await self.local_db.products.count_documents({})
+                deleted_count = local_count
+                inserted_count = production_count
+                logger.info(
+                    f"DRY RUN: Would delete {deleted_count} local products and insert {inserted_count} from production"
+                )
+
+            return {
+                "production_count": production_count,
+                "deleted_count": deleted_count,
+                "inserted_count": inserted_count,
+                "errors": errors,
+                "dry_run": dry_run,
+            }
+
+        except Exception as e:
+            logger.error(f"Error downloading products: {e}")
+            return {
+                "production_count": 0,
+                "deleted_count": 0,
+                "inserted_count": 0,
+                "errors": [str(e)],
+                "dry_run": dry_run,
+            }
+
+    async def download_documents(self, dry_run: bool = True) -> dict[str, Any]:
+        """Download documents from production to local by completely replacing local collection."""
+        try:
+            if self.local_db is None or self.production_db is None:
+                raise ValueError("Database connections not established")
+
+            documents = await self.production_db.documents.find().to_list(length=None)
+            production_count = len(documents)
+            deleted_count = 0
+            inserted_count = 0
+            errors = []
+
+            if not dry_run:
+                # Delete all existing documents in local
+                delete_result = await self.local_db.documents.delete_many({})
+                deleted_count = delete_result.deleted_count
+                logger.info(f"Deleted {deleted_count} documents from local")
+
+                # Insert all documents from production
+                if documents:
+                    try:
+                        await self.local_db.documents.insert_many(documents)
+                        inserted_count = len(documents)
+                        logger.info(f"Inserted {inserted_count} documents into local")
+                    except Exception as e:
+                        errors.append(f"Error inserting documents: {str(e)}")
+            else:
+                # In dry run, just count what would be deleted
+                local_count = await self.local_db.documents.count_documents({})
+                deleted_count = local_count
+                inserted_count = production_count
+                logger.info(
+                    f"DRY RUN: Would delete {deleted_count} local documents and insert {inserted_count} from production"
+                )
+
+            return {
+                "production_count": production_count,
+                "deleted_count": deleted_count,
+                "inserted_count": inserted_count,
+                "errors": errors,
+                "dry_run": dry_run,
+            }
+
+        except Exception as e:
+            logger.error(f"Error downloading documents: {e}")
+            return {
+                "production_count": 0,
+                "deleted_count": 0,
+                "inserted_count": 0,
+                "errors": [str(e)],
+                "dry_run": dry_run,
+            }
+
+    async def download_product_overviews(self, dry_run: bool = True) -> dict[str, Any]:
+        """Download product overviews from production to local by completely replacing local collection."""
+        try:
+            if self.local_db is None or self.production_db is None:
+                raise ValueError("Database connections not established")
+
+            overviews = await self.production_db.product_overviews.find().to_list(length=None)
+            production_count = len(overviews)
+            deleted_count = 0
+            inserted_count = 0
+            errors = []
+
+            if not dry_run:
+                # Delete all existing product overviews in local
+                delete_result = await self.local_db.product_overviews.delete_many({})
+                deleted_count = delete_result.deleted_count
+                logger.info(f"Deleted {deleted_count} product overviews from local")
+
+                # Insert all product overviews from production
+                if overviews:
+                    try:
+                        await self.local_db.product_overviews.insert_many(overviews)
+                        inserted_count = len(overviews)
+                        logger.info(f"Inserted {inserted_count} product overviews into local")
+                    except Exception as e:
+                        errors.append(f"Error inserting product overviews: {str(e)}")
+            else:
+                # In dry run, just count what would be deleted
+                local_count = await self.local_db.product_overviews.count_documents({})
+                deleted_count = local_count
+                inserted_count = production_count
+                logger.info(
+                    f"DRY RUN: Would delete {deleted_count} local product overviews and insert {inserted_count} from production"
+                )
+
+            return {
+                "production_count": production_count,
+                "deleted_count": deleted_count,
+                "inserted_count": inserted_count,
+                "errors": errors,
+                "dry_run": dry_run,
+            }
+
+        except Exception as e:
+            logger.error(f"Error downloading product overviews: {e}")
+            return {
+                "production_count": 0,
+                "deleted_count": 0,
+                "inserted_count": 0,
+                "errors": [str(e)],
+                "dry_run": dry_run,
+            }
+
+    async def run_full_download(self, dry_run: bool = True) -> dict[str, Any]:
+        """Run a full download of all data from production to local."""
+        try:
+            await self.connect_databases()
+
+            summary = await self.get_promotion_summary()
+            products_result = await self.download_products(dry_run)
+            documents_result = await self.download_documents(dry_run)
+            product_overviews_result = await self.download_product_overviews(dry_run)
+
+            return {
+                "summary": summary,
+                "products": products_result,
+                "documents": documents_result,
+                "product_overviews": product_overviews_result,
+                "dry_run": dry_run,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        finally:
+            await self.close_connections()
 
     async def run_full_promotion(self, dry_run: bool = True) -> dict[str, Any]:
         """Run a full promotion of all data."""

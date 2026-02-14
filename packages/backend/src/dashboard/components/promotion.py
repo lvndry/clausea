@@ -219,9 +219,96 @@ def show_promotion() -> None:
     else:
         st.info("Please confirm that you understand the promotion will modify production data.")
 
-    # Promotion History
+    # Download from Production Section
+    st.write("---")
+    st.header("Download from Production")
+    st.markdown("Download data from production database to local")
+
+    # Dry Run Section
+    st.subheader("Dry Run")
+    st.info(
+        "A dry run will show you what would be downloaded without actually performing the download."
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("Dry Run - Download All", key="dry_run_download_all"):
+            run_download(api_url, "/promotion/download", "Full download dry run")
+
+    with col2:
+        if st.button("Dry Run - Download Products", key="dry_run_download_products"):
+            run_download(
+                api_url,
+                "/promotion/download-products",
+                "Products download dry run",
+                {"dry_run": True},
+            )
+
+    with col3:
+        if st.button("Dry Run - Download Documents", key="dry_run_download_documents"):
+            run_download(
+                api_url,
+                "/promotion/download-documents",
+                "Documents download dry run",
+                {"dry_run": True},
+            )
+
+    # Actual Download Section
+    st.subheader("Execute Download")
+    st.warning(
+        "This will replace your local data with production data. Make sure you have a backup!"
+    )
+
+    download_confirmed = st.checkbox(
+        "I understand this will replace local data with production data and I have a backup",
+        key="download_confirmed",
+    )
+
+    if download_confirmed:
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            if st.button("Download All Data", type="secondary", key="download_all"):
+                run_download(
+                    api_url,
+                    "/promotion/download",
+                    "Full download",
+                    {"dry_run": False},
+                )
+
+        with col2:
+            if st.button("Download Products Only", type="secondary", key="download_products"):
+                run_download(
+                    api_url,
+                    "/promotion/download-products",
+                    "Products download",
+                    {"dry_run": False},
+                )
+
+        with col3:
+            if st.button("Download Documents Only", type="secondary", key="download_documents"):
+                run_download(
+                    api_url,
+                    "/promotion/download-documents",
+                    "Documents download",
+                    {"dry_run": False},
+                )
+
+        with col4:
+            if st.button("Download Overviews Only", type="secondary", key="download_overviews"):
+                run_download(
+                    api_url,
+                    "/promotion/download-product-overviews",
+                    "Product overviews download",
+                    {"dry_run": False},
+                )
+    else:
+        st.info("Please confirm that you understand the download will replace local data.")
+
+    # Promotion & Download History
     if "promotion_results" in st.session_state:
-        st.header("Promotion Results")
+        st.header("Results History")
 
         for result in st.session_state["promotion_results"]:
             with st.expander(f"{result['timestamp']} - {result['action']}"):
@@ -272,6 +359,156 @@ def run_promotion(
 
     except Exception as e:
         st.error(f"Error running {action}: {str(e)}")
+
+
+def run_download(
+    api_url: str, endpoint: str, action: str, data: dict[str, Any] | None = None
+) -> None:
+    """Helper function to run download operations (production -> local)"""
+    if not api_url:
+        st.error("Please provide API Base URL")
+        return
+
+    try:
+        with st.spinner(f"Running {action}..."):
+            response = run_async(run_promotion_async(api_url, endpoint, data))
+
+            if response is None:
+                st.error(f"Failed to run {action}. Please check your API connection and try again.")
+                return
+
+            result, status_code = response
+
+            if status_code == 200:
+                if result.get("success"):
+                    st.success(f"{action} completed successfully!")
+
+                    # Store result in session state (shared history with promotions)
+                    if "promotion_results" not in st.session_state:
+                        st.session_state["promotion_results"] = []
+
+                    st.session_state["promotion_results"].append(
+                        {
+                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "action": action,
+                            "data": result.get("data", {}),
+                        }
+                    )
+
+                    # Display results
+                    st.subheader(f"Results for {action}")
+                    display_download_results(result.get("data", {}))
+                else:
+                    st.error(f"{action} failed: {result.get('message', 'Unknown error')}")
+            else:
+                st.error(f"API request failed with status {status_code}")
+
+    except Exception as e:
+        st.error(f"Error running {action}: {str(e)}")
+
+
+def display_download_results(data: dict[str, Any]) -> None:
+    """Display download results in a formatted way"""
+    if not data:
+        st.info("No data to display")
+        return
+
+    # Summary section
+    if "summary" in data:
+        st.subheader("Summary")
+        summary = data["summary"]
+        if isinstance(summary, dict) and "collections" in summary:
+            collections = summary["collections"]
+            if isinstance(collections, dict):
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    products = collections.get("products", {})
+                    if isinstance(products, dict):
+                        st.metric("Products (Local)", products.get("local_count", 0))
+                        st.metric("Products (Production)", products.get("production_count", 0))
+
+                with col2:
+                    documents = collections.get("documents", {})
+                    if isinstance(documents, dict):
+                        st.metric("Documents (Local)", documents.get("local_count", 0))
+                        st.metric("Documents (Production)", documents.get("production_count", 0))
+
+                with col3:
+                    product_overviews = collections.get("product_overviews", {})
+                    if isinstance(product_overviews, dict):
+                        st.metric(
+                            "Product Overviews (Local)",
+                            product_overviews.get("local_count", 0),
+                        )
+                        st.metric(
+                            "Product Overviews (Production)",
+                            product_overviews.get("production_count", 0),
+                        )
+
+    # Single collection result
+    if "production_count" in data or "deleted_count" in data or "inserted_count" in data:
+        with st.expander("Download Results"):
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric("Production Count", data.get("production_count", 0))
+
+            with col2:
+                st.metric("Deleted (Local)", data.get("deleted_count", 0))
+
+            with col3:
+                st.metric("Inserted (Local)", data.get("inserted_count", 0))
+
+            with col4:
+                st.metric("Errors", len(data.get("errors", [])))
+
+            if data.get("errors"):
+                st.error("Errors occurred:")
+                for error in data["errors"]:
+                    st.text(f"- {error}")
+
+            if data.get("dry_run"):
+                st.info("This was a dry run - no actual data was downloaded")
+            else:
+                st.success("Data was successfully downloaded from production to local")
+    else:
+        # Full download result with multiple collections
+        for collection_name, result_value in data.items():
+            if collection_name in ("summary", "dry_run", "timestamp"):
+                continue
+            if not isinstance(result_value, dict):
+                continue
+
+            with st.expander(f"{collection_name.title()} Download"):
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("Production Count", result_value.get("production_count", 0))
+
+                with col2:
+                    st.metric("Deleted (Local)", result_value.get("deleted_count", 0))
+
+                with col3:
+                    st.metric("Inserted (Local)", result_value.get("inserted_count", 0))
+
+                with col4:
+                    errors = result_value.get("errors", [])
+                    st.metric("Errors", len(errors))
+
+                if errors:
+                    st.error("Errors occurred:")
+                    for error in errors:
+                        st.text(f"- {error}")
+
+                if result_value.get("dry_run"):
+                    st.info("This was a dry run - no actual data was downloaded")
+                else:
+                    st.success("Data was successfully downloaded from production to local")
+
+    # Raw data for debugging
+    with st.expander("Raw Download Data"):
+        st.json(data)
 
 
 def display_promotion_results(data: dict[str, Any]) -> None:

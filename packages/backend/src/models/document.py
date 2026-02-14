@@ -48,6 +48,20 @@ class ExtractedThirdPartyRecipient(BaseModel):
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
+class PrivacySignals(BaseModel):
+    """High-level binary/simple signals extracted from legal documents.
+
+    These are quick-scan indicators that answer the most common user questions
+    about a service's privacy practices.
+    """
+
+    sells_data: Literal["yes", "no", "unclear"] = "unclear"
+    cross_site_tracking: Literal["yes", "no", "unclear"] = "unclear"
+    account_deletion: Literal["self_service", "request_required", "not_specified"] = "not_specified"
+    data_retention_summary: str | None = None  # e.g., "30 days after deletion", "indefinite"
+    consent_model: Literal["opt_in", "opt_out", "mixed", "not_specified"] = "not_specified"
+
+
 class DocumentExtraction(BaseModel):
     """
     Extraction-first, evidence-backed structured facts for a single document.
@@ -68,6 +82,7 @@ class DocumentExtraction(BaseModel):
     dangers: list[ExtractedTextItem] = Field(default_factory=list)
     benefits: list[ExtractedTextItem] = Field(default_factory=list)
     recommended_actions: list[ExtractedTextItem] = Field(default_factory=list)
+    privacy_signals: PrivacySignals | None = None
 
 
 class KeypointWithEvidence(BaseModel):
@@ -116,6 +131,7 @@ class DocumentAnalysis(BaseModel):
         default=None,
         description="Document scope - e.g., 'Global privacy policy', 'Terms for Product X', 'EU-specific policy'",
     )
+    privacy_signals: PrivacySignals | None = None
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -192,6 +208,8 @@ class MetaSummary(BaseModel):
     dangers: list[str] | None = None  # 5-7 specific concerns with details
     benefits: list[str] | None = None  # 5-7 specific positive privacy protections
     recommended_actions: list[str] | None = None  # 5-8 actionable steps with specific instructions
+    privacy_signals: PrivacySignals | None = None
+    compliance_status: dict[str, int] | None = None  # {"GDPR": 8, "CCPA": 7}
 
 
 DocType = Literal[
@@ -264,6 +282,15 @@ class ProductOverview(BaseModel):
     keypoints: list[str] | None = None
     document_counts: dict[str, int] | None = None  # { total: n, analyzed: n, pending: n }
     document_types: dict[str, int] | None = None
+
+    # Detailed scoring breakdown (surfaced from MetaSummaryScores)
+    detailed_scores: MetaSummaryScores | None = None
+
+    # Compliance status per regulation (e.g., {"GDPR": 8, "CCPA": 7})
+    compliance_status: dict[str, int] | None = None
+
+    # Quick-scan privacy signals
+    privacy_signals: PrivacySignals | None = None
 
     # User Empowerment
     your_rights: list[str] | None = (

@@ -52,10 +52,11 @@ async def create_checkout(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
-        # Create checkout session
+        # Create checkout session with user_id in custom_data for webhook linking
         session = await paddle_service.create_checkout_session(
             price_id=req.price_id,
             customer_email=user.email,
+            user_id=current.user_id,
             customer_id=user.paddle_customer_id,
             success_url=req.success_url,
             cancel_url=req.cancel_url,

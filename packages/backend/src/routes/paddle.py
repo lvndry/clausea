@@ -52,15 +52,10 @@ async def handle_subscription_created(
         from src.core.config import config
 
         if price_id in [
-            config.paddle.price_individual_monthly,
-            config.paddle.price_individual_annual,
+            config.paddle.price_pro_monthly,
+            config.paddle.price_pro_annual,
         ]:
-            tier = UserTier.INDIVIDUAL
-        elif price_id in [
-            config.paddle.price_business_monthly,
-            config.paddle.price_business_annual,
-        ]:
-            tier = UserTier.BUSINESS
+            tier = UserTier.PRO
 
         # Update user
         user.tier = tier
@@ -175,6 +170,50 @@ async def handle_subscription_past_due(
         raise
 
 
+async def handle_subscription_paused(
+    event_data: dict[str, Any], db: AgnosticDatabase, user_service: UserService
+) -> None:
+    """Handle subscription.paused event."""
+    try:
+        subscription = event_data.get("data", {})
+        subscription_id = subscription.get("id")
+
+        user = await user_service.get_user_by_subscription_id(db, subscription_id)
+        if not user:
+            logger.error(f"User not found for subscription {subscription_id}")
+            return
+
+        user.subscription_status = "paused"
+        await user_service.upsert_user(db, user)
+        logger.info(f"Subscription paused for user {user.id}")
+
+    except Exception as e:
+        logger.error(f"Error handling subscription.paused: {e}")
+        raise
+
+
+async def handle_subscription_resumed(
+    event_data: dict[str, Any], db: AgnosticDatabase, user_service: UserService
+) -> None:
+    """Handle subscription.resumed event."""
+    try:
+        subscription = event_data.get("data", {})
+        subscription_id = subscription.get("id")
+
+        user = await user_service.get_user_by_subscription_id(db, subscription_id)
+        if not user:
+            logger.error(f"User not found for subscription {subscription_id}")
+            return
+
+        user.subscription_status = subscription.get("status", "active")
+        await user_service.upsert_user(db, user)
+        logger.info(f"Subscription resumed for user {user.id}")
+
+    except Exception as e:
+        logger.error(f"Error handling subscription.resumed: {e}")
+        raise
+
+
 @router.post("/paddle")
 async def paddle_webhook(
     request: Request,
@@ -218,9 +257,13 @@ async def paddle_webhook(
             await handle_subscription_canceled(event_data, db, user_service)
         elif event_type == "subscription.past_due":
             await handle_subscription_past_due(event_data, db, user_service)
+        elif event_type == "subscription.paused":
+            await handle_subscription_paused(event_data, db, user_service)
+        elif event_type == "subscription.resumed":
+            await handle_subscription_resumed(event_data, db, user_service)
         elif event_type == "payment.succeeded":
             logger.info(f"Payment succeeded: {event_data}")
-            # Just log for now, subscription.updated will handle status
+            # subscription.updated handles the status change
         elif event_type == "payment.failed":
             logger.warning(f"Payment failed: {event_data}")
             # TODO: Send notification to user
