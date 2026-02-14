@@ -7,10 +7,6 @@ from pydantic import BaseModel, Field
 class UserTier(str, Enum):
     FREE = "free"
     PRO = "pro"
-    # Legacy tiers (kept for backward compatibility with existing data)
-    INDIVIDUAL = "individual"
-    BUSINESS = "business"
-    ENTERPRISE = "enterprise"
 
 
 class User(BaseModel):

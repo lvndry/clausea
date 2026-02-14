@@ -1,11 +1,11 @@
 "use client";
 
-import { Building2, Menu, Sparkles } from "lucide-react";
+import { Building2, Menu, Settings, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import { Logo } from "@/data/logo";
+import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
 
 import { Sheet, SheetContent, SheetTrigger } from "../ui/sheet";
@@ -22,6 +22,13 @@ export function Sidebar({ className }: SidebarProps) {
       href: "/products",
       active: pathname?.startsWith("/products") || pathname?.startsWith("/c/"),
       description: "Privacy analysis",
+    },
+    {
+      label: "Settings",
+      icon: Settings,
+      href: "/settings",
+      active: pathname?.startsWith("/settings"),
+      description: "Account & billing",
     },
   ];
 

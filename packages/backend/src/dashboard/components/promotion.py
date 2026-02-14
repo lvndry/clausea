@@ -789,8 +789,7 @@ def display_promotion_results(data: dict[str, Any]) -> None:
                         for product in products:
                             product.visible_to_tiers = [
                                 UserTier.FREE,
-                                UserTier.BUSINESS,
-                                UserTier.ENTERPRISE,
+                                UserTier.PRO,
                             ]
                             success = run_async_with_retry(update_product_isolated(product))
                             if success:
@@ -826,8 +825,7 @@ def display_promotion_results(data: dict[str, Any]) -> None:
                             for product in missing_tier_fields:
                                 product.visible_to_tiers = [
                                     UserTier.FREE,
-                                    UserTier.BUSINESS,
-                                    UserTier.ENTERPRISE,
+                                    UserTier.PRO,
                                 ]
                                 run_async_with_retry(update_product_isolated(product))
 
@@ -847,7 +845,7 @@ def display_promotion_results(data: dict[str, Any]) -> None:
         # Tier visibility statistics
         st.subheader("Current Tier Visibility Statistics")
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             free_accessible = len(
@@ -860,26 +858,16 @@ def display_promotion_results(data: dict[str, Any]) -> None:
             st.metric("Free Tier Accessible", free_accessible)
 
         with col2:
-            business_accessible = len(
+            pro_accessible = len(
                 [
                     p
                     for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.BUSINESS in p.visible_to_tiers
+                    if hasattr(p, "visible_to_tiers") and UserTier.PRO in p.visible_to_tiers
                 ]
             )
-            st.metric("Business Tier Accessible", business_accessible)
+            st.metric("Pro Tier Accessible", pro_accessible)
 
         with col3:
-            enterprise_accessible = len(
-                [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.ENTERPRISE in p.visible_to_tiers
-                ]
-            )
-            st.metric("Enterprise Tier Accessible", enterprise_accessible)
-
-        with col4:
             premium_only = len(
                 [
                     p

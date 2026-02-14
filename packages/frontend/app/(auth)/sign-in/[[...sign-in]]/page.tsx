@@ -1,5 +1,7 @@
 "use client";
 
+import { usePathname } from "next/navigation";
+
 import { useEffect } from "react";
 
 import { SignIn } from "@clerk/nextjs";
@@ -8,6 +10,8 @@ import { useAnalytics } from "../../../../hooks/useAnalytics";
 
 export default function SignInPage() {
   const { trackPageView, trackUserJourney } = useAnalytics();
+  const pathname = usePathname();
+  const isCreateStep = pathname?.includes("/create");
 
   // Track sign-in page view
   useEffect(() => {
@@ -32,9 +36,13 @@ export default function SignInPage() {
     <div className="container max-w-md mx-auto px-4 py-20">
       <div className="flex flex-col items-center gap-8">
         <div className="flex flex-col gap-4 text-center">
-          <h1 className="text-4xl font-bold">Welcome Back</h1>
+          <h1 className="text-4xl font-bold">
+            {isCreateStep ? "Create your account" : "Welcome back"}
+          </h1>
           <p className="text-lg text-muted-foreground">
-            Sign in to your Clausea account to continue
+            {isCreateStep
+              ? "Get started with Clausea in seconds"
+              : "Sign in to your Clausea account to continue"}
           </p>
         </div>
         <div className="w-full max-w-[400px]">
@@ -47,6 +55,7 @@ export default function SignInPage() {
                 headerSubtitle: "hidden",
               },
             }}
+            signUpUrl="/sign-up"
             fallbackRedirectUrl="/products"
           />
         </div>

@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Logo } from "@/data/logo";
+import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
 import { useUser } from "@clerk/nextjs";
 

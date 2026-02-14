@@ -49,25 +49,20 @@ def show_edit_form(product: Product) -> None:
         current_tiers = (
             product.visible_to_tiers
             if hasattr(product, "visible_to_tiers")
-            else [UserTier.FREE, UserTier.BUSINESS, UserTier.ENTERPRISE]
+            else [UserTier.FREE, UserTier.PRO]
         )
 
         free_tier = st.checkbox(
             "Free Tier", value=UserTier.FREE in current_tiers, key=f"free_tier_{product.id}"
         )
-        business_tier = st.checkbox(
-            "Business Tier",
-            value=UserTier.BUSINESS in current_tiers,
-            key=f"business_tier_{product.id}",
-        )
-        enterprise_tier = st.checkbox(
-            "Enterprise Tier",
-            value=UserTier.ENTERPRISE in current_tiers,
-            key=f"enterprise_tier_{product.id}",
+        pro_tier = st.checkbox(
+            "Pro Tier",
+            value=UserTier.PRO in current_tiers,
+            key=f"pro_tier_{product.id}",
         )
 
         # Validate that at least one tier is selected
-        if not any([free_tier, business_tier, enterprise_tier]):
+        if not any([free_tier, pro_tier]):
             st.error("At least one tier must be selected!")
             return
 
@@ -98,10 +93,8 @@ def show_edit_form(product: Product) -> None:
                 visible_tiers = []
                 if free_tier:
                     visible_tiers.append(UserTier.FREE)
-                if business_tier:
-                    visible_tiers.append(UserTier.BUSINESS)
-                if enterprise_tier:
-                    visible_tiers.append(UserTier.ENTERPRISE)
+                if pro_tier:
+                    visible_tiers.append(UserTier.PRO)
 
                 # Create updated product instance
                 updated_product = Product(
@@ -291,12 +284,10 @@ def show_product_view() -> None:
                         for tier in product.visible_to_tiers:
                             if tier == UserTier.FREE:
                                 tier_labels.append("🟢 Free")
-                            elif tier == UserTier.BUSINESS:
-                                tier_labels.append("🔵 Business")
-                            elif tier == UserTier.ENTERPRISE:
-                                tier_labels.append("🟣 Enterprise")
+                            elif tier == UserTier.PRO:
+                                tier_labels.append("🔵 Pro")
 
-                        if len(tier_labels) == 3:
+                        if len(tier_labels) == 2:
                             st.success("✅ Accessible to all tiers")
                         elif len(tier_labels) == 1:
                             st.warning(f"⚠️ Premium content: {tier_labels[0]}")
@@ -376,27 +367,17 @@ def show_product_view() -> None:
             st.metric("Free Tier Accessible", free_accessible)
 
         with col2:
-            business_accessible = len(
+            pro_accessible = len(
                 [
                     p
                     for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.BUSINESS in p.visible_to_tiers
+                    if hasattr(p, "visible_to_tiers") and UserTier.PRO in p.visible_to_tiers
                 ]
             )
-            st.metric("Business Tier Accessible", business_accessible)
+            st.metric("Pro Tier Accessible", pro_accessible)
 
         with col3:
-            enterprise_accessible = len(
-                [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.ENTERPRISE in p.visible_to_tiers
-                ]
-            )
-            st.metric("Enterprise Tier Accessible", enterprise_accessible)
-
-        with col4:
-            # Count premium-only products (business+ only)
+            # Count premium-only products (Pro only, not Free)
             premium_only = len(
                 [
                     p

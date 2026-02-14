@@ -1,13 +1,16 @@
 "use client";
 
 import * as z from "zod";
-import { Mail, MapPin, Send } from "lucide-react";
+import { CheckCircle2, Mail, MapPin, Send } from "lucide-react";
 import posthog from "posthog-js";
 import { useForm } from "react-hook-form";
+
+import { useState } from "react";
 
 import { Header } from "@/components/clausea/Header";
 import { Footer } from "@/components/clausea/PricingAndFooter";
 import { Button } from "@/components/ui/button";
+import { getBackendUrl } from "@/lib/config";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 const contactSchema = z.object({
@@ -20,6 +23,9 @@ const contactSchema = z.object({
 type ContactFormValues = z.infer<typeof contactSchema>;
 
 export default function ContactPage() {
+  const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const {
     register,
     handleSubmit,
@@ -29,16 +35,34 @@ export default function ContactPage() {
   });
 
   const onSubmit = async (data: ContactFormValues) => {
-    // Track contact form submission
+    setSubmitError(null);
+
     posthog.capture("contact_form_submitted", {
       has_company: !!data.company,
       message_length: data.message.length,
       email_domain: data.email.split("@")[1],
     });
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    alert("Message sent! We'll get back to you soon.");
+    try {
+      const res = await fetch(getBackendUrl("/contact"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          err.detail || "Something went wrong. Please try again.",
+        );
+      }
+
+      setSubmitted(true);
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : "Failed to send message.",
+      );
+    }
   };
 
   return (
@@ -92,75 +116,105 @@ export default function ContactPage() {
 
           {/* Form Side */}
           <div className="flex-1 bg-white p-8 md:p-12 rounded-[2.5rem] border border-primary/5 shadow-2xl">
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
-                    Full Name
-                  </label>
-                  <input
-                    {...register("name")}
-                    placeholder="John Doe"
-                    className="w-full h-14 bg-neutral rounded-2xl px-6 outline-none focus:ring-2 ring-secondary/50 transition-all"
-                  />
-                  {errors.name && (
-                    <p className="text-xs text-red-500 px-4">
-                      {errors.name.message}
-                    </p>
-                  )}
+            {submitted ? (
+              <div className="flex flex-col items-center justify-center h-full text-center space-y-6 py-12">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8 text-green-600" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
-                    Email Address
-                  </label>
-                  <input
-                    {...register("email")}
-                    placeholder="john@example.com"
-                    className="w-full h-14 bg-neutral rounded-2xl px-6 outline-none focus:ring-2 ring-secondary/50 transition-all"
-                  />
-                  {errors.email && (
-                    <p className="text-xs text-red-500 px-4">
-                      {errors.email.message}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
-                  Company (Optional)
-                </label>
-                <input
-                  {...register("company")}
-                  placeholder="ACME Corp"
-                  className="w-full h-14 bg-neutral rounded-2xl px-6 outline-none focus:ring-2 ring-secondary/50 transition-all"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
-                  Message
-                </label>
-                <textarea
-                  {...register("message")}
-                  placeholder="How can we help you?"
-                  className="w-full h-40 bg-neutral rounded-2xl p-6 outline-none focus:ring-2 ring-secondary/50 transition-all resize-none"
-                />
-                {errors.message && (
-                  <p className="text-xs text-red-500 px-4">
-                    {errors.message.message}
+                  <h3 className="text-2xl font-display font-bold text-primary">
+                    Message sent
+                  </h3>
+                  <p className="text-muted-foreground max-w-sm">
+                    Thanks for reaching out. We&apos;ll get back to you within
+                    24 hours.
                   </p>
-                )}
+                </div>
+                <Button
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => setSubmitted(false)}
+                >
+                  Send another message
+                </Button>
               </div>
+            ) : (
+              <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+                {submitError && (
+                  <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-2xl text-sm text-destructive">
+                    {submitError}
+                  </div>
+                )}
 
-              <Button
-                disabled={isSubmitting}
-                className="w-full h-16 rounded-full text-lg font-bold uppercase tracking-widest gap-3 shadow-lg group"
-              >
-                {isSubmitting ? "Sending..." : "Send Message"}
-                <Send className="w-5 h-5 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-              </Button>
-            </form>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
+                      Full Name
+                    </label>
+                    <input
+                      {...register("name")}
+                      placeholder="John Doe"
+                      className="w-full h-14 bg-neutral rounded-2xl px-6 outline-none focus:ring-2 ring-secondary/50 transition-all"
+                    />
+                    {errors.name && (
+                      <p className="text-xs text-red-500 px-4">
+                        {errors.name.message}
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
+                      Email Address
+                    </label>
+                    <input
+                      {...register("email")}
+                      placeholder="john@example.com"
+                      className="w-full h-14 bg-neutral rounded-2xl px-6 outline-none focus:ring-2 ring-secondary/50 transition-all"
+                    />
+                    {errors.email && (
+                      <p className="text-xs text-red-500 px-4">
+                        {errors.email.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
+                    Company (Optional)
+                  </label>
+                  <input
+                    {...register("company")}
+                    placeholder="ACME Corp"
+                    className="w-full h-14 bg-neutral rounded-2xl px-6 outline-none focus:ring-2 ring-secondary/50 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-primary/60 px-4">
+                    Message
+                  </label>
+                  <textarea
+                    {...register("message")}
+                    placeholder="How can we help you?"
+                    className="w-full h-40 bg-neutral rounded-2xl p-6 outline-none focus:ring-2 ring-secondary/50 transition-all resize-none"
+                  />
+                  {errors.message && (
+                    <p className="text-xs text-red-500 px-4">
+                      {errors.message.message}
+                    </p>
+                  )}
+                </div>
+
+                <Button
+                  disabled={isSubmitting}
+                  className="w-full h-16 rounded-full text-lg font-bold uppercase tracking-widest gap-3 shadow-lg group"
+                >
+                  {isSubmitting ? "Sending..." : "Send Message"}
+                  <Send className="w-5 h-5 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                </Button>
+              </form>
+            )}
           </div>
         </div>
       </main>

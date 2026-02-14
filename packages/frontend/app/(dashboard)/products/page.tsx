@@ -13,6 +13,8 @@ import posthog from "posthog-js";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { IndexForm } from "@/components/pipeline/index-form";
+import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -248,7 +250,6 @@ export default function ProductsPage() {
   const { user } = useUser();
   const router = useRouter();
 
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
   const { trackUserJourney, trackPageView } = useAnalytics();
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -262,6 +263,10 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Pipeline state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   useEffect(() => {
     trackPageView("products");
@@ -359,6 +364,47 @@ export default function ProductsPage() {
     return 0;
   });
 
+  async function handlePipelineSubmit(url: string) {
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/pipeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to start analysis");
+      }
+      const data = await res.json();
+      setActiveJobId(data.job_id);
+      posthog.capture("pipeline_started", {
+        url,
+        product_slug: data.product_slug,
+        job_id: data.job_id,
+      });
+    } catch (err) {
+      console.error("Pipeline submit error:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to start analysis",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handlePipelineComplete(productSlug: string) {
+    posthog.capture("pipeline_completed", { product_slug: productSlug });
+    // Optionally auto-navigate after a brief delay
+    setTimeout(() => {
+      router.push(`/products/${productSlug}`);
+    }, 1500);
+  }
+
+  function handlePipelineDismiss() {
+    setActiveJobId(null);
+  }
+
   function handleProductClick(product: Product) {
     trackUserJourney.productViewed(product.slug, product.name);
     router.push(`/products/${product.slug}`);
@@ -428,6 +474,18 @@ export default function ProductsPage() {
           for the services you use daily.
         </p>
       </div>
+
+      {/* URL Submission - DeepWiki style */}
+      <IndexForm onSubmit={handlePipelineSubmit} isSubmitting={isSubmitting} />
+
+      {/* Pipeline Progress */}
+      {activeJobId && (
+        <PipelineProgress
+          jobId={activeJobId}
+          onComplete={handlePipelineComplete}
+          onDismiss={handlePipelineDismiss}
+        />
+      )}
 
       {/* Search - Simple, solid */}
       <div className="rounded-xl border border-border bg-card p-2 flex flex-col md:flex-row gap-2">

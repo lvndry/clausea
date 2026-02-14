@@ -8,7 +8,10 @@ import posthog from "posthog-js";
 
 import { useEffect, useRef, useState } from "react";
 
+import { ComplianceBadges } from "@/components/dashboard/overview/compliance-badges";
 import { DataStory } from "@/components/dashboard/overview/data-story";
+import { PrivacySignals } from "@/components/dashboard/overview/privacy-signals";
+import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown";
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
@@ -30,6 +33,26 @@ interface ThirdPartyRecipient {
   data_shared: string[];
   purpose?: string | null;
   risk_level: "low" | "medium" | "high";
+}
+
+interface DetailedScore {
+  score: number;
+  justification: string;
+}
+
+interface DetailedScores {
+  transparency: DetailedScore;
+  data_collection_scope: DetailedScore;
+  user_control: DetailedScore;
+  third_party_sharing: DetailedScore;
+}
+
+interface PrivacySignalsData {
+  sells_data: "yes" | "no" | "unclear";
+  cross_site_tracking: "yes" | "no" | "unclear";
+  account_deletion: "self_service" | "request_required" | "not_specified";
+  data_retention_summary?: string | null;
+  consent_model: "opt_in" | "opt_out" | "mixed" | "not_specified";
 }
 
 interface ProductOverview {
@@ -57,6 +80,9 @@ interface ProductOverview {
   document_counts?: { total: number; analyzed: number; pending: number } | null;
   document_types?: Record<string, number> | null;
   third_party_sharing?: string | null;
+  detailed_scores?: DetailedScores | null;
+  compliance_status?: Record<string, number> | null;
+  privacy_signals?: PrivacySignalsData | null;
 }
 
 interface DocumentSummary {
@@ -436,6 +462,19 @@ export default function CompanyPage() {
             keypoints={data.keypoints}
           />
 
+          {/* Privacy Signals - Quick facts right after verdict */}
+          {data.privacy_signals && (
+            <PrivacySignals signals={data.privacy_signals} />
+          )}
+
+          {/* Score Breakdown - Why the score is what it is */}
+          {data.detailed_scores && (
+            <ScoreBreakdown
+              detailedScores={data.detailed_scores}
+              riskScore={data.risk_score}
+            />
+          )}
+
           {/* Data Story */}
           <DataStory
             dataCollectionDetails={data.data_collection_details}
@@ -455,6 +494,11 @@ export default function CompanyPage() {
             dangers={data.dangers}
             benefits={data.benefits}
           />
+
+          {/* Compliance Badges */}
+          {data.compliance_status && Object.keys(data.compliance_status).length > 0 && (
+            <ComplianceBadges complianceStatus={data.compliance_status} />
+          )}
         </TabsContent>
 
         <TabsContent value="analysis" className="mt-0">
