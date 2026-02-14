@@ -1,10 +1,10 @@
 {
   "eslint.enable": true,
-  "eslint.workingDirectories": ["apps/frontend"],
+  "eslint.workingDirectories": ["packages/frontend"],
   "eslint.format.enable": true,
   "eslint.lintTask.enable": true,
   "eslint.options": {
-    "overrideConfigFile": "apps/frontend/eslint.config.mjs"
+    "overrideConfigFile": "packages/frontend/eslint.config.mjs"
   },
 
   "editor.formatOnSave": true,
@@ -73,7 +73,7 @@
   "typescript.preferences.importModuleSpecifier": "relative",
   "typescript.inlayHints.parameterNames.enabled": "none",
 
-  "python.defaultInterpreterPath": "${workspaceFolder}/apps/backend/.venv/bin/python",
+  "python.defaultInterpreterPath": "${workspaceFolder}/packages/backend/.venv/bin/python",
   "python.analysis.typeCheckingMode": "strict",
   "python.analysis.autoImportCompletions": true,
   "python.analysis.diagnosticMode": "workspace",

@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "apps/backend/**"
+      - "packages/backend/**"
       - ".github/workflows/backend.yml"
   pull_request:
     branches: [main]
     paths:
-      - "apps/backend/**"
+      - "packages/backend/**"
       - ".github/workflows/backend.yml"
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/backend
+        working-directory: packages/backend
 
     strategy:
       matrix:
@@ -41,9 +41,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            apps/backend/.venv
-            apps/backend/.uv/cache
-          key: ${{ runner.os }}-uv-${{ hashFiles('apps/backend/uv.lock') }}
+            packages/backend/.venv
+            packages/backend/.uv/cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('packages/backend/uv.lock') }}
           restore-keys: |
             ${{ runner.os }}-uv-
 
@@ -74,6 +74,6 @@ jobs:
         with:
           name: test-results-${{ matrix.python-version }}
           path: |
-            apps/backend/bandit-report.json
-            apps/backend/.pytest_cache/
+            packages/backend/bandit-report.json
+            packages/backend/.pytest_cache/
           retention-days: 7

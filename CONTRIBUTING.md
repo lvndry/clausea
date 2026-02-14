@@ -126,10 +126,10 @@ Before submitting your PR, ensure:
 make test
 
 # Run backend tests only
-cd apps/backend && source .venv/bin/activate && python -m pytest tests/ -v
+cd packages/backend && source .venv/bin/activate && python -m pytest tests/ -v
 
 # Run frontend tests only
-cd apps/frontend && bun test
+cd packages/frontend && bun test
 ```
 
 ## 📄 License

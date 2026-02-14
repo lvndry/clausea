@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "apps/frontend/**"
+      - "packages/frontend/**"
       - ".github/workflows/frontend.yml"
   pull_request:
     branches: [main]
     paths:
-      - "apps/frontend/**"
+      - "packages/frontend/**"
       - ".github/workflows/frontend.yml"
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/frontend
+        working-directory: packages/frontend
 
     strategy:
       matrix:
@@ -60,15 +60,15 @@ jobs:
         if: always()
         with:
           name: build-artifacts-${{ matrix.node-version }}
-          path: apps/frontend/.next/
+          path: packages/frontend/.next/
           retention-days: 7
 
   security:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.files.*.name, 'apps/frontend/package.json')
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.files.*.name, 'packages/frontend/package.json')
     defaults:
       run:
-        working-directory: apps/frontend
+        working-directory: packages/frontend
 
     steps:
       - name: Checkout code

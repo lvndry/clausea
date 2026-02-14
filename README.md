@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/frontend/public/static/favicons/logo.png" alt="Clausea Logo" width="200"/>
+  <img src="packages/frontend/public/static/favicons/logo.png" alt="Clausea Logo" width="200"/>
 </div>
 
 # Clausea
@@ -62,11 +62,11 @@ For a complete list of commands, run `make help`.
 
 ```bash
 # Backend environment
-cp apps/backend/.env.example apps/backend/.env
+cp packages/backend/.env.example packages/backend/.env
 # Edit with your API keys and database URLs
 
 # Frontend environment
-cp apps/frontend/.env.example apps/frontend/.env
+cp packages/frontend/.env.example packages/frontend/.env
 # Edit with your Clerk and API configuration
 ```
 
@@ -94,7 +94,7 @@ make run-frontend   # Frontend only
 make run-streamlit
 ```
 
-- **Streamlit Dashboard**: http://localhost:8501 (see [Streamlit Setup Guide](apps/backend/docs/STREAMLIT_SETUP.md))
+- **Streamlit Dashboard**: http://localhost:8501 (see [Streamlit Setup Guide](packages/backend/docs/STREAMLIT_SETUP.md))
 
 ## 📄 License
 

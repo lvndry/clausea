@@ -36,17 +36,22 @@ check_precommit() {
         print_status "Installing pre-commit..."
 
         # Try different installation methods
-        if command -v pip &> /dev/null; then
+        if command -v uv &> /dev/null; then
+            uv tool install pre-commit
+        elif command -v pip &> /dev/null; then
             pip install pre-commit
         elif command -v pip3 &> /dev/null; then
             pip3 install pre-commit
-        elif command -v uv &> /dev/null; then
-            uv pip install pre-commit
         else
             print_error "No Python package manager found. Please install pre-commit manually:"
-            print_status "pip install pre-commit"
+            print_status "uv tool install pre-commit"
             exit 1
         fi
+    fi
+
+    if ! command -v pre-commit &> /dev/null; then
+        print_error "pre-commit installation failed or is not on PATH"
+        exit 1
     fi
 
     print_success "pre-commit is installed"
@@ -55,7 +60,7 @@ check_precommit() {
 # Install backend development dependencies
 setup_backend_dev() {
     print_status "Setting up backend development dependencies..."
-    cd apps/backend
+    cd packages/backend
 
     # Install dev dependencies using uv
     print_status "Installing backend dev dependencies..."
@@ -68,7 +73,7 @@ setup_backend_dev() {
 # Install frontend development dependencies
 setup_frontend_dev() {
     print_status "Setting up frontend development dependencies..."
-    cd apps/frontend
+    cd packages/frontend
 
     # Install additional dev dependencies for pre-commit
     print_status "Installing frontend dev dependencies..."

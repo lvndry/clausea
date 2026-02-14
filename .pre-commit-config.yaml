@@ -23,16 +23,16 @@ repos:
     hooks:
       - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
-        files: ^apps/backend/
+        files: ^packages/backend/
       - id: ruff-format
-        files: ^apps/backend/
+        files: ^packages/backend/
 
   # Security checks for backend
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.6
     hooks:
       - id: bandit
-        args: [-r, apps/backend/, -f, json, -o, bandit-report.json]
+        args: [-r, packages/backend/, -f, json, -o, bandit-report.json]
         files: ^backend/.*\.py$
         types: [python]
         exclude: ^backend/tests/.*$
@@ -43,17 +43,17 @@ repos:
     hooks:
       - id: frontend-lint
         name: Frontend ESLint
-        entry: bash -c 'cd apps/frontend && bun run lint'
+        entry: bash -c 'cd packages/frontend && bun run lint'
         language: system
-        files: ^apps/frontend/
+        files: ^packages/frontend/
         types: [file]
         types_or: [ts, tsx]
 
       # Backend tests (only if tests exist)
       - id: backend-tests
         name: Backend Tests
-        entry: bash -c 'cd apps/backend && python -m pytest tests/ -v || echo "No tests found"'
+        entry: bash -c 'cd packages/backend && python -m pytest tests/ -v || echo "No tests found"'
         language: system
-        files: ^apps/backend/
+        files: ^packages/backend/
         pass_filenames: false
         always_run: true

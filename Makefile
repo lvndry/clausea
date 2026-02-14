@@ -52,19 +52,19 @@ install-deps: setup-backend setup-frontend
 # Setup backend dependencies
 setup-backend:
 	@echo "🔧 Setting up backend..."
-	@cd apps/backend && uv sync
+	@cd packages/backend && uv sync
 	@echo "✅ Backend setup complete"
 
 # Setup frontend dependencies
 setup-frontend:
 	@echo "🔧 Setting up frontend..."
-	@cd apps/frontend && bun install
+	@cd packages/frontend && bun install
 	@echo "✅ Frontend setup complete"
 
 # Setup extension dependencies
 setup-extension:
 	@echo "🔧 Setting up extension..."
-	@cd apps/extension && bun install
+	@cd packages/extension && bun install
 	@echo "✅ Extension setup complete"
 
 # Setup pre-commit hooks
@@ -75,13 +75,13 @@ setup-precommit: setup-permissions
 # Setup environment files
 setup-env:
 	@echo "🔧 Setting up environment..."
-	@if [ ! -f apps/backend/.env ]; then \
+	@if [ ! -f packages/backend/.env ]; then \
 		echo "Creating backend .env file..."; \
-		cp apps/backend/.env.example apps/backend/.env 2>/dev/null || echo "# Backend environment variables" > apps/backend/.env; \
+		cp packages/backend/.env.example packages/backend/.env 2>/dev/null || echo "# Backend environment variables" > packages/backend/.env; \
 	fi
-	@if [ ! -f apps/frontend/.env.local ]; then \
+	@if [ ! -f packages/frontend/.env.local ]; then \
 		echo "Creating frontend .env.local file..."; \
-		cp apps/frontend/.env.example apps/frontend/.env.local 2>/dev/null || echo "# Frontend environment variables" > apps/frontend/.env.local; \
+		cp packages/frontend/.env.example packages/frontend/.env.local 2>/dev/null || echo "# Frontend environment variables" > packages/frontend/.env.local; \
 	fi
 	@echo "✅ Environment files created"
 
@@ -90,7 +90,6 @@ setup-permissions:
 	@echo "🔧 Setting executable permissions on scripts..."
 	@chmod +x dev.sh
 	@chmod +x dev/setup-precommit.sh
-	@chmod +x apps/backend/scripts/run_logo_update.sh
 	@echo "✅ Script permissions set"
 
 # Start development environment
@@ -101,47 +100,47 @@ dev: check-deps
 # Start backend server only
 run-backend: check-deps
 	@echo "🚀 Starting backend server..."
-	@cd apps/backend && source .venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+	@cd packages/backend && source .venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Start frontend server only
 run-frontend: check-deps
 	@echo "🚀 Starting frontend server..."
-	@cd apps/frontend && bun run dev
+	@cd packages/frontend && bun run dev
 
 # Start extension development mode
 extension-dev: check-deps
 	@echo "🚀 Starting extension development mode..."
-	@cd apps/extension && bun run dev
+	@cd packages/extension && bun run dev
 
 # Build extension for production
 extension-build: check-deps
 	@echo "🏗️  Building extension..."
-	@cd apps/extension && bun run build
+	@cd packages/extension && bun run build
 	@echo "✅ Extension build complete"
 
 # Create zip file for extension distribution
 extension-zip: check-deps
 	@echo "📦 Creating extension zip file..."
-	@cd apps/extension && bun run zip
+	@cd packages/extension && bun run zip
 	@echo "✅ Extension zip file created"
 
 # Run tests
 test:
 	@echo "🧪 Running tests..."
-	@cd apps/backend && source .venv/bin/activate && python -m pytest tests/ -v
-	@cd apps/frontend && bun test
+	@cd packages/backend && source .venv/bin/activate && python -m pytest tests/ -v
+	@cd packages/frontend && bun test
 
 # Run linting
 lint:
 	@echo "🔍 Running linting..."
-	@cd apps/backend && source .venv/bin/activate && ruff check .
-	@cd apps/frontend && bun run lint
+	@cd packages/backend && source .venv/bin/activate && ruff check .
+	@cd packages/frontend && bun run lint
 
 # Format code
 format:
 	@echo "🎨 Formatting code..."
-	@cd apps/backend && source .venv/bin/activate && ruff format .
-	@cd apps/frontend && bun run format
+	@cd packages/backend && source .venv/bin/activate && ruff format .
+	@cd packages/frontend && bun run format
 
 # Clean up temporary files
 clean:
@@ -152,11 +151,11 @@ clean:
 	@find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	@find . -type d -name ".mypy_cache" -exec rm -rf {} +
 	@find . -type d -name ".ruff_cache" -exec rm -rf {} +
-	@rm -rf apps/backend/.venv
-	@rm -rf apps/frontend/node_modules
-	@rm -rf apps/frontend/.next
-	@rm -rf apps/extension/node_modules
-	@rm -rf apps/extension/.output
+	@rm -rf packages/backend/.venv
+	@rm -rf packages/frontend/node_modules
+	@rm -rf packages/frontend/.next
+	@rm -rf packages/extension/node_modules
+	@rm -rf packages/extension/.output
 	@echo "✅ Cleanup complete"
 
 # Check if required dependencies are installed
@@ -171,24 +170,24 @@ check-deps:
 # Run dashboard
 dashboard:
 	@echo "📊 Starting dashboard..."
-	@cd apps/backend && source .venv/bin/activate && streamlit run src/dashboard/app.py
+	@cd packages/backend && source .venv/bin/activate && streamlit run src/dashboard/app.py
 
 # Stop dashboard
 stop-dashboard:
 	@echo "🛑 Stopping dashboard..."
-	@cd apps/backend && source .venv/bin/activate && python scripts/stop_dashboard.py
+	@cd packages/backend && source .venv/bin/activate && python scripts/stop_dashboard.py
 
 # Production build
 build:
 	@echo "🏗️ Building for production..."
-	@cd apps/backend && source .venv/bin/activate && python -m build
-	@cd apps/frontend && bun run build
+	@cd packages/backend && source .venv/bin/activate && python -m build
+	@cd packages/frontend && bun run build
 
 # Docker commands
 docker-build:
 	@echo "🐳 Building Docker images..."
-	@docker build -t clausea-backend apps/backend/
-	@docker build -t clausea-frontend apps/frontend/
+	@docker build -t clausea-backend packages/backend/
+	@docker build -t clausea-frontend packages/frontend/
 
 docker-run:
 	@echo "🐳 Running with Docker Compose..."
@@ -201,7 +200,7 @@ docker-stop:
 # Docker Streamlit commands
 docker-build-streamlit:
 	@echo "🐳 Building Streamlit Docker image..."
-	@cd apps/backend && docker build -f Dockerfile.streamlit -t clausea-streamlit .
+	@cd packages/backend && docker build -f Dockerfile.streamlit -t clausea-streamlit .
 	@echo "✅ Streamlit Docker image built successfully"
 	@echo "Run 'make docker-run-streamlit' to start the container"
 
@@ -229,7 +228,7 @@ docker-run-streamlit:
 		-e DASHBOARD_PASSWORD="$$DASHBOARD_PASSWORD" \
 		-e ENVIRONMENT="$$ENV_MODE" \
 		-e PORT="8501" \
-		$$([ -f apps/backend/.env ] && echo "--env-file apps/backend/.env" || true) \
+		$$([ -f packages/backend/.env ] && echo "--env-file packages/backend/.env" || true) \
 		clausea-streamlit || \
 		(docker start clausea-streamlit && echo "✅ Streamlit container started (was already created)"); \
 	PORT=$${PORT:-8501}; \
@@ -258,7 +257,7 @@ backend: run-backend
 frontend: run-frontend
 logs:
 	@echo "📋 Showing logs..."
-	@tail -f apps/backend/logs/*.log 2>/dev/null || echo "No log files found"
+	@tail -f packages/backend/logs/*.log 2>/dev/null || echo "No log files found"
 
 # Quick start for new developers
 quick-start: setup dev

@@ -130,7 +130,7 @@ check_dependencies() {
 # Install backend dependencies
 setup_backend() {
     print_status "Setting up backend..."
-    cd apps/backend
+    cd packages/backend
 
     # Install dependencies using uv sync (handles venv creation)
     print_status "Installing backend dependencies..."
@@ -143,7 +143,7 @@ setup_backend() {
 # Install frontend dependencies
 setup_frontend() {
     print_status "Setting up frontend..."
-    cd apps/frontend
+    cd packages/frontend
 
     print_status "Installing frontend dependencies..."
     bun install
@@ -155,7 +155,7 @@ setup_frontend() {
 # Start backend server
 start_backend() {
     print_status "Starting backend server..."
-    cd apps/backend
+    cd packages/backend
 
     # Start backend server using uv in a new process group
     # Using setsid or starting in subshell to ensure process group creation
@@ -170,7 +170,7 @@ start_backend() {
 # Start frontend server
 start_frontend() {
     print_status "Starting frontend server..."
-    cd apps/frontend
+    cd packages/frontend
 
     # Start Next.js development server in a new process group
     (bun run dev) &

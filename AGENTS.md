@@ -59,13 +59,13 @@ Before committing any changes, always run:
 
 ```bash
 # Backend
-cd apps/backend
+cd packages/backend
 uv run ty check
 uv run ruff check
 uv run pytest
 
 # Frontend
-cd apps/frontend
+cd packages/frontend
 bun run lint
 ```
 
