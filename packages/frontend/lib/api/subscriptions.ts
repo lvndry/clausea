@@ -1,8 +1,6 @@
 // API client for subscription management
 import { getBackendUrl } from "@/lib/config";
 
-const API_BASE = getBackendUrl("");
-
 export interface CheckoutRequest {
   price_id: string;
   success_url?: string;
@@ -30,7 +28,8 @@ export interface BillingPortalResponse {
 
 class SubscriptionAPI {
   private async fetchWithAuth(endpoint: string, options: RequestInit = {}) {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const url = getBackendUrl(endpoint);
+    const response = await fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
