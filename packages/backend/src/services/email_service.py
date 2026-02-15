@@ -63,6 +63,10 @@ class EmailService:
 
         await self._send_email(subject=subject, body=body, to_email=self.to_email)
 
+    async def send_contact_email(self, *, subject: str, body: str) -> None:
+        """Send an email from the contact form."""
+        await self._send_email(subject=subject, body=body, to_email=self.to_email)
+
     async def _send_email(self, *, subject: str, body: str, to_email: str) -> None:
         api_key = self.api_key
         if not api_key:

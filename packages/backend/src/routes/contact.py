@@ -36,10 +36,9 @@ async def submit_contact_form(req: ContactRequest) -> dict[str, str]:
     )
 
     try:
-        await email_service._send_email(
+        await email_service.send_contact_email(
             subject=subject,
             body=body,
-            to_email=email_service.to_email,
         )
     except EmailServiceError as e:
         logger.error("Failed to send contact form email")

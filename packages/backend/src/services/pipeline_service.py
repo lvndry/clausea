@@ -7,9 +7,9 @@ execution of the full crawl -> summarize -> overview pipeline.
 from __future__ import annotations
 
 from datetime import datetime
-from urllib.parse import urlparse
 
 import shortuuid
+import tldextract
 from motor.core import AgnosticDatabase
 
 from src.core.database import get_db
@@ -31,22 +31,8 @@ def _extract_domain(url: str) -> str:
         https://www.netflix.com/signup -> netflix.com
         https://app.slack.com/client -> slack.com
     """
-    parsed = urlparse(url)
-    hostname = parsed.netloc or parsed.path
-
-    if hostname.startswith("www."):
-        hostname = hostname[4:]
-
-    parts = hostname.split(".")
-    two_part_tlds = {"co.uk", "com.au", "co.nz", "co.jp", "com.br", "co.in"}
-
-    if len(parts) >= 3:
-        potential_tld = ".".join(parts[-2:])
-        if potential_tld in two_part_tlds:
-            return ".".join(parts[-3:])
-        return ".".join(parts[-2:])
-
-    return hostname
+    extracted = tldextract.extract(url)
+    return f"{extracted.domain}.{extracted.suffix}"
 
 
 def _domain_to_product_name(domain: str) -> str:

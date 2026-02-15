@@ -14,6 +14,9 @@ from src.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+PADDLE_WEBHOOK_MAX_AGE_SECONDS = 300
+
+
 class PaddleService:
     """Service for interacting with Paddle's Billing API."""
 
@@ -232,7 +235,10 @@ class PaddleService:
             raise
 
     def verify_webhook_signature(
-        self, payload: bytes, signature: str, max_age_seconds: int = 300
+        self,
+        payload: bytes,
+        signature: str,
+        max_age_seconds: int = PADDLE_WEBHOOK_MAX_AGE_SECONDS,
     ) -> bool:
         """
         Verify Paddle webhook signature using Paddle Billing v2 format.

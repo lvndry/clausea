@@ -158,23 +158,25 @@ def show_promotion() -> None:
 
     with col1:
         if st.button("Dry Run - All Data"):
-            run_promotion(api_url, "/promotion/dry-run", "Full dry run promotion")
+            run_operation(api_url, "/promotion/dry-run", "Full dry run promotion", "promotion")
 
     with col2:
         if st.button("Dry Run - Products Only"):
-            run_promotion(
+            run_operation(
                 api_url,
                 "/promotion/promote-products",
                 "Products dry run promotion",
+                "promotion",
                 {"dry_run": True},
             )
 
     with col3:
         if st.button("Dry Run - Documents Only"):
-            run_promotion(
+            run_operation(
                 api_url,
                 "/promotion/promote-documents",
                 "Documents dry run promotion",
+                "promotion",
                 {"dry_run": True},
             )
 
@@ -192,28 +194,31 @@ def show_promotion() -> None:
 
         with col1:
             if st.button("Promote All Data", type="secondary"):
-                run_promotion(
+                run_operation(
                     api_url,
                     "/promotion/execute",
                     "Full promotion",
+                    "promotion",
                     {"dry_run": False},
                 )
 
         with col2:
             if st.button("Promote Products Only", type="secondary"):
-                run_promotion(
+                run_operation(
                     api_url,
                     "/promotion/promote-products",
                     "Products promotion",
+                    "promotion",
                     {"dry_run": False},
                 )
 
         with col3:
             if st.button("Promote Documents Only", type="secondary"):
-                run_promotion(
+                run_operation(
                     api_url,
                     "/promotion/promote-documents",
                     "Documents promotion",
+                    "promotion",
                     {"dry_run": False},
                 )
     else:
@@ -234,23 +239,25 @@ def show_promotion() -> None:
 
     with col1:
         if st.button("Dry Run - Download All", key="dry_run_download_all"):
-            run_download(api_url, "/promotion/download", "Full download dry run")
+            run_operation(api_url, "/promotion/download", "Full download dry run", "download")
 
     with col2:
         if st.button("Dry Run - Download Products", key="dry_run_download_products"):
-            run_download(
+            run_operation(
                 api_url,
                 "/promotion/download-products",
                 "Products download dry run",
+                "download",
                 {"dry_run": True},
             )
 
     with col3:
         if st.button("Dry Run - Download Documents", key="dry_run_download_documents"):
-            run_download(
+            run_operation(
                 api_url,
                 "/promotion/download-documents",
                 "Documents download dry run",
+                "download",
                 {"dry_run": True},
             )
 
@@ -270,37 +277,41 @@ def show_promotion() -> None:
 
         with col1:
             if st.button("Download All Data", type="secondary", key="download_all"):
-                run_download(
+                run_operation(
                     api_url,
                     "/promotion/download",
                     "Full download",
+                    "download",
                     {"dry_run": False},
                 )
 
         with col2:
             if st.button("Download Products Only", type="secondary", key="download_products"):
-                run_download(
+                run_operation(
                     api_url,
                     "/promotion/download-products",
                     "Products download",
+                    "download",
                     {"dry_run": False},
                 )
 
         with col3:
             if st.button("Download Documents Only", type="secondary", key="download_documents"):
-                run_download(
+                run_operation(
                     api_url,
                     "/promotion/download-documents",
                     "Documents download",
+                    "download",
                     {"dry_run": False},
                 )
 
         with col4:
             if st.button("Download Overviews Only", type="secondary", key="download_overviews"):
-                run_download(
+                run_operation(
                     api_url,
                     "/promotion/download-product-overviews",
                     "Product overviews download",
+                    "download",
                     {"dry_run": False},
                 )
     else:
@@ -315,10 +326,14 @@ def show_promotion() -> None:
                 st.json(result["data"])
 
 
-def run_promotion(
-    api_url: str, endpoint: str, action: str, data: dict[str, Any] | None = None
+def run_operation(
+    api_url: str,
+    endpoint: str,
+    action: str,
+    operation_type: str,
+    data: dict[str, Any] | None = None,
 ) -> None:
-    """Helper function to run promotion operations"""
+    """Helper function to run promotion or download operations"""
     if not api_url:
         st.error("Please provide API Base URL")
         return
@@ -351,53 +366,10 @@ def run_promotion(
 
                     # Display results
                     st.subheader(f"Results for {action}")
-                    display_promotion_results(result.get("data", {}))
-                else:
-                    st.error(f"{action} failed: {result.get('message', 'Unknown error')}")
-            else:
-                st.error(f"API request failed with status {status_code}")
-
-    except Exception as e:
-        st.error(f"Error running {action}: {str(e)}")
-
-
-def run_download(
-    api_url: str, endpoint: str, action: str, data: dict[str, Any] | None = None
-) -> None:
-    """Helper function to run download operations (production -> local)"""
-    if not api_url:
-        st.error("Please provide API Base URL")
-        return
-
-    try:
-        with st.spinner(f"Running {action}..."):
-            response = run_async(run_promotion_async(api_url, endpoint, data))
-
-            if response is None:
-                st.error(f"Failed to run {action}. Please check your API connection and try again.")
-                return
-
-            result, status_code = response
-
-            if status_code == 200:
-                if result.get("success"):
-                    st.success(f"{action} completed successfully!")
-
-                    # Store result in session state (shared history with promotions)
-                    if "promotion_results" not in st.session_state:
-                        st.session_state["promotion_results"] = []
-
-                    st.session_state["promotion_results"].append(
-                        {
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            "action": action,
-                            "data": result.get("data", {}),
-                        }
-                    )
-
-                    # Display results
-                    st.subheader(f"Results for {action}")
-                    display_download_results(result.get("data", {}))
+                    if operation_type == "promotion":
+                        display_promotion_results(result.get("data", {}))
+                    else:
+                        display_download_results(result.get("data", {}))
                 else:
                     st.error(f"{action} failed: {result.get('message', 'Unknown error')}")
             else:
