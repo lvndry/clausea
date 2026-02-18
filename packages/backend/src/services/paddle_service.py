@@ -76,21 +76,37 @@ class PaddleService:
             else:
                 payload["customer_email"] = customer_email
 
+            # Add checkout settings if success_url is provided
             if success_url:
-                payload["settings"] = {"success_url": success_url}
+                payload["checkout"] = {"url": success_url}
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.base_url}/checkout/sessions",
+                    f"{self.base_url}/transactions",
                     headers=self._get_headers(),
                     json=payload,
                     timeout=30.0,
                 )
+
+                if not response.is_success:
+                    error_detail = response.text
+                    logger.error(
+                        f"Paddle API error: {response.status_code} - {error_detail}",
+                        url=f"{self.base_url}/transactions",
+                        payload=payload,
+                    )
+
                 response.raise_for_status()
                 data = response.json()
                 logger.info(f"Created checkout session for {customer_email}")
                 return data  # type: ignore
 
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Paddle HTTP error: {e.response.status_code} - {e.response.text}",
+                url=str(e.request.url),
+            )
+            raise
         except Exception as e:
             logger.error(f"Error creating checkout session: {e}")
             raise

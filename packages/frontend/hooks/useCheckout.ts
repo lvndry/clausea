@@ -4,12 +4,14 @@
 import posthog from "posthog-js";
 
 import { useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 
 import { type CheckoutRequest, subscriptionApi } from "@/lib/api/subscriptions";
 
 // Custom hook for checkout flow
 
 export function useCheckout() {
+  const { getToken } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,13 +26,19 @@ export function useCheckout() {
     });
 
     try {
+      // Get Clerk token - try template first, then default
+      let token = await getToken({ template: "default" });
+      if (!token) {
+        token = await getToken();
+      }
+
       const request: CheckoutRequest = {
         price_id: priceId,
         success_url: `${window.location.origin}/checkout/success`,
         cancel_url: `${window.location.origin}/pricing`,
       };
 
-      const response = await subscriptionApi.createCheckout(request);
+      const response = await subscriptionApi.createCheckout(request, token);
 
       // Redirect to Paddle checkout
       window.location.href = response.checkout_url;

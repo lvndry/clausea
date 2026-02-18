@@ -20,7 +20,7 @@ import {
   type SubscriptionResponse,
   subscriptionApi,
 } from "@/lib/api/subscriptions";
-import { useUser } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 
 const PRO_PRICE_ID =
   process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
@@ -29,6 +29,7 @@ const PRO_PRICE_ID =
 
 export default function SettingsPage() {
   const { user } = useUser();
+  const { getToken } = useAuth();
   const { startCheckout, isLoading: checkoutLoading } = useCheckout();
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
     null,
@@ -40,7 +41,12 @@ export default function SettingsPage() {
   const fetchSubscription = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await subscriptionApi.getSubscription();
+      // Get Clerk token - try template first, then default
+      let token = await getToken({ template: "default" });
+      if (!token) {
+        token = await getToken();
+      }
+      const data = await subscriptionApi.getSubscription(token);
       setSubscription(data);
     } catch {
       // User might not have a subscription yet
@@ -48,7 +54,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getToken]);
 
   useEffect(() => {
     fetchSubscription();
@@ -65,7 +71,11 @@ export default function SettingsPage() {
     setActionLoading("cancel");
     setError(null);
     try {
-      await subscriptionApi.cancelSubscription();
+      let token = await getToken({ template: "default" });
+      if (!token) {
+        token = await getToken();
+      }
+      await subscriptionApi.cancelSubscription(token);
       await fetchSubscription();
     } catch (err) {
       setError(
@@ -80,7 +90,11 @@ export default function SettingsPage() {
     setActionLoading("resume");
     setError(null);
     try {
-      await subscriptionApi.resumeSubscription();
+      let token = await getToken({ template: "default" });
+      if (!token) {
+        token = await getToken();
+      }
+      await subscriptionApi.resumeSubscription(token);
       await fetchSubscription();
     } catch (err) {
       setError(
@@ -95,7 +109,11 @@ export default function SettingsPage() {
     setActionLoading("portal");
     setError(null);
     try {
-      const data = await subscriptionApi.getBillingPortal();
+      let token = await getToken({ template: "default" });
+      if (!token) {
+        token = await getToken();
+      }
+      const data = await subscriptionApi.getBillingPortal(token);
       window.open(data.portal_url, "_blank");
     } catch (err) {
       setError(
