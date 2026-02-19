@@ -34,8 +34,6 @@ export function useCheckout() {
 
       const request: CheckoutRequest = {
         price_id: priceId,
-        success_url: `${window.location.origin}/checkout/success`,
-        cancel_url: `${window.location.origin}/pricing`,
       };
 
       const response = await subscriptionApi.createCheckout(request, token);

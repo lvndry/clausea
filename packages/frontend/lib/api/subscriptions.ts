@@ -3,10 +3,7 @@ import { getBackendUrl } from "@/lib/config";
 
 export interface CheckoutRequest {
   price_id: string;
-  success_url?: string;
-  cancel_url?: string;
 }
-
 export interface CheckoutResponse {
   checkout_url: string;
   session_id: string;

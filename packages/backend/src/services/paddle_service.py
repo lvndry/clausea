@@ -48,8 +48,6 @@ class PaddleService:
         customer_email: str,
         user_id: str,
         customer_id: str | None = None,
-        success_url: str | None = None,
-        cancel_url: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a Paddle checkout session.
@@ -59,8 +57,6 @@ class PaddleService:
             customer_email: Customer email address
             user_id: Clausea user ID to link subscription back via webhook
             customer_id: Optional existing Paddle customer ID
-            success_url: URL to redirect after successful checkout
-            cancel_url: URL to redirect if checkout is canceled
 
         Returns:
             Checkout session data including checkout URL
@@ -76,9 +72,10 @@ class PaddleService:
             else:
                 payload["customer_email"] = customer_email
 
-            # Add checkout settings if success_url is provided
-            if success_url:
-                payload["checkout"] = {"url": success_url}
+            # Add checkout settings only if configured (must be approved by Paddle)
+            checkout_url = config.paddle.checkout_url
+            if checkout_url:
+                payload["checkout"] = {"url": checkout_url}
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(

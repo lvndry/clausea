@@ -102,7 +102,7 @@ export function Header() {
             <>
               {isSignedIn ? (
                 <Link href="/products">
-                  <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300">
+                  <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300 cursor-pointer">
                     Dashboard
                   </Button>
                 </Link>
