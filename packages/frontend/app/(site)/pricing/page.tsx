@@ -10,17 +10,17 @@ const siteUrl = (
 export const metadata: Metadata = {
   title: "Pricing - Legal Document Analysis Plans | Clausea AI",
   description:
-    "Choose the right plan for your legal document analysis needs. From Standard to Enterprise, Clausea AI offers flexible pricing for individuals, teams, and organizations.",
+    "Simple, transparent pricing for legal document analysis. Start free with 3 analyses per month, or upgrade to Pro for unlimited access.",
   keywords: [
     "legal document analysis pricing",
     "privacy policy analyzer pricing",
     "legal AI pricing",
-    "enterprise legal software pricing",
+    "clausea pricing",
   ],
   openGraph: {
     title: "Pricing - Legal Document Analysis Plans | Clausea AI",
     description:
-      "Choose the right plan for your legal document analysis needs. From Standard to Enterprise, flexible pricing for individuals, teams, and organizations.",
+      "Simple, transparent pricing for legal document analysis. Start free, upgrade to Pro for unlimited access.",
     url: `${siteUrl}/pricing`,
     siteName: "Clausea AI",
     images: [
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Pricing - Legal Document Analysis Plans | Clausea AI",
     description:
-      "Choose the right plan for your legal document analysis needs. Flexible pricing for individuals, teams, and organizations.",
+      "Simple, transparent pricing for legal document analysis. Start free, upgrade to Pro for unlimited access.",
     images: [`${siteUrl}/og`],
   },
   alternates: {
@@ -55,7 +55,7 @@ export default function PricingPage() {
         <Pricing />
 
         {/* Comparison Table */}
-        <section className="py-24 px-4 md:px-8 max-w-5xl mx-auto overflow-x-auto">
+        <section className="py-24 px-4 md:px-8 max-w-4xl mx-auto overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-primary/10">
@@ -63,25 +63,24 @@ export default function PricingPage() {
                   Features
                 </th>
                 <th className="py-8 font-display font-bold text-lg text-primary/60">
-                  Standard
+                  Free
                 </th>
                 <th className="py-8 font-display font-bold text-lg text-secondary">
                   Pro
-                </th>
-                <th className="py-8 font-display font-bold text-lg text-primary/60">
-                  Enterprise
                 </th>
               </tr>
             </thead>
             <tbody className="text-sm">
               {[
-                ["Documents per month", "10", "Unlimited", "Unlimited"],
-                ["Max File Size", "5MB", "50MB", "1GB+"],
-                ["Team Seats", "1", "5", "Unlimited"],
-                ["Semantic Search", "Basic", "Advanced", "Custom Tuned"],
-                ["API Access", "-", "Coming Soon", "Available"],
-                ["Priority Support", "-", "Yes", "Dedicated"],
-              ].map(([feature, s, p, e]) => (
+                ["Analyses per month", "3", "Unlimited"],
+                ["AI Summaries", "Yes", "Yes"],
+                ["Risk Scoring", "Yes", "Yes"],
+                ["Chat with Documents", "Yes", "Yes"],
+                ["Deep Analysis (Level 3)", "-", "Yes"],
+                ["Semantic Search", "Basic", "Advanced"],
+                ["Priority Support", "-", "Yes"],
+                ["Export Reports", "-", "Yes"],
+              ].map(([feature, free, pro]) => (
                 <tr
                   key={feature}
                   className="border-b border-primary/5 hover:bg-primary/5 transition-colors group"
@@ -89,9 +88,8 @@ export default function PricingPage() {
                   <td className="py-6 font-bold text-primary group-hover:text-secondary transition-colors">
                     {feature}
                   </td>
-                  <td className="py-6 text-primary/60">{s}</td>
-                  <td className="py-6 text-primary font-bold">{p}</td>
-                  <td className="py-6 text-primary/60">{e}</td>
+                  <td className="py-6 text-primary/60">{free}</td>
+                  <td className="py-6 text-primary font-bold">{pro}</td>
                 </tr>
               ))}
             </tbody>

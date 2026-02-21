@@ -1,6 +1,6 @@
 // User and subscription types for Clausea
 
-export type UserTier = "free" | "individual" | "business" | "enterprise";
+export type UserTier = "free" | "pro";
 
 export type SubscriptionStatus =
   | "active"

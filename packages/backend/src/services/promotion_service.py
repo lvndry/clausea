@@ -65,3 +65,40 @@ async def promote_users_to_tier_system(dry_run: bool) -> dict[str, Any]:
     result: dict[str, Any] = await promotion_manager.promote_users_to_tier_system(dry_run=dry_run)
     await promotion_manager.close_connections()
     return result
+
+
+# Download operations (production -> local)
+
+
+async def download_all(dry_run: bool) -> dict[str, Any] | None:
+    """Download all data from production to local."""
+    promotion_manager = PromotionManager()
+    result: dict[str, Any] = await promotion_manager.run_full_download(dry_run=dry_run)
+    return result
+
+
+async def download_products(dry_run: bool) -> dict[str, Any]:
+    """Download products from production to local."""
+    promotion_manager = PromotionManager()
+    await promotion_manager.connect_databases()
+    result: dict[str, Any] = await promotion_manager.download_products(dry_run=dry_run)
+    await promotion_manager.close_connections()
+    return result
+
+
+async def download_documents(dry_run: bool) -> dict[str, Any]:
+    """Download documents from production to local."""
+    promotion_manager = PromotionManager()
+    await promotion_manager.connect_databases()
+    result: dict[str, Any] = await promotion_manager.download_documents(dry_run=dry_run)
+    await promotion_manager.close_connections()
+    return result
+
+
+async def download_product_overviews(dry_run: bool) -> dict[str, Any]:
+    """Download product overviews from production to local."""
+    promotion_manager = PromotionManager()
+    await promotion_manager.connect_databases()
+    result: dict[str, Any] = await promotion_manager.download_product_overviews(dry_run=dry_run)
+    await promotion_manager.close_connections()
+    return result

@@ -142,10 +142,10 @@ class PaddleConfig:
         self.api_key: str | None = os.getenv("PADDLE_API_KEY")
         self.webhook_secret: str | None = os.getenv("PADDLE_WEBHOOK_SECRET")
         self.environment: str = os.getenv("PADDLE_ENVIRONMENT", "sandbox")
-        self.price_individual_monthly: str | None = os.getenv("PADDLE_PRICE_INDIVIDUAL_MONTHLY")
-        self.price_individual_annual: str | None = os.getenv("PADDLE_PRICE_INDIVIDUAL_ANNUAL")
-        self.price_business_monthly: str | None = os.getenv("PADDLE_PRICE_BUSINESS_MONTHLY")
-        self.price_business_annual: str | None = os.getenv("PADDLE_PRICE_BUSINESS_ANNUAL")
+        self.checkout_url: str | None = os.getenv("PADDLE_CHECKOUT_URL")
+        # Pro tier pricing
+        self.price_pro_monthly: str | None = os.getenv("PADDLE_PRICE_PRO_MONTHLY")
+        self.price_pro_annual: str | None = os.getenv("PADDLE_PRICE_PRO_ANNUAL")
 
 
 class Config:

@@ -23,8 +23,6 @@ class CheckoutRequest(BaseModel):
     """Request to create a checkout session."""
 
     price_id: str
-    success_url: str | None = None
-    cancel_url: str | None = None
 
 
 @router.post("/checkout")
@@ -36,7 +34,7 @@ async def create_checkout(
     Create a Paddle checkout session for subscription purchase.
 
     Args:
-        req: Checkout request with price_id and optional redirect URLs
+        req: Checkout request with price_id
         current: Authenticated user from Clerk
 
     Returns:
@@ -52,23 +50,25 @@ async def create_checkout(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
-        # Create checkout session
+        # Create checkout session with user_id in custom_data for webhook linking
         session = await paddle_service.create_checkout_session(
             price_id=req.price_id,
             customer_email=user.email,
+            user_id=current.user_id,
             customer_id=user.paddle_customer_id,
-            success_url=req.success_url,
-            cancel_url=req.cancel_url,
         )
 
-        # Extract checkout URL from session
-        checkout_url = session.get("data", {}).get("url")
+        # Extract checkout URL from transaction response
+        # Paddle Billing API returns: { data: { id, checkout: { url } } }
+        tx_data = session.get("data", {})
+        checkout_url = tx_data.get("checkout", {}).get("url")
         if not checkout_url:
+            logger.error(f"No checkout URL in Paddle response: {session}")
             raise HTTPException(status_code=500, detail="Failed to create checkout session")
 
         return {
             "checkout_url": checkout_url,
-            "session_id": session.get("data", {}).get("id"),
+            "session_id": tx_data.get("id"),
         }
 
     except HTTPException:

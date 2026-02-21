@@ -812,33 +812,24 @@ Summary: {summary}
     document_types = list({doc.doc_type for doc in documents})
 
     prompt = f"""
-Your task is to create a clear, comprehensive overview that gives users immediate, actionable insights about their privacy and rights. Synthesize information from the following {num_documents} document(s) ({", ".join(document_types)}) into a unified picture.
+Synthesize the following {num_documents} document(s) ({", ".join(document_types)}) into a unified privacy overview.
 
 **CRITICAL REQUIREMENTS:**
-1. **Summary field (MOST IMPORTANT)**: Write a clear, comprehensive paragraph (4-6 sentences) that:
-   - Starts directly with the information (e.g., "This platform collects...", "Users have the right to...")
-   - Synthesizes insights from ALL documents into a unified picture
-   - Explains what data is collected, key privacy concerns/protections, user control, and overall privacy posture
-   - Focuses on actionable insights and real-world impact
-   - DO NOT mention "we analyzed" or describe the analysis process - just present the information directly
+1. **Summary field (MOST IMPORTANT)**: 2-6 concise sentences. Name the company. State what data is collected and the biggest concern or protection. Do NOT repeat what goes in other fields.
 
-2. **Be COMPREHENSIVE**: Extract and aggregate information from ALL documents - don't miss any data types, purposes, or rights mentioned
+2. **Be COMPREHENSIVE in other fields**: Extract and aggregate information from ALL documents into data_collected, data_purposes, dangers, benefits, your_rights, keypoints, privacy_signals, and compliance_status. The summary stays short — the detail goes in these fields.
 
-3. **Be EXPLICIT AND EXPLANATORY**: Specify exact data types (not "personal information" but "email address, IP address, location data") AND explain what each means for users in real life
+3. **Be SPECIFIC**: Name exact data types (not "personal information"), exact recipients (not "third parties"), exact rights with instructions.
 
-4. **Be SPECIFIC AND HELPFUL**: For user rights, include WHAT data, WHY it matters, HOW to exercise, and WHERE to go (URLs, email addresses, specific steps)
+4. **Be BALANCED**: Include both concerning practices (dangers) and positive protections (benefits).
 
-5. **Be BALANCED**: Clearly highlight both concerning practices (dangers) AND positive privacy protections (benefits), always explaining the impact on users
-
-6. **Synthesize, don't list**: Combine information from all documents into a unified picture - don't list what each document says separately
-
-7. **Explain user impact**: For every fact, explain what it means for someone's daily life, privacy, and control
+5. **Synthesize, don't list per-document**: Combine all documents into one unified picture.
 
 The following document summaries are provided:
 
 {document_summaries}
 
-Create a unified overview that provides complete value in under 5 minutes of reading. Write clearly and directly.focus on giving users the information they need to understand their privacy and make informed decisions. Make sure anyone, regardless of their privacy knowledge, can understand and get value from your overview.
+Write clearly and directly. Make sure anyone, regardless of their privacy knowledge, can understand the overview.
 """
 
     # Set up usage tracking for meta-summary generation

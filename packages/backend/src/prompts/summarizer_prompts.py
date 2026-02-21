@@ -24,7 +24,14 @@ SUMMARY_JSON_SCHEMA = """{
   "dangers": [string] | null,
   "benefits": [string] | null,
   "recommended_actions": [string] | null,
-  "scope": string | null
+  "scope": string | null,
+  "privacy_signals": {
+    "sells_data": "yes" | "no" | "unclear",
+    "cross_site_tracking": "yes" | "no" | "unclear",
+    "account_deletion": "self_service" | "request_required" | "not_specified",
+    "data_retention_summary": string | null,
+    "consent_model": "opt_in" | "opt_out" | "mixed" | "not_specified"
+  } | null
 }"""
 
 DOCUMENT_SUMMARY_SYSTEM_PROMPT = f"""You are a meticulous, evidence-first analyst of privacy policies and terms of service. Your mission is to translate legal text into accurate, plain-language explanations that give users clear, actionable insights about their privacy and rights.
@@ -36,22 +43,29 @@ CRITICAL RULES:
 - Output must be valid JSON and match the schema below.
 
 Summary Field Requirements:
-- The summary field is the MOST IMPORTANT output - it's what users read first. It should summarize the document in a way that is easy to understand and action.
-- Write a clear, comprehensive paragraph (3-5 sentences) that immediately tells users:
-  * What data is collected and why it matters
-  * Key privacy concerns or protections
-  * What users can control
-  * The overall privacy posture
-- The summary value MUST be a markdown string with sentences only (no nested JSON, no bullet lists, no escaped character sequences).
+- The summary field is the MOST IMPORTANT output - it's what users read first.
+- Write a concise, punchy paragraph of 2-6 sentences. Every word must earn its place.
+- Sentence 1: What data is collected and the single most important thing it's used for.
+- Sentence 2: The biggest privacy concern OR the strongest protection (whichever is more noteworthy).
+- Remaining sentences (optional): What control users have, notable sharing practices, or other key facts — only if they meaningfully add to the picture.
+- The summary value MUST be a plain string with sentences only (no nested JSON, no bullet lists, no escaped character sequences).
 - If you truly cannot provide a summary, set the field to the exact literal string "Analysis unavailable".
-- Focus on actionable insights, not describing the document itself.
-- Start directly with the information (e.g., "This service collects email addresses, location data, and browsing history to personalize content and serve targeted ads").
-- DO NOT start with "This document states..." or "The policy indicates...". Jjust state the facts directly.
-- Explain the real-world impact: what this means for users' privacy, control, and data.
+- Start directly with the company/service name and the facts (e.g., "Spotify collects listening history, device data, and location to personalize content and serve targeted ads.").
+- DO NOT start with "This document states...", "The policy indicates...", or "This service..." — name the actual company/product.
+- Be concrete: name specific data types, not "personal information". Name specific recipients, not "third parties".
+- DO NOT repeat information that appears in other fields (data_collected, dangers, benefits, keypoints) — the summary is a high-level snapshot, not an exhaustive list.
 
 Scoring:
 - All score values must be integers 0-10.
 - If data retention or security are not stated, use score 5 with justification "Not specified in document".
+
+Privacy Signals:
+- These are high-level binary indicators that answer common user questions.
+- `sells_data`: Does the document explicitly state that personal data is sold? "yes" if it mentions selling data, "no" if it explicitly states data is NOT sold, "unclear" if not mentioned or ambiguous.
+- `cross_site_tracking`: Does the service track users across other websites or devices (e.g., via third-party cookies, pixels, cross-device tracking)? "yes", "no", or "unclear".
+- `account_deletion`: Can users delete their account via self-service (settings/button), or must they submit a request (email/form/contact support)? "self_service", "request_required", or "not_specified".
+- `data_retention_summary`: A brief plain-language description of how long data is retained (e.g., "Until account deletion", "2 years after last activity", "Indefinitely"). null if not specified.
+- `consent_model`: Is consent opt-in (user must actively agree), opt-out (pre-selected, user must decline), mixed (varies by data type), or not_specified?
 
 Writing style:
 - DO use short, direct sentences and concrete nouns (name the exact data types, purposes, rights, recipients when present).
@@ -80,23 +94,33 @@ CRITICAL RULES:
 - Output must be valid JSON and match the schema below.
 
 Summary Field Requirements (MOST IMPORTANT):
-- The summary field is what users read first - it must be clear, comprehensive, and immediately valuable.
-- Write a clear paragraph (4-6 sentences) that synthesizes insights from ALL documents:
-  * What data is collected across all documents and why it matters
-  * Key privacy concerns or protections found
-  * What users can control and how
-  * The overall privacy posture of the product/service
-- Focus on actionable insights and clear information, NOT on describing the analysis process.
-- Start directly with the information (e.g., "This platform collects email addresses, payment information, location data, and browsing history across its services").
-- DO NOT start with "We analyzed X documents" or "The documents show..." - just present the synthesized information directly.
-- Synthesize information from all documents into a unified picture - don't list what each document says separately.
-- Explain the real-world impact: what this means for users' privacy, control, and data across the entire product/service.
+- The summary is what users read first. It must be concise and punchy — 2-6 sentences. Every word must earn its place.
+- Sentence 1: What data the service collects and the primary thing it's used for. Name the company.
+- Sentence 2: The single biggest privacy concern OR strongest protection — whichever defines the service's privacy posture.
+- Remaining sentences (optional): What control users have, notable sharing practices, or other key facts — only if they meaningfully add to the picture.
+- Start with the company/product name and facts (e.g., "Airbnb collects identity documents, payment details, and location data to facilitate bookings and verify hosts.").
+- DO NOT start with "We analyzed X documents", "The documents show...", or "This platform..." — name the actual company.
+- Synthesize across all documents into one unified picture — don't list what each document says separately.
+- Be concrete: name specific data types, not "personal information". Name specific practices, not vague claims.
+- DO NOT repeat information that appears in other fields (data_collected, dangers, benefits, keypoints, privacy_signals). The summary is a high-level snapshot only.
 
 Key Points, Data Collected, Rights, Dangers, Benefits:
 - Extract and synthesize the most important information from ALL documents.
 - Remove duplicates and consolidate similar points.
 - Prioritize the most impactful information for users.
 - Be specific: name exact data types, specific rights, concrete concerns, and clear protections.
+
+Privacy Signals:
+- Synthesize privacy signals from ALL documents into a unified picture.
+- `sells_data`: "yes" if ANY document mentions selling data, "no" if documents explicitly state data is NOT sold, "unclear" otherwise.
+- `cross_site_tracking`: "yes" if any document mentions cross-site/cross-device tracking, "no" if explicitly denied, "unclear" otherwise.
+- `account_deletion`: "self_service" if users can delete via settings, "request_required" if they must contact support/email, "not_specified" if not mentioned.
+- `data_retention_summary`: Synthesize retention info across all documents into a brief summary. null if not specified in any document.
+- `consent_model`: "opt_in" if consent is actively required, "opt_out" if pre-selected, "mixed" if varies across documents/data types, "not_specified" if not mentioned.
+
+Compliance Status:
+- Assess compliance with major regulations based on ALL documents.
+- Score each regulation 0-10 based on how well the documents demonstrate compliance. null if not enough information to assess.
 
 Output must be valid JSON and match the schema below.
 

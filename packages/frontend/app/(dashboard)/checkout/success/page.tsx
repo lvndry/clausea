@@ -3,6 +3,7 @@
 import { CheckCircle } from "lucide-react";
 import Link from "next/link";
 import posthog from "posthog-js";
+import { useAuth } from "@clerk/nextjs";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -10,6 +11,7 @@ import type { SubscriptionResponse } from "@/lib/api/subscriptions";
 import { subscriptionApi } from "@/lib/api/subscriptions";
 
 export default function CheckoutSuccessPage() {
+  const { getToken } = useAuth();
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
     null,
   );
@@ -17,10 +19,14 @@ export default function CheckoutSuccessPage() {
   const hasTrackedRef = useRef(false);
 
   useEffect(() => {
-    // Fetch subscription after checkout
-    subscriptionApi
-      .getSubscription()
-      .then((sub) => {
+    let cancelled = false;
+    (async () => {
+      let token = await getToken({ template: "default" });
+      if (!token) token = await getToken();
+      if (cancelled) return;
+      try {
+        const sub = await subscriptionApi.getSubscription(token);
+        if (cancelled) return;
         setSubscription(sub);
         // Track checkout completed event only once when subscription is loaded
         if (sub && !hasTrackedRef.current) {
@@ -31,13 +37,19 @@ export default function CheckoutSuccessPage() {
             current_period_end: sub.current_period_end,
           });
         }
-      })
-      .catch((err) => {
-        console.error(err);
-        posthog.captureException(err);
-      })
-      .finally(() => setIsLoading(false));
-  }, []);
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err);
+          posthog.captureException(err);
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 dark:from-gray-950 dark:to-gray-900">

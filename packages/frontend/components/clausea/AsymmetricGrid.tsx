@@ -15,9 +15,9 @@ import { useRef } from "react";
 
 const features = [
   {
-    title: "RAG-Powered Queries",
+    title: "High-Precision Search",
     description:
-      "Search across thousands of policies with semantic precision. Ask complex legal questions and get referenced answers.",
+      "Purpose-built AI agents search across thousands of policies with legal-grade precision. Ask complex questions and get referenced answers.",
     icon: Search,
     size: "lg",
   },

@@ -46,7 +46,7 @@ export const metadata = {
     "legal AI",
     "ai",
     "llm",
-    "rag",
+    "ai agents",
     "semantic search",
     "agents",
     "terms of service",

@@ -15,6 +15,4 @@ class Product(BaseModel):
     crawl_allowed_paths: list[str] = Field(default_factory=list)
     crawl_denied_paths: list[str] = Field(default_factory=list)
     logo: str | None = None
-    visible_to_tiers: list[UserTier] = Field(
-        default_factory=lambda: [UserTier.FREE, UserTier.BUSINESS, UserTier.ENTERPRISE]
-    )
+    visible_to_tiers: list[UserTier] = Field(default_factory=lambda: [UserTier.FREE, UserTier.PRO])

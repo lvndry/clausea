@@ -14,6 +14,9 @@ from src.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+PADDLE_WEBHOOK_MAX_AGE_SECONDS = 300
+
+
 class PaddleService:
     """Service for interacting with Paddle's Billing API."""
 
@@ -43,9 +46,8 @@ class PaddleService:
         self,
         price_id: str,
         customer_email: str,
+        user_id: str,
         customer_id: str | None = None,
-        success_url: str | None = None,
-        cancel_url: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a Paddle checkout session.
@@ -53,9 +55,8 @@ class PaddleService:
         Args:
             price_id: Paddle price ID for the subscription
             customer_email: Customer email address
+            user_id: Clausea user ID to link subscription back via webhook
             customer_id: Optional existing Paddle customer ID
-            success_url: URL to redirect after successful checkout
-            cancel_url: URL to redirect if checkout is canceled
 
         Returns:
             Checkout session data including checkout URL
@@ -63,6 +64,7 @@ class PaddleService:
         try:
             payload: dict[str, Any] = {
                 "items": [{"price_id": price_id, "quantity": 1}],
+                "custom_data": {"user_id": user_id},
             }
 
             if customer_id:
@@ -70,21 +72,38 @@ class PaddleService:
             else:
                 payload["customer_email"] = customer_email
 
-            if success_url:
-                payload["custom_data"] = {"success_url": success_url}
+            # Add checkout settings only if configured (must be approved by Paddle)
+            checkout_url = config.paddle.checkout_url
+            if checkout_url:
+                payload["checkout"] = {"url": checkout_url}
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.base_url}/checkout/sessions",
+                    f"{self.base_url}/transactions",
                     headers=self._get_headers(),
                     json=payload,
                     timeout=30.0,
                 )
+
+                if not response.is_success:
+                    error_detail = response.text
+                    logger.error(
+                        f"Paddle API error: {response.status_code} - {error_detail}",
+                        url=f"{self.base_url}/transactions",
+                        payload=payload,
+                    )
+
                 response.raise_for_status()
                 data = response.json()
                 logger.info(f"Created checkout session for {customer_email}")
                 return data  # type: ignore
 
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Paddle HTTP error: {e.response.status_code} - {e.response.text}",
+                url=str(e.request.url),
+            )
+            raise
         except Exception as e:
             logger.error(f"Error creating checkout session: {e}")
             raise
@@ -228,13 +247,22 @@ class PaddleService:
             logger.error(f"Error creating portal session for {customer_id}: {e}")
             raise
 
-    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+    def verify_webhook_signature(
+        self,
+        payload: bytes,
+        signature: str,
+        max_age_seconds: int = PADDLE_WEBHOOK_MAX_AGE_SECONDS,
+    ) -> bool:
         """
-        Verify Paddle webhook signature.
+        Verify Paddle webhook signature using Paddle Billing v2 format.
+
+        Paddle's Paddle-Signature header format: ts=<timestamp>;h1=<hmac_sha256_hex>
+        The signed payload is: <timestamp>:<raw_body>
 
         Args:
             payload: Raw webhook payload bytes
-            signature: Signature from Paddle-Signature header
+            signature: Signature from Paddle-Signature header (ts=...;h1=... format)
+            max_age_seconds: Maximum age of the webhook in seconds (default 5 minutes)
 
         Returns:
             True if signature is valid
@@ -244,14 +272,44 @@ class PaddleService:
             return False
 
         try:
-            # Paddle uses HMAC SHA256
-            expected_signature = hmac.new(
+            # Parse Paddle-Signature header: ts=<timestamp>;h1=<hash>
+            parts: dict[str, str] = {}
+            for part in signature.split(";"):
+                if "=" in part:
+                    key, value = part.split("=", 1)
+                    parts[key.strip()] = value.strip()
+
+            ts = parts.get("ts")
+            h1 = parts.get("h1")
+
+            if not ts or not h1:
+                logger.error("Invalid Paddle-Signature format: missing ts or h1")
+                return False
+
+            # Check timestamp freshness to prevent replay attacks
+            import time
+
+            try:
+                webhook_ts = int(ts)
+                current_ts = int(time.time())
+                if abs(current_ts - webhook_ts) > max_age_seconds:
+                    logger.error(f"Webhook timestamp too old: {abs(current_ts - webhook_ts)}s")
+                    return False
+            except ValueError:
+                logger.error(f"Invalid timestamp in Paddle-Signature: {ts}")
+                return False
+
+            # Build signed payload: ts:body
+            signed_payload = f"{ts}:{payload.decode('utf-8')}".encode()
+
+            # Compute expected HMAC SHA256
+            expected_hash = hmac.new(
                 self.webhook_secret.encode("utf-8"),
-                payload,
+                signed_payload,
                 hashlib.sha256,
             ).hexdigest()
 
-            return hmac.compare_digest(signature, expected_signature)
+            return hmac.compare_digest(h1, expected_hash)
 
         except Exception as e:
             logger.error(f"Error verifying webhook signature: {e}")

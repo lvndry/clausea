@@ -6,9 +6,7 @@ from pydantic import BaseModel, Field
 
 class UserTier(str, Enum):
     FREE = "free"
-    INDIVIDUAL = "individual"
-    BUSINESS = "business"
-    ENTERPRISE = "enterprise"
+    PRO = "pro"
 
 
 class User(BaseModel):

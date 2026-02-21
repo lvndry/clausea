@@ -12,10 +12,10 @@ const siteUrl = (
 export const metadata: Metadata = {
   title: "Features - Advanced Legal Infrastructure | Clausea AI",
   description:
-    "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second RAG, SOC2 Type II security, and model-agnostic architecture. Built for enterprise legal and compliance.",
+    "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, SOC2 Type II security, and model-agnostic architecture. Built for enterprise legal and compliance.",
   keywords: [
     "legal document analysis features",
-    "RAG legal documents",
+    "AI legal agents",
     "enterprise legal AI",
     "SOC2 legal software",
     "privacy policy analysis",
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Features - Advanced Legal Infrastructure | Clausea AI",
     description:
-      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second RAG, SOC2 Type II security, and model-agnostic architecture.",
+      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, SOC2 Type II security, and model-agnostic architecture.",
     url: `${siteUrl}/features`,
     siteName: "Clausea AI",
     images: [
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Features - Advanced Legal Infrastructure | Clausea AI",
     description:
-      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second RAG, SOC2 Type II security.",
+      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, SOC2 Type II security.",
     images: [`${siteUrl}/og`],
   },
   alternates: {
@@ -63,9 +63,8 @@ export default function FeaturesPage() {
             <span className="text-secondary italic">Infrastructure.</span>
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            Clausea isn&apos;t just a chatbot. It&apos;s a sophisticated RAG
-            engine built specifically for the high-stakes world of legal and
-            compliance.
+            Clausea isn&apos;t just a chatbot. It&apos;s a purpose-built AI
+            agent designed for the high-stakes world of legal and compliance.
           </p>
         </section>
 
@@ -91,10 +90,10 @@ export default function FeaturesPage() {
               <div className="w-12 h-12 rounded-2xl bg-secondary text-primary flex items-center justify-center">
                 <Zap className="w-6 h-6" />
               </div>
-              <h4 className="text-xl font-bold font-display">Sub-Second RAG</h4>
+              <h4 className="text-xl font-bold font-display">Sub-Second Retrieval</h4>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Our vector index is optimized for dense legal text, providing
-                sub-second retrieval across 100k+ pages.
+                Our search index is optimized for dense legal text, providing
+                sub-second answers across 100k+ pages.
               </p>
             </div>
             <div className="space-y-4">

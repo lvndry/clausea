@@ -36,6 +36,7 @@ dependencies = [
     "tenacity>=9.1.2",
     "uvicorn>=0.34.2",
     "watchdog>=6.0.0",
+    "tldextract>=5.3.1",
 ]
 
 [dependency-groups]

@@ -108,12 +108,12 @@ export function Header() {
             <>
               {isSignedIn ? (
                 <Link href="/products">
-                  <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300">
+                  <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300 cursor-pointer">
                     Dashboard
                   </Button>
                 </Link>
               ) : (
-                <Link href="/sign-in">
+                <Link href="/sign-up">
                   <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300 cursor-pointer">
                     Get Started
                   </Button>
@@ -199,7 +199,7 @@ export function Header() {
                       </Button>
                     </Link>
                   ) : (
-                    <Link href="/sign-in" onClick={() => setIsOpen(false)}>
+                    <Link href="/sign-up" onClick={() => setIsOpen(false)}>
                       <Button
                         size="lg"
                         className="w-full rounded-full h-14 text-lg font-medium bg-primary text-primary-foreground"

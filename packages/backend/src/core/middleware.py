@@ -20,6 +20,8 @@ WHITELISTED_ROUTES = {
     "/health/startup",
     "/openapi.json",
     "/users/tier-limits",
+    "/webhooks/paddle",
+    "/contact",
 }
 
 # Localhost addresses that are considered safe for development

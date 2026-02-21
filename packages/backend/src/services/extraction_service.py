@@ -23,6 +23,7 @@ from src.models.document import (
     ExtractedDataPurposeLink,
     ExtractedTextItem,
     ExtractedThirdPartyRecipient,
+    PrivacySignals,
 )
 from src.utils.cancellation import CancellationToken
 
@@ -110,6 +111,16 @@ class _ExtractionThirdParty(BaseModel):
     quote: str
 
 
+class _ExtractionPrivacySignals(BaseModel):
+    """Privacy signals extracted from a single chunk."""
+
+    sells_data: str | None = None  # "yes", "no", "unclear"
+    cross_site_tracking: str | None = None  # "yes", "no", "unclear"
+    account_deletion: str | None = None  # "self_service", "request_required", "not_specified"
+    data_retention_summary: str | None = None  # e.g. "30 days", "indefinite"
+    consent_model: str | None = None  # "opt_in", "opt_out", "mixed", "not_specified"
+
+
 class _ExtractionChunkResult(BaseModel):
     data_collected: list[_ExtractionItem] = Field(default_factory=list)
     data_purposes: list[_ExtractionItem] = Field(default_factory=list)
@@ -119,6 +130,7 @@ class _ExtractionChunkResult(BaseModel):
     dangers: list[_ExtractionItem] = Field(default_factory=list)
     benefits: list[_ExtractionItem] = Field(default_factory=list)
     recommended_actions: list[_ExtractionItem] = Field(default_factory=list)
+    privacy_signals: _ExtractionPrivacySignals | None = None
 
 
 EXTRACTION_SYSTEM_PROMPT = """You are an expert legal-document information extractor.
@@ -157,6 +169,13 @@ def _extraction_user_prompt(document: Document, chunk: str) -> str:
         "dangers": [{"value": "No retention period specified", "quote": "exact quote"}],
         "benefits": [{"value": "Encryption in transit", "quote": "exact quote"}],
         "recommended_actions": [{"value": "Opt out of ads via ...", "quote": "exact quote"}],
+        "privacy_signals": {
+            "sells_data": "yes | no | unclear (only if this chunk mentions selling/not selling data)",
+            "cross_site_tracking": "yes | no | unclear (only if this chunk mentions cross-site/cross-device tracking)",
+            "account_deletion": "self_service | request_required | not_specified (only if this chunk mentions account deletion process)",
+            "data_retention_summary": "specific duration or 'indefinite' (only if this chunk mentions retention periods)",
+            "consent_model": "opt_in | opt_out | mixed | not_specified (only if this chunk mentions consent mechanisms)",
+        },
     }
 
     return f"""
@@ -175,6 +194,12 @@ Notes:
 - `risk_level` must be one of: low, medium, high (optional if unclear).
 - Keep `value` short and normalized (deduplicate variants like "e-mail" vs "email").
 - Evidence quotes must be EXACT substrings of the chunk.
+- For `privacy_signals`: only set a field if the chunk contains EXPLICIT information about it. Leave fields as null if the chunk doesn't mention them.
+  - `sells_data`: Look for explicit statements about selling or not selling personal data/information.
+  - `cross_site_tracking`: Look for cross-site tracking, cross-device tracking, third-party cookies for tracking, or ad tracking across sites.
+  - `account_deletion`: Look for how users can delete their account - self-service (button/settings), or requires contacting support/email.
+  - `data_retention_summary`: Look for specific retention periods (e.g. "30 days", "2 years", "as long as your account is active").
+  - `consent_model`: Look for opt-in consent (explicit agreement required), opt-out (pre-selected, user must uncheck), or mixed approaches.
 """.strip()
 
 
@@ -261,6 +286,62 @@ def _merge_third_parties(
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 
 
+def _merge_privacy_signals(
+    accumulated: PrivacySignals,
+    chunk_signals: _ExtractionPrivacySignals | None,
+) -> None:
+    """Merge privacy signals from a chunk into the accumulated result.
+
+    Priority: explicit values ("yes"/"no") override "unclear"/"not_specified".
+    "yes" takes precedence over "no" for sells_data and cross_site_tracking
+    (if any chunk says data is sold, we flag it).
+    """
+    if not chunk_signals:
+        return
+
+    # sells_data: "yes" > "no" > "unclear"
+    if chunk_signals.sells_data:
+        val = chunk_signals.sells_data.strip().lower()
+        if val == "yes":
+            accumulated.sells_data = "yes"
+        elif val == "no" and accumulated.sells_data == "unclear":
+            accumulated.sells_data = "no"
+
+    # cross_site_tracking: "yes" > "no" > "unclear"
+    if chunk_signals.cross_site_tracking:
+        val = chunk_signals.cross_site_tracking.strip().lower()
+        if val == "yes":
+            accumulated.cross_site_tracking = "yes"
+        elif val == "no" and accumulated.cross_site_tracking == "unclear":
+            accumulated.cross_site_tracking = "no"
+
+    # account_deletion: "self_service" > "request_required" > "not_specified"
+    if chunk_signals.account_deletion:
+        val = chunk_signals.account_deletion.strip().lower()
+        if val == "self_service":
+            accumulated.account_deletion = "self_service"
+        elif val == "request_required" and accumulated.account_deletion == "not_specified":
+            accumulated.account_deletion = "request_required"
+
+    # data_retention_summary: first non-null value wins, then longer/more specific overrides
+    if chunk_signals.data_retention_summary and not accumulated.data_retention_summary:
+        accumulated.data_retention_summary = chunk_signals.data_retention_summary.strip()
+
+    # consent_model: "opt_in"/"opt_out" > "mixed" > "not_specified"
+    if chunk_signals.consent_model:
+        val = chunk_signals.consent_model.strip().lower()
+        if val in ("opt_in", "opt_out"):
+            if accumulated.consent_model == "not_specified":
+                accumulated.consent_model = val  # type: ignore[assignment]
+            elif (
+                accumulated.consent_model in ("opt_in", "opt_out")
+                and accumulated.consent_model != val
+            ):
+                accumulated.consent_model = "mixed"
+        elif val == "mixed":
+            accumulated.consent_model = "mixed"
+
+
 async def extract_document_facts(
     document: Document,
     *,
@@ -306,6 +387,7 @@ async def extract_document_facts(
     recommended_actions: dict[str, ExtractedTextItem] = {}
     data_collection_details: dict[str, ExtractedDataPurposeLink] = {}
     third_party_details: dict[str, ExtractedThirdPartyRecipient] = {}
+    accumulated_signals = PrivacySignals()
 
     for idx, chunk in enumerate(chunks, 1):
         await token.check_cancellation()
@@ -369,6 +451,7 @@ async def extract_document_facts(
             document=document,
             content_hash=content_hash,
         )
+        _merge_privacy_signals(accumulated_signals, chunk_result.privacy_signals)
 
     extraction = DocumentExtraction(
         version="v1",
@@ -382,6 +465,7 @@ async def extract_document_facts(
         dangers=list(dangers.values()),
         benefits=list(benefits.values()),
         recommended_actions=list(recommended_actions.values()),
+        privacy_signals=accumulated_signals,
     )
 
     document.extraction = extraction

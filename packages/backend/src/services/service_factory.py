@@ -7,6 +7,8 @@ components.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
@@ -15,6 +17,9 @@ from src.services.conversation_service import ConversationService
 from src.services.document_service import DocumentService
 from src.services.product_service import ProductService
 from src.services.user_service import UserService
+
+if TYPE_CHECKING:
+    from src.services.pipeline_service import PipelineService
 
 
 def create_product_service() -> ProductService:
@@ -55,6 +60,21 @@ def create_services() -> tuple[ProductService, DocumentService]:
     document_service = DocumentService(document_repo, product_repo)
 
     return product_service, document_service
+
+
+def create_pipeline_service() -> PipelineService:
+    """Create a PipelineService with repository dependencies.
+
+    Returns:
+        Configured PipelineService instance
+    """
+    # Lazy imports to avoid circular dependency:
+    # service_factory -> pipeline_service -> pipeline -> service_factory
+    from src.repositories.pipeline_repository import PipelineRepository as _PipelineRepo
+    from src.services.pipeline_service import PipelineService as _PipelineSvc
+
+    pipeline_repo = _PipelineRepo()
+    return _PipelineSvc(pipeline_repo)
 
 
 def create_user_service() -> UserService:

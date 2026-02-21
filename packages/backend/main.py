@@ -9,10 +9,12 @@ from src.core.db_indexes import ensure_all_indexes
 from src.core.logging import setup_logging
 from src.core.middleware import AuthMiddleware
 from src.routes import (
+    contact,
     conversations,
     extension,
     list,
     paddle,
+    pipeline,
     products,
     promotion,
     q,
@@ -61,6 +63,8 @@ routes = [
     paddle.router,
     subscription.router,
     extension.router,
+    contact.router,
+    pipeline.router,
 ]
 
 for route in routes:

@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, Mail } from "lucide-react";
+import { CheckCircle2, Loader2, Mail } from "lucide-react";
 import { motion, useInView } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
 import { FaGithub } from "react-icons/fa";
 import { FaTwitter } from "react-icons/fa6";
@@ -11,6 +12,12 @@ import { FaTwitter } from "react-icons/fa6";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useCheckout } from "@/hooks/useCheckout";
+
+const PRO_PRICE_ID =
+  process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
+  process.env.NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY ||
+  "";
 
 /**
  * Pricing Component - Warm Theme
@@ -18,48 +25,44 @@ import { Button } from "@/components/ui/button";
 export function Pricing() {
   const containerRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(containerRef, { once: true, amount: 0.2 });
+  const router = useRouter();
+  const { startCheckout, isLoading, error } = useCheckout();
 
   const tiers = [
     {
-      name: "Explorer",
+      name: "Free",
       price: "0",
-      description: "Perfect for individuals testing the waters.",
+      description: "Perfect for trying out Clausea with basic privacy analysis.",
       features: [
-        "10 Documents per month",
-        "Basic RAG search",
-        "Standard Summarization",
-        "Email Support",
+        "3 analyses per month",
+        "AI-powered summaries",
+        "Risk scoring",
+        "Chat with documents",
       ],
-      cta: "Start Free",
+      cta: "Get Started",
       popular: false,
+      action: () => router.push("/sign-up"),
     },
     {
-      name: "Navigator",
-      price: "49",
-      description: "Advanced tools for legal professionals.",
+      name: "Pro",
+      price: "9",
+      description: "Unlimited analysis for privacy-conscious individuals and teams.",
       features: [
-        "Unlimited Documents",
-        "Advanced Semantic Search",
-        "Clause Comparison",
-        "Priority Support",
-        "Export to PDF/JSON",
+        "Unlimited analyses",
+        "Advanced semantic search",
+        "Deep analysis (Level 3)",
+        "Priority support",
+        "Export reports",
       ],
-      cta: "Go Navigator",
+      cta: "Upgrade to Pro",
       popular: true,
-    },
-    {
-      name: "Fleet",
-      price: "Custom",
-      description: "Seamless integration for law firms.",
-      features: [
-        "Custom AI Models",
-        "API access",
-        "Dedicated Account Manager",
-        "On-premise deployment",
-        "SLA Guarantee",
-      ],
-      cta: "Contact Sales",
-      popular: false,
+      action: () => {
+        if (PRO_PRICE_ID) {
+          startCheckout(PRO_PRICE_ID);
+        } else {
+          router.push("/sign-up");
+        }
+      },
     },
   ];
 
@@ -85,19 +88,25 @@ export function Pricing() {
             Pricing
           </span>
           <h2 className="text-3xl md:text-5xl lg:text-6xl font-display font-bold text-foreground tracking-tight">
-            Choose Your{" "}
+            Simple{" "}
             <span className="text-gradient-warm font-serif italic font-normal tracking-normal">
-              Plan.
+              Pricing.
             </span>
           </h2>
           <p className="text-muted-foreground text-lg mt-4 max-w-xl mx-auto">
-            From solo explorers to enterprise teams, find the right plan for
-            your needs.
+            Start free, upgrade when you need more. No hidden fees.
           </p>
         </motion.div>
 
+        {/* Error message */}
+        {error && (
+          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-center text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
         {/* Pricing Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto items-start">
           {tiers.map((tier, index) => (
             <motion.div
               key={tier.name}
@@ -108,7 +117,7 @@ export function Pricing() {
                 tier.popular
                   ? "bg-card border-primary/30 shadow-lg scale-100 md:scale-105 z-10"
                   : "bg-card/50 border-border hover:border-primary/20"
-              } ${index === 1 ? "md:mt-0" : "md:mt-6"}`}
+              }`}
             >
               {tier.popular && (
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-primary text-primary-foreground px-5 py-1 rounded-full text-xs font-medium">
@@ -121,12 +130,9 @@ export function Pricing() {
               </h4>
               <div className="flex items-baseline gap-2 mb-4">
                 <span className="text-4xl font-display font-bold text-foreground">
-                  {tier.price !== "Custom" && "$"}
-                  {tier.price}
+                  ${tier.price}
                 </span>
-                {tier.price !== "Custom" && (
-                  <span className="text-sm text-muted-foreground">/month</span>
-                )}
+                <span className="text-sm text-muted-foreground">/month</span>
               </div>
 
               <p className="text-sm leading-relaxed mb-6 text-muted-foreground pb-6 border-b border-border">
@@ -147,6 +153,7 @@ export function Pricing() {
 
               <Button
                 variant={tier.popular ? "default" : "outline"}
+                disabled={isLoading && tier.popular}
                 className={`w-full h-12 rounded-full font-medium transition-all duration-500 ${
                   tier.popular
                     ? "bg-primary text-primary-foreground hover:bg-primary/90"
@@ -159,8 +166,12 @@ export function Pricing() {
                     is_popular: tier.popular,
                     cta_text: tier.cta,
                   });
+                  tier.action();
                 }}
               >
+                {isLoading && tier.popular ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : null}
                 {tier.cta}
               </Button>
             </motion.div>

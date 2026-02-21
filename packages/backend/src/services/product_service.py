@@ -89,6 +89,18 @@ class ProductService:
         """
         return await self._product_repo.find_by_domain(db, domain)
 
+    async def create_product(self, db: AgnosticDatabase, product: Product) -> Product:
+        """Create a new product.
+
+        Args:
+            db: Database instance
+            product: Product to create
+
+        Returns:
+            The created Product
+        """
+        return await self._product_repo.create(db, product)
+
     async def get_all_products(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 
@@ -253,6 +265,21 @@ class ProductService:
         overview.data_collection_details = getattr(meta_summary, "data_collection_details", None)
         overview.third_party_details = getattr(meta_summary, "third_party_details", None)
 
+        # If compliance_status is missing from meta summary, aggregate from document analyses
+        if not overview.compliance_status and product:
+            docs = await self._document_repo.find_by_product_id(db, product.id)
+            aggregated_compliance: dict[str, list[int]] = {}
+            for doc in docs:
+                if doc.analysis and doc.analysis.compliance_status:
+                    for reg, score in doc.analysis.compliance_status.items():
+                        if score is not None:
+                            aggregated_compliance.setdefault(reg, []).append(score)
+            if aggregated_compliance:
+                overview.compliance_status = {
+                    reg: round(sum(scores) / len(scores))
+                    for reg, scores in aggregated_compliance.items()
+                }
+
         return overview
 
     async def get_product_analysis(self, db: AgnosticDatabase, slug: str) -> ProductAnalysis | None:
@@ -370,4 +397,10 @@ class ProductService:
             dangers=meta.dangers,
             benefits=meta.benefits,
             recommended_actions=meta.recommended_actions,
+            # Sub-scores breakdown
+            detailed_scores=meta.scores,
+            # Compliance status (aggregated from document-level analyses)
+            compliance_status=meta.compliance_status,
+            # Quick-scan privacy signals
+            privacy_signals=meta.privacy_signals,
         )

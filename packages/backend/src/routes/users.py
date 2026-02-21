@@ -20,10 +20,6 @@ class CreateUserRequest(BaseModel):
     last_name: str | None = None
 
 
-class UpgradeTierRequest(BaseModel):
-    tier: UserTier
-
-
 @router.post("")
 async def upsert_user(
     req: CreateUserRequest,
@@ -78,10 +74,11 @@ async def get_usage(current: ClerkUser = Depends(get_current_user)) -> dict[str,
 
 @router.get("/tier-limits")
 async def get_tier_limits() -> dict[str, Any]:
-    """Get tier limits and information for all available tiers"""
+    """Get tier limits and information for active tiers"""
+    active_tiers = [UserTier.FREE, UserTier.PRO]
     tiers = []
 
-    for tier in UserTier:
+    for tier in active_tiers:
         tiers.append(
             {
                 "tier": tier.value,
@@ -93,34 +90,6 @@ async def get_tier_limits() -> dict[str, Any]:
         )
 
     return {"tiers": tiers, "limit_type": "company_searches", "period": "monthly"}
-
-
-@router.post("/upgrade-tier")
-async def upgrade_tier(
-    req: UpgradeTierRequest,
-    current: ClerkUser = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Upgrade user's tier"""
-    if not current.user_id:
-        raise HTTPException(status_code=401, detail="Invalid user")
-
-    async with get_db() as db:
-        user_service = create_user_service()
-        user = await user_service.get_user_by_id(db, current.user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        old_tier = user.tier
-        user.tier = req.tier
-        await user_service.upsert_user(db, user)
-
-    return {
-        "success": True,
-        "user_id": current.user_id,
-        "old_tier": old_tier.value,
-        "new_tier": req.tier.value,
-        "upgraded_at": user.updated_at.isoformat(),
-    }
 
 
 class CompleteOnboardingRequest(BaseModel):

@@ -53,7 +53,7 @@ async def test_get_product_by_slug(
         categories=["tech"],
         crawl_base_urls=["https://test.com"],
         logo=None,
-        visible_to_tiers=[UserTier.FREE, UserTier.BUSINESS, UserTier.ENTERPRISE],
+        visible_to_tiers=[UserTier.FREE, UserTier.PRO],
     )
     mock_product_repo.find_by_slug.return_value = mock_product
 
