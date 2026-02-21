@@ -2,6 +2,7 @@
 
 import { ArrowRight, Shield, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { useEffect, useState } from "react";
@@ -11,7 +12,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
 import { useUser } from "@clerk/nextjs";
 
@@ -140,7 +140,13 @@ export default function OnboardingPage() {
           className="flex flex-col items-center gap-4"
         >
           <div className="w-14 h-14 bg-linear-to-br from-primary/20 to-secondary/20 border border-primary/20 rounded-2xl flex items-center justify-center">
-            <Logo className="w-7 h-7 text-primary animate-pulse" />
+            <Image
+              src="/static/favicons/logo.png"
+              alt="Clausea"
+              width={28}
+              height={28}
+              className="w-7 h-7 object-contain animate-pulse"
+            />
           </div>
           <p className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
             Loading...
@@ -166,7 +172,13 @@ export default function OnboardingPage() {
         >
           <div className="flex items-center justify-center gap-3 mb-6">
             <div className="w-12 h-12 bg-linear-to-br from-primary/20 to-secondary/20 border border-primary/20 rounded-xl flex items-center justify-center">
-              <Logo className="w-6 h-6 text-primary" />
+              <Image
+                src="/static/favicons/logo.png"
+                alt="Clausea"
+                width={24}
+                height={24}
+                className="w-6 h-6 object-contain"
+              />
             </div>
             <span className="font-display font-bold text-3xl tracking-tight text-foreground">
               Clausea{" "}

@@ -1,5 +1,7 @@
+"use client";
+
 import Image from "next/image";
-import * as React from "react";
+import { cn } from "@/lib/utils";
 
 interface LogoProps {
   className?: string;
@@ -7,14 +9,14 @@ interface LogoProps {
   height?: number;
 }
 
-export function Logo({ className, width = 32, height = 32 }: LogoProps) {
+export function Logo({ className, width = 24, height = 24 }: LogoProps) {
   return (
     <Image
       src="/static/favicons/logo.png"
       alt="Clausea"
       width={width}
       height={height}
-      className={className}
+      className={cn("object-contain", className)}
     />
   );
 }
