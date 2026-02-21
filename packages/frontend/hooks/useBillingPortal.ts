@@ -2,14 +2,14 @@
 "use client";
 
 import posthog from "posthog-js";
+import { useAuth } from "@clerk/nextjs";
 
 import { useState } from "react";
 
 import { subscriptionApi } from "@/lib/api/subscriptions";
 
-// Custom hook for billing portal access
-
 export function useBillingPortal() {
+  const { getToken } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,7 +23,9 @@ export function useBillingPortal() {
     });
 
     try {
-      const response = await subscriptionApi.getBillingPortal();
+      let token = await getToken({ template: "default" });
+      if (!token) token = await getToken();
+      const response = await subscriptionApi.getBillingPortal(token);
 
       // Open portal in new tab
       window.open(response.portal_url, "_blank");
