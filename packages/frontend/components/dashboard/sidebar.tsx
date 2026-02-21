@@ -1,11 +1,11 @@
 "use client";
 
 import { Building2, Menu, Sparkles } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import { Logo } from "@/data/logo";
 import { cn } from "@/lib/utils";
 
 import { Sheet, SheetContent, SheetTrigger } from "../ui/sheet";
@@ -30,7 +30,13 @@ export function Sidebar({ className }: SidebarProps) {
       {/* Logo Section */}
       <div className="p-6 border-b border-border">
         <Link href="/" className="flex items-center gap-3 group">
-          <Logo className="w-10 h-10" />
+          <Image
+            src="/static/favicons/logo.png"
+            alt="Clausea"
+            width={40}
+            height={40}
+            className="w-10 h-10 object-contain"
+          />
           <div className="flex flex-col">
             <span className="font-display font-bold text-lg tracking-tight text-foreground">
               Clausea

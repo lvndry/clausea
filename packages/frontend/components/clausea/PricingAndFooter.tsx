@@ -2,6 +2,7 @@
 
 import { CheckCircle2, Mail } from "lucide-react";
 import { motion, useInView } from "motion/react";
+import Image from "next/image";
 import Link from "next/link";
 import posthog from "posthog-js";
 import { FaGithub } from "react-icons/fa";
@@ -10,7 +11,6 @@ import { FaTwitter } from "react-icons/fa6";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Logo } from "@/data/logo";
 
 /**
  * Pricing Component - Warm Theme
@@ -198,7 +198,13 @@ export function Footer() {
           <div className="col-span-1">
             <Link href="/" className="flex items-center gap-3 mb-6 group">
               <div className="w-10 h-10 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center group-hover:bg-primary/20 group-hover:rotate-3 transition-all duration-500 overflow-hidden">
-                <Logo className="w-6 h-6" />
+                <Image
+                  src="/static/favicons/logo.png"
+                  alt="Clausea"
+                  width={24}
+                  height={24}
+                  className="w-6 h-6 object-contain"
+                />
               </div>
               <span className="font-display font-bold text-xl tracking-tight">
                 Clausea

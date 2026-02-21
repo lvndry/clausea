@@ -2,13 +2,13 @@
 
 import { Menu, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { startTransition, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Logo } from "@/data/logo";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@clerk/nextjs";
 
@@ -64,7 +64,13 @@ export function Header() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-3 group">
           <div className="w-10 h-10 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center group-hover:bg-primary/20 group-hover:border-primary/40 group-hover:rotate-3 transition-all duration-500 overflow-hidden">
-            <Logo className="w-7 h-7" />
+            <Image
+              src="/static/favicons/logo.png"
+              alt="Clausea"
+              width={28}
+              height={28}
+              className="w-7 h-7 object-contain"
+            />
           </div>
           <span className="font-display font-bold text-xl tracking-tight text-foreground">
             Clausea
@@ -148,7 +154,13 @@ export function Header() {
             {/* Mobile Logo */}
             <div className="mb-6 flex items-center gap-3">
               <div className="w-12 h-12 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center overflow-hidden">
-                <Logo className="w-8 h-8" />
+                <Image
+                  src="/static/favicons/logo.png"
+                  alt="Clausea"
+                  width={32}
+                  height={32}
+                  className="w-8 h-8 object-contain"
+                />
               </div>
             </div>
 
