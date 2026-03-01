@@ -208,43 +208,37 @@
 
 @layer base {
   /* LIGHT MODE (Default) - Warm Ivory Theme inspired by DeepJudge, Withdavid */
+  /* LIGHT MODE (Default) - Minimal Warm Ivory */
   :root {
-    /* Background: Warm ivory/parchment */
-    --background: 40 25% 97%;
+    /* Background: Warm ivory */
+    --background: 44 33% 96%; /* #faf9f6 */
     /* Foreground: Deep charcoal */
-    --foreground: 30 5% 10%;
+    --foreground: 20 5% 10%; /* #1a1918 */
 
-    --card: 40 20% 98%;
-    --card-foreground: 30 5% 10%;
+    --card: 44 33% 98%;
+    --card-foreground: 20 5% 10%;
 
-    --popover: 40 20% 99%;
-    --popover-foreground: 30 5% 10%;
+    --popover: 44 33% 98%;
+    --popover-foreground: 20 5% 10%;
 
-    /* Primary: Terracotta/warm brown */
-    --primary: 18 55% 54%;
-    --primary-foreground: 40 25% 98%;
+    /* Primary: Deep charcoal */
+    --primary: 20 5% 10%;
+    --primary-foreground: 44 33% 96%;
 
-    /* Secondary: Sage green (cool accent) */
-    --secondary: 150 20% 49%;
-    --secondary-foreground: 40 25% 98%;
+    /* Secondary: Warm gray */
+    --secondary: 0 0% 40%;
+    --secondary-foreground: 44 33% 96%;
 
-    /* Muted: Warm sand */
-    --muted: 35 20% 92%;
-    --muted-foreground: 30 10% 45%;
+    /* Muted: Lighter warm gray */
+    --muted: 40 10% 90%;
+    --muted-foreground: 0 0% 40%;
 
-    /* Accent: Warm gold */
-    --accent: 32 45% 65%;
-    --accent-foreground: 30 5% 10%;
+    /* Borders: Hairline stark borders (stone-200) */
+    --border: 0 0% 90%; /* #e5e5e5 */
+    --input: 0 0% 90%;
+    --ring: 20 5% 10%;
 
-    --destructive: 0 65% 55%;
-    --destructive-foreground: 0 0% 100%;
-
-    /* Borders: Subtle warm tones */
-    --border: 35 15% 88%;
-    --input: 35 15% 88%;
-    --ring: 18 55% 54%;
-
-    --radius: 1rem;
+    --radius: 0rem; /* Brutalist sharp corners */
 
     /* Chart colors */
     --chart-1: 18 55% 54%;
@@ -252,52 +246,37 @@
     --chart-3: 32 45% 65%;
     --chart-4: 35 25% 50%;
     --chart-5: 200 15% 55%;
-
-    /* Extended warm palette */
-    --warm: 18 55% 54%;
-    --warm-foreground: 40 25% 98%;
-    --sage: 150 20% 49%;
-    --terracotta: 18 55% 54%;
-    --ivory: 40 25% 97%;
-    --sand: 35 20% 85%;
   }
 
-  /* DARK MODE - Rich warm dark theme */
+  /* DARK MODE - Minimal Warm Charcoal */
   .dark {
     /* Background: Warm charcoal */
-    --background: 30 8% 8%;
+    --background: 20 5% 10%; /* #1a1918 */
     /* Foreground: Warm off-white */
-    --foreground: 35 20% 93%;
+    --foreground: 44 33% 96%; /* #faf9f6 */
 
-    --card: 30 8% 10%;
-    --card-foreground: 35 20% 93%;
+    --card: 20 5% 12%;
+    --card-foreground: 44 33% 96%;
 
-    --popover: 30 8% 10%;
-    --popover-foreground: 35 20% 93%;
+    --popover: 20 5% 12%;
+    --popover-foreground: 44 33% 96%;
 
-    /* Primary: Lighter terracotta */
-    --primary: 18 50% 62%;
-    --primary-foreground: 30 8% 8%;
+    /* Primary: Warm off-white */
+    --primary: 44 33% 96%;
+    --primary-foreground: 20 5% 10%;
 
-    /* Secondary: Lighter sage */
-    --secondary: 150 22% 58%;
-    --secondary-foreground: 30 8% 8%;
+    /* Secondary: Warm gray */
+    --secondary: 0 0% 60%;
+    --secondary-foreground: 20 5% 10%;
 
-    /* Muted: Dark sand */
-    --muted: 30 8% 15%;
-    --muted-foreground: 35 15% 60%;
+    /* Muted: Dark warm gray */
+    --muted: 24 6% 16%;
+    --muted-foreground: 0 0% 60%;
 
-    /* Accent: Warm gold */
-    --accent: 32 50% 60%;
-    --accent-foreground: 30 8% 8%;
-
-    --destructive: 0 65% 55%;
-    --destructive-foreground: 0 0% 100%;
-
-    /* Borders: Subtle warm dark tones */
-    --border: 30 8% 18%;
-    --input: 30 8% 18%;
-    --ring: 18 50% 62%;
+    /* Borders: Hairline stark borders dark */
+    --border: 24 5% 26%; /* stone-800/60 approx */
+    --input: 24 5% 26%;
+    --ring: 44 33% 96%;
 
     /* Chart colors */
     --chart-1: 18 50% 62%;
@@ -305,14 +284,6 @@
     --chart-3: 32 50% 60%;
     --chart-4: 35 25% 55%;
     --chart-5: 200 18% 50%;
-
-    /* Extended warm palette */
-    --warm: 18 50% 62%;
-    --warm-foreground: 30 8% 8%;
-    --sage: 150 22% 58%;
-    --terracotta: 18 50% 62%;
-    --ivory: 35 20% 93%;
-    --sand: 30 8% 20%;
   }
 
   html,
@@ -346,106 +317,33 @@
 
 /* Warm Theme Utilities */
 @layer utilities {
-  /* Glass effects */
+  /* Glass effects - Stripped down for Stark UI */
   .glass {
-    @apply bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg;
+    @apply bg-background/90 backdrop-blur-md border border-border shadow-none;
   }
 
   .glass-warm {
-    background: linear-gradient(
-      135deg,
-      hsla(40, 25%, 98%, 0.9) 0%,
-      hsla(35, 20%, 95%, 0.85) 100%
-    );
-    @apply backdrop-blur-xl border border-black/5 shadow-xl;
+    @apply bg-background/90 backdrop-blur-md border border-border shadow-none;
   }
 
   .dark .glass-warm {
-    background: linear-gradient(
-      135deg,
-      hsla(30, 8%, 12%, 0.9) 0%,
-      hsla(30, 8%, 8%, 0.85) 100%
-    );
-    @apply border-white/10;
+    @apply bg-background/90 backdrop-blur-md border border-border shadow-none;
   }
 
   .glass-card {
-    @apply bg-card/80 backdrop-blur-md border border-border/50 hover:border-primary/30 transition-colors duration-500;
+    @apply bg-card border border-border transition-colors duration-500 hover:bg-muted/50;
   }
 
-  /* Text gradients */
-  .text-gradient {
-    @apply bg-clip-text text-transparent bg-linear-to-r from-primary via-accent to-primary;
-  }
-
-  .text-gradient-warm {
-    @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(
-      135deg,
-      hsl(18, 55%, 54%) 0%,
-      hsl(32, 45%, 65%) 50%,
-      hsl(150, 20%, 49%) 100%
-    );
-  }
-
-  .text-gradient-subtle {
-    @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(
-      135deg,
-      hsl(30, 10%, 20%) 0%,
-      hsl(30, 5%, 35%) 100%
-    );
-  }
-
-  .dark .text-gradient-subtle {
-    background-image: linear-gradient(
-      135deg,
-      hsl(35, 20%, 95%) 0%,
-      hsl(35, 15%, 75%) 100%
-    );
-  }
-
-  /* Background patterns */
+  /* Background patterns - Stripped out */
   .warm-gradient {
     background-color: hsl(var(--background));
-    background-image:
-      radial-gradient(
-        ellipse at 20% 0%,
-        hsla(18, 55%, 54%, 0.08) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        ellipse at 80% 0%,
-        hsla(150, 20%, 49%, 0.06) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        ellipse at 50% 100%,
-        hsla(32, 45%, 65%, 0.1) 0%,
-        transparent 50%
-      );
   }
 
   .dark .warm-gradient {
-    background-image:
-      radial-gradient(
-        ellipse at 20% 0%,
-        hsla(18, 50%, 62%, 0.1) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        ellipse at 80% 0%,
-        hsla(150, 22%, 58%, 0.08) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        ellipse at 50% 100%,
-        hsla(32, 50%, 60%, 0.12) 0%,
-        transparent 50%
-      );
+    background-color: hsl(var(--background));
   }
 
-  /* Noise overlay */
+  /* Noise overlay - Kept for texture */
   .noise-overlay {
     position: fixed;
     top: 0;
@@ -453,185 +351,55 @@
     width: 100%;
     height: 100%;
     content: "";
-    opacity: 0.02;
+    opacity: 0.03;
     z-index: 9999;
     pointer-events: none;
     background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
   }
 
-  /* Subtle glow effects */
-  .subtle-glow {
-    box-shadow:
-      0 0 40px -10px hsla(18, 55%, 54%, 0.15),
-      0 0 80px -20px hsla(32, 45%, 65%, 0.1);
-  }
-
-  .dark .subtle-glow {
-    box-shadow:
-      0 0 40px -10px hsla(18, 50%, 62%, 0.2),
-      0 0 80px -20px hsla(32, 50%, 60%, 0.15);
-  }
-
-  /* Shimmer effect for CTAs */
-  .shimmer {
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      hsla(40, 25%, 98%, 0.2) 50%,
-      transparent 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 2.5s ease-in-out infinite;
-  }
-
-  .dark .shimmer {
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      hsla(35, 20%, 93%, 0.15) 50%,
-      transparent 100%
-    );
-    background-size: 200% 100%;
-  }
-
-  /* Underline decoration for emphasis */
-  .underline-warm {
-    text-decoration: underline;
-    text-decoration-color: hsla(18, 55%, 54%, 0.4);
-    text-underline-offset: 4px;
-    text-decoration-thickness: 2px;
-  }
-
-  .dark .underline-warm {
-    text-decoration-color: hsla(18, 50%, 62%, 0.5);
-  }
-
-  /* Wave pattern (kept for footer) */
-  .wave-pattern {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320'%3E%3Cpath fill='%23c4704f' fill-opacity='0.03' d='M0,160L48,176C96,192,192,224,288,213.3C384,203,480,149,576,128C672,107,768,117,864,138.7C960,160,1056,192,1152,186.7C1248,181,1344,139,1392,117.3L1440,96L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z'%3E%3C/path%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: bottom;
-    background-size: 100% auto;
-  }
-
-  /* Enhanced Glass morphism */
+  /* Enhanced Glass morphism - Removed for stark design */
   .glass-panel {
-    @apply relative overflow-hidden;
-    background: linear-gradient(
-      135deg,
-      hsla(40, 25%, 99%, 0.85) 0%,
-      hsla(40, 20%, 97%, 0.75) 100%
-    );
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    @apply border border-white/60 shadow-xl;
+    @apply bg-background border border-border;
   }
 
   .dark .glass-panel {
-    background: linear-gradient(
-      135deg,
-      hsla(30, 10%, 12%, 0.9) 0%,
-      hsla(30, 8%, 8%, 0.85) 100%
-    );
-    @apply border-white/10;
+    @apply bg-background border border-border;
   }
 
   .glass-sidebar {
-    background: linear-gradient(
-      180deg,
-      hsla(40, 25%, 99%, 0.95) 0%,
-      hsla(40, 20%, 97%, 0.9) 100%
-    );
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    @apply border-r border-black/5;
+    @apply bg-background/95 backdrop-blur-xl border-r border-border;
   }
 
   .dark .glass-sidebar {
-    background: linear-gradient(
-      180deg,
-      hsla(30, 10%, 10%, 0.98) 0%,
-      hsla(30, 8%, 6%, 0.95) 100%
-    );
-    @apply border-white/5;
+    @apply bg-background/95 backdrop-blur-xl border-r border-border;
   }
 
   .glass-header {
-    background: hsla(40, 25%, 98%, 0.8);
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
-    @apply border-b border-black/5;
+    @apply bg-background/95 backdrop-blur-xl border-b border-border;
   }
 
   .dark .glass-header {
-    background: hsla(30, 8%, 8%, 0.85);
-    @apply border-white/5;
+    @apply bg-background/95 backdrop-blur-xl border-b border-border;
   }
 
-  /* Elevated card with hover lift */
+  /* Elevated card with hover lift - Simplified */
   .card-elevated {
-    @apply relative bg-card rounded-2xl border border-border/50 shadow-sm;
-    @apply transition-all duration-500 ease-out;
+    @apply relative bg-card  border border-border;
+    @apply transition-all duration-300 ease-out;
   }
 
   .card-elevated:hover {
-    @apply -translate-y-1 shadow-lg border-primary/20;
+    @apply bg-muted/30;
   }
 
-  /* Gradient border effect */
+  /* Gradient border effect - stripped out */
   .gradient-border {
-    @apply relative rounded-2xl;
+    @apply relative border border-border;
   }
 
-  .gradient-border::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    padding: 1px;
-    border-radius: inherit;
-    background: linear-gradient(
-      135deg,
-      hsla(18, 55%, 54%, 0.5) 0%,
-      hsla(150, 20%, 49%, 0.3) 50%,
-      hsla(32, 45%, 65%, 0.5) 100%
-    );
-    -webkit-mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
-    background-size: 200% 200%;
-    animation: border-flow 4s linear infinite;
-  }
-
-  /* Spotlight effect for hero sections */
+  /* Spotlight effect for hero sections - Stripped out */
   .spotlight {
     @apply relative overflow-hidden;
-  }
-
-  .spotlight::before {
-    content: "";
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: radial-gradient(
-      ellipse at center,
-      hsla(18, 55%, 54%, 0.08) 0%,
-      transparent 50%
-    );
-    animation: spotlight 8s ease-in-out infinite;
-    pointer-events: none;
-  }
-
-  .dark .spotlight::before {
-    background: radial-gradient(
-      ellipse at center,
-      hsla(18, 50%, 62%, 0.12) 0%,
-      transparent 50%
-    );
   }
 
   /* Dashboard background with mesh gradient */

@@ -26,31 +26,22 @@ interface SharingMapProps {
 
 const riskConfig = {
   low: {
-    color: "text-green-600 dark:text-green-400",
-    bg: "bg-green-50 dark:bg-green-950/20",
-    border: "border-green-200 dark:border-green-800",
-    iconBg: "bg-green-100 dark:bg-green-900/30",
-    icon: Shield,
-    label: "Low",
-    badgeVariant: "success" as const,
+    color: "text-[#2B7A5C]",
+    bg: "bg-[#2B7A5C]/5",
+    border: "border-[#2B7A5C]/20",
+    label: "LOW RISK",
   },
   medium: {
-    color: "text-amber-600 dark:text-amber-400",
-    bg: "bg-amber-50 dark:bg-amber-950/20",
-    border: "border-amber-200 dark:border-amber-800",
-    iconBg: "bg-amber-100 dark:bg-amber-900/30",
-    icon: CheckCircle,
-    label: "Medium",
-    badgeVariant: "warning" as const,
+    color: "text-[#B58D2D]",
+    bg: "bg-[#B58D2D]/5",
+    border: "border-[#B58D2D]/20",
+    label: "MEDIUM",
   },
   high: {
-    color: "text-red-600 dark:text-red-400",
-    bg: "bg-red-50 dark:bg-red-950/20",
-    border: "border-red-200 dark:border-red-800",
-    iconBg: "bg-red-100 dark:bg-red-900/30",
-    icon: AlertTriangle,
-    label: "High Risk",
-    badgeVariant: "danger" as const,
+    color: "text-[#BD452D]",
+    bg: "bg-[#BD452D]/5",
+    border: "border-[#BD452D]/20",
+    label: "HIGH RISK",
   },
 };
 
@@ -71,151 +62,100 @@ export function SharingMap({
     thirdPartyDetails?.filter((t) => t.risk_level === "medium").length || 0;
 
   return (
-    <Card variant="default" className="border-border">
-      <CardHeader className="pb-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
-              <Network className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-            </div>
-            <div>
-              <CardTitle className="text-lg">Who Has Your Data</CardTitle>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Third parties that receive your data
-              </p>
-            </div>
-          </div>
-
-          {hasStructuredData && (
-            <div className="flex items-center gap-2">
-              {highRiskCount > 0 && (
-                <Badge variant="danger" size="sm" className="gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  {highRiskCount}
-                </Badge>
-              )}
-              <Badge variant="outline" size="sm" className="gap-1">
-                <Building2 className="h-3 w-3" />
-                {thirdPartyDetails.length}
-              </Badge>
-            </div>
-          )}
+    <div className="border border-border bg-background">
+      <div className="p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Network className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+            Data Distribution Map
+          </h3>
         </div>
-      </CardHeader>
+        {hasStructuredData && (
+          <div className="flex items-center gap-2">
+            <div className="px-3 py-1 border border-border text-[10px] uppercase tracking-widest font-bold bg-muted/5">
+              {thirdPartyDetails?.length} Recipients
+            </div>
+            {highRiskCount > 0 && (
+              <div className="px-3 py-1 border border-[#BD452D]/20 text-[10px] uppercase tracking-widest font-bold bg-[#BD452D]/5 text-[#BD452D]">
+                {highRiskCount} High Risk
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
-      <CardContent className="space-y-3">
+      <div className="divide-y divide-border">
         {hasStructuredData ? (
-          <div className="space-y-2.5">
-            {thirdPartyDetails.map((recipient, index) => {
-              const config = riskConfig[recipient.risk_level];
-              const Icon = config.icon;
+          thirdPartyDetails?.map((recipient, index) => {
+            const config = riskConfig[recipient.risk_level];
 
-              return (
-                <div
-                  key={index}
-                  className={cn(
-                    "p-4 rounded-lg border",
-                    config.bg,
-                    config.border,
-                  )}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-                    {/* Recipient info */}
-                    <div className="flex items-start gap-3 flex-1 min-w-0">
-                      <div
-                        className={cn(
-                          "w-9 h-9 rounded-lg flex items-center justify-center shrink-0",
-                          config.iconBg,
-                        )}
-                      >
-                        <Icon className={cn("h-4.5 w-4.5", config.color)} />
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <h4 className="font-semibold text-sm text-foreground truncate">
-                            {recipient.recipient}
-                          </h4>
-                          <Badge
-                            variant={config.badgeVariant}
-                            size="sm"
-                            className="shrink-0"
-                          >
-                            {config.label}
-                          </Badge>
-                        </div>
-
-                        {recipient.purpose && (
-                          <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-                            {recipient.purpose}
-                          </p>
-                        )}
-
-                        {/* Shared data badges */}
-                        <div className="flex flex-wrap gap-1.5">
-                          {recipient.data_shared.map((data, dIndex) => (
-                            <Badge
-                              key={dIndex}
-                              variant="outline"
-                              size="sm"
-                              className="bg-background/50"
-                            >
-                              {data}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
+            return (
+              <div
+                key={index}
+                className="grid grid-cols-1 md:grid-cols-12 group hover:bg-muted/5 transition-colors"
+              >
+                {/* Recipient info */}
+                <div className="col-span-12 md:col-span-4 p-6 border-b md:border-b-0 md:border-r border-border bg-muted/5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground block mb-2">
+                        Recipient
+                      </span>
+                      <h4 className="font-display font-medium text-xl text-foreground">
+                        {recipient.recipient}
+                      </h4>
+                    </div>
+                    <div
+                      className={cn(
+                        "px-2 py-0.5 text-[8px] font-bold tracking-tighter border",
+                        config.color,
+                        config.bg,
+                      )}
+                    >
+                      {config.label}
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-foreground/80 leading-relaxed text-sm">
-            {thirdPartySharing}
-          </p>
-        )}
 
-        {/* Summary footer */}
-        {hasStructuredData && (
-          <div className="pt-3 border-t border-border/50">
-            <div className="flex flex-wrap items-center gap-4 text-sm">
-              <span className="text-muted-foreground">
-                Data shared with{" "}
-                <span className="font-medium text-foreground">
-                  {thirdPartyDetails.length} third parties
-                </span>
-              </span>
+                {/* Shared data and purpose */}
+                <div className="col-span-12 md:col-span-8 p-6 space-y-4">
+                  {recipient.purpose && (
+                    <p className="text-sm text-foreground/80 leading-relaxed font-serif italic max-w-2xl">
+                      &ldquo;{recipient.purpose}&rdquo;
+                    </p>
+                  )}
 
-              <div className="flex items-center gap-3 ml-auto">
-                {highRiskCount > 0 && (
-                  <span
-                    className={cn(
-                      "flex items-center gap-1.5 font-medium",
-                      riskConfig.high.color,
-                    )}
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    {highRiskCount} high-risk
-                  </span>
-                )}
-                {mediumRiskCount > 0 && (
-                  <span
-                    className={cn(
-                      "flex items-center gap-1.5 font-medium",
-                      riskConfig.medium.color,
-                    )}
-                  >
-                    <CheckCircle className="h-3.5 w-3.5" />
-                    {mediumRiskCount} medium
-                  </span>
-                )}
+                  <div className="flex flex-wrap gap-2">
+                    {recipient.data_shared.map((data, dIndex) => (
+                      <div
+                        key={dIndex}
+                        className="px-3 py-1 border border-border text-[10px] uppercase tracking-widest font-medium text-muted-foreground"
+                      >
+                        {data}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
+            );
+          })
+        ) : (
+          <div className="p-10 text-foreground leading-relaxed font-serif italic border-b border-border">
+            &ldquo;{thirdPartySharing}&rdquo;
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+
+      {hasStructuredData && (
+        <div className="p-6 border-t border-border bg-muted/5">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+            <span>Aggregated risk analysis complete</span>
+            <span className="text-foreground">
+              {thirdPartyDetails?.length} Vectors mapped
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

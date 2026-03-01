@@ -5,7 +5,8 @@ import { httpJson } from "@lib/http";
 
 export async function GET(request: NextRequest) {
   try {
-    const url = apiEndpoints.products();
+    const base = apiEndpoints.products();
+    const url = `${base}?include_all=true`;
     const products = await httpJson(url, {
       method: "GET",
     });

@@ -92,6 +92,52 @@ async def ensure_document_indexes(db: AgnosticDatabase) -> None:
             logger.warning(f"Could not create index on documents.product_id: {e}")
 
 
+async def ensure_pipeline_indexes(db: AgnosticDatabase) -> None:
+    """Ensure indexes exist on pipeline-related collections."""
+    # pipeline_jobs
+    try:
+        await db.pipeline_jobs.create_index(
+            "id", unique=True, name="idx_pipeline_job_id", background=True
+        )
+        logger.info("Created unique index on pipeline_jobs.id")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug("Index on pipeline_jobs.id already exists or has duplicate values")
+        else:
+            logger.warning(f"Could not create index on pipeline_jobs.id: {e}")
+
+    try:
+        await db.pipeline_jobs.create_index(
+            "product_slug", name="idx_pipeline_job_product_slug", background=True
+        )
+        logger.info("Created index on pipeline_jobs.product_slug")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("Index on pipeline_jobs.product_slug already exists")
+        else:
+            logger.warning(f"Could not create index on pipeline_jobs.product_slug: {e}")
+
+    # indexation_subscriptions
+    try:
+        await db.indexation_subscriptions.create_index(
+            [("product_slug", 1), ("email", 1)],
+            unique=True,
+            name="idx_indexation_sub_product_email",
+            background=True,
+        )
+        logger.info("Created unique index on indexation_subscriptions.(product_slug,email)")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug(
+                "Index on indexation_subscriptions.(product_slug,email) already exists or has duplicates"
+            )
+        else:
+            logger.warning(f"Could not create index on indexation_subscriptions: {e}")
+
+
 async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     """Ensure all database indexes are created.
 
@@ -104,4 +150,5 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     logger.info("Ensuring database indexes are created...")
     await ensure_product_indexes(db)
     await ensure_document_indexes(db)
+    await ensure_pipeline_indexes(db)
     logger.info("Database indexes verified")

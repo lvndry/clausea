@@ -13,6 +13,8 @@ import { motion, useInView } from "motion/react";
 
 import { useRef } from "react";
 
+import { cn } from "@/lib/utils";
+
 const features = [
   {
     title: "High-Precision Search",
@@ -65,83 +67,69 @@ export default function AsymmetricGrid() {
   return (
     <section
       ref={containerRef}
-      className="py-8 md:py-12 px-4 md:px-8 bg-background overflow-hidden relative"
+      className="col-span-12 grid grid-cols-1 md:grid-cols-12 border-b border-border bg-background"
     >
-      {/* Background ambience - warm tones */}
-      <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
-        <div className="absolute top-1/4 left-0 w-[400px] h-[400px] bg-primary/5 rounded-full blur-[120px]" />
-        <div className="absolute bottom-1/4 right-0 w-[500px] h-[500px] bg-secondary/4 rounded-full blur-[140px]" />
-      </div>
-
-      <div className="max-w-6xl mx-auto relative z-10">
-        {/* Section Header */}
+      {/* Section Header */}
+      <div className="col-span-12 md:col-span-4 px-6 md:px-10 py-16 md:py-20 border-b md:border-b-0 md:border-r border-border flex flex-col justify-between">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6 }}
-          className="text-center mb-16 md:mb-20 space-y-4"
         >
-          <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wider uppercase text-primary bg-primary/10 border border-primary/20 px-4 py-2 rounded-full">
-            <Layers className="w-4 h-4" />
+          <span className="text-[10px] md:text-xs uppercase tracking-[0.3em] text-muted-foreground block mb-8">
             Capabilities
           </span>
-          <h2 className="text-3xl md:text-5xl lg:text-6xl font-display font-bold text-foreground tracking-tight">
-            Surface the{" "}
-            <span className="text-gradient-warm font-serif italic font-normal tracking-normal">
-              Hidden Depths.
-            </span>
+          <h2 className="text-4xl md:text-6xl font-display font-medium text-foreground tracking-tight leading-[0.9]">
+            Surface the
+            <br />
+            Hidden Depths.
           </h2>
-          <p className="text-muted-foreground text-lg md:text-xl max-w-2xl mx-auto">
-            Powerful AI tools designed to navigate complex legal waters with
-            precision and speed.
-          </p>
         </motion.div>
+        <motion.p
+          initial={{ opacity: 0, y: 20 }}
+          animate={isInView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="text-muted-foreground text-sm leading-relaxed max-w-[280px] mt-12 md:mt-0"
+        >
+          Powerful AI tools designed to navigate complex legal waters with
+          precision and speed.
+        </motion.p>
+      </div>
 
-        {/* Feature Grid */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 md:gap-6 md:auto-rows-[260px] lg:auto-rows-[280px]">
-          {features.map((feature, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 40 }}
-              animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.6, delay: index * 0.1 }}
-              className={`group relative p-6 md:p-8 rounded-2xl bg-card border border-border hover:border-primary/30 transition-all duration-500 cursor-pointer overflow-hidden min-h-[220px] ${
-                feature.size === "lg" ? "lg:col-span-2" : ""
-              }`}
-            >
-              {/* Card content */}
-              <div className="relative z-10 h-full flex flex-col">
-                {/* Icon */}
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5 border border-border bg-muted/50 text-primary group-hover:scale-110 group-hover:bg-primary group-hover:text-primary-foreground group-hover:border-primary transition-all duration-500">
-                  <feature.icon className="w-6 h-6" />
-                </div>
+      {/* Feature Grid */}
+      <div className="col-span-12 md:col-span-8 grid grid-cols-1 md:grid-cols-2">
+        {features.map((feature, index) => (
+          <motion.article
+            key={index}
+            initial={{ opacity: 0, y: 20 }}
+            animate={isInView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.6, delay: index * 0.1 }}
+            className={cn(
+              "px-6 md:px-10 py-12 border-b border-border flex flex-col justify-between min-h-[320px] group transition-colors hover:bg-muted/10 cursor-pointer",
+              index % 2 === 0 ? "md:border-r" : "",
+              index >= features.length - 2 ? "border-b-0" : "", // Remove bottom border for last row
+            )}
+          >
+            <div className="flex justify-between items-start">
+              <feature.icon
+                className="w-8 h-8 text-foreground"
+                strokeWidth={1.5}
+              />
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] uppercase tracking-widest font-medium text-primary">
+                Explore
+              </span>
+            </div>
 
-                {/* Title */}
-                <h3 className="text-xl md:text-2xl font-display font-bold text-foreground mb-3 group-hover:translate-x-1 transition-transform duration-500">
-                  {feature.title}
-                </h3>
-
-                {/* Description */}
-                <p className="text-muted-foreground text-sm md:text-base leading-relaxed max-w-sm group-hover:text-foreground/70 transition-colors duration-500">
-                  {feature.description}
-                </p>
-
-                {/* Hover CTA */}
-                <div className="mt-auto pt-4 opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-500 flex items-center gap-2 text-sm font-medium text-primary">
-                  Explore Feature <ArrowRight className="w-4 h-4" />
-                </div>
-              </div>
-
-              {/* Decorative background icon */}
-              <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-[0.04] transition-opacity duration-700">
-                <feature.icon className="w-40 h-40 -rotate-12 translate-x-12 -translate-y-12" />
-              </div>
-
-              {/* Hover glow effect */}
-              <div className="absolute -inset-1 bg-linear-to-r from-primary/0 via-primary/5 to-primary/0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 -z-10 blur-xl" />
-            </motion.div>
-          ))}
-        </div>
+            <div className="mt-16">
+              <h3 className="font-display text-3xl md:text-4xl text-foreground font-medium mb-4 tracking-tight leading-none">
+                {feature.title}
+              </h3>
+              <p className="text-muted-foreground text-sm leading-relaxed max-w-[280px]">
+                {feature.description}
+              </p>
+            </div>
+          </motion.article>
+        ))}
       </div>
     </section>
   );

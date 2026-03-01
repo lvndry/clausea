@@ -35,118 +35,102 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
   const negativeItems = dangers?.slice(0, 5) || [];
 
   return (
-    <Card variant="default" className="border-border">
-      <CardHeader className="pb-4">
+    <div className="border border-border bg-background">
+      <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-            <Zap className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+          <Zap className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+            Analysis of Rights & Risks
+          </h3>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2">
+        {/* Rights & Benefits Column */}
+        <div className="border-b md:border-b-0 md:border-r border-border">
+          <div className="p-6 border-b border-border bg-muted/5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C]">
+                Rights & Benefits
+              </span>
+              <ThumbsUp className="h-4 w-4 text-[#2B7A5C]/40" />
+            </div>
           </div>
-          <div>
-            <CardTitle className="text-lg">Your Power</CardTitle>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Rights, benefits, and concerns to be aware of
-            </p>
+          <div className="divide-y divide-border">
+            {positiveItems.length > 0 ? (
+              positiveItems.map((item, index) => (
+                <div
+                  key={index}
+                  className="p-6 flex items-start gap-4 hover:bg-muted/5 transition-colors"
+                >
+                  <div className="mt-1 shrink-0">
+                    {item.type === "right" ? (
+                      <Shield
+                        className="h-4 w-4 text-[#2B7A5C]"
+                        strokeWidth={1.5}
+                      />
+                    ) : (
+                      <Sparkles
+                        className="h-4 w-4 text-[#2B7A5C]"
+                        strokeWidth={1.5}
+                      />
+                    )}
+                  </div>
+                  <span className="text-sm text-foreground leading-relaxed">
+                    {item.text}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-xs text-muted-foreground uppercase tracking-widest">
+                No specific rights identified
+              </div>
+            )}
           </div>
         </div>
-      </CardHeader>
 
-      <CardContent>
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* Positive Column */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-                <Shield className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <h4 className="font-semibold text-emerald-600 dark:text-emerald-400">
-                Your Rights & Benefits
-              </h4>
-            </div>
-
-            <div className="space-y-2">
-              {positiveItems.length > 0 ? (
-                positiveItems.map((item, index) => (
-                  <div
-                    key={index}
-                    className={cn(
-                      "flex items-start gap-2.5 p-3 rounded-lg border",
-                      item.type === "right"
-                        ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800"
-                        : "bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5",
-                        item.type === "right"
-                          ? "bg-emerald-100 dark:bg-emerald-900/30"
-                          : "bg-blue-100 dark:bg-blue-900/30",
-                      )}
-                    >
-                      {item.type === "right" ? (
-                        <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                      ) : (
-                        <ThumbsUp className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-                      )}
-                    </div>
-                    <span className="text-sm text-foreground leading-snug">
-                      {item.text}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="flex items-center justify-center p-6 rounded-lg bg-muted/30 border border-dashed border-border">
-                  <p className="text-sm text-muted-foreground">
-                    No specific rights documented
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Negative Column */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-              </div>
-              <h4 className="font-semibold text-amber-600 dark:text-amber-400">
+        {/* Limitations & Concerns Column */}
+        <div className="flex flex-col">
+          <div className="p-6 border-b border-border bg-muted/5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-widest font-bold text-[#BD452D]">
                 Limitations & Concerns
-              </h4>
-            </div>
-
-            <div className="space-y-2">
-              {negativeItems.length > 0 ? (
-                negativeItems.map((danger, index) => (
-                  <div
-                    key={index}
-                    className={cn(
-                      "flex items-start gap-2.5 p-3 rounded-lg border",
-                      "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800",
-                    )}
-                  >
-                    <div className="w-5 h-5 rounded-md bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0 mt-0.5">
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                    </div>
-                    <span className="text-sm text-foreground leading-snug">
-                      {danger}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="flex items-center justify-center p-6 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
-                  <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                    <Sparkles className="h-4 w-4" />
-                    <p className="text-sm font-medium">
-                      No major concerns identified
-                    </p>
-                  </div>
-                </div>
-              )}
+              </span>
+              <AlertTriangle className="h-4 w-4 text-[#BD452D]/40" />
             </div>
           </div>
+          <div className="divide-y divide-border flex-1">
+            {negativeItems.length > 0 ? (
+              negativeItems.map((danger, index) => (
+                <div
+                  key={index}
+                  className="p-6 flex items-start gap-4 hover:bg-muted/5 transition-colors"
+                >
+                  <div className="mt-1 shrink-0">
+                    <AlertTriangle
+                      className="h-4 w-4 text-[#BD452D]"
+                      strokeWidth={1.5}
+                    />
+                  </div>
+                  <span className="text-sm text-foreground leading-relaxed">
+                    {danger}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-10">
+                <CheckCircle
+                  className="h-8 w-8 text-[#2B7A5C] mb-4"
+                  strokeWidth={1.5}
+                />
+                <span className="text-xs text-[#2B7A5C] uppercase tracking-widest font-bold">
+                  No critical concerns identified
+                </span>
+              </div>
+            )}
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

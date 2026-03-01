@@ -99,3 +99,20 @@ class PipelineRepository(BaseRepository):
             {"$set": job.model_dump()},
         )
         logger.debug(f"Updated pipeline job {job.id} -> status={job.status}")
+
+    async def update_fields(
+        self, db: AgnosticDatabase, job_id: str, fields: dict[str, Any]
+    ) -> None:
+        """Update specific fields of a pipeline job.
+
+        Args:
+            db: Database instance
+            job_id: Job ID
+            fields: Dictionary of fields to update (supports dot notation)
+        """
+        fields["updated_at"] = datetime.now()
+        await db[self.COLLECTION].update_one(
+            {"id": job_id},
+            {"$set": fields},
+        )
+        logger.debug(f"Partially updated pipeline job {job_id}: {list(fields.keys())}")

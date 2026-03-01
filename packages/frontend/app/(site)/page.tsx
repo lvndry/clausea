@@ -7,16 +7,18 @@ import { Footer, Pricing } from "@/components/clausea/PricingAndFooter";
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-background text-foreground selection:bg-primary/20 w-full overflow-hidden">
+    <div className="min-h-screen bg-background text-foreground selection:bg-foreground selection:text-background w-full overflow-x-hidden">
       <GSAPInit />
-      <Header />
-      <main className="flex-1 w-full">
-        <Hero />
-        <ComplexityToClarity />
-        <AsymmetricGrid />
-        <Pricing />
-      </main>
-      <Footer />
+      <div className="grid grid-cols-12 max-w-[1600px] mx-auto border-x border-border min-h-screen">
+        <Header />
+        <main className="col-span-12 flex flex-col w-full">
+          <Hero />
+          <ComplexityToClarity />
+          <AsymmetricGrid />
+          <Pricing />
+        </main>
+        <Footer />
+      </div>
     </div>
   );
 }

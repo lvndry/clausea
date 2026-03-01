@@ -1,23 +1,26 @@
 "use client";
 
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowUpDown,
+  CheckCircle2,
   ChevronDown,
   Search,
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import posthog from "posthog-js";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { IndexForm } from "@/components/pipeline/index-form";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,34 +30,24 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { getVerdictConfig } from "@/lib/verdict";
 import type { Product } from "@/types";
 import { useUser } from "@clerk/nextjs";
 import { useAnalytics } from "@hooks/useAnalytics";
+import { usePipelineJob } from "@hooks/usePipelineJob";
 
 function ProductCard({
   product,
   index,
-  verdict,
-  riskScore,
-  isLoadingSummary,
-  fetchMetaSummary,
   onClick,
 }: {
   product: Product;
   index: number;
-  verdict?: string;
-  riskScore?: number;
-  isLoadingSummary?: boolean;
-  fetchMetaSummary?: (slug: string) => void;
   onClick: () => void;
 }) {
   const [logo, setLogo] = useState<string | null>(product.logo || null);
   const [isLoadingLogo, setIsLoadingLogo] = useState(false);
   const [hasTriedLoading, setHasTriedLoading] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
-
-  const verdictConfig = verdict ? getVerdictConfig(verdict) : null;
 
   // Lazy load logo
   useEffect(() => {
@@ -95,178 +88,103 @@ function ProductCard({
     return () => observer.disconnect();
   }, [product.slug, product.name, logo, hasTriedLoading]);
 
-  // Lazy load summary
-  useEffect(() => {
-    if (verdict !== undefined || isLoadingSummary) return;
-
-    const summaryObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && fetchMetaSummary) {
-            fetchMetaSummary(product.slug);
-            summaryObserver.disconnect();
-          }
-        });
-      },
-      { rootMargin: "100px" },
-    );
-
-    if (cardRef.current) summaryObserver.observe(cardRef.current);
-    return () => summaryObserver.disconnect();
-  }, [product.slug, verdict, isLoadingSummary, fetchMetaSummary]);
-
-  // Vary card styles - some with borders, some minimal
-  const cardVariants = [
-    "border border-border bg-card",
-    "border-2 border-border/60 bg-card",
-    "border border-border/40 bg-muted/30",
-  ];
-  const cardStyle = cardVariants[index % cardVariants.length];
-
-  // Risk color - solid, not gradient
-  const getRiskColor = (score?: number) => {
-    if (!score) return "bg-muted";
-    if (score >= 7) return "bg-red-500";
-    if (score >= 4) return "bg-amber-500";
-    return "bg-green-500";
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: index * 0.03 }}
+      className="group"
+      onClick={onClick}
     >
-      <Card
+      <div
         ref={cardRef}
-        variant="default"
-        className={cn(
-          "group cursor-pointer transition-all duration-200",
-          cardStyle,
-          "hover:border-primary/50 hover:shadow-md",
-        )}
-        onClick={onClick}
+        className="border border-border bg-background p-6 sm:p-8 relative overflow-hidden transition-colors hover:border-foreground/30 cursor-pointer h-full flex flex-col gap-6"
       >
-        <CardContent className="p-5">
-          <div className="flex flex-col gap-4">
-            {/* Header: Logo + Verdict */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="relative">
-                {isLoadingLogo ? (
-                  <div className="w-12 h-12 rounded-lg bg-muted animate-pulse" />
-                ) : logo ? (
-                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-background border border-border flex items-center justify-center p-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={logo}
-                      alt={`${product.name} logo`}
-                      className="w-full h-full object-contain"
-                      loading="lazy"
-                    />
-                  </div>
-                ) : (
-                  <div className="w-12 h-12 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center font-display font-bold text-lg">
-                    {product.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
-              </div>
-
-              {verdictConfig && (
-                <Badge
-                  variant="outline"
-                  size="sm"
-                  className="gap-1 font-medium uppercase tracking-wide rounded-md"
-                >
-                  <verdictConfig.cardIcon className="h-3 w-3" />
-                  {verdictConfig.label}
-                </Badge>
-              )}
-            </div>
-
-            {/* Product Info */}
-            <div className="space-y-1">
-              <h3 className="font-display font-bold text-lg text-foreground group-hover:text-primary transition-colors">
-                {product.name}
-              </h3>
-              {product.description && (
-                <p className="text-sm text-muted-foreground line-clamp-2 leading-snug">
-                  {product.description}
-                </p>
-              )}
-            </div>
-
-            {/* Risk Score - Simple bar */}
-            <div className="pt-3 border-t border-border/50">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Risk
-                </span>
-                <span className="text-sm font-bold text-foreground">
-                  {isLoadingSummary ? (
-                    <Skeleton className="w-8 h-4" />
-                  ) : riskScore !== undefined ? (
-                    <span
-                      className={cn(
-                        riskScore >= 7
-                          ? "text-red-600"
-                          : riskScore >= 4
-                            ? "text-amber-600"
-                            : "text-green-600",
-                      )}
-                    >
-                      {Math.round(riskScore)}/10
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">--</span>
-                  )}
-                </span>
-              </div>
-
-              {/* Simple progress bar */}
-              <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                {isLoadingSummary ? (
-                  <div className="h-full w-1/3 bg-muted-foreground/20 animate-pulse" />
-                ) : riskScore !== undefined ? (
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(riskScore / 10) * 100}%` }}
-                    transition={{ duration: 0.6, ease: "easeOut" }}
-                    className={cn(
-                      "h-full rounded-full",
-                      getRiskColor(riskScore),
-                    )}
-                  />
-                ) : null}
-              </div>
-            </div>
+        <div className="flex items-start justify-between">
+          <div className="w-12 h-12 flex items-center justify-center border border-border bg-muted/5 shrink-0">
+            {isLoadingLogo ? (
+              <div className="w-6 h-6 border-b-2 border-foreground rounded-full animate-spin" />
+            ) : logo ? (
+              <img
+                src={logo}
+                alt={`${product.name} logo`}
+                className="w-full h-full object-contain p-2"
+                loading="lazy"
+              />
+            ) : (
+              <span className="text-[10px] font-bold text-muted-foreground">
+                {product.name.substring(0, 2).toUpperCase()}
+              </span>
+            )}
           </div>
-        </CardContent>
-      </Card>
+          <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+            View Analysis
+          </div>
+        </div>
+
+        <div className="space-y-4 grow">
+          <h3 className="font-display font-medium text-2xl text-foreground">
+            {product.name}
+          </h3>
+          {product.description && (
+            <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed font-serif italic">
+              &ldquo;{product.description}&rdquo;
+            </p>
+          )}
+        </div>
+
+        <div className="pt-6 border-t border-border mt-auto flex items-center justify-between gap-4">
+          <div className="flex flex-wrap gap-2">
+            {product.categories?.slice(0, 3).map((cat) => (
+              <span
+                key={cat}
+                className="text-[8px] font-bold uppercase tracking-widest text-muted-foreground px-2 py-0.5 border border-border bg-muted/5 whitespace-nowrap"
+              >
+                {cat}
+              </span>
+            ))}
+            {(!product.categories || product.categories.length === 0) && (
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                General Service
+              </span>
+            )}
+          </div>
+          <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground group-hover:translate-x-1 transition-all shrink-0" />
+        </div>
+      </div>
     </motion.div>
   );
 }
 
-export default function ProductsPage() {
+function ProductsPageContent() {
   const { user } = useUser();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const { trackUserJourney, trackPageView } = useAnalytics();
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [productSummaries, setProductSummaries] = useState<Record<string, any>>(
-    {},
-  );
-  const [summaryLoading, setSummaryLoading] = useState<Record<string, boolean>>(
-    {},
-  );
   const [sortBy, setSortBy] = useState<"name" | "risk" | "recent">("name");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Pagination
+  const ITEMS_PER_PAGE = 20;
+  const pageParam = searchParams.get("page");
+  const currentPage = pageParam ? parseInt(pageParam) : 1;
+
   // Pipeline state
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const {
+    jobId: activeJobId,
+    setJobId: setActiveJobId,
+    clearJobId: clearActiveJobId,
+  } = usePipelineJob();
+  const [alreadyIndexed, setAlreadyIndexed] = useState<{
+    slug: string;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     trackPageView("products");
@@ -280,7 +198,9 @@ export default function ProductsPage() {
           product.description
             ?.toLowerCase()
             .includes(searchTerm.toLowerCase()) ||
-          product.industry?.toLowerCase().includes(searchTerm.toLowerCase()),
+          product.categories?.some((cat) =>
+            cat.toLowerCase().includes(searchTerm.toLowerCase()),
+          ),
       ).length;
       trackUserJourney.productSearched(searchTerm, filteredCount);
     }
@@ -306,66 +226,35 @@ export default function ProductsPage() {
     fetchProducts();
   }, []);
 
-  const fetchMetaSummary = useCallback(
-    (slug: string) => {
-      if (!slug || productSummaries[slug] || summaryLoading[slug]) return;
-      setSummaryLoading((s) => ({ ...s, [slug]: true }));
-      fetch(`/api/products/${slug}/overview`)
-        .then((res) => {
-          if (res.ok) return res.json();
-          return null;
-        })
-        .then((data) => {
-          if (data) setProductSummaries((s) => ({ ...s, [slug]: data }));
-        })
-        .catch(() => {})
-        .finally(() => {
-          setSummaryLoading((s) => ({ ...s, [slug]: false }));
-        });
-    },
-    [productSummaries, summaryLoading],
-  );
-
   const filteredProducts = products.filter(
     (product) =>
       product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.industry?.toLowerCase().includes(searchTerm.toLowerCase()),
+      product.categories?.some((cat) =>
+        cat.toLowerCase().includes(searchTerm.toLowerCase()),
+      ),
   );
 
   const sortedProducts = [...filteredProducts].sort((a, b) => {
     if (sortBy === "name") return a.name.localeCompare(b.name);
-    if (sortBy === "risk") {
-      const ra = productSummaries[a.slug]?.verdict || "";
-      const rb = productSummaries[b.slug]?.verdict || "";
-      const rank = (v: string) =>
-        v === "very_pervasive"
-          ? 5
-          : v === "pervasive"
-            ? 4
-            : v === "moderate"
-              ? 3
-              : v === "user_friendly"
-                ? 2
-                : v === "very_user_friendly"
-                  ? 1
-                  : 0;
-      return rank(rb) - rank(ra);
-    }
-    if (sortBy === "recent") {
-      const ta = new Date(
-        productSummaries[a.slug]?.last_updated || 0,
-      ).getTime();
-      const tb = new Date(
-        productSummaries[b.slug]?.last_updated || 0,
-      ).getTime();
-      return tb - ta;
-    }
-    return 0;
+    return a.name.localeCompare(b.name);
   });
+
+  const totalPages = Math.ceil(sortedProducts.length / ITEMS_PER_PAGE);
+  const paginatedProducts = sortedProducts.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE,
+  );
+
+  const setPage = (page: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", page.toString());
+    router.push(`/products?${params.toString()}`);
+  };
 
   async function handlePipelineSubmit(url: string) {
     setIsSubmitting(true);
+    setAlreadyIndexed(null);
     try {
       const res = await fetch("/api/pipeline", {
         method: "POST",
@@ -377,6 +266,12 @@ export default function ProductsPage() {
         throw new Error(errData.error || "Failed to start analysis");
       }
       const data = await res.json();
+
+      if (data.already_indexed) {
+        setAlreadyIndexed({ slug: data.product_slug, name: data.product_name });
+        return;
+      }
+
       setActiveJobId(data.job_id);
       posthog.capture("pipeline_started", {
         url,
@@ -385,9 +280,7 @@ export default function ProductsPage() {
       });
     } catch (err) {
       console.error("Pipeline submit error:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to start analysis",
-      );
+      setError(err instanceof Error ? err.message : "Failed to start analysis");
     } finally {
       setIsSubmitting(false);
     }
@@ -395,6 +288,7 @@ export default function ProductsPage() {
 
   function handlePipelineComplete(productSlug: string) {
     posthog.capture("pipeline_completed", { product_slug: productSlug });
+    clearActiveJobId();
     // Optionally auto-navigate after a brief delay
     setTimeout(() => {
       router.push(`/products/${productSlug}`);
@@ -402,7 +296,7 @@ export default function ProductsPage() {
   }
 
   function handlePipelineDismiss() {
-    setActiveJobId(null);
+    clearActiveJobId();
   }
 
   function handleProductClick(product: Product) {
@@ -412,15 +306,15 @@ export default function ProductsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-8">
-        <div className="space-y-3">
-          <Skeleton className="h-10 w-64" />
-          <Skeleton className="h-5 w-96" />
+      <div className="space-y-12">
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-64 rounded-none" />
+          <Skeleton className="h-4 w-full max-w-2xl rounded-none" />
         </div>
-        <Skeleton className="h-12 w-full rounded-xl" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <Skeleton className="h-16 w-full rounded-none" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           {[...Array(6)].map((_, i) => (
-            <Skeleton key={i} className="h-[200px] rounded-xl" />
+            <Skeleton key={i} className="h-64 rounded-none" />
           ))}
         </div>
       </div>
@@ -456,27 +350,66 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="flex flex-col space-y-8">
-      {/* Header - More personality */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-primary" />
+    <div className="flex flex-col space-y-12">
+      {/* Header */}
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 border border-border flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-foreground" strokeWidth={1.5} />
           </div>
           <div>
-            <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground tracking-tight">
+            <h1 className="text-4xl md:text-5xl font-display font-medium text-foreground tracking-tight">
               Service Intelligence
             </h1>
           </div>
         </div>
-        <p className="text-muted-foreground text-base max-w-2xl">
-          Understand what you&apos;re agreeing to. AI-powered privacy analysis
-          for the services you use daily.
+        <p className="text-muted-foreground text-sm uppercase tracking-widest font-medium max-w-2xl leading-relaxed">
+          The privacy archive. AI-powered structural analysis of the digital
+          service layer.
         </p>
       </div>
 
       {/* URL Submission - DeepWiki style */}
       <IndexForm onSubmit={handlePipelineSubmit} isSubmitting={isSubmitting} />
+
+      {/* Already-indexed banner */}
+      {alreadyIndexed && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="border border-[#2B7A5C]/20 bg-[#2B7A5C]/5 p-4 flex items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <CheckCircle2
+                className="h-4 w-4 text-[#2B7A5C]"
+                strokeWidth={2}
+              />
+              <p className="text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C]">
+                Analysis available: {alreadyIndexed.name}
+              </p>
+            </div>
+            <div className="flex gap-4 items-center">
+              <Link href={`/products/${alreadyIndexed.slug}`}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="rounded-none h-8 px-0 text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C] hover:bg-transparent hover:text-[#2B7A5C]/70"
+                >
+                  View Archive
+                </Button>
+              </Link>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="rounded-none h-8 px-0 text-[10px] uppercase tracking-widest font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
+                onClick={() => setAlreadyIndexed(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Pipeline Progress */}
       {activeJobId && (
@@ -487,79 +420,68 @@ export default function ProductsPage() {
         />
       )}
 
-      {/* Search - Simple, solid */}
-      <div className="rounded-xl border border-border bg-card p-2 flex flex-col md:flex-row gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
+      {/* Search & Filter */}
+      <div className="border border-border bg-background flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-border">
+        <div className="relative flex-1 p-4">
+          <Search
+            className="absolute left-8 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40"
+            strokeWidth={1.5}
+          />
           <Input
-            placeholder="Search products..."
+            placeholder="Search the archive..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 h-10 border-none bg-transparent focus-visible:ring-0 text-sm"
+            className="pl-12 h-10 border-none bg-transparent focus-visible:ring-0 text-sm uppercase tracking-widest font-medium placeholder:text-muted-foreground/30 rounded-none shadow-none"
           />
         </div>
 
-        <div className="flex items-center gap-2 px-2">
-          <div className="hidden md:block w-px h-6 bg-border" />
-
-          <Badge variant="secondary" size="sm" className="gap-1.5 rounded-md">
-            {filteredProducts.length}
-          </Badge>
-
+        <div className="flex items-center p-2 bg-muted/5">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-9 rounded-lg px-3 text-sm"
+                className="h-10 rounded-none px-6 text-[10px] uppercase tracking-widest font-bold hover:bg-transparent"
               >
-                <ArrowUpDown className="mr-2 h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Sort:</span>
-                <span className="ml-1 capitalize text-primary font-medium">
-                  {sortBy}
-                </span>
-                <ChevronDown className="ml-2 h-3 w-3 opacity-50" />
+                <ArrowUpDown
+                  className="mr-3 h-4 w-4 text-foreground/40"
+                  strokeWidth={1.5}
+                />
+                <span className="text-muted-foreground mr-2">Sort:</span>
+                <span className="text-foreground">{sortBy}</span>
+                <ChevronDown className="ml-3 h-3 w-3 opacity-30" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48 p-1 rounded-lg">
+            <DropdownMenuContent
+              align="end"
+              className="w-56 p-2 rounded-none border-border shadow-none"
+            >
               <DropdownMenuItem
-                onClick={() => {
-                  setSortBy("name");
-                  posthog.capture("product_sort_changed", {
-                    sort_by: "name",
-                    products_count: filteredProducts.length,
-                  });
-                }}
-                className="rounded-md cursor-pointer"
+                onClick={() => setSortBy("name")}
+                className="rounded-none cursor-pointer text-[10px] uppercase tracking-widest font-bold focus:bg-muted/10 p-3"
               >
                 Name (A-Z)
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => {
-                  setSortBy("risk");
-                  posthog.capture("product_sort_changed", {
-                    sort_by: "risk",
-                    products_count: filteredProducts.length,
-                  });
-                }}
-                className="rounded-md cursor-pointer"
+                onClick={() => setSortBy("risk")}
+                className="rounded-none cursor-pointer text-[10px] uppercase tracking-widest font-bold focus:bg-muted/10 p-3"
               >
                 Risk Level
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => {
-                  setSortBy("recent");
-                  posthog.capture("product_sort_changed", {
-                    sort_by: "recent",
-                    products_count: filteredProducts.length,
-                  });
-                }}
-                className="rounded-md cursor-pointer"
+                onClick={() => setSortBy("recent")}
+                className="rounded-none cursor-pointer text-[10px] uppercase tracking-widest font-bold focus:bg-muted/10 p-3"
               >
                 Recently Updated
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <div className="h-6 w-px bg-border mx-2" />
+
+          <div className="px-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            {filteredProducts.length} Entries
+          </div>
         </div>
       </div>
 
@@ -567,45 +489,105 @@ export default function ProductsPage() {
       <AnimatePresence mode="popLayout">
         {filteredProducts.length === 0 ? (
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex flex-col items-center justify-center py-20 text-center space-y-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center justify-center py-32 text-center"
           >
-            <div className="w-20 h-20 rounded-xl bg-muted/50 flex items-center justify-center">
-              <Search className="h-10 w-10 text-muted-foreground/30" />
+            <div className="w-16 h-16 border border-border flex items-center justify-center mb-6">
+              <Search className="h-6 w-6 text-muted-foreground/20" />
             </div>
-            <div className="space-y-1">
-              <h3 className="text-xl font-bold font-display">
-                No products found
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">
+                Archive result: null
               </h3>
-              <p className="text-muted-foreground max-w-sm mx-auto text-sm">
-                Try searching for a different product or check back later.
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground max-w-sm mx-auto">
+                The specified identifier does not exist within our current
+                mapping.
               </p>
             </div>
           </motion.div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {sortedProducts.map((product, index) => {
-              const verdict = productSummaries[product.slug]?.verdict;
-              const riskScore = productSummaries[product.slug]?.risk_score;
-              const isLoadingSummary = summaryLoading[product.slug];
-
-              return (
+          <div className="space-y-12">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {paginatedProducts.map((product, index) => (
                 <ProductCard
                   key={product.id}
                   product={product}
                   index={index}
-                  verdict={verdict}
-                  riskScore={riskScore}
-                  isLoadingSummary={isLoadingSummary}
-                  fetchMetaSummary={fetchMetaSummary}
                   onClick={() => handleProductClick(product)}
                 />
-              );
-            })}
+              ))}
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="pt-12 border-t border-border flex items-center justify-between">
+                <Button
+                  variant="ghost"
+                  disabled={currentPage === 1}
+                  onClick={() => setPage(currentPage - 1)}
+                  className="rounded-none text-[10px] uppercase tracking-widest font-bold gap-3 px-0 hover:bg-transparent hover:text-foreground/70"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+
+                <div className="flex gap-4">
+                  {[...Array(totalPages)].map((_, i) => (
+                    <button
+                      key={i + 1}
+                      onClick={() => setPage(i + 1)}
+                      className={cn(
+                        "text-[10px] font-bold uppercase tracking-widest transition-colors",
+                        currentPage === i + 1
+                          ? "text-foreground underline underline-offset-8"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                </div>
+
+                <Button
+                  variant="ghost"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                  className="rounded-none text-[10px] uppercase tracking-widest font-bold gap-3 px-0 hover:bg-transparent hover:text-foreground/70"
+                >
+                  Next
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function ProductsPageFallback() {
+  return (
+    <div className="space-y-12">
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-64 rounded-none" />
+        <Skeleton className="h-4 w-full max-w-2xl rounded-none" />
+      </div>
+      <Skeleton className="h-16 w-full rounded-none" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {[...Array(6)].map((_, i) => (
+          <Skeleton key={i} className="h-64 rounded-none" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function ProductsPage() {
+  return (
+    <Suspense fallback={<ProductsPageFallback />}>
+      <ProductsPageContent />
+    </Suspense>
   );
 }

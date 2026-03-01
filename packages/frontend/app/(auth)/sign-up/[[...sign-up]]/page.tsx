@@ -48,6 +48,7 @@ export default function SignUpPage() {
               },
             }}
             signInUrl="/sign-in"
+            forceRedirectUrl="/onboarding"
             fallbackRedirectUrl="/onboarding"
           />
         </div>

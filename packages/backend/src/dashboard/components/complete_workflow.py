@@ -62,9 +62,11 @@ def run_crawl_async(product: Product, stop_event: Event | None = None) -> Proces
             asyncio.set_event_loop(loop)
 
             async def runner():
+                from src.core.config import config
+
                 pipeline = LegalDocumentPipeline(
-                    max_depth=4,
-                    max_pages=500,
+                    max_depth=config.crawler.max_depth,
+                    max_pages=config.crawler.max_pages,
                     crawler_strategy="bfs",
                     concurrent_limit=5,
                     delay_between_requests=1.0,

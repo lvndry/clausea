@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
+import { cn } from "@/lib/utils";
 
 const PRO_PRICE_ID =
   process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
@@ -32,7 +33,8 @@ export function Pricing() {
     {
       name: "Free",
       price: "0",
-      description: "Perfect for trying out Clausea with basic privacy analysis.",
+      description:
+        "Perfect for trying out Clausea with basic privacy analysis.",
       features: [
         "3 analyses per month",
         "AI-powered summaries",
@@ -46,7 +48,8 @@ export function Pricing() {
     {
       name: "Pro",
       price: "9",
-      description: "Unlimited analysis for privacy-conscious individuals and teams.",
+      description:
+        "Unlimited analysis for privacy-conscious individuals and teams.",
       features: [
         "Unlimited analyses",
         "Advanced semantic search",
@@ -70,113 +73,117 @@ export function Pricing() {
     <section
       ref={containerRef}
       id="pricing"
-      className="py-8 md:py-12 px-4 md:px-8 bg-muted/30 relative overflow-hidden"
+      className="col-span-12 grid grid-cols-1 md:grid-cols-12 border-b border-border bg-background"
     >
-      {/* Background ambience */}
-      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[140px] pointer-events-none" />
-      <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-secondary/5 rounded-full blur-[120px] pointer-events-none" />
-
-      <div className="max-w-6xl mx-auto relative z-10">
+      <div className="col-span-12 md:col-span-4 px-6 md:px-10 py-16 md:py-20 border-b md:border-b-0 md:border-r border-border flex flex-col justify-between">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6 }}
-          className="text-center mb-10"
         >
-          <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wider uppercase text-primary bg-primary/10 border border-primary/20 px-4 py-2 rounded-full mb-6">
+          <span className="text-[10px] md:text-xs uppercase tracking-[0.3em] text-muted-foreground block mb-8">
             Pricing
           </span>
-          <h2 className="text-3xl md:text-5xl lg:text-6xl font-display font-bold text-foreground tracking-tight">
-            Simple{" "}
-            <span className="text-gradient-warm font-serif italic font-normal tracking-normal">
-              Pricing.
-            </span>
+          <h2 className="text-4xl md:text-6xl font-display font-medium text-foreground tracking-tight leading-[0.9]">
+            Simple
+            <br />
+            Pricing.
           </h2>
-          <p className="text-muted-foreground text-lg mt-4 max-w-xl mx-auto">
-            Start free, upgrade when you need more. No hidden fees.
-          </p>
         </motion.div>
 
-        {/* Error message */}
-        {error && (
-          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-center text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        <div className="mt-12 md:mt-0">
+          <p className="text-muted-foreground text-sm leading-relaxed max-w-[280px]">
+            Start free, upgrade when you need more. No hidden fees.
+          </p>
+          {/* Error message */}
+          {error && (
+            <div className="mt-6 p-4 border border-foreground bg-foreground/5 text-xs font-medium text-foreground">
+              {error}
+            </div>
+          )}
+        </div>
+      </div>
 
-        {/* Pricing Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto items-start">
-          {tiers.map((tier, index) => (
-            <motion.div
-              key={tier.name}
-              initial={{ opacity: 0, y: 40 }}
-              animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.6, delay: index * 0.15 }}
-              className={`relative p-8 lg:p-10 rounded-2xl border transition-all duration-500 ${
-                tier.popular
-                  ? "bg-card border-primary/30 shadow-lg scale-100 md:scale-105 z-10"
-                  : "bg-card/50 border-border hover:border-primary/20"
-              }`}
-            >
-              {tier.popular && (
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-primary text-primary-foreground px-5 py-1 rounded-full text-xs font-medium">
-                  Most Popular
-                </div>
-              )}
-
-              <h4 className="text-sm font-medium uppercase tracking-wider mb-3 text-primary">
+      {/* Pricing Grid */}
+      <div className="col-span-12 md:col-span-8 grid grid-cols-1 md:grid-cols-2">
+        {tiers.map((tier, index) => (
+          <motion.div
+            key={tier.name}
+            initial={{ opacity: 0, y: 40 }}
+            animate={isInView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.6, delay: index * 0.15 }}
+            className={cn(
+              "px-6 md:px-10 py-12 border-b border-border flex flex-col min-h-[480px] bg-background",
+              index === 0 ? "md:border-r border-b" : "border-b-0",
+              tier.popular ? "bg-muted/5" : "",
+            )}
+          >
+            <div className="flex justify-between items-start mb-12">
+              <h4 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
                 {tier.name}
               </h4>
-              <div className="flex items-baseline gap-2 mb-4">
-                <span className="text-4xl font-display font-bold text-foreground">
-                  ${tier.price}
+              {tier.popular && (
+                <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+                  Most Popular
                 </span>
-                <span className="text-sm text-muted-foreground">/month</span>
-              </div>
+              )}
+            </div>
 
-              <p className="text-sm leading-relaxed mb-6 text-muted-foreground pb-6 border-b border-border">
-                {tier.description}
-              </p>
+            <div className="flex items-baseline gap-2 mb-6">
+              <span className="text-6xl font-display font-medium text-foreground tracking-tight leading-none">
+                ${tier.price}
+              </span>
+              <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+                /mo
+              </span>
+            </div>
 
-              <ul className="space-y-3 mb-8">
-                {tier.features.map((feature) => (
-                  <li
-                    key={feature}
-                    className="flex items-start gap-3 text-sm text-foreground/80"
-                  >
-                    <CheckCircle2 className="w-5 h-5 shrink-0 text-primary" />
-                    <span>{feature}</span>
-                  </li>
-                ))}
-              </ul>
+            <p className="text-sm leading-relaxed text-muted-foreground mb-12 grow">
+              {tier.description}
+            </p>
 
-              <Button
-                variant={tier.popular ? "default" : "outline"}
-                disabled={isLoading && tier.popular}
-                className={`w-full h-12 rounded-full font-medium transition-all duration-500 ${
-                  tier.popular
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "border-border hover:bg-primary/5 hover:border-primary/30"
-                }`}
-                onClick={() => {
-                  posthog.capture("pricing_plan_clicked", {
-                    plan_name: tier.name,
-                    plan_price: tier.price,
-                    is_popular: tier.popular,
-                    cta_text: tier.cta,
-                  });
-                  tier.action();
-                }}
-              >
-                {isLoading && tier.popular ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : null}
-                {tier.cta}
-              </Button>
-            </motion.div>
-          ))}
-        </div>
+            <ul className="space-y-4 mb-12">
+              {tier.features.map((feature) => (
+                <li
+                  key={feature}
+                  className="flex items-start gap-4 text-sm text-muted-foreground"
+                >
+                  <CheckCircle2
+                    className="w-4 h-4 shrink-0 text-foreground mt-0.5"
+                    strokeWidth={1.5}
+                  />
+                  <span>{feature}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Button
+              variant={tier.popular ? "default" : "outline"}
+              disabled={isLoading && tier.popular}
+              className={cn(
+                "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
+                tier.popular
+                  ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
+                  : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
+              )}
+              onClick={() => {
+                posthog.capture("pricing_plan_clicked", {
+                  plan_name: tier.name,
+                  plan_price: tier.price,
+                  is_popular: tier.popular,
+                  cta_text: tier.cta,
+                });
+                tier.action();
+              }}
+            >
+              {isLoading && tier.popular ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              {tier.cta}
+            </Button>
+          </motion.div>
+        ))}
       </div>
     </section>
   );
@@ -199,170 +206,166 @@ export function Footer() {
   };
 
   return (
-    <footer className="bg-background text-foreground pt-20 pb-10 px-4 md:px-8 border-t border-border overflow-hidden relative">
-      {/* Subtle wave pattern */}
-      <div className="absolute inset-0 wave-pattern opacity-30 pointer-events-none" />
+    <footer className="col-span-12 grid grid-cols-1 md:grid-cols-12 bg-background border-b border-border">
+      {/* Brand Column */}
+      <div className="col-span-12 md:col-span-4 px-6 md:px-10 py-16 md:py-20 border-b md:border-b-0 md:border-r border-border flex flex-col justify-between">
+        <div>
+          <Link href="/" className="inline-block mb-12">
+            <span className="font-display text-2xl md:text-3xl font-medium tracking-widest uppercase text-foreground">
+              CLAUSEA
+            </span>
+          </Link>
+          <p className="text-muted-foreground text-sm leading-relaxed max-w-[280px]">
+            Navigating the depths of legal complexity. Because clarity
+            shouldn&apos;t be a luxury.
+          </p>
+        </div>
 
-      <div className="max-w-6xl mx-auto relative z-10">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-10 lg:gap-12 mb-16">
-          {/* Brand Column */}
-          <div className="col-span-1">
-            <Link href="/" className="flex items-center gap-3 mb-6 group">
-              <div className="w-10 h-10 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center group-hover:bg-primary/20 group-hover:rotate-3 transition-all duration-500 overflow-hidden">
-                <Image
-                  src="/static/favicons/logo.png"
-                  alt="Clausea"
-                  width={24}
-                  height={24}
-                  className="w-6 h-6 object-contain"
-                />
-              </div>
-              <span className="font-display font-bold text-xl tracking-tight">
-                Clausea
-              </span>
-            </Link>
-            <p className="text-muted-foreground leading-relaxed mb-6 text-sm max-w-xs">
-              Navigating the depths of legal complexity. Because clarity
-              shouldn&apos;t be a luxury.
-            </p>
-            <div className="flex items-center gap-3">
-              {[
-                { icon: FaTwitter, href: "https://x.com/clausea_ai" },
-                { icon: FaGithub, href: "https://github.com/lvndry/clausea" },
-              ].map(({ icon: Icon, href }, i) => (
-                <a
-                  key={i}
-                  href={href}
-                  className="w-9 h-9 rounded-full border border-border flex items-center justify-center hover:bg-primary hover:text-primary-foreground hover:border-primary transition-all duration-300"
+        <div className="flex items-center gap-6 mt-16 md:mt-0">
+          {[
+            { icon: FaTwitter, href: "https://x.com/clausea_ai" },
+            { icon: FaGithub, href: "https://github.com/lvndry/clausea" },
+          ].map(({ icon: Icon, href }, i) => (
+            <a
+              key={i}
+              href={href}
+              className="text-foreground hover:text-muted-foreground transition-colors"
+            >
+              <Icon className="w-5 h-5" />
+            </a>
+          ))}
+        </div>
+      </div>
+
+      {/* Links Columns */}
+      <div className="col-span-12 md:col-span-8 grid grid-cols-1 md:grid-cols-3">
+        <div className="px-6 md:px-10 py-12 md:py-20 border-b md:border-b-0 md:border-r border-border">
+          <h5 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground mb-8">
+            Product
+          </h5>
+          <ul className="space-y-4">
+            {["Features", "Pricing", "API", "Integrations"].map((l) => (
+              <li key={l}>
+                <Link
+                  href="#"
+                  className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  <Icon className="w-4 h-4" />
-                </a>
-              ))}
-            </div>
-          </div>
+                  {l}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
 
-          {/* Links Columns */}
-          <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-8 lg:gap-10">
-            <div className="space-y-4">
-              <h5 className="font-medium text-xs uppercase tracking-wider text-foreground">
-                Product
-              </h5>
-              <ul className="space-y-3">
-                {["Features", "Pricing", "API", "Integrations"].map((l) => (
-                  <li key={l}>
-                    <Link
-                      href="#"
-                      className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                    >
-                      {l}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="space-y-4">
-              <h5 className="font-medium text-xs uppercase tracking-wider text-foreground">
-                Resources
-              </h5>
-              <ul className="space-y-3">
-                {["Security", "Support", "Blog"].map((l) => (
-                  <li key={l}>
-                    <Link
-                      href="#"
-                      className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                    >
-                      {l}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="space-y-4">
-              <h5 className="font-medium text-xs uppercase tracking-wider text-foreground">
-                Legal
-              </h5>
-              <ul className="space-y-3">
-                <li>
-                  <Link
-                    href="/privacy"
-                    className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    Privacy Policy
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/terms"
-                    className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    Terms of Service
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="#"
-                    className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    Cookie Policy
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="#"
-                    className="text-sm text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    GDPR
-                  </Link>
-                </li>
-              </ul>
-            </div>
-          </div>
+        <div className="px-6 md:px-10 py-12 md:py-20 border-b md:border-b-0 md:border-r border-border">
+          <h5 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground mb-8">
+            Resources
+          </h5>
+          <ul className="space-y-4">
+            {["Security", "Support", "Blog"].map((l) => (
+              <li key={l}>
+                <Link
+                  href="#"
+                  className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {l}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
 
-          {/* Newsletter */}
-          <div className="space-y-4">
-            <h5 className="font-medium text-xs uppercase tracking-wider text-foreground">
+        <div className="px-6 md:px-10 py-12 md:py-20 border-b border-border md:border-b-0">
+          <h5 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground mb-8">
+            Legal
+          </h5>
+          <ul className="space-y-4">
+            <li>
+              <Link
+                href="/privacy"
+                className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Privacy Policy
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/terms"
+                className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Terms of Service
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="#"
+                className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cookie Policy
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="#"
+                className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                GDPR
+              </Link>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Newsletter & Bottom Bar */}
+      <div className="col-span-12 grid grid-cols-1 md:grid-cols-12">
+        <div className="col-span-12 md:col-span-4 px-6 md:px-10 py-12 md:border-r border-border flex flex-col justify-center">
+          <p className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground mb-4">
+            © 2024 Clausea AI
+          </p>
+          <div className="flex items-center gap-6">
+            <Link
+              href="#"
+              className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Status
+            </Link>
+            <Link
+              href="#"
+              className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Security
+            </Link>
+          </div>
+        </div>
+
+        <div className="col-span-12 md:col-span-8 px-6 md:px-10 py-12 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div>
+            <h5 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground mb-2">
               Stay Updated
             </h5>
             <p className="text-muted-foreground text-sm">
               Get legal AI insights delivered monthly.
             </p>
-            <div className="flex gap-2 p-1 bg-muted/50 border border-border rounded-full focus-within:border-primary/50 transition-all duration-300">
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={newsletterEmail}
-                onChange={(e) => setNewsletterEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleNewsletterSubmit();
-                  }
-                }}
-                className="bg-transparent px-4 py-2 text-sm flex-1 outline-none text-foreground placeholder:text-muted-foreground/50"
-                aria-label="Email address"
-              />
-              <Button
-                size="icon"
-                className="rounded-full w-9 h-9 bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
-                onClick={handleNewsletterSubmit}
-              >
-                <Mail className="w-4 h-4" />
-              </Button>
-            </div>
           </div>
-        </div>
 
-        {/* Bottom Bar */}
-        <div className="pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-muted-foreground">
-            © 2025 Clausea AI. All rights reserved.
-          </p>
-          <div className="flex items-center gap-6 text-xs text-muted-foreground">
-            <Link href="#" className="hover:text-primary transition-colors">
-              Status
-            </Link>
-            <Link href="#" className="hover:text-primary transition-colors">
-              Security
-            </Link>
+          <div className="flex w-full md:w-auto md:min-w-[400px]">
+            <input
+              type="email"
+              placeholder="your@email.com"
+              value={newsletterEmail}
+              onChange={(e) => setNewsletterEmail(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleNewsletterSubmit();
+              }}
+              className="bg-transparent border border-r-0 border-foreground px-4 py-3 text-sm flex-1 outline-none text-foreground placeholder:text-muted-foreground rounded-none"
+              aria-label="Email address"
+            />
+            <Button
+              className="rounded-none border border-foreground bg-foreground text-background hover:bg-muted-foreground transition-colors px-6 h-auto"
+              onClick={handleNewsletterSubmit}
+            >
+              <Mail className="w-4 h-4" />
+            </Button>
           </div>
         </div>
       </div>

@@ -48,6 +48,17 @@ class ExtractedThirdPartyRecipient(BaseModel):
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
+ContractClauseType = Literal["liability", "arbitration", "governing_law", "jurisdiction"]
+
+
+class ExtractedContractClause(BaseModel):
+    """Evidence-backed contract clause."""
+
+    clause_type: ContractClauseType
+    value: str
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
 class PrivacySignals(BaseModel):
     """High-level binary/simple signals extracted from legal documents.
 
@@ -70,7 +81,7 @@ class DocumentExtraction(BaseModel):
     claim is traceable to an exact quote in the source document.
     """
 
-    version: str = "v1"
+    version: str = "v3"
     generated_at: datetime = Field(default_factory=datetime.now)
     source_content_hash: str
 
@@ -83,6 +94,11 @@ class DocumentExtraction(BaseModel):
     benefits: list[ExtractedTextItem] = Field(default_factory=list)
     recommended_actions: list[ExtractedTextItem] = Field(default_factory=list)
     privacy_signals: PrivacySignals | None = None
+    retention_policy: list[ExtractedTextItem] = Field(default_factory=list)
+    security_measures: list[ExtractedTextItem] = Field(default_factory=list)
+    advertising_practices: list[ExtractedTextItem] = Field(default_factory=list)
+    profiling_ai: list[ExtractedTextItem] = Field(default_factory=list)
+    contract_clauses: list[ExtractedContractClause] = Field(default_factory=list)
 
 
 class KeypointWithEvidence(BaseModel):
@@ -90,6 +106,41 @@ class KeypointWithEvidence(BaseModel):
 
     keypoint: str
     evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+InsightCategory = Literal[
+    "data_collection",
+    "data_purposes",
+    "data_sharing",
+    "user_rights",
+    "retention",
+    "deletion",
+    "security",
+    "advertising",
+    "profiling_ai",
+    "data_sale",
+    "cookies_tracking",
+    "children",
+    "dangers",
+    "benefits",
+    "recommended_actions",
+    "liability",
+    "arbitration",
+    "governing_law",
+    "jurisdiction",
+]
+
+
+CoverageStatus = Literal["found", "missing", "ambiguous", "not_analyzed"]
+
+
+class CoverageItem(BaseModel):
+    """Coverage status for a required insight category."""
+
+    category: InsightCategory
+    status: CoverageStatus
+    notes: str | None = None
+    evidence_count: int | None = None
 
 
 class DocumentAnalysis(BaseModel):
@@ -132,6 +183,8 @@ class DocumentAnalysis(BaseModel):
         description="Document scope - e.g., 'Global privacy policy', 'Terms for Product X', 'EU-specific policy'",
     )
     privacy_signals: PrivacySignals | None = None
+    coverage: list[CoverageItem] | None = None
+    contract_clauses: list[str] | None = None
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -151,6 +204,20 @@ class DocumentAnalysis(BaseModel):
             pass
 
         return str(result)  # Ensure we return str, not Any
+
+    @field_validator("compliance_status", mode="before")
+    @classmethod
+    def clean_compliance_status(cls, v: dict[str, Any] | None) -> dict[str, int] | None:
+        if not v or not isinstance(v, dict):
+            return None
+        cleaned = {}
+        for k, val in v.items():
+            if val is not None:
+                try:
+                    cleaned[str(k)] = int(val)
+                except (ValueError, TypeError):
+                    pass
+        return cleaned if cleaned else None
 
 
 class MetaSummaryScore(BaseModel):
@@ -210,6 +277,22 @@ class MetaSummary(BaseModel):
     recommended_actions: list[str] | None = None  # 5-8 actionable steps with specific instructions
     privacy_signals: PrivacySignals | None = None
     compliance_status: dict[str, int] | None = None  # {"GDPR": 8, "CCPA": 7}
+    coverage: list[CoverageItem] | None = None
+    contract_clauses: list[str] | None = None
+
+    @field_validator("compliance_status", mode="before")
+    @classmethod
+    def clean_compliance_status(cls, v: dict[str, Any] | None) -> dict[str, int] | None:
+        if not v or not isinstance(v, dict):
+            return None
+        cleaned = {}
+        for k, val in v.items():
+            if val is not None:
+                try:
+                    cleaned[str(k)] = int(val)
+                except (ValueError, TypeError):
+                    pass
+        return cleaned if cleaned else None
 
 
 DocType = Literal[
@@ -223,6 +306,7 @@ DocType = Literal[
     "copyright_policy",
     "safety_policy",
     "other",
+    "unclassified",
 ]
 
 Region = Literal[
@@ -301,6 +385,22 @@ class ProductOverview(BaseModel):
 
     # Actions
     recommended_actions: list[str] | None = None  # 5-8 actionable steps with specific instructions
+    coverage: list[CoverageItem] | None = None
+    contract_clauses: list[str] | None = None
+
+    @field_validator("compliance_status", mode="before")
+    @classmethod
+    def clean_compliance_status(cls, v: dict[str, Any] | None) -> dict[str, int] | None:
+        if not v or not isinstance(v, dict):
+            return None
+        cleaned = {}
+        for k, val in v.items():
+            if val is not None:
+                try:
+                    cleaned[str(k)] = int(val)
+                except (ValueError, TypeError):
+                    pass
+        return cleaned if cleaned else None
 
 
 class DocumentSummary(BaseModel):

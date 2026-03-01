@@ -1,6 +1,7 @@
 "use client";
 
-import { Globe, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Globe, Loader2 } from "lucide-react";
+
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,11 @@ interface IndexFormProps {
   className?: string;
 }
 
-export function IndexForm({ onSubmit, isSubmitting, className }: IndexFormProps) {
+export function IndexForm({
+  onSubmit,
+  isSubmitting,
+  className,
+}: IndexFormProps) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -44,48 +49,50 @@ export function IndexForm({ onSubmit, isSubmitting, className }: IndexFormProps)
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "rounded-xl border border-border bg-card p-1.5",
-        "focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20",
+        "border border-border bg-background p-1.5",
+        "focus-within:border-foreground/30",
         "transition-all duration-200",
         className,
       )}
     >
-      <div className="flex items-center gap-2">
-        <div className="flex items-center flex-1 gap-2 pl-3">
-          <Globe className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <div className="flex items-center flex-1 gap-4 pl-4 font-serif italic text-muted-foreground/50">
+          <Globe className="h-4 w-4 shrink-0" strokeWidth={1} />
           <Input
             type="text"
-            placeholder="Enter a website URL to analyze (e.g., netflix.com)"
+            placeholder="URL of new product to index (e.g. apple.com)"
             value={url}
             onChange={(e) => {
               setUrl(e.target.value);
               if (error) setError(null);
             }}
             disabled={isSubmitting}
-            className="border-none bg-transparent focus-visible:ring-0 text-sm h-10 px-0"
+            className="border-none bg-transparent focus-visible:ring-0 text-foreground text-sm h-10 px-0 uppercase tracking-widest font-sans font-medium"
           />
         </div>
         <Button
           type="submit"
           disabled={isSubmitting || !url.trim()}
           size="sm"
-          className="h-9 px-4 rounded-lg shrink-0"
+          className="h-12 sm:h-10 px-8 rounded-none shrink-0 bg-foreground text-background hover:bg-foreground/90 border border-foreground text-[10px] uppercase tracking-widest font-bold"
         >
           {isSubmitting ? (
             <>
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-              Analyzing...
+              <Loader2 className="mr-3 h-4 w-4 animate-spin" />
+              Processing
             </>
           ) : (
             <>
-              Analyze
-              <ArrowRight className="ml-2 h-3.5 w-3.5" />
+              Index
+              <ArrowRight className="ml-3 h-4 w-4 transition-transform group-hover:translate-x-1" />
             </>
           )}
         </Button>
       </div>
       {error && (
-        <p className="text-xs text-destructive px-3 pb-2 pt-1">{error}</p>
+        <div className="text-[10px] text-destructive px-4 pb-2 pt-1 uppercase tracking-widest font-bold">
+          {error}
+        </div>
       )}
     </form>
   );

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import shortuuid
@@ -15,7 +16,6 @@ logger = get_logger(__name__)
 
 
 VOYAGE_LAW_2_DIMENSION = 1024
-init_pinecone_index(VOYAGE_LAW_2_DIMENSION)
 
 
 def _log_document_size_info(document: Document) -> None:
@@ -77,6 +77,9 @@ async def embed_product_documents(
     """
     documents = await document_service.get_product_documents(db, product_id)
     logger.info(f"Embedding {len(documents)} documents for product {product_id}")
+
+    # Pinecone calls are synchronous; ensure initialization happens off the event loop.
+    await asyncio.to_thread(init_pinecone_index, VOYAGE_LAW_2_DIMENSION)
 
     index = pc.Index(INDEX_NAME)
     splitter = RecursiveCharacterTextSplitter(
@@ -154,7 +157,7 @@ async def embed_product_documents(
         batch_size = config.embedding.upsert_batch_size
         for i in range(0, len(all_vectors), batch_size):
             batch = all_vectors[i : i + batch_size]
-            index.upsert(vectors=batch, namespace=namespace)
+            await asyncio.to_thread(index.upsert, vectors=batch, namespace=namespace)
             logger.info(
                 f"Upserted batch {i // batch_size + 1} ({len(batch)} vectors) to Pinecone namespace '{namespace}'"
             )
@@ -168,6 +171,7 @@ async def embed_product_documents(
 
 async def embed_document(document: Document, namespace: str) -> None:
     """Embed a single document into the specified namespace."""
+    await asyncio.to_thread(init_pinecone_index, VOYAGE_LAW_2_DIMENSION)
     index = pc.Index(INDEX_NAME)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=config.embedding.chunk_size,
@@ -236,7 +240,7 @@ async def embed_document(document: Document, namespace: str) -> None:
         batch_size = config.embedding.upsert_batch_size
         for i in range(0, len(all_vectors), batch_size):
             batch = all_vectors[i : i + batch_size]
-            index.upsert(vectors=batch, namespace=namespace)
+            await asyncio.to_thread(index.upsert, vectors=batch, namespace=namespace)
             logger.info(
                 f"Upserted batch {i // batch_size + 1} ({len(batch)} vectors) to Pinecone namespace '{namespace}' for document {document.id}"
             )

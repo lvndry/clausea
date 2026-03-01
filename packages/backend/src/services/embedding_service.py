@@ -13,7 +13,7 @@ from src.core.logging import get_logger
 from src.embedding import embed_product_documents
 from src.llm import get_embeddings
 from src.models.document import Document
-from src.pinecone_client import INDEX_NAME, pc
+from src.pinecone_client import INDEX_NAME, init_pinecone_index, pc
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.document_service import DocumentService
@@ -136,6 +136,8 @@ class EmbeddingService:
 
     async def embed_document(self, document: Document, namespace: str) -> None:
         """Embed a single document into the specified namespace."""
+        # Pinecone calls are synchronous; initialize and upsert off the event loop.
+        await asyncio.to_thread(init_pinecone_index, 1024)
         index = pc.Index(INDEX_NAME)
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.embedding.chunk_size,
@@ -204,7 +206,7 @@ class EmbeddingService:
             batch_size = config.embedding.upsert_batch_size
             for i in range(0, len(all_vectors), batch_size):
                 batch = all_vectors[i : i + batch_size]
-                index.upsert(vectors=batch, namespace=namespace)
+                await asyncio.to_thread(index.upsert, vectors=batch, namespace=namespace)
                 logger.info(
                     f"Upserted batch {i // batch_size + 1} ({len(batch)} vectors) to Pinecone namespace '{namespace}' for document {document.id}"
                 )

@@ -1,13 +1,40 @@
 import logging
 import sys
-from typing import Any
+from collections.abc import Callable, Mapping, MutableMapping
+from typing import Any, cast
 
 import structlog
 
 from src.core.config import config
 
-structlog.configure(
-    processors=[
+
+def component_processor(
+    logger: Any, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Injects [component]: prefix if component is present in context."""
+    component = event_dict.get("component")
+    if component:
+        event_dict["event"] = f"[{component}]: {event_dict['event']}"
+    return event_dict
+
+
+Processor = Callable[
+    [Any, str, MutableMapping[str, Any]],
+    Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
+]
+
+
+json_or_console_renderer: Processor = cast(
+    Processor,
+    structlog.processors.JSONRenderer()
+    if not config.app.is_development
+    else structlog.dev.ConsoleRenderer(),
+)
+
+
+processors = cast(
+    list[Processor],
+    [
         structlog.stdlib.filter_by_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -24,10 +51,14 @@ structlog.configure(
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
-        if not config.app.is_development
-        else structlog.dev.ConsoleRenderer(),
+        component_processor,
+        json_or_console_renderer,
     ],
+)
+
+
+structlog.configure(
+    processors=processors,
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
     wrapper_class=structlog.stdlib.BoundLogger,
@@ -56,12 +87,15 @@ def setup_logging() -> None:
     logging.getLogger("LiteLLM").setLevel(logging.INFO)
 
 
-def get_logger(name: str = __name__) -> Any:
-    """Get a logger instance"""
-    return structlog.get_logger(name)
+def get_logger(name: str = __name__, component: str | None = None) -> Any:
+    """Get a logger instance with optional component context."""
+    logger = structlog.get_logger(name)
+    if component:
+        return logger.bind(component=component)
+    return logger
 
 
 # Convenience function for backward compatibility
-def logger(name: str = __name__) -> Any:
+def logger(name: str = __name__, component: str | None = None) -> Any:
     """Get a logger instance (alias for get_logger)"""
-    return structlog.get_logger(name)
+    return get_logger(name, component)

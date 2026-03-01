@@ -1,10 +1,12 @@
 """Product routes using Repository pattern with context manager."""
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, EmailStr
 
 from src.core.database import get_db
 from src.core.logging import get_logger
 from src.models.document import (
+    DocumentDeepAnalysis,
     DocumentExtraction,
     DocumentSummary,
     ProductAnalysis,
@@ -12,14 +14,27 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.models.user import UserTier
 from src.services.extraction_service import extract_document_facts
-from src.services.service_factory import create_product_service, create_services
-from src.services.usage_service import UsageService
-from src.summarizer import generate_product_deep_analysis, generate_product_overview
+from src.services.service_factory import (
+    create_indexation_notification_service,
+    create_product_service,
+    create_services,
+    create_user_service,
+)
+from src.summarizer import (
+    generate_document_deep_analysis,
+    generate_product_deep_analysis,
+    generate_product_overview,
+)
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+class IndexationNotifyRequest(BaseModel):
+    email: EmailStr
 
 
 def _get_user_id(request: Request) -> str | None:
@@ -28,6 +43,19 @@ def _get_user_id(request: Request) -> str | None:
     if user and isinstance(user, dict):
         return user.get("user_id")
     return None
+
+
+async def _require_pro_tier(db, request: Request) -> None:
+    user_id = _get_user_id(request)
+    if user_id in (None, "localhost_dev", "service_account"):
+        return
+    user_service = create_user_service()
+    user = await user_service.get_user_by_id(db, user_id)
+    if not user or user.tier != UserTier.PRO:
+        raise HTTPException(
+            status_code=402,
+            detail="This feature requires a Pro subscription.",
+        )
 
 
 @router.get("", response_model=list[Product])
@@ -52,93 +80,31 @@ async def get_all_products(
 
 
 @router.get("/{slug}/overview", response_model=ProductOverview)
-async def get_product_overview(slug: str, request: Request) -> ProductOverview:
+async def get_product_overview(slug: str, _request: Request) -> ProductOverview:
     """Get a quick decision-making overview for a product (Level 1).
-    Generates the overview on-the-fly if it doesn't exist yet.
+
+    Note: This endpoint does NOT trigger generation. Overviews are expected
+    to be produced by the indexation pipeline.
     """
-    try:
-        async with get_db() as db:
-            service = create_product_service()
+    async with get_db() as db:
+        service = create_product_service()
 
-            # First check if product exists
-            product = await service.get_product_by_slug(db, slug)
-            if not product:
-                raise HTTPException(status_code=404, detail="Product not found")
+        product = await service.get_product_by_slug(db, slug)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
 
-            # Try to get existing overview (cached - no usage counted)
-            overview = await service.get_product_overview(db, slug)
-            if overview:
-                return overview
+        overview = await service.get_product_overview(db, slug)
+        if overview:
+            return overview
 
-            # Overview needs generation - check usage limits
-            user_id = _get_user_id(request)
-            if user_id and user_id not in ("localhost_dev", "service_account"):
-                allowed, usage_info = await UsageService.check_usage_limit(db, user_id)
-                if not allowed:
-                    raise HTTPException(
-                        status_code=429,
-                        detail={
-                            "message": "Monthly analysis limit reached. Upgrade to Pro for unlimited analyses.",
-                            "usage": usage_info,
-                        },
-                    )
-
-            # Overview doesn't exist - generate it JIT
-            logger.info(f"Overview not found for {slug}, generating on-the-fly...")
-            try:
-                product_svc, doc_svc = create_services()
-                # Generate product overview (will raise exception on failure)
-                await generate_product_overview(
-                    db, slug, product_svc=product_svc, document_svc=doc_svc
-                )
-
-                # After successful generation, increment usage
-                if user_id and user_id not in ("localhost_dev", "service_account"):
-                    await UsageService.increment_usage(db, user_id, endpoint="product_overview")
-
-                # Retrieve the generated overview
-                overview = await service.get_product_overview(db, slug)
-                if overview:
-                    return overview
-                else:
-                    # This shouldn't happen, but handle it gracefully
-                    logger.error(
-                        f"Failed to retrieve overview after generation for {slug}. "
-                        f"Meta-summary was generated but overview transformation failed."
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Failed to generate product overview. The overview could not be created from the generated summary.",
-                    )
-            except HTTPException:
-                # Re-raise HTTP exceptions as-is
-                raise
-            except Exception as e:
-                # Log the full error with context
-                logger.error(
-                    f"Error generating overview for {slug}: {str(e)}",
-                    exc_info=True,
-                )
-                # Return the actual error message to the client so they know what went wrong
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to generate product overview: {str(e)}",
-                ) from e
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is (they already have proper responses)
-        raise
-    except BaseException as e:
-        logger.error(
-            f"Unexpected error in get_product_overview for {slug}: {str(e)}",
-            exc_info=True,
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Overview not available yet. Indexation may be in progress.",
+                "code": "overview_not_ready",
+                "product_slug": slug,
+            },
         )
-
-        error_detail = (
-            f"An unexpected error occurred while fetching product overview: {str(e)}"
-            if str(e)
-            else "An unexpected error occurred while fetching product overview."
-        )
-        raise HTTPException(status_code=500, detail=error_detail) from None
 
 
 @router.get("/{slug}/analysis", response_model=ProductAnalysis)
@@ -242,11 +208,12 @@ async def get_document_extraction(
 
 
 @router.get("/{slug}/deep-analysis", response_model=ProductDeepAnalysis)
-async def get_product_deep_analysis_route(slug: str) -> ProductDeepAnalysis:
+async def get_product_deep_analysis_route(slug: str, request: Request) -> ProductDeepAnalysis:
     """Get deep analysis for a product (Level 3).
     Generates the deep analysis on-the-fly if it doesn't exist yet.
     """
     async with get_db() as db:
+        await _require_pro_tier(db, request)
         service = create_product_service()
 
         # First check if product exists
@@ -278,6 +245,36 @@ async def get_product_deep_analysis_route(slug: str) -> ProductDeepAnalysis:
             ) from e
 
 
+@router.get(
+    "/{slug}/documents/{document_id}/deep-analysis",
+    response_model=DocumentDeepAnalysis,
+)
+async def get_document_deep_analysis_route(
+    slug: str, document_id: str, request: Request
+) -> DocumentDeepAnalysis:
+    """Get deep analysis for a single document (paid)."""
+    async with get_db() as db:
+        await _require_pro_tier(db, request)
+        product_svc, doc_svc = create_services()
+
+        product = await product_svc.get_product_by_slug(db, slug)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        doc = await doc_svc.get_document_by_id(db, document_id)
+        if not doc or doc.product_id != product.id:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        try:
+            return await generate_document_deep_analysis(db, doc, doc_svc)
+        except Exception as e:
+            logger.error(f"Error generating document deep analysis for {document_id}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate document deep analysis. Please try again later.",
+            ) from e
+
+
 @router.get("/{slug}", response_model=Product)
 async def get_product_by_slug(slug: str) -> Product:
     """Get a product by its slug."""
@@ -287,3 +284,19 @@ async def get_product_by_slug(slug: str) -> Product:
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
         return product
+
+
+@router.post("/{slug}/indexation-notify")
+async def subscribe_indexation_notify(
+    slug: str, payload: IndexationNotifyRequest
+) -> dict[str, str]:
+    """Subscribe an email to be notified when indexation completes for a product."""
+    async with get_db() as db:
+        product_svc = create_product_service()
+        product = await product_svc.get_product_by_slug(db, slug)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        svc = create_indexation_notification_service()
+        await svc.subscribe(db, product_slug=slug, email=str(payload.email))
+        return {"status": "ok"}

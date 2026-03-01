@@ -12,12 +12,28 @@ interface ComplianceBadgesProps {
 
 function getComplianceInfo(score: number): {
   status: string;
-  variant: "success" | "warning" | "danger" | "outline";
+  color: string;
+  bg: string;
 } {
-  if (score >= 8) return { status: "Compliant", variant: "success" };
-  if (score >= 5) return { status: "Partial", variant: "warning" };
-  if (score >= 1) return { status: "Non-Compliant", variant: "danger" };
-  return { status: "Unknown", variant: "outline" };
+  if (score >= 8)
+    return {
+      status: "COMPLIANT",
+      color: "text-[#2B7A5C]",
+      bg: "bg-[#2B7A5C]/5",
+    };
+  if (score >= 5)
+    return { status: "PARTIAL", color: "text-[#B58D2D]", bg: "bg-[#B58D2D]/5" };
+  if (score >= 1)
+    return {
+      status: "NON-COMPLIANT",
+      color: "text-[#BD452D]",
+      bg: "bg-[#BD452D]/5",
+    };
+  return {
+    status: "UNKNOWN",
+    color: "text-muted-foreground",
+    bg: "bg-muted/5",
+  };
 }
 
 const regulationLabels: Record<string, string> = {
@@ -37,52 +53,58 @@ export function ComplianceBadges({ complianceStatus }: ComplianceBadgesProps) {
   }
 
   return (
-    <Card variant="default" className="border-border">
-      <CardHeader className="pb-4">
+    <div className="border border-border bg-background">
+      <div className="p-6 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-teal-100 dark:bg-teal-900/30 flex items-center justify-center">
-            <ShieldCheck className="h-5 w-5 text-teal-600 dark:text-teal-400" />
-          </div>
-          <div>
-            <CardTitle className="text-lg">Compliance</CardTitle>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Regulation compliance assessment
-            </p>
-          </div>
+          <ShieldCheck className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+            Compliance Assessment
+          </h3>
         </div>
-      </CardHeader>
+      </div>
 
-      <CardContent>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {regulations.map(([regulation, score]) => {
-            const info = getComplianceInfo(score);
-            const label = regulationLabels[regulation] || regulation;
+      <div className="grid grid-cols-2 md:grid-cols-4">
+        {regulations.map(([regulation, score], idx) => {
+          const info = getComplianceInfo(score);
+          const label = regulationLabels[regulation] || regulation;
 
-            return (
-              <div
-                key={regulation}
-                className={cn(
-                  "flex flex-col items-center gap-2 p-3.5 rounded-lg",
-                  "border border-border/50 bg-muted/30",
-                )}
-              >
-                <span className="text-sm font-semibold text-foreground">
+          return (
+            <div
+              key={regulation}
+              className={cn(
+                "p-6 flex flex-col gap-4 bg-background",
+                idx % 4 !== 3 ? "md:border-r border-border" : "",
+                idx < 4 ? "md:border-b-0" : "border-t",
+                "border-b border-r sm:border-r", // Basic mobile grid
+              )}
+            >
+              <div className="flex justify-between items-start">
+                <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                   {label}
                 </span>
-                <span className="text-2xl font-bold text-foreground">
-                  {score}
-                  <span className="text-sm font-normal text-muted-foreground">
-                    /10
-                  </span>
-                </span>
-                <Badge variant={info.variant} size="sm">
+                <div
+                  className={cn(
+                    "px-2 py-0.5 text-[8px] font-bold tracking-tighter border border-border",
+                    info.color,
+                    info.bg,
+                  )}
+                >
                   {info.status}
-                </Badge>
+                </div>
               </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+
+              <div className="flex items-baseline gap-1">
+                <span className="text-3xl font-display font-medium text-foreground leading-none">
+                  {score}
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
+                  /10
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

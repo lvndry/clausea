@@ -1,5 +1,6 @@
 """Document processing service for uploaded documents with OCR, classification, and summarization."""
 
+import asyncio
 import importlib
 import json
 from io import BytesIO
@@ -165,6 +166,9 @@ class DocumentProcessor:
             return None
 
     async def _extract_text_from_pdf(self, file_content: bytes) -> str | None:
+        return await asyncio.to_thread(self._extract_text_from_pdf_sync, file_content)
+
+    def _extract_text_from_pdf_sync(self, file_content: bytes) -> str | None:
         """Extract text from PDF using pdfplumber, with optional fallbacks (pdfminer / tika).
 
         This method prefers pdfplumber for text-based PDFs (fast and reliable). If that
@@ -223,6 +227,9 @@ class DocumentProcessor:
             return None
 
     async def _extract_text_from_docx(self, file_content: bytes) -> str | None:
+        return await asyncio.to_thread(self._extract_text_from_docx_sync, file_content)
+
+    def _extract_text_from_docx_sync(self, file_content: bytes) -> str | None:
         """Extract text from DOCX file using python-docx, or fallback to Tika when enabled.
 
         Tika provides broader support for legacy Office formats and binary extraction but it is

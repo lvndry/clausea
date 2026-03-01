@@ -148,6 +148,19 @@ class PaddleConfig:
         self.price_pro_annual: str | None = os.getenv("PADDLE_PRICE_PRO_ANNUAL")
 
 
+class CrawlerConfig:
+    """Crawler configuration"""
+
+    def __init__(self) -> None:
+        self.max_pages: int = int(os.getenv("CRAWLER_MAX_PAGES", 2000))
+        self.max_depth: int = int(os.getenv("CRAWLER_MAX_DEPTH", 5))
+        self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", 20))
+        self.discovery_max_pages: int = int(os.getenv("CRAWLER_DISCOVERY_MAX_PAGES", 1000))
+        self.discovery_max_depth: int = int(os.getenv("CRAWLER_DISCOVERY_MAX_DEPTH", 3))
+        self.delay_between_requests: float = float(os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", 1.0))
+        self.rate_limit_jitter: float = float(os.getenv("CRAWLER_RATE_LIMIT_JITTER", 0.2))
+
+
 class Config:
     """Application configuration with nested configuration objects"""
 
@@ -160,6 +173,7 @@ class Config:
         self.embedding = EmbeddingConfig()
         self.tracking = TrackingConfig()
         self.paddle = PaddleConfig()
+        self.crawler = CrawlerConfig()
 
         logger.info(f"Tracking enabled: {self.tracking.tracking_enabled}")
 

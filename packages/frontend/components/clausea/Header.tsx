@@ -14,20 +14,9 @@ import { useAuth } from "@clerk/nextjs";
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
   const { isSignedIn, isLoaded } = useAuth();
-  const headerRef = useRef<HTMLElement>(null);
   const prevPathnameRef = useRef(pathname);
-
-  // Handle scroll state
-  useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 50);
-    };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -40,97 +29,63 @@ export function Header() {
   }, [pathname, isOpen]);
 
   const navLinks = [
-    { name: "Features", href: "/features" },
-    { name: "Pricing", href: "/pricing" },
-    { name: "Contact", href: "/contact" },
+    { name: "Archive", href: "/archive" },
+    { name: "Methodology", href: "/methodology" },
   ];
 
   return (
-    <header
-      ref={headerRef}
-      className={cn(
-        "fixed top-0 left-0 w-full z-40 transition-all duration-500",
-        scrolled ? "py-4 px-4 md:px-6" : "py-6 px-4 md:px-8",
-      )}
-    >
-      <nav
-        className={cn(
-          "mx-auto flex items-center justify-between px-6 md:px-8 transition-all duration-500",
-          scrolled
-            ? "bg-background/80 backdrop-blur-xl border border-border/50 shadow-lg py-3 rounded-full max-w-6xl"
-            : "bg-transparent border-transparent py-2 max-w-7xl",
-        )}
-      >
+    <>
+      <nav className="col-span-12 flex justify-between items-center px-6 md:px-10 py-8 border-b border-border w-full">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center group-hover:bg-primary/20 group-hover:border-primary/40 group-hover:rotate-3 transition-all duration-500 overflow-hidden">
-            <Image
-              src="/static/favicons/logo.png"
-              alt="Clausea"
-              width={28}
-              height={28}
-              className="w-7 h-7 object-contain"
-            />
-          </div>
-          <span className="font-display font-bold text-xl tracking-tight text-foreground">
-            Clausea
-          </span>
+        <Link
+          href="/"
+          className="font-display text-2xl md:text-3xl font-medium tracking-widest uppercase text-foreground transition-colors hover:text-primary"
+        >
+          CLAUSEA
         </Link>
 
         {/* Desktop Nav */}
-        <ul className="hidden md:flex items-center gap-8">
+        <div className="hidden md:flex items-center gap-6 md:gap-10 text-[10px] md:text-[11px] uppercase tracking-widest font-medium">
           {navLinks.map((link) => (
-            <li key={link.name}>
-              <Link
-                href={link.href}
-                className={cn(
-                  "relative text-sm font-medium transition-all duration-300 py-2",
-                  pathname === link.href
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {link.name}
-                {pathname === link.href && (
-                  <motion.span
-                    layoutId="nav-underline"
-                    className="absolute -bottom-1 left-0 right-0 h-0.5 bg-primary rounded-full"
-                  />
-                )}
-              </Link>
-            </li>
-          ))}
-        </ul>
-
-        {/* CTA Buttons */}
-        <div className="flex items-center gap-3">
-          {isLoaded && (
-            <>
-              {isSignedIn ? (
-                <Link href="/products">
-                  <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300 cursor-pointer">
-                    Dashboard
-                  </Button>
-                </Link>
-              ) : (
-                <Link href="/sign-up">
-                  <Button className="hidden sm:flex rounded-full px-6 h-10 font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300 cursor-pointer">
-                    Get Started
-                  </Button>
-                </Link>
+            <Link
+              key={link.name}
+              href={link.href}
+              className={cn(
+                "transition-colors",
+                pathname === link.href
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
-            </>
+            >
+              {link.name}
+            </Link>
+          ))}
+          {isLoaded && !isSignedIn && (
+            <Link
+              href="/sign-in"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Login
+            </Link>
           )}
 
-          {/* Mobile Menu Toggle */}
-          <button
-            className="md:hidden w-10 h-10 flex items-center justify-center rounded-full bg-muted/50 border border-border hover:border-primary/30 transition-colors"
-            onClick={() => setIsOpen(!isOpen)}
-            aria-label="Toggle menu"
-          >
-            {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+          {isLoaded && (
+            <Link href={isSignedIn ? "/products" : "/sign-up"}>
+              <button className="px-5 py-2.5 md:px-7 md:py-3 border border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors cursor-pointer">
+                {isSignedIn ? "Dashboard" : "New Analysis"}
+              </button>
+            </Link>
+          )}
         </div>
+
+        {/* Mobile Menu Toggle */}
+        <button
+          className="md:hidden flex items-center justify-center text-foreground hover:text-primary transition-colors"
+          onClick={() => setIsOpen(!isOpen)}
+          aria-label="Toggle menu"
+        >
+          {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+        </button>
       </nav>
 
       {/* Mobile Menu */}
@@ -141,28 +96,24 @@ export function Header() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
-            className="fixed inset-0 z-40 bg-background/98 backdrop-blur-xl md:hidden flex flex-col items-center justify-center gap-6 p-8"
+            className="fixed inset-0 z-40 bg-background md:hidden flex flex-col items-center justify-center gap-8 p-8 overflow-y-auto"
           >
             <button
-              className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center rounded-full bg-muted/50 border border-border hover:border-primary/30 transition-colors"
+              className="absolute top-8 right-6 text-foreground hover:text-primary transition-colors"
               onClick={() => setIsOpen(false)}
               aria-label="Close menu"
             >
-              <X className="w-5 h-5" />
+              <X className="w-6 h-6" />
             </button>
 
             {/* Mobile Logo */}
-            <div className="mb-6 flex items-center gap-3">
-              <div className="w-12 h-12 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-center overflow-hidden">
-                <Image
-                  src="/static/favicons/logo.png"
-                  alt="Clausea"
-                  width={32}
-                  height={32}
-                  className="w-8 h-8 object-contain"
-                />
-              </div>
-            </div>
+            <Link
+              href="/"
+              onClick={() => setIsOpen(false)}
+              className="font-display text-3xl font-medium tracking-widest uppercase mb-8"
+            >
+              CLAUSEA
+            </Link>
 
             {navLinks.map((link, index) => (
               <motion.div
@@ -175,10 +126,10 @@ export function Header() {
                   href={link.href}
                   onClick={() => setIsOpen(false)}
                   className={cn(
-                    "text-3xl font-display font-bold transition-colors",
+                    "text-sm uppercase tracking-widest font-medium transition-colors",
                     pathname === link.href
-                      ? "text-primary"
-                      : "text-foreground hover:text-primary",
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {link.name}
@@ -186,34 +137,42 @@ export function Header() {
               </motion.div>
             ))}
 
-            <div className="mt-8 flex flex-col gap-4 w-full max-w-xs">
+            {isLoaded && !isSignedIn && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: navLinks.length * 0.1 }}
+              >
+                <Link
+                  href="/sign-in"
+                  onClick={() => setIsOpen(false)}
+                  className="text-sm uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Login
+                </Link>
+              </motion.div>
+            )}
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: (navLinks.length + 1) * 0.1 }}
+              className="mt-8 w-full max-w-xs"
+            >
               {isLoaded && (
-                <>
-                  {isSignedIn ? (
-                    <Link href="/products" onClick={() => setIsOpen(false)}>
-                      <Button
-                        size="lg"
-                        className="w-full rounded-full h-14 text-lg font-medium bg-primary text-primary-foreground"
-                      >
-                        Dashboard
-                      </Button>
-                    </Link>
-                  ) : (
-                    <Link href="/sign-up" onClick={() => setIsOpen(false)}>
-                      <Button
-                        size="lg"
-                        className="w-full rounded-full h-14 text-lg font-medium bg-primary text-primary-foreground"
-                      >
-                        Get Started
-                      </Button>
-                    </Link>
-                  )}
-                </>
+                <Link
+                  href={isSignedIn ? "/products" : "/sign-up"}
+                  onClick={() => setIsOpen(false)}
+                >
+                  <button className="w-full py-4 border border-foreground text-sm uppercase tracking-widest font-medium text-foreground hover:bg-foreground hover:text-background transition-colors">
+                    {isSignedIn ? "Dashboard" : "New Analysis"}
+                  </button>
+                </Link>
               )}
-            </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
-    </header>
+    </>
   );
 }

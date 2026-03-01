@@ -6,10 +6,14 @@ import asyncio
 import heapq
 import json
 import logging
+import random
 import re
 import time
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -17,20 +21,74 @@ from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
 import aiohttp
 import markdownify
+import tldextract
 from bs4 import BeautifulSoup
 from camoufox import AsyncCamoufox
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page
 from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.core.logging import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger(__name__, component="crawler")
+logger_robots = get_logger(__name__, component="crawler:robots")
+logger_rate_limit = get_logger(__name__, component="crawler:rate_limit")
+logger_fetch = get_logger(__name__, component="crawler:fetch")
+logger_proxy = get_logger(__name__, component="crawler:proxy")
+
+_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
 
 # Standard user agent string following RFC 7231 format
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; ClauseaBot/2.0; +https://www.clausea.co/bot.html; lvndry@proton.me)"
 )
+
+ACCEPT_HEADER = (
+    "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
+)
+
+
+@dataclass
+class StaticFetchResult:
+    """Raw result from an HTTP GET before any content extraction."""
+
+    url: str
+    status_code: int
+    content_type: str
+    body: str
+    raw_bytes: bytes | None = None
+    headers: dict[str, str] = dataclass_field(default_factory=dict)
+    is_error: bool = False
+    error_message: str | None = None
+    cached: bool = False
+
+    def to_failed_crawl_result(self) -> "CrawlResult":
+        return CrawlResult(
+            url=self.url,
+            title="",
+            content="",
+            markdown="",
+            metadata={"content-type": self.content_type} if self.content_type else {},
+            status_code=self.status_code,
+            success=False,
+            error_message=self.error_message or f"HTTP {self.status_code}",
+        )
+
+
+@dataclass
+class PageContent:
+    """Intermediate container between raw fetch and CrawlResult.
+
+    Holds extracted text, markdown, metadata, and links before the result
+    is finalised. Produced by content extraction, consumed by result building.
+    """
+
+    text: str
+    markdown: str
+    title: str
+    metadata: dict[str, Any] = dataclass_field(default_factory=dict)
+    discovered_links: list[dict[str, str]] = dataclass_field(default_factory=list)
+    status_code: int = 200
 
 
 class CrawlResult(BaseModel):
@@ -62,7 +120,6 @@ class CrawlStats(BaseModel):
     total_urls: int = 0
     crawled_urls: int = 0
     failed_urls: int = 0
-    legal_documents_found: int = 0
     start_time: float = Field(default_factory=time.time)
 
     @property
@@ -83,9 +140,16 @@ class URLScorer:
             re.compile(pattern, re.IGNORECASE): weight
             for pattern, weight in {
                 r"privacy-policy": 8.0,
+                r"\bprivacy\s+policy\b": 8.0,
+                r"\bprivacy\s+notice\b": 7.0,
                 r"terms-of-service": 8.0,
+                r"\bterms\s+of\s+service\b": 8.0,
+                r"\bterms\s+of\s+use\b": 7.5,
+                r"\bterms\s+and\s+conditions\b": 7.5,
                 r"cookie-policy": 7.0,
+                r"\bcookie\s+policy\b": 7.0,
                 r"data-processing-addendum": 8.0,
+                r"\bdata\s+processing\s+addendum\b": 8.0,
                 r"subprocessors": 6.0,
                 r"gdpr": 6.0,
                 r"ccpa": 6.0,
@@ -226,20 +290,23 @@ class URLScorer:
             if pattern.search(url_lower):
                 score += weight
 
-        # Score based on anchor text if provided
+        # Score based on anchor text if provided.
+        # Anchor text is what the *linking page* calls the target — often the
+        # strongest signal we have, especially when the URL is opaque
+        # (e.g. /help/article/2908 for "Terms of Service").
         if anchor_text:
             anchor_lower = anchor_text.lower()
-            # If anchor text explicitly contains legal keywords, give it a high boost
             anchor_words = self.word_pattern.findall(anchor_lower)
-            for word in anchor_words:
-                if word in self.legal_keywords:
-                    # Give anchor text matches a weight boost
-                    score += self.legal_keywords[word] * 1.5
 
-            # Also check for phrases in anchor text
+            # Phrase matches are the highest-confidence anchor signal
             for pattern, weight in self.compiled_high_value_patterns.items():
                 if pattern.search(anchor_lower):
-                    score += weight * 1.5
+                    score += weight * 2.5
+
+            # Individual keyword matches
+            for word in anchor_words:
+                if word in self.legal_keywords:
+                    score += self.legal_keywords[word] * 2.0
 
         # Score based on path patterns using compiled regex
         for pattern, weight in self.compiled_path_patterns.items():
@@ -509,14 +576,16 @@ class ContentAnalyzer:
 class DomainRateLimiter:
     """Per-domain rate limiter for efficient concurrent crawling."""
 
-    def __init__(self, delay_between_requests: float = 1.0) -> None:
+    def __init__(self, delay_between_requests: float = 1.0, jitter: float = 0.0) -> None:
         """
         Initialize the domain rate limiter.
 
         Args:
             delay_between_requests: Minimum delay between requests to the same domain in seconds
+            jitter: Randomized jitter to add to the delay (0.0 to 1.0)
         """
         self.delay_between_requests = delay_between_requests
+        self.jitter = jitter
         self.domain_locks: dict[str, asyncio.Lock] = {}
         self.domain_last_request: dict[str, float] = {}
         self.lock = asyncio.Lock()  # Protects domain_locks and domain_last_request dicts
@@ -554,9 +623,24 @@ class DomainRateLimiter:
         async with domain_lock:
             last_time = self.domain_last_request[domain]
             elapsed = time.time() - last_time
+
             if elapsed < self.delay_between_requests:
-                sleep_time = self.delay_between_requests - elapsed
-                await asyncio.sleep(sleep_time)
+                base_sleep = self.delay_between_requests - elapsed
+
+                # Add randomized jitter if configured
+                if self.jitter > 0:
+                    # random.uniform ensures the delay varies around the target
+                    jitter_amt = random.uniform(-self.jitter, self.jitter)
+                    sleep_time = max(0, base_sleep + jitter_amt)
+
+                    if sleep_time > 0:
+                        logger_rate_limit.debug(
+                            f"rate limiting domain '{domain}': sleeping {sleep_time:.2f}s (base: {base_sleep:.2f}s, jitter: {jitter_amt:+.2f}s)"
+                        )
+                        await asyncio.sleep(sleep_time)
+                else:
+                    await asyncio.sleep(base_sleep)
+
             self.domain_last_request[domain] = time.time()
 
     def clear_cache(self) -> None:
@@ -613,16 +697,18 @@ class RobotsTxtChecker:
                     async with session.get(robots_url, timeout=timeout) as response:
                         if response.status == 200:
                             robots_content = await response.text()
-                            logger.debug(f"Fetched robots.txt from {robots_url}")
+                            logger_robots.debug(f"fetched robots.txt from {robots_url}")
                             parsed_rules = self._parse_robots_txt(robots_content)
                         else:
-                            logger.debug(
-                                f"Could not fetch robots.txt from {robots_url} (status: {response.status})"
+                            logger_robots.debug(
+                                f"robots.txt not found at {robots_url} (status: {response.status}); allowing all requests"
                             )
                             # If we can't fetch robots.txt, allow all
                             parsed_rules = {"allow_all": True}
                 except Exception as e:
-                    logger.debug(f"Error fetching robots.txt from {robots_url}: {e}")
+                    logger_robots.debug(
+                        f"error fetching robots.txt from {robots_url}: {e}; allowing all requests"
+                    )
                     # If we can't fetch robots.txt, allow all
                     parsed_rules = {"allow_all": True}
 
@@ -632,7 +718,9 @@ class RobotsTxtChecker:
             robots_rules = self.robots_cache.pop(base_url)
             self.robots_cache[base_url] = robots_rules
             if robots_rules.get("allow_all", False):
-                logger.debug(f"No robots.txt rules for {base_url}, allowing access")
+                logger_robots.debug(
+                    f"no robots.txt rules found for {base_url}; allowing all access"
+                )
                 return True, "No robots.txt rules found"
 
             # If sitemaps exist in parsed rules, expose them to the caller
@@ -643,7 +731,7 @@ class RobotsTxtChecker:
             )
 
         except Exception as e:
-            logger.warning(f"Error checking robots.txt for {url}: {e}")
+            logger_robots.warning(f"error checking robots.txt for {url}: {e}")
             return True, f"Error checking robots.txt: {str(e)}"
 
     def _add_to_cache(self, base_url: str, rules: dict[str, Any]) -> None:
@@ -666,7 +754,7 @@ class RobotsTxtChecker:
         the `sitemaps` key in the returned dict if present.
         """
         lines = [line.strip() for line in content.split("\n") if line.strip()]
-        logger.debug(f"Parsing robots.txt with {len(lines)} lines")
+        logger_robots.debug(f"parsing robots.txt: {len(lines)} directive lines")
 
         user_agents: dict[str, dict[str, Any]] = {}
         current_user_agent = None
@@ -694,28 +782,30 @@ class RobotsTxtChecker:
                     current_user_agent = value.lower()
                     if current_user_agent not in user_agents:
                         user_agents[current_user_agent] = {"disallow": [], "allow": []}
-                    logger.debug(f"Found user-agent: {current_user_agent}")
+                    logger_robots.debug(f"found user-agent directive: {current_user_agent}")
                 elif directive == "disallow" and current_user_agent:
                     if value:  # Only add non-empty disallow rules
                         user_agents[current_user_agent]["disallow"].append(value)
-                        logger.debug(f"Added disallow rule for {current_user_agent}: {value}")
+                        logger_robots.debug(
+                            f"added disallow rule for {current_user_agent}: {value}"
+                        )
                 elif directive == "allow" and current_user_agent:
                     user_agents[current_user_agent]["allow"].append(value)
-                    logger.debug(f"Added allow rule for {current_user_agent}: {value}")
+                    logger_robots.debug(f"added allow rule for {current_user_agent}: {value}")
                 elif directive == "crawl-delay" and current_user_agent:
                     # Store crawl delay for rate limiting
                     try:
                         delay = float(value)
                         user_agents[current_user_agent]["crawl_delay"] = delay
-                        logger.debug(f"Added crawl-delay for {current_user_agent}: {delay}")
+                        logger_robots.debug(f"added crawl-delay for {current_user_agent}: {delay}s")
                     except ValueError:
-                        logger.warning(f"Invalid crawl-delay value: {value}")
+                        logger_robots.warning(f"invalid crawl-delay value in robots.txt: {value}")
                 elif directive == "sitemap":
                     # Record sitemap directives for later discovery
                     if "sitemaps" not in locals():
                         sitemaps: list[str] = []
                     sitemaps.append(value)
-                    logger.debug(f"Found sitemap directive: {value}")
+                    logger_robots.debug(f"found sitemap directive: {value}")
 
         # Return user agent rules and sitemaps (if any were found via directives)
         parsed: dict[str, Any] = {"user_agents": user_agents}
@@ -731,7 +821,7 @@ class RobotsTxtChecker:
             path = "/"
 
         user_agents = robots_rules.get("user_agents", {})
-        logger.debug(f"Checking rules for URL: {url} (path: {path})")
+        logger_robots.debug(f"checking robots.txt rules for path: {path}")
 
         # Find applicable rules by checking user agent patterns
         applicable_rules = None
@@ -742,31 +832,31 @@ class RobotsTxtChecker:
         if user_agent_lower in user_agents:
             applicable_rules = user_agents[user_agent_lower]
             matched_user_agent = user_agent_lower
-            logger.debug(f"Found exact user-agent match: {user_agent_lower}")
+            logger_robots.debug(f"found exact user-agent match: {user_agent_lower}")
         # Then check wildcard patterns
         else:
             for pattern in self.user_agent_patterns:
                 if pattern in user_agents:
                     applicable_rules = user_agents[pattern]
                     matched_user_agent = pattern
-                    logger.debug(f"Found wildcard user-agent match: {pattern}")
+                    logger_robots.debug(f"found wildcard user-agent match: {pattern}")
                     break
 
         # If robots_rules include sitemaps (collected during parsing), attach for callers
         sitemaps = robots_rules.get("sitemaps")
         if sitemaps:
-            logger.debug(f"Robots.txt contains {len(sitemaps)} sitemaps")
+            logger_robots.debug(f"robots.txt contains {len(sitemaps)} sitemap directive(s)")
 
         # If no rules found, allow by default
         if not applicable_rules:
             return True, "No matching rules found"
 
-        logger.debug(f"Using rules for user-agent: {matched_user_agent}")
+        logger_robots.debug(f"applying rules for user-agent: {matched_user_agent}")
 
         # Check allow rules first (most specific wins)
         for allow_pattern in applicable_rules.get("allow", []):
             if self._path_matches_pattern(path, allow_pattern):
-                logger.debug(f"URL allowed by pattern: {allow_pattern}")
+                logger_robots.debug(f"URL allowed by allow pattern: {allow_pattern}")
                 return True, f"Explicitly allowed by pattern: {allow_pattern}"
 
         # Then check disallow rules
@@ -777,8 +867,8 @@ class RobotsTxtChecker:
                     if self._path_matches_pattern(path, allow_pattern) and len(allow_pattern) > len(
                         disallow_pattern
                     ):
-                        logger.debug(
-                            f"URL allowed by more specific pattern: {allow_pattern} (overrides {disallow_pattern})"
+                        logger_robots.debug(
+                            f"URL allowed by more specific allow pattern: {allow_pattern} (overrides disallow: {disallow_pattern})"
                         )
                         return (
                             True,
@@ -946,11 +1036,11 @@ class ClauseaCrawler:
 
     def __init__(
         self,
-        max_depth: int = 3,
+        max_depth: int = 5,
         max_pages: int = 1000,
         max_concurrent: int = 10,
         delay_between_requests: float = 1.0,
-        timeout: int = 30,
+        timeout: int = 60,
         allowed_domains: list[str] | None = None,
         respect_robots_txt: bool = True,
         user_agent: str = DEFAULT_USER_AGENT,
@@ -967,10 +1057,12 @@ class ClauseaCrawler:
         proxy: str | None = None,  # Optional proxy URL (e.g., "http://user:pass@host:port")
         allowed_paths: list[str] | None = None,  # Optional list of allowed path regexes
         denied_paths: list[str] | None = None,  # Optional list of denied path regexes
+        delay_jitter: float = 0.0,  # Randomized jitter to add to the delay (0.0 to 1.0)
         # Opt-in binary crawling and parser preferences
         enable_binary_crawling: bool = False,
         use_tika_for_binaries: bool = False,
         use_pdfminer_for_pdf: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,  # Optional progress callback
     ):
         """
         Initialize the ClauseaCrawler.
@@ -997,6 +1089,7 @@ class ClauseaCrawler:
         self.max_pages = max_pages
         self.max_concurrent = max_concurrent
         self.delay_between_requests = delay_between_requests
+        self.delay_jitter = delay_jitter
         self.timeout = timeout
         self.allowed_domains: set[str] | None = set(allowed_domains) if allowed_domains else None
         self.respect_robots_txt = respect_robots_txt
@@ -1020,6 +1113,9 @@ class ClauseaCrawler:
         self.use_tika_for_binaries = use_tika_for_binaries
         self.use_pdfminer_for_pdf = use_pdfminer_for_pdf
 
+        # Progress callback for external monitoring
+        self.progress_callback = progress_callback
+
         # Compile path patterns
         self.compiled_allowed_paths = (
             [re.compile(p) for p in allowed_paths] if allowed_paths else []
@@ -1028,7 +1124,6 @@ class ClauseaCrawler:
 
         # Components
         self.url_scorer = URLScorer()
-        self.content_analyzer = ContentAnalyzer()
         self.robots_checker = RobotsTxtChecker(max_cache_size=1000) if respect_robots_txt else None
         self.http_cache = HTTPCache(
             max_cache_size=10000
@@ -1043,20 +1138,24 @@ class ClauseaCrawler:
 
         # Browser state
         self.browser_instance: AsyncCamoufox | None = None
-        self.browser_context: BrowserContext | None = None
+        self.browser_context: Browser | BrowserContext | None = None
         self.browser_lock = asyncio.Lock()
 
         # State
         self.visited_urls: set[str] = set()
         self.failed_urls: set[str] = set()
+        self.queued_urls: set[str] = set()  # Prevents duplicate queue entries
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
         self.url_stack: list[tuple[str, int]] = []  # For DFS
         self.url_priority_queue: list[tuple[float, str, int]] = []  # For best-first (scored URLs)
+        self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
         self.results: list[CrawlResult] = []
         self.stats = CrawlStats()
 
         # Per-domain rate limiting (allows concurrent requests to different domains)
-        self.rate_limiter = DomainRateLimiter(delay_between_requests=delay_between_requests)
+        self.rate_limiter = DomainRateLimiter(
+            delay_between_requests=delay_between_requests, jitter=self.delay_jitter
+        )
 
         # Compile skip patterns once for efficiency
         # PDFs are optionally crawlable via `enable_binary_crawling`.
@@ -1183,22 +1282,12 @@ class ClauseaCrawler:
             finally:
                 self.file_handler = None
 
-    async def _setup_browser(self) -> tuple[AsyncCamoufox, BrowserContext]:  # type: ignore[return-value, name-defined]
+    async def _setup_browser(self) -> tuple[AsyncCamoufox, Browser | BrowserContext]:
         """Initialize and return a Camoufox browser and context."""
         async with self.browser_lock:
             if self.browser_instance is None:
-                # Configure Camoufox with fingerprint spoofing and anti-detection
-                config = {
-                    "navigator.userAgent": self.user_agent,
-                    "window.innerWidth": 1280,
-                    "window.innerHeight": 800,
-                    "window.outerWidth": 1280,
-                    "window.outerHeight": 800,
-                }
-
                 # Prepare Camoufox initialization arguments
                 init_kwargs: dict[str, Any] = {
-                    "config": config,
                     "headless": True,
                 }
 
@@ -1210,10 +1299,13 @@ class ClauseaCrawler:
                 self.browser_instance = AsyncCamoufox(**init_kwargs)
                 await self.browser_instance.__aenter__()  # Manually enter context manager
 
-                # Get the browser context (Camoufox's AsyncCamoufox acts as both browser and context)
-                self.browser_context = self.browser_instance  # type: ignore[assignment]
+                # __aenter__ returns the launched Browser (or BrowserContext in persistent mode)
+                self.browser_context = self.browser_instance.browser
 
-            return self.browser_instance, self.browser_context  # type: ignore[return-value]
+            if self.browser_context is None:
+                raise RuntimeError("Camoufox browser failed to initialize")
+
+            return self.browser_instance, self.browser_context
 
     async def _cleanup_browser(self) -> None:
         """Clean up Camoufox resources."""
@@ -1226,118 +1318,540 @@ class ClauseaCrawler:
                 self.browser_context = None
                 logger.debug("🌐 Camoufox browser closed")
 
-    async def _fetch_with_browser(self, url: str) -> CrawlResult:
+    @staticmethod
+    def _is_garbled_content(text: str, *, sample_size: int = 1024) -> bool:
+        """Detect garbled/binary content that slipped through as text.
+
+        Checks the ratio of non-printable / unusual characters in a sample.
+        Returns True when the text is likely compressed, encoded, or binary data
+        that was incorrectly decoded as a string (common with JS-heavy SPAs that
+        inline binary bundles).
         """
-        Fetch page content using a headless browser (for dynamic rendering).
+        if not text or len(text) < 100:
+            return False
 
-        Tries progressively less strict wait conditions:
-        1. networkidle (most strict, waits for all network activity to stop)
-        2. load (waits for page load event)
-        3. domcontentloaded (waits for DOM to be ready)
+        sample = text[:sample_size]
+        non_text_chars = sum(
+            1 for ch in sample if not ch.isprintable() and ch not in ("\n", "\r", "\t")
+        )
+        ratio = non_text_chars / len(sample)
+        if ratio > 0.08:
+            return True
 
-        Returns a failed result if all strategies fail, which can be used
-        by the caller to fall back to static HTML parsing.
+        # Also flag content with extremely high density of non-ASCII (e.g. encoded blobs)
+        non_ascii = sum(1 for ch in sample if ord(ch) > 127)
+        if non_ascii / len(sample) > 0.25:
+            return True
+
+        return False
+
+    _JS_REQUIRED_MARKERS = [
+        "javascript is required",
+        "enable javascript",
+        "you need to enable javascript",
+        "please enable js",
+    ]
+
+    @staticmethod
+    def _has_js_required_markers(text: str) -> bool:
+        text_lower = text.lower()
+        return any(m in text_lower for m in ClauseaCrawler._JS_REQUIRED_MARKERS)
+
+    def _content_is_sufficient(self, page: PageContent, url: str) -> bool:
+        """Decide whether the statically-fetched content is good enough to keep.
+
+        If this returns False and ``use_browser`` is enabled the caller should
+        retry with the headless browser.
         """
-        browser, context = await self._setup_browser()
-        # Camoufox's AsyncCamoufox instance can create pages directly
-        page: Page = await browser.new_page()  # type: ignore[assignment, name-defined]
+        if not page.text or len(page.text) < 500:
+            return False
+        if self._is_garbled_content(page.text):
+            return False
+        if self._has_js_required_markers(page.text):
+            return False
+        url_score = self.url_scorer.score_url(url)
+        if url_score >= 5.0 and len(page.text) < 1000:
+            return False
+        return True
 
-        try:
-            # Block heavy resources for performance
-            await page.route(
-                "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,otf}", lambda route: route.abort()
-            )
+    # ------------------------------------------------------------------
+    # Static fetch (pure HTTP, no content processing)
+    # ------------------------------------------------------------------
 
-            # Try progressively less strict wait conditions
-            wait_strategies: list[
-                tuple[str, Literal["networkidle", "load", "domcontentloaded"]]
-            ] = [
-                ("networkidle", "networkidle"),
-                ("load", "load"),
-                ("domcontentloaded", "domcontentloaded"),
-            ]
+    async def _static_fetch(self, session: aiohttp.ClientSession, url: str) -> StaticFetchResult:
+        """Perform a raw HTTP GET with rate-limiting, robots check, and caching.
 
-            response = None
-            last_error = None
+        Returns a :class:`StaticFetchResult` with the raw body/bytes.  No
+        content parsing or legal analysis happens here.
+        """
+        await self.rate_limit(url)
 
-            for strategy_name, wait_until in wait_strategies:
-                try:
-                    logger.debug(f"Trying browser fetch with {strategy_name} strategy for {url}")
-                    response = await page.goto(
-                        url, wait_until=wait_until, timeout=self.timeout * 1000
-                    )
-                    if response:
-                        logger.debug(f"Successfully loaded {url} with {strategy_name} strategy")
-                        break
-                except Exception as e:
-                    last_error = e
-                    logger.debug(f"Browser fetch with {strategy_name} failed for {url}: {e}")
-                    # Continue to next strategy
-                    continue
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
 
-            if not response:
-                # All strategies failed
-                logger.warning(f"All browser fetch strategies failed for {url}: {last_error}")
-                return CrawlResult(
+        should_check_robots = (
+            self.respect_robots_txt and domain not in self.ignore_robots_for_domains
+        )
+
+        if should_check_robots and self.robots_checker:
+            is_allowed, reason = await self.robots_checker.can_fetch(session, url)
+            if not is_allowed:
+                logger.warning(f"URL blocked by robots.txt: {url} - Reason: {reason}")
+                return StaticFetchResult(
                     url=url,
-                    title="",
-                    content="",
-                    markdown="",
-                    metadata={},
-                    status_code=500,
-                    success=False,
-                    error_message=f"Browser fetch error: {str(last_error)}",
+                    status_code=403,
+                    content_type="",
+                    body="",
+                    is_error=True,
+                    error_message=f"Blocked by robots.txt: {reason}",
                 )
 
-            # Extract content
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": ACCEPT_HEADER,
+        }
+        cache_headers = self.http_cache.get_cache_headers(url)
+        headers.update(cache_headers)
+
+        request_args: dict[str, Any] = {"timeout": timeout, "headers": headers}
+        if self.proxy:
+            request_args["proxy"] = self.proxy
+
+        async with session.get(url, **request_args) as response:
+            if response.status == 304:
+                logger.debug(f"Content not modified (304) for {url}, using cached metadata")
+                return StaticFetchResult(
+                    url=url,
+                    status_code=304,
+                    content_type="",
+                    body="",
+                    cached=True,
+                )
+
+            if response.status == 200:
+                self.http_cache.update_cache(url, response)
+
+            content_type = response.headers.get("content-type", "").lower()
+            resp_headers = dict(response.headers.items())
+
+            is_text = any(
+                ct in content_type
+                for ct in (
+                    "text/html",
+                    "text/plain",
+                    "text/xml",
+                    "application/xml",
+                    "application/rss+xml",
+                    "application/atom+xml",
+                )
+            )
+
+            if is_text:
+                body = await response.text()
+                return StaticFetchResult(
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body=body,
+                    headers=resp_headers,
+                )
+            else:
+                raw_bytes = await response.read()
+                return StaticFetchResult(
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body="",
+                    raw_bytes=raw_bytes,
+                    headers=resp_headers,
+                )
+
+    # ------------------------------------------------------------------
+    # Content extraction (content-type routing, no legal analysis)
+    # ------------------------------------------------------------------
+
+    async def _extract_page_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
+        """Route by content-type and extract text/markdown/links.
+
+        Returns ``None`` for unsupported or unparseable content types.
+        """
+        ct = raw.content_type
+
+        if raw.cached:
+            return PageContent(
+                text="",
+                markdown="",
+                title="",
+                metadata={"cached": True, "status": "not_modified"},
+                status_code=raw.status_code,
+            )
+
+        is_text_type = any(
+            t in ct
+            for t in (
+                "text/html",
+                "text/plain",
+                "text/xml",
+                "application/xml",
+                "application/rss+xml",
+                "application/atom+xml",
+            )
+        )
+        if not is_text_type:
+            return await self._extract_binary_content(raw, url)
+
+        if "text/html" in ct:
+            return self._extract_html_content(raw, url)
+        elif "text/plain" in ct:
+            return self._extract_plain_text_content(raw, url)
+        else:
+            return self._extract_xml_content(raw, url)
+
+    def _extract_html_content(self, raw: StaticFetchResult, url: str) -> PageContent:
+        soup = BeautifulSoup(raw.body, "html.parser")
+        title_tag = soup.find("title")
+        title_text = title_tag.get_text().strip() if title_tag else ""
+        content_soup = self._extract_main_content_soup(soup)
+        text_content = self._extract_text_from_soup(content_soup)
+        markdown_content = markdownify.markdownify(str(content_soup), heading_style="ATX")
+        metadata = self.extract_metadata(soup)
+        discovered_links = self.extract_links(soup, url)
+        return PageContent(
+            text=text_content,
+            markdown=markdown_content,
+            title=title_text,
+            metadata=metadata,
+            discovered_links=discovered_links,
+            status_code=raw.status_code,
+        )
+
+    def _extract_plain_text_content(self, raw: StaticFetchResult, url: str) -> PageContent:
+        text_content = raw.body.strip()
+        lines = text_content.split("\n")
+        title_text = ""
+        for line in lines[:5]:
+            line = line.strip()
+            if line and (
+                any(
+                    kw in line.lower()
+                    for kw in [
+                        "privacy",
+                        "terms",
+                        "policy",
+                        "agreement",
+                        "license",
+                        "legal",
+                        "notice",
+                    ]
+                )
+                or len(line) < 100
+            ):
+                title_text = line
+                break
+        if not title_text:
+            url_parts = url.rstrip("/").split("/")
+            if url_parts:
+                title_text = url_parts[-1].replace("-", " ").replace("_", " ").title()
+        return PageContent(
+            text=text_content,
+            markdown=text_content,
+            title=title_text,
+            metadata={
+                "content-type": raw.content_type,
+                "estimated_title": title_text,
+                "line_count": len(lines),
+                "character_count": len(text_content),
+            },
+            discovered_links=[],
+            status_code=raw.status_code,
+        )
+
+    def _extract_xml_content(self, raw: StaticFetchResult, url: str) -> PageContent:
+        discovered_links: list[dict[str, str]] = []
+        text_content = ""
+        title_text = ""
+        try:
+            sitemap_urls = self._parse_sitemap_xml(raw.body)
+            if sitemap_urls:
+                logger.info(f"📄 Parsed sitemap/RSS feed, found {len(sitemap_urls)} URLs")
+                discovered_links = [
+                    {"url": self.normalize_url(u), "text": ""} for u in sitemap_urls
+                ]
+                title_text = "XML Sitemap or Feed"
+                text_content = f"Contains {len(sitemap_urls)} URLs"
+        except Exception as e:
+            logger.debug(f"Failed to parse XML content from {url}: {e}")
+            text_content = raw.body.strip()
+            title_text = "XML Document"
+        return PageContent(
+            text=text_content,
+            markdown=text_content,
+            title=title_text,
+            metadata={
+                "content-type": raw.content_type,
+                "estimated_title": title_text,
+                "link_count": len(discovered_links),
+            },
+            discovered_links=discovered_links,
+            status_code=raw.status_code,
+        )
+
+    async def _extract_binary_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
+        if not self.enable_binary_crawling:
+            return None
+        if "application/pdf" not in raw.content_type and not raw.content_type.startswith(
+            "application/"
+        ):
+            return None
+        if not raw.raw_bytes:
+            return None
+
+        from src.document_processor import DocumentProcessor
+
+        processor = DocumentProcessor(
+            max_content_length=5000,
+            enable_binary_parsing=True,
+            prefer_tika=self.use_tika_for_binaries,
+            prefer_pdfminer=self.use_pdfminer_for_pdf,
+        )
+        filename = urlparse(url).path.split("/")[-1] or "document"
+        text_content = await processor._extract_text(raw.raw_bytes, filename, raw.content_type)
+
+        if not text_content:
+            return None
+
+        return PageContent(
+            text=text_content,
+            markdown=text_content,
+            title=filename,
+            metadata={
+                "content-type": raw.content_type,
+                "estimated_title": filename,
+                "line_count": len(text_content.splitlines()),
+                "character_count": len(text_content),
+            },
+            discovered_links=[],
+            status_code=raw.status_code,
+        )
+
+    # ------------------------------------------------------------------
+    # Browser fetch (returns PageContent)
+    # ------------------------------------------------------------------
+
+    async def _browser_fetch(self, url: str) -> PageContent | None:
+        """Fetch page with Camoufox headless browser, returning PageContent or None on failure."""
+        _browser_manager, context = await self._setup_browser()
+        page: Page = await context.new_page()
+
+        try:
+            # Only block heavy media. CSS and fonts are often required for SPA rendering
+            # or for bot-detection scripts to verify "visibility".
+            await page.route("**/*.{png,jpg,jpeg,gif,svg}", lambda route: route.abort())
+
+            total_timeout_ms = self.timeout * 1000
+
+            # Initiate navigation once. 'commit' ensures the response started.
+            # This is much faster and more resilient than restarting for each state.
+            logger.debug(f"🌐 Initiating browser fetch for {url}")
+            response = await page.goto(url, wait_until="commit", timeout=total_timeout_ms)
+
+            if not response:
+                logger.warning(f"❌ Browser fetch failed to initiate for {url}")
+                return None
+
+            # Progressively wait for more complete states without restarting navigation.
+            # We try for 'networkidle' but settle for 'load' or 'domcontentloaded' if they complete.
+            wait_states: list[Literal["domcontentloaded", "load", "networkidle"]] = [
+                "domcontentloaded",
+                "load",
+                "networkidle",
+            ]
+
+            # Allocate a portion of total timeout for each state check
+            state_timeout = total_timeout_ms // 2
+
+            for state in wait_states:
+                try:
+                    logger.debug(f"⏳ Waiting for {state} state for {url}")
+                    await page.wait_for_load_state(state, timeout=state_timeout)
+                    logger.debug(f"✅ Reached {state} state for {url}")
+                except Exception as e:
+                    logger.debug(f"⚠️ Wait for {state} timed out for {url} (continuing): {e}")
+                    # If we reached domcontentloaded, we can try to extract content even if others fail.
+                    # We continue the loop to try the next state if time remains.
+                    continue
+
             title = await page.title()
             content = await page.content()
-
-            # Process with BeautifulSoup to extract structured data (links, metadata)
             soup = BeautifulSoup(content, "html.parser")
-
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.decompose()
-
-            text_content = soup.get_text()
-            text_content = re.sub(r"\s+", " ", text_content).strip()
-            markdown_content = markdownify.markdownify(str(soup), heading_style="ATX")
+            content_soup = self._extract_main_content_soup(soup)
+            text_content = self._extract_text_from_soup(content_soup)
+            markdown_content = markdownify.markdownify(str(content_soup), heading_style="ATX")
             metadata = self.extract_metadata(soup)
             discovered_links = self.extract_links(soup, url)
 
-            # Prefer canonical if present and valid
-            resolved_url = self._choose_effective_url(url, metadata)
-            if resolved_url != url:
-                metadata["canonical_resolved"] = True
-                logger.debug(f"Using canonical URL for result: {resolved_url} (original: {url})")
-                url = resolved_url
-
-            return CrawlResult(
-                url=url,
-                title=title,
-                content=text_content,
+            return PageContent(
+                text=text_content,
                 markdown=markdown_content,
+                title=title,
                 metadata=metadata,
-                status_code=response.status,
-                success=True,
                 discovered_links=discovered_links,
+                status_code=response.status,
             )
 
         except Exception as e:
             logger.warning(f"Browser fetch failed for {url}: {e}")
-            return CrawlResult(
-                url=url,
-                title="",
-                content="",
-                markdown="",
-                metadata={},
-                status_code=500,
-                success=False,
-                error_message=f"Browser fetch error: {str(e)}",
-            )
+            return None
         finally:
             await page.close()
+
+    # ------------------------------------------------------------------
+    # Result building (no legal scoring – just assembles CrawlResult)
+    # ------------------------------------------------------------------
+
+    def _build_crawl_result(self, url: str, page: PageContent) -> CrawlResult:
+        """Assemble a :class:`CrawlResult` from extracted :class:`PageContent`.
+
+        Resolves canonical URLs.  Does **not** perform legal scoring.
+        """
+        resolved_url = self._choose_effective_url(url, page.metadata)
+        if resolved_url != url:
+            page.metadata["canonical_resolved"] = True
+            logger.debug(f"Using canonical URL for result: {resolved_url} (original: {url})")
+            url = resolved_url
+
+        return CrawlResult(
+            url=url,
+            title=page.title,
+            content=page.text,
+            markdown=page.markdown,
+            metadata=page.metadata,
+            status_code=page.status_code,
+            success=True,
+            discovered_links=page.discovered_links,
+        )
+
+    def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
+        """Extract likely primary content region and remove common boilerplate."""
+        main_candidate = None
+
+        # Prefer semantically meaningful content containers first.
+        for selector in (
+            "main",
+            "article",
+            '[role="main"]',
+            '[id*="content" i]',
+            '[class*="content" i]',
+            '[data-testid*="content" i]',
+            '[data-testid*="article" i]',
+            '[data-testid="CEPHtmlSection"]',  # Specifically for Airbnb help articles
+            '[data-qa*="content" i]',
+            '[id*="legal" i]',
+            '[class*="legal" i]',
+            '[id*="privacy" i]',
+            '[class*="privacy" i]',
+            '[id*="terms" i]',
+            '[class*="terms" i]',
+            '[id*="policy" i]',
+            '[class*="policy" i]',
+        ):
+            candidate = soup.select_one(selector)
+            if candidate:
+                candidate_text = candidate.get_text(" ", strip=True)
+                # For specific modern selectors, we can be more lenient with length
+                # as they are likely high-precision.
+                min_len = 50 if "data-testid" in selector else 300
+                if len(candidate_text) >= min_len:
+                    main_candidate = candidate
+                    break
+
+        content_root = main_candidate or soup.body or soup
+        cleaned = BeautifulSoup(str(content_root), "html.parser")
+
+        # Remove elements that almost never contain legal body text.
+        for tag in cleaned(["script", "style", "noscript", "template", "svg", "canvas", "iframe"]):
+            tag.decompose()
+
+        for tag in cleaned.find_all(
+            ["nav", "header", "footer", "aside", "form", "button", "input", "select", "textarea"]
+        ):
+            tag.decompose()
+
+        # Remove common boilerplate containers (cookie banners, menus, popups, etc.).
+        boilerplate_pattern = re.compile(
+            r"(cookie|consent|banner|popup|modal|newsletter|subscribe|breadcrumb|"
+            r"social|share|tracking|advert|promo|sidebar|drawer|menu|navigation|"
+            r"footer|header|masthead|toolbar)",
+            re.IGNORECASE,
+        )
+
+        for tag in cleaned.find_all(True):
+            # Skip tags with None attrs (can happen with malformed/edge-case HTML)
+            if tag.attrs is None:
+                continue
+            classes_value = tag.get("class")
+            if isinstance(classes_value, list):
+                classes = " ".join(str(cls) for cls in classes_value)
+            elif classes_value:
+                classes = str(classes_value)
+            else:
+                classes = ""
+            attrs = " ".join(
+                str(value) for value in [tag.get("id", ""), classes, tag.get("aria-label", "")]
+            )
+            if attrs and boilerplate_pattern.search(attrs):
+                # Preserve substantial legal-policy content wrappers even when their
+                # class/id contains "cookie" or similar boilerplate-like terms.
+                tag_text = tag.get_text(" ", strip=True)
+                if self._is_substantive_legal_policy_container(attrs, tag_text):
+                    continue
+                tag.decompose()
+
+        return cleaned
+
+    @staticmethod
+    def _is_substantive_legal_policy_container(attrs: str, text: str) -> bool:
+        """Return True when a boilerplate-looking container likely holds legal policy text."""
+        attrs_lower = attrs.lower()
+        text_lower = text.lower()
+
+        legal_attr_keywords = (
+            "legal",
+            "privacy",
+            "policy",
+            "terms",
+            "gdpr",
+            "ccpa",
+            "data-protection",
+            "data_protection",
+            "dpa",
+            "cookie-policy",
+            "cookie_policy",
+        )
+        if not any(keyword in attrs_lower for keyword in legal_attr_keywords):
+            return False
+
+        # Require enough body text to avoid preserving tiny cookie banners.
+        if len(text_lower) < 300:
+            return False
+
+        legal_text_pattern = re.compile(
+            r"\b(?:privacy|terms|policy|agreement|legal|gdpr|ccpa|cookie|data protection|"
+            r"liability|disclaimer|jurisdiction|compliance|consent|rights)\b",
+            re.IGNORECASE,
+        )
+        return bool(legal_text_pattern.search(text_lower))
+
+    def _extract_text_from_soup(self, soup: BeautifulSoup) -> str:
+        """Extract normalized text while preserving some block separation."""
+        text_content = soup.get_text(separator="\n")
+        text_content = text_content.replace("\xa0", " ")
+        text_content = re.sub(r"[ \t]+", " ", text_content)
+        text_content = re.sub(r"\n{3,}", "\n\n", text_content)
+        return text_content.strip()
 
     @staticmethod
     @lru_cache(maxsize=50000)  # noqa: B019 - Static method cache is safe
@@ -1467,94 +1981,93 @@ class ClauseaCrawler:
 
         return urls
 
+    # Well-known sitemap paths to probe when robots.txt has no directive.
+    _WELL_KNOWN_SITEMAP_PATHS = [
+        "/sitemap.xml",
+        "/sitemap_index.xml",
+        "/sitemap-index.xml",
+        "/sitemaps.xml",
+    ]
+
     async def _discover_sitemap_urls(
         self, session: aiohttp.ClientSession, base_url: str
     ) -> list[str]:
-        """Discover sitemap URLs from robots.txt and fetch/parse sitemap files.
+        """Discover page URLs by fetching and parsing sitemaps.
 
-        This method:
-        1. Fetches robots.txt for the base URL
-        2. Parses it to extract sitemap directives
-        3. Fetches and parses sitemap XML files
-        4. Returns all discovered URLs from sitemaps
+        Discovery sources (tried in order):
+        1. ``Sitemap:`` directives in ``robots.txt``
+        2. Well-known sitemap paths (``/sitemap.xml``, …)
 
-        Args:
-            session: aiohttp session for making requests
-            base_url: Base URL to discover sitemaps for
+        Sitemap index files are followed one level deep.
 
         Returns:
-            List of URLs discovered from sitemaps
+            Deduplicated list of page URLs found across all sitemaps.
         """
+        parsed_url = urlparse(base_url)
+        origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        headers = {"User-Agent": self.user_agent}
+
+        # ------------------------------------------------------------------
+        # 1. Collect candidate sitemap URLs to fetch
+        # ------------------------------------------------------------------
+        sitemap_candidates: list[str] = []
+
+        # 1a. robots.txt directives
+        if self.robots_checker:
+            try:
+                async with session.get(f"{origin}/robots.txt", headers=headers) as response:
+                    if response.status == 200:
+                        robots_content = await response.text()
+                        rules = self.robots_checker._parse_robots_txt(robots_content)
+                        sitemap_candidates.extend(rules.get("sitemaps", []))
+            except Exception as e:
+                logger.debug(f"Failed to fetch robots.txt: {e}")
+
+        # 1b. Well-known paths (only those not already found via robots.txt)
+        known = {s.rstrip("/") for s in sitemap_candidates}
+        for path in self._WELL_KNOWN_SITEMAP_PATHS:
+            candidate = f"{origin}{path}"
+            if candidate.rstrip("/") not in known:
+                sitemap_candidates.append(candidate)
+
+        # ------------------------------------------------------------------
+        # 2. Fetch each sitemap, follow indexes one level deep
+        # ------------------------------------------------------------------
+        seen_urls: set[str] = set()
         discovered_urls: list[str] = []
 
-        try:
-            # Get robots.txt rules (this will use the cache if available)
-            if self.robots_checker:
-                parsed_url = urlparse(base_url)
-                robots_url = f"{parsed_url.scheme}://{parsed_url.netloc}/robots.txt"
+        async def _fetch_and_parse_sitemap(sitemap_url: str) -> list[str]:
+            """Fetch a single sitemap and return the URLs it contains."""
+            try:
+                async with session.get(sitemap_url, headers=headers) as resp:
+                    if resp.status != 200:
+                        return []
+                    return self._parse_sitemap_xml(await resp.text())
+            except Exception as e:
+                logger.debug(f"Failed to fetch sitemap {sitemap_url}: {e}")
+                return []
 
-                # Fetch robots.txt
-                try:
-                    async with session.get(
-                        robots_url, headers={"User-Agent": self.user_agent}
-                    ) as response:
-                        if response.status == 200:
-                            robots_content = await response.text()
-                            robots_rules = self.robots_checker._parse_robots_txt(robots_content)
+        for sitemap_url in sitemap_candidates:
+            urls = await _fetch_and_parse_sitemap(sitemap_url)
+            if not urls:
+                continue
 
-                            # Extract sitemap URLs from robots.txt
-                            sitemap_urls = robots_rules.get("sitemaps", [])
+            # Separate sitemap-index entries from regular page URLs
+            child_sitemaps: list[str] = []
+            for url in urls:
+                if "sitemap" in url.lower() and url.endswith(".xml"):
+                    child_sitemaps.append(url)
+                elif url not in seen_urls:
+                    seen_urls.add(url)
+                    discovered_urls.append(url)
 
-                            # Fetch and parse each sitemap
-                            for sitemap_url in sitemap_urls:
-                                try:
-                                    async with session.get(
-                                        sitemap_url, headers={"User-Agent": self.user_agent}
-                                    ) as sitemap_response:
-                                        if sitemap_response.status == 200:
-                                            sitemap_content = await sitemap_response.text()
-                                            urls = self._parse_sitemap_xml(sitemap_content)
-
-                                            # Check if it's a sitemap index (returns sitemap URLs)
-                                            # or a regular sitemap (returns page URLs)
-                                            if urls:
-                                                # If URLs look like sitemap URLs (contain "sitemap" in path),
-                                                # recursively fetch them
-                                                for url in urls:
-                                                    if "sitemap" in url.lower():
-                                                        # It's another sitemap index - fetch it
-                                                        try:
-                                                            async with session.get(
-                                                                url,
-                                                                headers={
-                                                                    "User-Agent": self.user_agent
-                                                                },
-                                                            ) as nested_response:
-                                                                if nested_response.status == 200:
-                                                                    nested_content = (
-                                                                        await nested_response.text()
-                                                                    )
-                                                                    nested_urls = (
-                                                                        self._parse_sitemap_xml(
-                                                                            nested_content
-                                                                        )
-                                                                    )
-                                                                    discovered_urls.extend(
-                                                                        nested_urls
-                                                                    )
-                                                        except Exception as e:
-                                                            logger.debug(
-                                                                f"Failed to fetch nested sitemap {url}: {e}"
-                                                            )
-                                                    else:
-                                                        # It's a regular page URL
-                                                        discovered_urls.append(url)
-                                except Exception as e:
-                                    logger.debug(f"Failed to fetch sitemap {sitemap_url}: {e}")
-                except Exception as e:
-                    logger.debug(f"Failed to fetch robots.txt from {robots_url}: {e}")
-        except Exception as e:
-            logger.debug(f"Error discovering sitemaps for {base_url}: {e}")
+            # Follow child sitemaps one level deep
+            for child_url in child_sitemaps:
+                nested_urls = await _fetch_and_parse_sitemap(child_url)
+                for url in nested_urls:
+                    if url not in seen_urls:
+                        seen_urls.add(url)
+                        discovered_urls.append(url)
 
         return discovered_urls
 
@@ -1576,19 +2089,26 @@ class ClauseaCrawler:
         return {"user_agents": {}}
 
     def is_allowed_domain(self, url: str) -> bool:
-        """Check if URL domain is allowed."""
+        """Check if URL domain is allowed.
+
+        Uses tldextract to compare registered domains, which correctly handles:
+        - Subdomains (e.g., www.airbnb.com matches airbnb.com)
+        - ccTLD variants (e.g., airbnb.com.ua matches airbnb.com via shared 'airbnb' domain)
+        - Rejects unrelated domains (e.g., evil.com, notairbnb.com)
+        """
         if not self.allowed_domains:
             return True
 
-        parsed = self._parse_url(url)
-        domain = self._normalize_domain(parsed.netloc)
+        url_ext = _TLD_EXTRACT(url)
+        url_domain = url_ext.domain  # e.g., "airbnb"
 
-        # Check if domain matches any allowed domain
-        return any(
-            domain == self._normalize_domain(allowed)
-            or domain.endswith("." + self._normalize_domain(allowed))
-            for allowed in (self.allowed_domains or set())
-        )
+        for allowed in self.allowed_domains:
+            allowed_ext = _TLD_EXTRACT(allowed)
+            # Compare the registered domain name (ignoring suffix/subdomain)
+            if url_domain == allowed_ext.domain:
+                return True
+
+        return False
 
     def is_same_domain(self, url1: str, url2: str) -> bool:
         """Check if two URLs are from the same domain."""
@@ -1609,26 +2129,25 @@ class ClauseaCrawler:
             logger.debug(f"❌ URL {url} rejected: depth {depth} > max_depth {self.max_depth}")
             return False
 
-        if url in self.visited_urls or url in self.failed_urls:
-            logger.debug(f"❌ URL {url} rejected: already visited or failed")
+        if url in self.visited_urls or url in self.failed_urls or url in self.queued_urls:
+            logger.debug(f"❌ URL {url} rejected: already visited, failed, or queued")
             return False
 
         # Parse URL once and reuse for multiple checks
         parsed_url = self._parse_url(url)
+
+        # Enforce HTTPS
+        if parsed_url.scheme != "https":
+            logger.debug(f"❌ URL {url} rejected: non-HTTPS scheme '{parsed_url.scheme}'")
+            return False
+
         url_domain = self._normalize_domain(parsed_url.netloc)
 
         # Check allowed domain
         if self.allowed_domains:
-            normalized_allowed = [
-                self._normalize_domain(allowed) for allowed in self.allowed_domains
-            ]
-            is_allowed = any(
-                url_domain == normalized or url_domain.endswith("." + normalized)
-                for normalized in normalized_allowed
-            )
-            if not is_allowed:
+            if not self.is_allowed_domain(url):
                 logger.debug(
-                    f"❌ URL {url} rejected: domain '{url_domain}' not in allowed domains: {normalized_allowed}"
+                    f"❌ URL {url} rejected: domain '{url_domain}' not in allowed domains: {self.allowed_domains}"
                 )
                 return False
 
@@ -1697,6 +2216,8 @@ class ClauseaCrawler:
             ):
                 return
             absolute = urljoin(base_url, raw_url)
+            if absolute.startswith("http://"):
+                return
             normalized = self.normalize_url(absolute)
             entry = {"url": normalized, "text": (text or "").strip()}
             if rel:
@@ -1706,7 +2227,18 @@ class ClauseaCrawler:
         # Standard anchors and common data-* attributes
         for a in soup.find_all("a"):
             href = a.get("href")
-            text = a.get_text().strip() if a.get_text() else ""
+            # Get primary text from tag content
+            text = (a.get_text() or "").strip()
+
+            # Enrich text with title or aria-label if content is thin
+            if len(text) < 3:
+                title_attr = a.get("title")
+                aria_label = a.get("aria-label")
+                if title_attr:
+                    text = str(title_attr).strip()
+                elif aria_label:
+                    text = str(aria_label).strip()
+
             rel_attr = a.get("rel")
             rel = (
                 " ".join(rel_attr).lower()
@@ -1720,10 +2252,27 @@ class ClauseaCrawler:
                     add_url(str(attr_value), text, rel or None)
 
         # <link> tags (canonical, alternate, etc.)
+        # For alternate/canonical links, propagate the page title as anchor text
+        # so the URL scorer can see legal keywords.
+        # Prioritize meta titles over standard <title> tag.
+        page_title = ""
+        meta_title = (
+            soup.find("meta", property="og:title")
+            or soup.find("meta", attrs={"name": "twitter:title"})
+            or soup.find("title")
+        )
+        if meta_title:
+            if meta_title.name == "title":
+                page_title = meta_title.get_text().strip()
+            else:
+                content = meta_title.get("content")
+                page_title = (str(content) if content else "").strip()
+
         for link_tag in soup.find_all("link", href=True):
             rel = " ".join(link_tag.get("rel") or [])
             href_value = link_tag.get("href")
-            add_url(str(href_value) if href_value else None, f"link:{rel}", rel)
+            link_text = page_title if rel in ("alternate", "canonical") else f"link:{rel}"
+            add_url(str(href_value) if href_value else None, link_text, rel)
 
         # Image map areas
         for area in soup.find_all("area", href=True):
@@ -1801,10 +2350,6 @@ class ClauseaCrawler:
                 unique_links.append(link)
 
         logger.debug(f"🔗 Discovered {len(unique_links)} unique links from {base_url}")
-        for link in unique_links[:20]:
-            logger.debug(f"  - {link['url']} ({link['text'][:60]})")
-        if len(unique_links) > 20:
-            logger.debug(f"  ... and {len(unique_links) - 20} more links")
 
         return unique_links
 
@@ -1919,385 +2464,61 @@ class ClauseaCrawler:
         return False
 
     async def _fetch_page_internal(self, session: aiohttp.ClientSession, url: str) -> CrawlResult:
-        """
-        Internal method to fetch and process a single page (without retry logic).
+        """Fetch and extract content for a single URL (without retry logic).
 
-        This is the actual implementation that will be retried on transient errors.
+        Pipeline:
+          1. Static HTTP fetch
+          2. Content extraction (route by content-type)
+          3. Quality gate — if content is insufficient and browser is enabled, retry with Camoufox
+          4. Build CrawlResult (no legal scoring)
         """
-        await self.rate_limit(url)
-
         try:
-            # Check if we should ignore robots.txt for this domain
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-            if domain.startswith("www."):
-                domain = domain[4:]
+            raw = await self._static_fetch(session, url)
 
-            should_check_robots = (
-                self.respect_robots_txt and domain not in self.ignore_robots_for_domains
-            )
+            if raw.is_error:
+                return raw.to_failed_crawl_result()
 
-            # Check robots.txt
-            if should_check_robots and self.robots_checker:
-                is_allowed, reason = await self.robots_checker.can_fetch(session, url)
-                if not is_allowed:
-                    logger.warning(f"URL blocked by robots.txt: {url} - Reason: {reason}")
-                    return CrawlResult(
-                        url=url,
-                        title="",
-                        content="",
-                        markdown="",
-                        metadata={},
-                        status_code=403,
-                        success=False,
-                        error_message=f"Blocked by robots.txt: {reason}",
-                    )
+            page = await self._extract_page_content(raw, url)
 
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
-            headers = {"User-Agent": self.user_agent}
-
-            # Add HTTP cache headers (If-None-Match, If-Modified-Since)
-            cache_headers = self.http_cache.get_cache_headers(url)
-            headers.update(cache_headers)
-
-            # Use proxy if configured
-            request_args = {
-                "timeout": timeout,
-                "headers": headers,
-            }
-            if self.proxy:
-                request_args["proxy"] = self.proxy
-
-            async with session.get(url, **request_args) as response:
-                # Handle 304 Not Modified - content hasn't changed
-                if response.status == 304:
-                    logger.debug(f"Content not modified (304) for {url}, using cached metadata")
-                    # Return a result indicating no change (but still successful)
-                    # The caller can decide whether to process this or skip
-                    return CrawlResult(
-                        url=url,
-                        title="",
-                        content="",
-                        markdown="",
-                        metadata={"cached": True, "status": "not_modified"},
-                        status_code=304,
-                        success=True,
-                        error_message=None,
-                    )
-
-                # Update cache with ETag/Last-Modified if present
-                if response.status == 200:
-                    self.http_cache.update_cache(url, response)
-
-                content_type = response.headers.get("content-type", "").lower()
-
-                # Process HTML, plain text, and XML content
-                if (
-                    "text/html" not in content_type
-                    and "text/plain" not in content_type
-                    and "text/xml" not in content_type
-                    and "application/xml" not in content_type
-                    and "application/rss+xml" not in content_type
-                    and "application/atom+xml" not in content_type
-                ):
-                    # Optionally support binary parsing (PDF/Office) when enabled
-                    if self.enable_binary_crawling and (
-                        "application/pdf" in content_type or content_type.startswith("application/")
-                    ):
-                        # Read raw bytes
-                        raw_bytes = await response.read()
-                        # Try to extract text using DocumentProcessor (opt-in)
-                        from src.document_processor import DocumentProcessor
-
-                        processor = DocumentProcessor(
-                            max_content_length=5000,
-                            enable_binary_parsing=True,
-                            prefer_tika=self.use_tika_for_binaries,
-                            prefer_pdfminer=self.use_pdfminer_for_pdf,
-                        )
-
-                        filename = urlparse(url).path.split("/")[-1] or "document"
-                        text_content = await processor._extract_text(
-                            raw_bytes, filename, content_type
-                        )
-
-                        if not text_content:
-                            return CrawlResult(
-                                url=url,
-                                title="",
-                                content="",
-                                markdown="",
-                                metadata={"content-type": content_type},
-                                status_code=response.status,
-                                success=False,
-                                error_message=f"Unsupported or unparseable binary content type: {content_type}",
-                            )
-
-                        # Build simple metadata and markdown
-                        title_text = filename
-                        lines = text_content.splitlines()
-                        markdown_content = text_content
-
-                        metadata = {
-                            "content-type": content_type,
-                            "estimated_title": title_text,
-                            "line_count": len(lines),
-                            "character_count": len(text_content),
-                        }
-
-                        discovered_links = []
-
-                        # Analyze for legal content
-                        is_legal, legal_score, indicators = self.content_analyzer.analyze_content(
-                            text_content, title_text, metadata
-                        )
-
-                        if is_legal:
-                            self.stats.legal_documents_found += 1
-
-                        effective_url = self._choose_effective_url(url, metadata)
-                        if effective_url != url:
-                            metadata["canonical_resolved"] = True
-                            logger.debug(
-                                f"Returning canonical URL for result: {effective_url} (original: {url})"
-                            )
-                            url = effective_url
-
-                        return CrawlResult(
-                            url=url,
-                            title=title_text,
-                            content=text_content,
-                            markdown=markdown_content,
-                            metadata=metadata,
-                            status_code=response.status,
-                            success=True,
-                            error_message=None,
-                            legal_score=legal_score,
-                            discovered_links=discovered_links,
-                        )
-
-                    return CrawlResult(
-                        url=url,
-                        title="",
-                        content="",
-                        markdown="",
-                        metadata={},
-                        status_code=response.status,
-                        success=False,
-                        error_message=f"Unsupported content type: {content_type}",
-                    )
-
-                text_response = await response.text()
-
-                # Handle HTML content
-                if "text/html" in content_type:
-                    soup = BeautifulSoup(text_response, "html.parser")
-
-                    # Extract data
-                    title = soup.find("title")
-                    title_text = title.get_text().strip() if title else ""
-
-                    # Remove script and style elements
-                    for script in soup(["script", "style"]):
-                        script.decompose()
-
-                    # Get text content
-                    text_content = soup.get_text()
-                    text_content = re.sub(r"\s+", " ", text_content).strip()
-
-                    # Check if we should fallback to browser for dynamic content
-                    # Fallback criteria:
-                    # 1. use_browser is enabled
-                    # 2. Content is very short (likely bootstrap only)
-                    # 3. Content contains JS required markers
-                    js_required_markers = [
-                        "javascript is required",
-                        "enable javascript",
-                        "you need to enable javascript",
-                        "please enable js",
-                    ]
-
-                    should_fallback = self.use_browser and (
-                        len(text_content) < 500
-                        or any(marker in text_content.lower() for marker in js_required_markers)
-                    )
-
-                    if should_fallback:
-                        logger.info(
-                            f"🔄 Detected dynamic content or short page, trying browser: {url}"
-                        )
-                        browser_result = await self._fetch_with_browser(url)
-
-                        # If browser fetch succeeded, use it
-                        if browser_result.success:
-                            return browser_result
-
-                        # Browser fetch failed, fall back to static HTML parsing
-                        logger.info(
-                            f"⚠️ Browser fetch failed, falling back to static HTML parsing: {url}"
-                        )
-                        # Continue with static HTML parsing below (don't return)
-
-                    # Convert to markdown
-                    markdown_content = markdownify.markdownify(str(soup), heading_style="ATX")
-
-                    # Extract metadata
-                    metadata = self.extract_metadata(soup)
-
-                    # Extract links
-                    discovered_links = self.extract_links(soup, url)
-
-                    # If page has a canonical URL, prefer it for the result URL (when appropriate)
-                    resolved_url = self._choose_effective_url(url, metadata)
-                    if resolved_url != url:
-                        metadata["canonical_resolved"] = True
-                        logger.debug(
-                            f"Using canonical URL for result: {resolved_url} (original: {url})"
-                        )
-                    url = resolved_url
-
-                # Handle plain text content
-                elif "text/plain" in content_type:
-                    # For plain text, use the content as-is
-                    text_content = text_response.strip()
-
-                    # Try to extract title from first line or URL
-                    lines = text_content.split("\n")
-                    title_text = ""
-
-                    # Look for title indicators in first few lines
-                    for line in lines[:5]:
-                        line = line.strip()
-                        if line and (
-                            any(
-                                keyword in line.lower()
-                                for keyword in [
-                                    "privacy",
-                                    "terms",
-                                    "policy",
-                                    "agreement",
-                                    "license",
-                                    "legal",
-                                    "notice",
-                                ]
-                            )
-                            or len(line) < 100  # Short lines might be titles
-                        ):
-                            title_text = line
-                            break
-
-                    # Fallback: extract title from URL
-                    if not title_text:
-                        url_parts = url.rstrip("/").split("/")
-                        if url_parts:
-                            title_text = url_parts[-1].replace("-", " ").replace("_", " ").title()
-
-                    # Use text content as markdown (it's already plain text)
-                    markdown_content = text_content
-
-                    # Basic metadata for plain text
-                    metadata = {
-                        "content-type": content_type,
-                        "estimated_title": title_text,
-                        "line_count": len(lines),
-                        "character_count": len(text_content),
-                    }
-
-                    # No links can be extracted from plain text
-                    discovered_links = []
-
-                # Handle XML content (sitemaps, RSS/Atom feeds)
-                elif (
-                    "text/xml" in content_type
-                    or "application/xml" in content_type
-                    or "application/rss+xml" in content_type
-                    or "application/atom+xml" in content_type
-                ):
-                    # Parse XML to extract URLs
-                    discovered_links = []
-                    text_content = ""
-                    title_text = ""
-
-                    try:
-                        # Try parsing as sitemap first
-                        sitemap_urls = self._parse_sitemap_xml(text_response)
-                        if sitemap_urls:
-                            logger.info(
-                                f"📄 Parsed sitemap/RSS feed, found {len(sitemap_urls)} URLs"
-                            )
-                            discovered_links = [
-                                {"url": self.normalize_url(url), "text": ""} for url in sitemap_urls
-                            ]
-                            title_text = "XML Sitemap or Feed"
-                            text_content = f"Contains {len(sitemap_urls)} URLs"
-                    except Exception as e:
-                        logger.debug(f"Failed to parse XML content from {url}: {e}")
-                        # Fallback to treating as plain text
-                        text_content = text_response.strip()
-                        title_text = "XML Document"
-
-                    # Basic metadata for XML
-                    metadata = {
-                        "content-type": content_type,
-                        "estimated_title": title_text,
-                        "link_count": len(discovered_links),
-                    }
-
-                # Analyze content for legal relevance (works for HTML, plain text, and XML)
-                is_legal, legal_score, indicators = self.content_analyzer.analyze_content(
-                    text_content, title_text, metadata
-                )
-
-                if is_legal:
-                    self.stats.legal_documents_found += 1
-
-                # Ensure the URL we return is the preferred canonical when appropriate
-                effective_url = self._choose_effective_url(url, metadata)
-                if effective_url != url:
-                    metadata["canonical_resolved"] = True
-                    logger.debug(
-                        f"Returning canonical URL for result: {effective_url} (original: {url})"
-                    )
-                    url = effective_url
-
-                return CrawlResult(
-                    url=url,
-                    title=title_text,
-                    content=text_content,
-                    markdown=markdown_content,
-                    metadata=metadata,
-                    status_code=response.status,
-                    success=True,
-                    legal_score=legal_score,
-                    discovered_links=discovered_links,
-                )
-        except aiohttp.ClientResponseError as e:
-            # Handle HTTP errors
-            status = e.status
-            error_msg = f"HTTP {status}: {e.message}"
-
-            # Check if this is a retryable error
-            if status >= 500 or status == 429:
-                # Server error or rate limit - will be retried
-                raise
-            else:
-                # Client error (4xx) - don't retry
-                logger.warning(f"Client error fetching {url}: {error_msg}")
+            if page is None:
                 return CrawlResult(
                     url=url,
                     title="",
                     content="",
                     markdown="",
-                    metadata={},
-                    status_code=status,
+                    metadata={"content-type": raw.content_type},
+                    status_code=raw.status_code,
                     success=False,
-                    error_message=error_msg,
+                    error_message=f"Unsupported content type: {raw.content_type}",
                 )
+
+            if not self._content_is_sufficient(page, url) and self.use_browser:
+                logger.info(f"🔄 Static content insufficient, trying browser: {url}")
+                browser_page = await self._browser_fetch(url)
+                if browser_page is not None:
+                    page = browser_page
+                else:
+                    logger.info(f"⚠️ Browser fetch failed, using static content: {url}")
+
+            return self._build_crawl_result(url, page)
+
+        except aiohttp.ClientResponseError as e:
+            if e.status >= 500 or e.status == 429:
+                raise
+            logger.warning(f"Client error fetching {url}: HTTP {e.status}: {e.message}")
+            return CrawlResult(
+                url=url,
+                title="",
+                content="",
+                markdown="",
+                metadata={},
+                status_code=e.status,
+                success=False,
+                error_message=f"HTTP {e.status}: {e.message}",
+            )
         except (aiohttp.ClientError, TimeoutError):
-            # Network/timeout errors - will be retried
             raise
         except Exception as e:
-            # Other errors - don't retry
             logger.error(f"Unexpected error fetching {url}: {e}")
             return CrawlResult(
                 url=url,
@@ -2380,11 +2601,25 @@ class ClauseaCrawler:
                 error_message=f"{type(e).__name__}: {str(e)} (retries exhausted)",
             )
 
+    # Locale-like path segment pattern (e.g. "en", "fr-FR", "pt-br", "zh-Hans")
+    _LOCALE_RE = re.compile(r"^[a-z]{2}(?:[-_][a-zA-Z]{2,4})?$")
+
     def generate_potential_legal_urls(self, base_url: str) -> list[str]:
-        """Generate potential legal document URLs based on common patterns."""
+        """Generate potential legal document URLs based on common patterns.
+
+        The generator is *path-prefix-aware*: if the base URL contains a
+        non-trivial path (e.g. a locale prefix like ``/en`` or a sub-section
+        like ``/help``), legal paths are generated both at the domain root
+        **and** under that prefix so that sites structured as
+        ``/en/articles/…`` or ``/help/legal/…`` are discovered.
+
+        It also produces hub / listing page URLs (``/articles``,
+        ``/collections``, …) that are common in knowledge-base platforms
+        (Intercom, Zendesk, Freshdesk, …) and frequently link to individual
+        legal documents.
+        """
         parsed = urlparse(base_url)
         domain = parsed.netloc
-        scheme = parsed.scheme
 
         # Common legal document paths
         legal_paths = [
@@ -2431,11 +2666,70 @@ class ClauseaCrawler:
             "/legal/policies/cookies",
         ]
 
-        # Generate URLs for each path
-        potential_urls = []
-        for path in legal_paths:
-            url = f"{scheme}://{domain}{path}"
-            potential_urls.append(url)
+        # Hub / listing / index pages common on knowledge-base platforms
+        # (Intercom, Zendesk, Freshdesk, HelpScout, …).  These intermediate
+        # pages typically link to individual articles containing the actual
+        # legal text.
+        hub_paths = [
+            "/articles",
+            "/collections",
+            "/categories",
+            "/sections",
+            "/docs",
+            "/help",
+            "/help/articles",
+            "/help/collections",
+            "/support",
+            "/support/articles",
+            "/support/solutions",
+            "/knowledge",
+            "/knowledge-base",
+            "/kb",
+            "/faq",
+            "/hc",
+        ]
+
+        # ------------------------------------------------------------------
+        # Detect meaningful path prefixes from the base URL.
+        #
+        # Examples:
+        #   https://privacy.example.com/en           → prefix "/en"
+        #   https://help.example.com/hc/en-us        → prefix "/hc/en-us"
+        #   https://example.com                      → no prefix
+        #   https://example.com/                     → no prefix
+        # ------------------------------------------------------------------
+        base_path = parsed.path.rstrip("/")
+        prefixes: list[str] = [""]  # always generate root-level URLs
+
+        if base_path and base_path != "/":
+            prefixes.append(base_path)
+
+            # If the path has multiple segments, also add each cumulative
+            # sub-prefix.  For "/hc/en-us" this yields ["/hc", "/hc/en-us"].
+            segments = [s for s in base_path.split("/") if s]
+            if len(segments) > 1:
+                for i in range(1, len(segments)):
+                    sub = "/" + "/".join(segments[:i])
+                    if sub not in prefixes:
+                        prefixes.append(sub)
+
+        # ------------------------------------------------------------------
+        # Build the final URL set (deduplicated, preserving order).
+        # ------------------------------------------------------------------
+        seen: set[str] = set()
+        potential_urls: list[str] = []
+
+        def _add(path: str) -> None:
+            url = f"https://{domain}{path}"
+            if url not in seen:
+                seen.add(url)
+                potential_urls.append(url)
+
+        for prefix in prefixes:
+            for path in legal_paths:
+                _add(f"{prefix}{path}")
+            for path in hub_paths:
+                _add(f"{prefix}{path}")
 
         return potential_urls
 
@@ -2478,6 +2772,7 @@ class ClauseaCrawler:
             if not self.should_crawl_url(url, base_url, depth + 1):
                 continue
 
+            self.queued_urls.add(url)
             if self.strategy == "bfs":
                 self.url_queue.append((url, depth + 1))
                 logger.debug(f"Added to BFS queue: {url} (depth: {depth + 1})")
@@ -2488,13 +2783,18 @@ class ClauseaCrawler:
                 score = self.url_scorer.score_url(url, anchor_text=anchor_text)
                 heapq.heappush(self.url_priority_queue, (-score, url, depth + 1))
                 logger.debug(
-                    f"Added to Best-First queue: {url} (score: {score:.2f}, text: {anchor_text})"
+                    f"Added to Best-First queue: {url} (score: {score:.2f}, title: {anchor_text})"
                 )
 
-        # If we're at depth 0 (starting page), also add potential legal URLs
-        if depth == 0:
+        # Fallback: if sitemaps didn't provide seeds, speculatively probe
+        # common legal paths from the starting page.  When sitemaps DID
+        # provide seeds we skip this — the sitemap already tells us what
+        # pages exist, so blind probing would only waste requests.
+        if depth == 0 and not self._sitemap_seeded:
             potential_legal_urls = self.generate_potential_legal_urls(base_url)
-            logger.info(f"🔍 Generated {len(potential_legal_urls)} potential legal URLs")
+            logger.info(
+                f"🔍 No sitemap seeds — probing {len(potential_legal_urls)} potential legal URLs"
+            )
 
             for url in potential_legal_urls:
                 normalized = self.normalize_url(url)
@@ -2508,6 +2808,7 @@ class ClauseaCrawler:
                 if not self.should_crawl_url(url, base_url, 1):
                     continue
 
+                self.queued_urls.add(url)
                 if self.strategy == "bfs":
                     self.url_queue.append((url, 1))
                     logger.debug(f"Added potential legal URL to BFS queue: {url}")
@@ -2515,7 +2816,6 @@ class ClauseaCrawler:
                     self.url_stack.append((url, 1))
                     logger.debug(f"Added potential legal URL to DFS stack: {url}")
                 elif self.strategy == "best_first":
-                    # For generated URLs, we don't have anchor text
                     score = self.url_scorer.score_url(url, anchor_text=None)
                     heapq.heappush(self.url_priority_queue, (-score, url, 1))
                     logger.debug(
@@ -2532,6 +2832,16 @@ class ClauseaCrawler:
             _, url, depth = heapq.heappop(self.url_priority_queue)
             return url, depth
         return None
+
+    def _get_pending_url_count(self) -> int:
+        """Return the number of URLs waiting in the active queue/stack."""
+        if self.strategy == "bfs":
+            return len(self.url_queue)
+        elif self.strategy == "dfs":
+            return len(self.url_stack)
+        elif self.strategy == "best_first":
+            return len(self.url_priority_queue)
+        return 0
 
     async def crawl(self, base_url: str) -> list[CrawlResult]:
         """
@@ -2554,6 +2864,7 @@ class ClauseaCrawler:
             self.stats = CrawlStats()
 
             # Add base URL to queue
+            self.queued_urls.add(base_url)
             if self.strategy == "bfs":
                 self.url_queue.append((base_url, 0))
                 logger.debug(f"Added base URL to BFS queue: {base_url} (depth: 0)")
@@ -2570,28 +2881,34 @@ class ClauseaCrawler:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
 
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                # Discover sitemaps early (before main loop) to seed queue
+                # Discover sitemaps and use their URLs as depth-0 seeds.
+                # This gives every sitemap URL the full max_depth of crawling
+                # and avoids wasting requests on speculative path guessing.
                 try:
                     sitemap_urls = await self._discover_sitemap_urls(session, base_url)
-                    if sitemap_urls:
-                        logger.info(f"🔍 Found {len(sitemap_urls)} sitemap URLs for {base_url}")
-                        for url in sitemap_urls:
-                            if not self.should_crawl_url(url, base_url, 1):
-                                continue
-                            if self.strategy == "bfs":
-                                self.url_queue.append((url, 1))
-                            elif self.strategy == "dfs":
-                                self.url_stack.append((url, 1))
-                            elif self.strategy == "best_first":
-                                score = self.url_scorer.score_url(url, anchor_text=None)
-                                heapq.heappush(self.url_priority_queue, (-score, url, 1))
+                    seeded = 0
+                    for url in sitemap_urls:
+                        if not self.should_crawl_url(url, base_url, 0):
+                            continue
+                        self.queued_urls.add(url)
+                        if self.strategy == "bfs":
+                            self.url_queue.append((url, 0))
+                        elif self.strategy == "dfs":
+                            self.url_stack.append((url, 0))
+                        elif self.strategy == "best_first":
+                            score = self.url_scorer.score_url(url, anchor_text=None)
+                            heapq.heappush(self.url_priority_queue, (-score, url, 0))
+                        seeded += 1
+                    if seeded:
+                        self._sitemap_seeded = True
+                        logger.info(f"🗺️  Seeded {seeded} URLs from sitemaps (depth 0)")
                 except Exception:
                     logger.debug("Sitemap discovery failed; continuing without sitemap")
 
                 # Semaphore to limit concurrent requests
                 semaphore = asyncio.Semaphore(self.max_concurrent)
 
-                async def process_url(url: str, depth: int) -> CrawlResult:
+                async def process_url(url: str) -> CrawlResult:
                     async with semaphore:
                         return await self.fetch_page(session, url)
 
@@ -2614,11 +2931,11 @@ class ClauseaCrawler:
                         break
 
                     # Process batch concurrently
-                    tasks = [process_url(url, depth) for url, depth in batch]
+                    tasks = [process_url(url) for url, _depth in batch]
                     batch_results = await asyncio.gather(*tasks)
 
                     # Process results
-                    for result, (url, depth) in zip(batch_results, batch, strict=False):
+                    for result, (url, depth) in zip(batch_results, batch, strict=True):
                         self.stats.total_urls += 1
 
                         if result.success:
@@ -2635,8 +2952,7 @@ class ClauseaCrawler:
                                 )
                             logger.info(
                                 f"✅ [{self.stats.crawled_urls}/{self.max_pages}] "
-                                f"{url} (Legal: {result.legal_score:.1f}) "
-                                f"Found: {len(result.discovered_links)} links"
+                                f"{url} — {len(result.discovered_links)} links"
                             )
                         else:
                             self.stats.failed_urls += 1
@@ -2644,24 +2960,31 @@ class ClauseaCrawler:
                             logger.warning(f"❌ Failed: {url} - {result.error_message}")
 
                     # Progress update
-                    if self.stats.crawled_urls % 10 == 0:
+                    if self.stats.total_urls % 10 == 0:
                         logger.info(
-                            f"📊 Progress: {self.stats.crawled_urls} crawled, "
-                            f"{self.stats.legal_documents_found} legal docs, "
+                            f"📊 Progress: {self.stats.total_urls} processed, "
+                            f"{self.stats.crawled_urls} successful, "
                             f"{self.stats.crawl_rate:.1f} pages/sec"
                         )
+                        if self.progress_callback:
+                            pending = self._get_pending_url_count()
+                            total_known = min(self.max_pages, len(self.visited_urls) + pending)
+                            self.progress_callback(self.stats.total_urls, total_known)
+
+                # Ensure the UI gets a final progress update even if we finish
+                # before hitting the next modulo threshold.
+                if self.progress_callback:
+                    pending = self._get_pending_url_count()
+                    total_known = min(self.max_pages, len(self.visited_urls) + pending)
+                    self.progress_callback(self.stats.total_urls, total_known)
 
             # Final statistics
             logger.info("🎉 Crawl completed!")
             logger.info(f"📊 Total URLs: {self.stats.total_urls}")
             logger.info(f"✅ Successfully crawled: {self.stats.crawled_urls}")
             logger.info(f"❌ Failed: {self.stats.failed_urls}")
-            logger.info(f"⚖️  Legal documents found: {self.stats.legal_documents_found}")
             logger.info(f"⏱️  Total time: {self.stats.elapsed_time:.1f} seconds")
             logger.info(f"🚀 Average rate: {self.stats.crawl_rate:.1f} pages/sec")
-
-            # Sort results by legal score (highest first)
-            self.results.sort(key=lambda x: x.legal_score, reverse=True)
 
             return self.results
         finally:
@@ -2684,6 +3007,8 @@ class ClauseaCrawler:
             # Reset state for next URL
             self.visited_urls.clear()
             self.failed_urls.clear()
+            self.queued_urls.clear()
+            self._sitemap_seeded = False
             self.url_queue.clear()
             self.url_stack.clear()
             self.url_priority_queue.clear()
@@ -2747,11 +3072,9 @@ async def test_specific_url(url: str) -> CrawlResult:
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         result = await crawler.fetch_page(session, url)
 
-        # Log detailed analysis
         if result.success:
             logger.info(f"✅ Successfully fetched: {url}")
             logger.info(f"📄 Title: {result.title}")
-            logger.info(f"⚖️ Legal Score: {result.legal_score}")
             logger.info(f"📊 Content Length: {len(result.content)} chars")
             logger.info(f"🔗 Discovered Links: {len(result.discovered_links)}")
         else:
@@ -2779,7 +3102,6 @@ async def main() -> None:
         logger.info(f"📄 Title: {result.title or 'Untitled'}")
         logger.info(f"   URL: {result.url}")
         logger.info(f"   Success: {result.success}")
-        logger.info(f"   Legal Score: {result.legal_score:.1f}")
         logger.info(f"   Content Length: {len(result.content)} chars")
         if not result.success:
             logger.info(f"   Error: {result.error_message}")
@@ -2791,35 +3113,12 @@ async def main() -> None:
         base_url=base_url, max_depth=4, max_pages=200, strategy="bfs"
     )
 
-    # Display all results with scores
     logger.info(f"\n📊 All crawled pages ({len(results)} total):")
     for i, result in enumerate(results, 1):
         logger.info(f"{i:3d}. {result.title or 'Untitled'[:50]}")
         logger.info(f"     URL: {result.url}")
-        logger.info(f"     Legal Score: {result.legal_score:.1f}")
+        logger.info(f"     Content Length: {len(result.content)} chars")
         logger.info("")
-
-    # Display legal documents
-    legal_docs = [r for r in results if r.legal_score >= 3.0]
-
-    logger.info(f"\n🎯 Found {len(legal_docs)} potential legal documents:")
-    for result in legal_docs:
-        logger.info(f"📄 {result.title or 'Untitled'}")
-        logger.info(f"   URL: {result.url}")
-        logger.info(f"   Legal Score: {result.legal_score:.1f}")
-        logger.info(f"   Content Length: {len(result.content)} chars")
-        logger.info("")
-
-    # Display moderate scoring pages that might be legal but scored lower
-    moderate_docs = [r for r in results if 1.0 <= r.legal_score < 3.0]
-
-    if moderate_docs:
-        logger.info(f"\n📋 Found {len(moderate_docs)} pages with moderate legal scores:")
-        for result in moderate_docs[:10]:  # Top 10 moderate scoring
-            logger.info(f"📄 {result.title or 'Untitled'}")
-            logger.info(f"   URL: {result.url}")
-            logger.info(f"   Legal Score: {result.legal_score:.1f}")
-            logger.info("")
 
 
 if __name__ == "__main__":

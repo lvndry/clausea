@@ -36,7 +36,7 @@ Paste error messages here
 
 - **OS**: [e.g., macOS 14.0, Ubuntu 22.04, Windows 11]
 - **Browser** (if frontend issue): [e.g., Chrome 120, Firefox 121, Safari 17]
-- **User Tier**: [e.g., Free, Business, Enterprise]
+- **User Tier**: [e.g., Free, Pro]
 - **Product**: [e.g Google, Discord]
 
 ## 🔧 Possible Solution

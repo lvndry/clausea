@@ -12,6 +12,7 @@ import { useParams } from "next/navigation";
 
 import { useState } from "react";
 
+import MarkdownRenderer from "@/components/markdown/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -31,38 +32,43 @@ interface VerdictHeroProps {
 
 const verdictConfig = {
   very_user_friendly: {
-    label: "Very User Friendly",
+    label: "LOW RISK",
     subtitle: "Your privacy is well protected",
-    color: "text-emerald-600 dark:text-emerald-400",
-    bg: "bg-emerald-50/30 dark:bg-emerald-950/10",
+    color: "text-[#2B7A5C]",
+    border: "border-[#2B7A5C]/20",
+    bg: "bg-[#2B7A5C]/5",
     icon: ShieldCheck,
   },
   user_friendly: {
-    label: "User Friendly",
+    label: "FAIR",
     subtitle: "Generally respects your privacy",
-    color: "text-green-600 dark:text-green-400",
-    bg: "bg-green-50/30 dark:bg-green-950/10",
+    color: "text-[#2B7A5C]",
+    border: "border-[#2B7A5C]/20",
+    bg: "bg-[#2B7A5C]/5",
     icon: CheckCircle,
   },
   moderate: {
-    label: "Moderate",
+    label: "MIXED",
     subtitle: "Some privacy considerations",
-    color: "text-amber-600 dark:text-amber-400",
-    bg: "bg-amber-50/30 dark:bg-amber-950/10",
+    color: "text-[#B58D2D]",
+    border: "border-[#B58D2D]/20",
+    bg: "bg-[#B58D2D]/5",
     icon: Shield,
   },
   pervasive: {
-    label: "Pervasive",
+    label: "PERVASIVE",
     subtitle: "Significant privacy concerns",
-    color: "text-orange-600 dark:text-orange-400",
-    bg: "bg-orange-50/30 dark:bg-orange-950/10",
+    color: "text-[#BD452D]",
+    border: "border-[#BD452D]/20",
+    bg: "bg-[#BD452D]/5",
     icon: ShieldAlert,
   },
   very_pervasive: {
-    label: "Very Pervasive",
+    label: "CRITICAL",
     subtitle: "Major privacy risks identified",
-    color: "text-red-600 dark:text-red-400",
-    bg: "bg-red-50/30 dark:bg-red-950/10",
+    color: "text-[#BD452D]",
+    border: "border-[#BD452D]/20",
+    bg: "bg-[#BD452D]/5",
     icon: AlertTriangle,
   },
 };
@@ -89,9 +95,9 @@ export function VerdictHero({
   };
 
   const getRiskColor = () => {
-    if (riskScore <= 3) return "text-emerald-600 dark:text-emerald-400";
-    if (riskScore <= 6) return "text-amber-600 dark:text-amber-400";
-    return "text-red-600 dark:text-red-400";
+    if (riskScore <= 3) return "text-[#2B7A5C]";
+    if (riskScore <= 6) return "text-[#B58D2D]";
+    return "text-[#BD452D]";
   };
 
   const handleShare = async () => {
@@ -131,90 +137,94 @@ export function VerdictHero({
   };
 
   return (
-    <div className="space-y-8">
-      {/* Main Verdict Section */}
-      <div className="space-y-5">
-        {/* Verdict Header - Better aligned */}
-        <div className="flex items-start gap-3">
+    <div className="grid grid-cols-1 md:grid-cols-12 border border-border bg-background">
+      {/* Score and Verdict */}
+      <div className="col-span-12 md:col-span-4 p-8 border-b md:border-b-0 md:border-r border-border flex flex-col justify-between">
+        <div>
+          <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block mb-6">
+            Privacy Verdict
+          </span>
+          <h1
+            className={cn(
+              "text-5xl md:text-6xl font-display font-medium leading-[0.9] tracking-tight mb-4",
+              config.color,
+            )}
+          >
+            {config.label}
+          </h1>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-display font-medium text-foreground">
+              {riskScore}
+            </span>
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+              Risk Score
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-12">
+          <p className="text-xs uppercase tracking-[0.2em] font-medium text-foreground mb-3">
+            Status
+          </p>
           <div
             className={cn(
-              "w-8 h-8 rounded-md flex items-center justify-center shrink-0 mt-0.5",
+              "inline-flex items-center gap-2 px-3 py-1.5 border border-border text-[10px] uppercase tracking-widest font-bold",
+              config.color,
               config.bg,
             )}
           >
-            <Icon className={cn("h-4 w-4", config.color)} />
+            <Icon className="h-3 w-3" />
+            {config.label}
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-3 flex-wrap">
-              <h1
-                className={cn(
-                  "text-3xl md:text-4xl font-bold font-display tracking-tight",
-                  config.color,
-                )}
-              >
-                {config.label}
-              </h1>
-              <span className="text-lg font-medium text-muted-foreground">
-                {riskScore}/10
-              </span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1.5">
-              {config.subtitle}
-            </p>
-          </div>
-        </div>
-
-        {/* Summary - Readable size */}
-        <div className="pl-11 pr-4 md:pr-24">
-          <p className="text-base text-foreground leading-relaxed">{summary}</p>
-        </div>
-
-        {/* Risk Info + Share - Clean, aligned */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pl-11 pt-1 gap-3 sm:gap-0">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Risk
-            </span>
-            <span className={cn("text-sm font-semibold", getRiskColor())}>
-              {getRiskLabel()}
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleShare}
-            className="gap-2"
-          >
-            <Share2 className="h-4 w-4" />
-            {shareText}
-          </Button>
         </div>
       </div>
 
-      {/* Key Insights - Clean, readable */}
-      {topKeypoints.length > 0 && (
-        <div className="space-y-3 pt-6 border-t border-border/50 pl-11 pr-4">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Key Insights
-          </h3>
-          <div className="space-y-2.5">
-            {topKeypoints.map((point, index) => (
-              <div
-                key={index}
-                className="flex items-start gap-2.5 text-sm text-foreground/90 leading-relaxed"
-              >
-                <span
-                  className={cn(
-                    "mt-1.5 h-1 w-1 rounded-full shrink-0",
-                    config.color.replace("text-", "bg-"),
-                  )}
-                />
-                <span>{point}</span>
-              </div>
-            ))}
+      {/* Summary and Insights */}
+      <div className="col-span-12 md:col-span-8 flex flex-col">
+        <div className="p-8 md:p-10 border-b border-border flex-1">
+          <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block mb-6">
+            Executive Summary
+          </span>
+          <div className="text-lg text-foreground leading-relaxed max-w-2xl prose prose-slate dark:prose-invert">
+            <MarkdownRenderer>{summary}</MarkdownRenderer>
+          </div>
+          <div className="mt-8">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleShare}
+              className="gap-2 rounded-none border-foreground text-foreground uppercase text-[10px] tracking-widest font-bold px-6 h-10 hover:bg-foreground hover:text-background transition-colors"
+            >
+              <Share2 className="h-3 w-3" />
+              {shareText}
+            </Button>
           </div>
         </div>
-      )}
+
+        {/* Key Insights */}
+        {topKeypoints.length > 0 && (
+          <div className="p-8 md:p-10 bg-muted/5">
+            <span className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground block mb-6">
+              Key Insights
+            </span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {topKeypoints.map((point, index) => (
+                <div key={index} className="space-y-3">
+                  <div
+                    className={cn(
+                      "h-px w-8",
+                      config.color.replace("text-", "bg-"),
+                    )}
+                  />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {point}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

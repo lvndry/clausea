@@ -22,6 +22,9 @@ class PipelineStep(BaseModel):
     name: str
     status: Literal["pending", "running", "completed", "failed"] = "pending"
     message: str | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_percent: float | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
