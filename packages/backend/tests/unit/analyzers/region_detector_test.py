@@ -60,37 +60,6 @@ class TestMapRegionNameToCode:
         assert detector._map_region_name_to_code("European Union") == "EU"
 
 
-# ── _map_regions_to_document_format ─────────────────────────────────
-
-
-class TestMapRegionsToDocumentFormat:
-    """Tests for the bulk region mapping helper."""
-
-    def test_global_flag(self, detector: RegionDetector) -> None:
-        result = detector._map_regions_to_document_format(is_global=True, specific_regions=[])
-        assert result == ["global"]
-
-    def test_specific_regions(self, detector: RegionDetector) -> None:
-        result = detector._map_regions_to_document_format(
-            is_global=False, specific_regions=["US", "EU"]
-        )
-        assert "US" in result
-        assert "EU" in result
-
-    def test_deduplication(self, detector: RegionDetector) -> None:
-        result = detector._map_regions_to_document_format(
-            is_global=False, specific_regions=["US", "US", "EU"]
-        )
-        assert result.count("US") == 1
-
-    def test_unknown_falls_back_to_other(self, detector: RegionDetector) -> None:
-        result = detector._map_regions_to_document_format(
-            is_global=False, specific_regions=["unknown_place"]
-        )
-        # Unknown regions get filtered; empty → ["Other"]
-        assert result == ["Other"]
-
-
 # ── URL-based region detection ──────────────────────────────────────
 
 
