@@ -58,7 +58,12 @@
   }
 }
 
-/* Extension popup body */
+/* Extension popup dimensions */
+html {
+  width: 400px;
+  min-height: 300px;
+}
+
 body {
   width: 400px;
   min-height: 300px;
@@ -73,6 +78,11 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
+}
+
+#root {
+  width: 400px;
+  min-height: 300px;
 }
 
 /* Scrollbar */

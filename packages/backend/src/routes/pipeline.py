@@ -130,6 +130,32 @@ async def get_active_job(product_slug: str) -> PipelineJob:
         return job
 
 
+@router.get("/latest", response_model=PipelineJob)
+async def get_latest_job(product_slug: str) -> PipelineJob:
+    """Get the most recent pipeline job for a product (any status).
+
+    Returns active jobs first; falls back to the most recently created job.
+    Used by the frontend to detect failed pipelines and show crawl errors.
+    """
+    pipeline_svc = create_pipeline_service()
+
+    async with get_db() as db:
+        # Prefer active job
+        job = await pipeline_svc.get_active_job_for_product(db, product_slug)
+        if job:
+            return job
+
+        # Fall back to most recent job (including completed/failed)
+        from src.repositories.pipeline_repository import PipelineRepository
+
+        repo = PipelineRepository()
+        jobs = await repo.find_by_product_slug(db, product_slug)
+        if jobs:
+            return jobs[0]  # sorted by created_at desc
+
+        raise HTTPException(status_code=404, detail="No pipeline jobs found for this product")
+
+
 @router.get("/jobs/{job_id}", response_model=PipelineJob)
 async def get_job_status(job_id: str) -> PipelineJob:
     """Get the current status of a pipeline job.

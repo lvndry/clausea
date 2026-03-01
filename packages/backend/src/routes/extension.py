@@ -3,20 +3,37 @@
 Provides lightweight endpoints optimized for the browser extension popup.
 """
 
+import asyncio
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import AnyHttpUrl, BaseModel
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, EmailStr
 
 from src.core.database import get_db
 from src.core.logging import get_logger
-from src.services.email_service import EmailServiceError, get_email_service
-from src.services.service_factory import create_product_service
+from src.services.service_factory import (
+    create_indexation_notification_service,
+    create_pipeline_service,
+    create_product_service,
+)
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/extension", tags=["extension"])
+
+
+# ---------------------------------------------------------------------------
+# Response / request models
+# ---------------------------------------------------------------------------
+
+
+class ExtensionCrawlError(BaseModel):
+    """Lightweight crawl error info for the extension popup."""
+
+    url: str
+    error_type: str
+    error_message: str | None = None
 
 
 class ExtensionCheckResponse(BaseModel):
@@ -25,6 +42,10 @@ class ExtensionCheckResponse(BaseModel):
     found: bool
     slug: str | None = None
     product_name: str | None = None
+    pipeline_active: bool = False
+    pipeline_failed: bool = False
+    pipeline_error: str | None = None
+    crawl_errors: list[ExtensionCrawlError] | None = None
     verdict: (
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
@@ -32,19 +53,38 @@ class ExtensionCheckResponse(BaseModel):
     risk_score: int | None = None
     one_line_summary: str | None = None
     top_concerns: list[str] | None = None
-    # For the extension to know where to redirect
     analysis_url: str | None = None
 
 
-class ExtensionRequestSupportPayload(BaseModel):
-    """Payload for requesting Clausea to index a new site."""
+class ExtensionAnalyzeRequest(BaseModel):
+    """Request body for triggering analysis from the extension."""
 
-    url: AnyHttpUrl
-    source: Literal["browser_extension"] = "browser_extension"
+    url: str
 
 
-class ExtensionRequestSupportResponse(BaseModel):
-    success: bool
+class ExtensionAnalyzeResponse(BaseModel):
+    """Response after triggering analysis."""
+
+    status: Literal["started", "already_running", "already_indexed"]
+    product_slug: str
+    product_name: str
+    job_id: str | None = None
+
+
+class ExtensionSubscribeRequest(BaseModel):
+    """Subscribe an email for indexation completion notification."""
+
+    product_slug: str
+    email: EmailStr
+
+
+class ExtensionSubscribeResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def extract_domain(url: str) -> str:
@@ -78,6 +118,40 @@ def extract_domain(url: str) -> str:
     return hostname
 
 
+# ---------------------------------------------------------------------------
+# Pipeline scheduling (mirrors pipeline.py pattern)
+# ---------------------------------------------------------------------------
+
+_RUNNING_JOB_IDS: set[str] = set()
+_RUNNING_JOB_LOCK = asyncio.Lock()
+
+
+async def _schedule_pipeline_run(job_id: str) -> bool:
+    """Best-effort background scheduler, idempotent per-process."""
+    async with _RUNNING_JOB_LOCK:
+        if job_id in _RUNNING_JOB_IDS:
+            return False
+        _RUNNING_JOB_IDS.add(job_id)
+
+    async def _runner() -> None:
+        try:
+            pipeline_svc = create_pipeline_service()
+            await pipeline_svc.run_pipeline(job_id)
+        except Exception as exc:
+            logger.error(f"Background pipeline failed for job {job_id}: {exc}", exc_info=True)
+        finally:
+            async with _RUNNING_JOB_LOCK:
+                _RUNNING_JOB_IDS.discard(job_id)
+
+    asyncio.create_task(_runner())
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
 @router.get("/check", response_model=ExtensionCheckResponse)
 async def check_url(
     url: str = Query(..., description="The URL to check (e.g., https://netflix.com/signup)"),
@@ -93,36 +167,66 @@ async def check_url(
     1. Light up the icon (green/yellow/red) based on verdict
     2. Show a quick summary in the popup
     3. Link to the full analysis on clausea.co
+    4. Indicate whether an analysis pipeline is already running
     """
     domain = extract_domain(url)
     logger.debug(f"Extension check for URL: {url} -> domain: {domain}")
 
     async with get_db() as db:
-        service = create_product_service()
+        product_svc = create_product_service()
+        pipeline_svc = create_pipeline_service()
 
         # Try to find product by domain
-        product = await service.get_product_by_domain(db, domain)
+        product = await product_svc.get_product_by_domain(db, domain)
 
         if not product:
             # Try without subdomain variations
-            # e.g., if domain is "app.notion.so", try "notion.so"
             parts = domain.split(".")
             if len(parts) > 2:
                 base_domain = ".".join(parts[-2:])
-                product = await service.get_product_by_domain(db, base_domain)
+                product = await product_svc.get_product_by_domain(db, base_domain)
 
         if not product:
             return ExtensionCheckResponse(found=False)
 
+        # Check for active pipeline job
+        active_job = await pipeline_svc.get_active_job_for_product(db, product.slug)
+
         # Get the overview if available
-        overview = await service.get_product_overview(db, product.slug)
+        overview = await product_svc.get_product_overview(db, product.slug)
 
         if not overview:
-            # Product exists but no analysis yet
+            # Product exists but no analysis yet — check for a recent failed job
+            failed_job = None
+            if not active_job:
+                from src.repositories.pipeline_repository import PipelineRepository
+
+                pipeline_repo = PipelineRepository()
+                recent_jobs = await pipeline_repo.find_by_product_slug(db, product.slug)
+                for rj in recent_jobs:
+                    if rj.status == "failed":
+                        failed_job = rj
+                        break
+
+            crawl_errors = None
+            if failed_job and failed_job.crawl_errors:
+                crawl_errors = [
+                    ExtensionCrawlError(
+                        url=e.url,
+                        error_type=e.error_type,
+                        error_message=e.error_message,
+                    )
+                    for e in failed_job.crawl_errors[:5]  # limit payload size
+                ]
+
             return ExtensionCheckResponse(
-                found=True,
+                found=False,
                 slug=product.slug,
                 product_name=product.name,
+                pipeline_active=active_job is not None,
+                pipeline_failed=failed_job is not None,
+                pipeline_error=failed_job.error if failed_job else None,
+                crawl_errors=crawl_errors,
                 analysis_url=f"https://clausea.co/products/{product.slug}",
             )
 
@@ -142,6 +246,7 @@ async def check_url(
             found=True,
             slug=product.slug,
             product_name=overview.product_name,
+            pipeline_active=active_job is not None,
             verdict=overview.verdict,
             risk_score=overview.risk_score,
             one_line_summary=overview.one_line_summary,
@@ -170,37 +275,73 @@ async def get_supported_domains() -> list[str]:
         return list(set(domains))
 
 
-@router.post("/request-support", response_model=ExtensionRequestSupportResponse)
-async def request_support(
-    payload: ExtensionRequestSupportPayload,
-    request: Request,
-) -> ExtensionRequestSupportResponse:
-    """Allow users to request Clausea to index a new website."""
+@router.post("/analyze", response_model=ExtensionAnalyzeResponse)
+async def analyze_url(payload: ExtensionAnalyzeRequest) -> ExtensionAnalyzeResponse:
+    """Trigger the analysis pipeline for a URL.
 
-    domain = extract_domain(str(payload.url))
+    Creates the product from URL metadata (domain, name, slug) if it doesn't
+    exist, then starts the background pipeline.
+
+    Idempotent: if a pipeline is already running for this domain, returns the
+    existing job. If the product is already fully indexed, reports that.
+    """
+    url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+
+    # Normalize to domain root so the crawler starts from a sensible position
+    domain = extract_domain(url)
+    normalized_url = f"https://{domain}"
+
+    pipeline_svc = create_pipeline_service()
+
+    async with get_db() as db:
+        result = await pipeline_svc.create_job_for_url(db, normalized_url)
+
+        if result.get("already_indexed"):
+            return ExtensionAnalyzeResponse(
+                status="already_indexed",
+                product_slug=result["product_slug"],
+                product_name=result["product_name"],
+            )
+
+        job = result["job"]
+        scheduled = await _schedule_pipeline_run(job.id)
+
+        return ExtensionAnalyzeResponse(
+            status="started" if scheduled else "already_running",
+            product_slug=job.product_slug,
+            product_name=job.product_name,
+            job_id=job.id,
+        )
+
+
+@router.post("/subscribe", response_model=ExtensionSubscribeResponse)
+async def subscribe_email(payload: ExtensionSubscribeRequest) -> ExtensionSubscribeResponse:
+    """Subscribe an email to be notified when analysis completes for a product.
+
+    Uses the existing IndexationNotificationService which automatically sends
+    an email when the pipeline finishes.
+    """
+    notify_svc = create_indexation_notification_service()
+
+    async with get_db() as db:
+        # Verify the product exists
+        product_svc = create_product_service()
+        product = await product_svc.get_product_by_slug(db, payload.product_slug)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        await notify_svc.subscribe(
+            db,
+            product_slug=payload.product_slug,
+            email=str(payload.email),
+        )
+
     logger.info(
-        "extension support request",
-        domain=domain,
-        url=str(payload.url),
-        source=payload.source,
-        ip=request.client.host if request.client else None,
+        "extension email subscription",
+        product_slug=payload.product_slug,
+        email=str(payload.email),
     )
 
-    email_service = get_email_service()
-    metadata = {
-        "ip": request.client.host if request.client else "unknown",
-        "user_agent": request.headers.get("user-agent", "unknown"),
-    }
-
-    try:
-        await email_service.send_support_request(
-            domain=domain,
-            url=str(payload.url),
-            source=payload.source,
-            metadata=metadata,
-        )
-    except EmailServiceError as error:
-        logger.exception("failed to send support request email", domain=domain)
-        raise HTTPException(status_code=500, detail=str(error)) from error
-
-    return ExtensionRequestSupportResponse(success=True)
+    return ExtensionSubscribeResponse()

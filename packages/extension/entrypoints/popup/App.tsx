@@ -1,18 +1,22 @@
 import {
+  type ExtensionAnalyzeResponse,
   type ExtensionCheckResponse,
+  analyzeUrl,
   checkUrl,
   getVerdictColor,
   getVerdictLabel,
-  requestSupport,
+  subscribeEmail,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
-  BellPlus,
   CheckCircle2,
   ExternalLink,
   Loader2,
+  Mail,
+  Play,
   Shield,
+  ShieldBan,
   TriangleAlert,
   XCircle,
 } from "lucide-react";
@@ -20,12 +24,21 @@ import { useEffect, useMemo, useState } from "react";
 
 export const CLAUSEA_URL = "https://clausea.co";
 
-type ViewState = "loading" | "loaded" | "error" | "not-found";
+type ViewState = "loading" | "loaded" | "error" | "not-found" | "crawl-failed";
+
+// Sub-states within the "not-found" view
+type NotFoundPhase =
+  | "initial" // Show "Analyze" button (no pipeline active)
+  | "pipeline-active" // Pipeline already running (detected on check)
+  | "triggering" // User clicked "Analyze", waiting for response
+  | "triggered" // Pipeline just started, show email input
+  | "subscribing" // Submitting email
+  | "subscribed" // Email subscribed successfully
+  | "trigger-error" // Analyze call failed
+  | "subscribe-error"; // Subscribe call failed
 
 // ---------------------------------------------------------------------------
 // Verdict palette — aligned with frontend Badge variants & semantic hex colors
-// Badge: uses frontend pattern (bg-{color}-500/15 text-{color}-600 border-{color}-600/30)
-// Bar:   uses exact frontend hex values (#2B7A5C safe, #B58D2D caution, #BD452D danger)
 // ---------------------------------------------------------------------------
 
 const verdictPalette: Record<string, { badge: string; bar: string }> = {
@@ -66,10 +79,16 @@ export default function App() {
   const [data, setData] = useState<ExtensionCheckResponse | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [error, setError] = useState<string>("");
-  const [supportStatus, setSupportStatus] = useState<
-    "idle" | "loading" | "success" | "error"
-  >("idle");
-  const [supportError, setSupportError] = useState<string>("");
+
+  // Not-found / pipeline state
+  const [notFoundPhase, setNotFoundPhase] = useState<NotFoundPhase>("initial");
+  const [analyzeResult, setAnalyzeResult] =
+    useState<ExtensionAnalyzeResponse | null>(null);
+  const [email, setEmail] = useState<string>("");
+  const [phaseError, setPhaseError] = useState<string>("");
+
+  // The product slug for the subscribe call — comes from either check or analyze
+  const productSlug = analyzeResult?.product_slug ?? data?.slug ?? null;
 
   // ── Fetch privacy analysis on mount ──────────────────────────────────────
   useEffect(() => {
@@ -140,9 +159,21 @@ export default function App() {
 
         if (!mounted) return;
         setData(analysis);
-        setView(analysis?.found ? "loaded" : "not-found");
-        setSupportStatus("idle");
-        setSupportError("");
+
+        if (analysis?.found) {
+          setView("loaded");
+        } else if (
+          analysis?.pipeline_failed &&
+          analysis.crawl_errors?.length
+        ) {
+          setView("crawl-failed");
+        } else {
+          setView("not-found");
+          // Determine initial not-found phase based on pipeline status
+          setNotFoundPhase(
+            analysis?.pipeline_active ? "pipeline-active" : "initial",
+          );
+        }
       } catch (err) {
         if (!mounted) return;
         setError(formatError(err));
@@ -156,22 +187,45 @@ export default function App() {
     };
   }, []);
 
-  // ── Request support for uncovered site ───────────────────────────────────
-  const handleSupportRequest = async () => {
-    if (
-      !currentUrl ||
-      supportStatus === "loading" ||
-      supportStatus === "success"
-    )
-      return;
-    setSupportStatus("loading");
-    setSupportError("");
+  // ── Trigger pipeline analysis ────────────────────────────────────────────
+  const handleAnalyze = async () => {
+    if (!currentUrl) return;
+    setNotFoundPhase("triggering");
+    setPhaseError("");
     try {
-      await requestSupport(currentUrl);
-      setSupportStatus("success");
+      const result = await analyzeUrl(currentUrl);
+      setAnalyzeResult(result);
+
+      if (result.status === "already_indexed") {
+        // Product was indexed between our check and analyze — re-fetch
+        const fresh = await checkUrl(currentUrl);
+        setData(fresh);
+        if (fresh.found) {
+          setView("loaded");
+          return;
+        }
+      }
+
+      // "started" or "already_running" → show email input
+      setNotFoundPhase("triggered");
     } catch (err) {
-      setSupportStatus("error");
-      setSupportError(formatError(err));
+      setPhaseError(formatError(err));
+      setNotFoundPhase("trigger-error");
+    }
+  };
+
+  // ── Subscribe email for notification ─────────────────────────────────────
+  const handleSubscribe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!productSlug || !email.trim()) return;
+    setNotFoundPhase("subscribing");
+    setPhaseError("");
+    try {
+      await subscribeEmail(productSlug, email.trim());
+      setNotFoundPhase("subscribed");
+    } catch (err) {
+      setPhaseError(formatError(err));
+      setNotFoundPhase("subscribe-error");
     }
   };
 
@@ -185,9 +239,17 @@ export default function App() {
     ? getVerdictLabel(data.verdict)
     : "Unknown";
 
+  // Is the pipeline running (either detected on check, or just triggered)?
+  const pipelineRunning =
+    notFoundPhase === "pipeline-active" ||
+    notFoundPhase === "triggered" ||
+    notFoundPhase === "subscribing" ||
+    notFoundPhase === "subscribed" ||
+    notFoundPhase === "subscribe-error";
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="flex min-h-[300px] w-[400px] flex-col bg-background text-foreground">
       {/* ── Header ── */}
       <header className="border-b border-border bg-card px-5 py-4">
         <div className="flex items-center gap-3">
@@ -204,7 +266,7 @@ export default function App() {
       </header>
 
       {/* ── Content ── */}
-      <div className="stagger-children">
+      <div className="stagger-children flex-1">
         {/* Loading */}
         {view === "loading" && (
           <section className="border-b border-border bg-card px-5 py-6">
@@ -246,35 +308,41 @@ export default function App() {
           </section>
         )}
 
-        {/* Not Found */}
+        {/* ── Not Found ── */}
         {view === "not-found" && (
           <section className="border-b border-border bg-card px-5 py-6">
             <div className="flex flex-col items-center gap-4 text-center">
               <div className="border border-border p-4 text-muted-foreground">
                 <Shield className="h-6 w-6" strokeWidth={1.5} />
               </div>
+
               <div>
                 <p className="text-sm font-semibold">
-                  Not in our database yet
+                  {pipelineRunning
+                    ? "Analysis is underway"
+                    : "Not analyzed yet"}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  We haven&apos;t analyzed this site. Request support and
-                  we&apos;ll prioritize it.
+                  {pipelineRunning
+                    ? "We're crawling and analyzing this site's policies. This may take a few minutes."
+                    : "We haven't analyzed this site yet. Start an analysis and we'll crawl their privacy policies."}
                 </p>
               </div>
 
-              {supportStatus === "idle" && (
+              {/* ── Phase: initial — show Analyze button ── */}
+              {notFoundPhase === "initial" && (
                 <button
                   type="button"
-                  onClick={handleSupportRequest}
+                  onClick={handleAnalyze}
                   className="flex w-full items-center justify-center gap-2 border border-foreground px-4 py-3 text-xs font-medium uppercase tracking-widest text-foreground transition-colors hover:bg-foreground hover:text-background"
                 >
-                  <BellPlus className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  Notify me when ready
+                  <Play className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Analyze this site
                 </button>
               )}
 
-              {supportStatus === "loading" && (
+              {/* ── Phase: triggering — spinner on button ── */}
+              {notFoundPhase === "triggering" && (
                 <button
                   type="button"
                   disabled
@@ -284,41 +352,156 @@ export default function App() {
                     className="h-3.5 w-3.5 animate-spin"
                     strokeWidth={1.5}
                   />
-                  Sending request...
+                  Starting analysis...
                 </button>
               )}
 
-              {supportStatus === "success" && (
-                <div className="flex w-full flex-col items-center gap-2 border border-green-600/30 bg-green-500/10 p-4 text-green-600">
-                  <CheckCircle2 className="h-5 w-5" strokeWidth={1.5} />
-                  <p className="text-xs font-medium">Request sent</p>
-                  <p className="text-[10px] text-green-600/70">
-                    We&apos;ll add this site to our priority list.
-                  </p>
-                </div>
-              )}
-
-              {supportStatus === "error" && (
-                <div className="flex w-full flex-col items-center gap-2 border border-red-600/30 bg-red-500/10 p-4 text-red-600">
-                  <AlertTriangle className="h-4 w-4" strokeWidth={1.5} />
-                  <p className="text-xs">
-                    {supportError ||
-                      "Something went wrong. Please try again."}
-                  </p>
+              {/* ── Phase: trigger-error ── */}
+              {notFoundPhase === "trigger-error" && (
+                <div className="flex w-full flex-col items-center gap-3">
+                  <div className="flex w-full flex-col items-center gap-2 border border-red-600/30 bg-red-500/10 p-4 text-red-600">
+                    <AlertTriangle className="h-4 w-4" strokeWidth={1.5} />
+                    <p className="text-xs">
+                      {phaseError || "Failed to start analysis."}
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    onClick={handleSupportRequest}
-                    className="text-[10px] font-semibold underline hover:no-underline"
+                    onClick={handleAnalyze}
+                    className="text-xs font-medium text-foreground underline hover:no-underline"
                   >
                     Try again
                   </button>
+                </div>
+              )}
+
+              {/* ── Phase: pipeline running — email subscription form ── */}
+              {(notFoundPhase === "pipeline-active" ||
+                notFoundPhase === "triggered" ||
+                notFoundPhase === "subscribe-error") && (
+                <div className="w-full space-y-3">
+                  <div className="border-t border-border pt-4">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                      Get notified when ready
+                    </p>
+                  </div>
+                  <form
+                    onSubmit={handleSubscribe}
+                    className="flex w-full gap-2"
+                  >
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@email.com"
+                      className="flex-1 border border-border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <button
+                      type="submit"
+                      className="flex items-center gap-1.5 border border-foreground px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground hover:text-background"
+                    >
+                      <Mail className="h-3 w-3" strokeWidth={1.5} />
+                      Notify
+                    </button>
+                  </form>
+                  {notFoundPhase === "subscribe-error" && (
+                    <p className="text-xs text-red-600">
+                      {phaseError || "Failed to subscribe. Please try again."}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ── Phase: subscribing ── */}
+              {notFoundPhase === "subscribing" && (
+                <div className="flex w-full items-center justify-center gap-2 border border-border p-4 text-muted-foreground">
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin"
+                    strokeWidth={1.5}
+                  />
+                  <p className="text-xs">Subscribing...</p>
+                </div>
+              )}
+
+              {/* ── Phase: subscribed — success ── */}
+              {notFoundPhase === "subscribed" && (
+                <div className="flex w-full flex-col items-center gap-2 border border-green-600/30 bg-green-500/10 p-4 text-green-600">
+                  <CheckCircle2 className="h-5 w-5" strokeWidth={1.5} />
+                  <p className="text-xs font-medium">You&apos;re subscribed</p>
+                  <p className="text-[10px] text-green-600/70">
+                    We&apos;ll email{" "}
+                    <span className="font-medium">{email}</span> when the
+                    analysis is ready.
+                  </p>
                 </div>
               )}
             </div>
           </section>
         )}
 
-        {/* Loaded */}
+        {/* ── Crawl Failed ── */}
+        {view === "crawl-failed" && data && (
+          <section className="border-b border-border bg-card px-5 py-6">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="border border-amber-600/30 bg-amber-500/10 p-4 text-amber-600">
+                <ShieldBan className="h-6 w-6" strokeWidth={1.5} />
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold">Unable to analyze</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {data.crawl_errors?.every(
+                    (e) => e.error_type === "robots_txt_blocked",
+                  )
+                    ? "This site blocks automated access via robots.txt. We cannot crawl their legal documents."
+                    : data.pipeline_error ??
+                      "We were unable to crawl legal documents from this site."}
+                </p>
+              </div>
+
+              {data.crawl_errors && data.crawl_errors.length > 0 && (
+                <div className="w-full space-y-2 text-left">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                    Failed URLs
+                  </p>
+                  {data.crawl_errors.slice(0, 3).map((err) => (
+                    <div
+                      key={err.url}
+                      className="flex items-start gap-2 text-xs text-muted-foreground"
+                    >
+                      <ShieldBan
+                        className="mt-0.5 h-3 w-3 shrink-0 text-amber-500"
+                        strokeWidth={1.5}
+                      />
+                      <span className="break-all font-mono text-[10px]">
+                        {err.url}
+                      </span>
+                    </div>
+                  ))}
+                  {data.crawl_errors.length > 3 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      ...and {data.crawl_errors.length - 3} more
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {data.analysis_url && (
+                <button
+                  type="button"
+                  onClick={() => window.open(data!.analysis_url!, "_blank")}
+                  className="flex w-full items-center justify-center gap-2 border border-border px-4 py-3 text-xs font-medium uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted"
+                >
+                  View details
+                  <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ── Loaded ── */}
         {view === "loaded" && data && (
           <>
             {/* Verdict */}
