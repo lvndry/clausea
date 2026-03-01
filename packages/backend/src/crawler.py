@@ -1515,7 +1515,10 @@ class ClauseaCrawler:
             return await self._extract_binary_content(raw, url)
 
         if "text/html" in ct:
-            return self._extract_html_content(raw, url)
+            # BeautifulSoup parsing + markdownify conversion are CPU-bound and can
+            # block the event loop for hundreds of ms on large pages.  Offload to a
+            # thread so other requests stay responsive during a crawl job.
+            return await asyncio.to_thread(self._extract_html_content, raw, url)
         elif "text/plain" in ct:
             return self._extract_plain_text_content(raw, url)
         else:
@@ -1697,12 +1700,20 @@ class ClauseaCrawler:
 
             title = await page.title()
             content = await page.content()
-            soup = BeautifulSoup(content, "html.parser")
-            content_soup = self._extract_main_content_soup(soup)
-            text_content = self._extract_text_from_soup(content_soup)
-            markdown_content = markdownify.markdownify(str(content_soup), heading_style="ATX")
-            metadata = self.extract_metadata(soup)
-            discovered_links = self.extract_links(soup, url)
+
+            # CPU-bound HTML parsing — offload to a thread to keep the event loop free.
+            def _parse_browser_html() -> tuple[str, str, dict[str, Any], list[dict[str, str]]]:
+                soup = BeautifulSoup(content, "html.parser")
+                content_soup = self._extract_main_content_soup(soup)
+                _text = self._extract_text_from_soup(content_soup)
+                _markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
+                _metadata = self.extract_metadata(soup)
+                _links = self.extract_links(soup, url)
+                return _text, _markdown, _metadata, _links
+
+            text_content, markdown_content, metadata, discovered_links = await asyncio.to_thread(
+                _parse_browser_html
+            )
 
             return PageContent(
                 text=text_content,
