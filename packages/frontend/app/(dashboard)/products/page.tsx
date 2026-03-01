@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import posthog from "posthog-js";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { IndexForm } from "@/components/pipeline/index-form";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
@@ -156,7 +156,7 @@ function ProductCard({
   );
 }
 
-export default function ProductsPage() {
+function ProductsPageContent() {
   const { user } = useUser();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -564,5 +564,30 @@ export default function ProductsPage() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function ProductsPageFallback() {
+  return (
+    <div className="space-y-12">
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-64 rounded-none" />
+        <Skeleton className="h-4 w-full max-w-2xl rounded-none" />
+      </div>
+      <Skeleton className="h-16 w-full rounded-none" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {[...Array(6)].map((_, i) => (
+          <Skeleton key={i} className="h-64 rounded-none" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function ProductsPage() {
+  return (
+    <Suspense fallback={<ProductsPageFallback />}>
+      <ProductsPageContent />
+    </Suspense>
   );
 }

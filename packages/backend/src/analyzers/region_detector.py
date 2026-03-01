@@ -309,18 +309,3 @@ class RegionDetector:
         }
 
         return region_mapping.get(region_name.lower())
-
-    def _map_regions_to_document_format(
-        self, is_global: bool, specific_regions: list[str]
-    ) -> list[Region]:
-        """Map detected regions to Document Region literals."""
-        if is_global:
-            return ["global"]
-
-        regions: list[Region] = []
-        for region in specific_regions:
-            mapped = self._map_region_name_to_code(region)
-            if mapped and mapped not in regions:
-                regions.append(mapped)
-
-        return regions if regions else ["Other"]

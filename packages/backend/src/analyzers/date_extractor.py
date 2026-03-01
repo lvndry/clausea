@@ -55,10 +55,8 @@ class DateExtractor(LLMUsageTrackingMixin):
             r"(?:creation|created?)\s+date:?\s*([^.\n<]+)",
             # ISO date format in context (YYYY-MM-DD)
             r"(?:effective|updated|modified|published|posted|created).*?(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
-            # US date format (MM/DD/YYYY)
+            # US/European numeric date format (MM/DD/YYYY or DD/MM/YYYY)
             r"(?:effective|updated|modified|published).*?(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
-            # European date format (DD/MM/YYYY)
-            r"(?:effective|updated).*?(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
             # Full month names
             r"(?:effective|updated|modified|published).*?((?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})",
             # Abbreviated month names
