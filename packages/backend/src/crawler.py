@@ -834,15 +834,12 @@ class RobotsTxtChecker:
             matched_user_agent = user_agent_lower
             logger_robots.debug(f"found exact user-agent match: {user_agent_lower}")
         # Then check if any robots.txt User-agent token is our bot name (e.g. "ClauseaBot")
-        elif any(
-            ua in user_agent_lower and ua not in self.user_agent_patterns for ua in user_agents
-        ):
+        elif matching := [
+            ua
+            for ua in user_agents
+            if ua in user_agent_lower and ua not in self.user_agent_patterns
+        ]:
             # Prefer longest matching token (most specific)
-            matching = [
-                ua
-                for ua in user_agents
-                if ua in user_agent_lower and ua not in self.user_agent_patterns
-            ]
             best = max(matching, key=len)
             applicable_rules = user_agents[best]
             matched_user_agent = best

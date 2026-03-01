@@ -12,6 +12,7 @@ from pydantic import BaseModel, EmailStr
 
 from src.core.database import get_db
 from src.core.logging import get_logger
+from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import (
     create_indexation_notification_service,
     create_pipeline_service,
@@ -199,8 +200,6 @@ async def check_url(
             # Product exists but no analysis yet — check for a recent failed job
             failed_job = None
             if not active_job:
-                from src.repositories.pipeline_repository import PipelineRepository
-
                 pipeline_repo = PipelineRepository()
                 recent_jobs = await pipeline_repo.find_by_product_slug(db, product.slug)
                 for rj in recent_jobs:

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from src.core.database import get_db
 from src.core.logging import get_logger
 from src.models.pipeline_job import PipelineJob
+from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
@@ -146,7 +147,6 @@ async def get_latest_job(product_slug: str) -> PipelineJob:
             return job
 
         # Fall back to most recent job (including completed/failed)
-        from src.repositories.pipeline_repository import PipelineRepository
 
         repo = PipelineRepository()
         jobs = await repo.find_by_product_slug(db, product_slug)

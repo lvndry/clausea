@@ -44,15 +44,15 @@ type NotFoundPhase =
 const verdictPalette: Record<string, { badge: string; bar: string }> = {
   safe: {
     badge: "border-green-600/30 bg-green-500/15 text-green-600",
-    bar: "bg-[#2B7A5C]",
+    bar: "bg-green-700",
   },
   caution: {
     badge: "border-amber-600/30 bg-amber-500/15 text-amber-600",
-    bar: "bg-[#B58D2D]",
+    bar: "bg-amber-600",
   },
   danger: {
     badge: "border-red-600/30 bg-red-500/15 text-red-600",
-    bar: "bg-[#BD452D]",
+    bar: "bg-red-600",
   },
   gray: {
     badge: "border-border bg-muted text-muted-foreground",
