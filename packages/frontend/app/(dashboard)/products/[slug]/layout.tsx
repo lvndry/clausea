@@ -7,8 +7,8 @@ const siteUrl = (
 ).replace(/\/$/, "");
 
 interface ProductOverview {
-  product_name: string;
-  product_slug: string;
+  name: string;
+  slug: string;
   company_name?: string | null;
   one_line_summary?: string;
   risk_score?: number;
@@ -24,7 +24,7 @@ async function getProductData(slug: string): Promise<ProductOverview | null> {
   try {
     const backendUrl = getBackendUrl(`/products/${slug}`);
     const response = await fetch(backendUrl, {
-      next: { revalidate: 3600 }, // Revalidate every hour
+      next: { revalidate: 60 }, // 1 min — fresh enough for new products, cached for established ones
     });
 
     if (!response.ok) {
@@ -57,7 +57,7 @@ export async function generateMetadata({
     };
   }
 
-  const productName = product.product_name || product.company_name || "Product";
+  const productName = product.name || product.company_name || "Product";
   const description =
     product.one_line_summary ||
     `Privacy policy and terms of service analysis for ${productName}. Get insights into data collection, sharing practices, and user rights.`;
@@ -94,7 +94,7 @@ export async function generateMetadata({
     openGraph: {
       title: `${productName} - Privacy Policy Analysis | Clausea AI`,
       description: fullDescription,
-      url: `${siteUrl}/products/${product.product_slug}`,
+      url: `${siteUrl}/products/${product.slug}`,
       siteName: "Clausea AI",
       images: [
         {
@@ -114,7 +114,7 @@ export async function generateMetadata({
       images: [`${siteUrl}/og`],
     },
     alternates: {
-      canonical: `${siteUrl}/products/${product.product_slug}`,
+      canonical: `${siteUrl}/products/${product.slug}`,
     },
   };
 }
