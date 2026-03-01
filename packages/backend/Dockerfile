@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir uv==0.9
 RUN uv venv $VENV_PATH
 
 COPY pyproject.toml ./
