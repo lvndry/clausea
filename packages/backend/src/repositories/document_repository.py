@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -46,6 +47,18 @@ def _normalize_document_record(document: dict[str, Any]) -> dict[str, Any]:
                 # For any other unexpected value, fall back to the default by
                 # removing the key so Pydantic uses the field default.
                 analysis.pop("verdict", None)
+
+        # Fix malformed summary strings that are actually JSON blobs from the LLM
+        summary = analysis.get("summary")
+        if isinstance(summary, str) and summary.strip().startswith("{"):
+            try:
+                parsed = json.loads(summary)
+                if isinstance(parsed, dict) and "summary" in parsed:
+                    analysis["summary"] = str(parsed["summary"]).strip()
+            except (json.JSONDecodeError, TypeError):
+                # If parsing fails or the string was truncated, we'll leave it
+                # as is. The frontend will render whatever string is present.
+                pass
 
         document["analysis"] = analysis
 

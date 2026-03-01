@@ -11,10 +11,14 @@ from typing import TYPE_CHECKING
 
 from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.document_repository import DocumentRepository
+from src.repositories.indexation_subscription_repository import (
+    IndexationSubscriptionRepository,
+)
 from src.repositories.product_repository import ProductRepository
 from src.repositories.user_repository import UserRepository
 from src.services.conversation_service import ConversationService
 from src.services.document_service import DocumentService
+from src.services.indexation_notification_service import IndexationNotificationService
 from src.services.product_service import ProductService
 from src.services.user_service import UserService
 
@@ -75,6 +79,11 @@ def create_pipeline_service() -> PipelineService:
 
     pipeline_repo = _PipelineRepo()
     return _PipelineSvc(pipeline_repo)
+
+
+def create_indexation_notification_service() -> IndexationNotificationService:
+    repo = IndexationSubscriptionRepository()
+    return IndexationNotificationService(repo)
 
 
 def create_user_service() -> UserService:

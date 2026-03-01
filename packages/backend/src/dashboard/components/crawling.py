@@ -9,6 +9,7 @@ from threading import Event
 
 import streamlit as st
 
+from src.core.config import config
 from src.dashboard.db_utils import get_all_products_isolated
 from src.dashboard.utils import run_async, suppress_streamlit_warnings
 from src.models.product import Product
@@ -100,8 +101,8 @@ def run_crawl_async(product: Product, stop_event: Event | None = None):
 
             async def runner():
                 pipeline = LegalDocumentPipeline(
-                    max_depth=4,
-                    max_pages=500,
+                    max_depth=config.crawler.max_depth,
+                    max_pages=config.crawler.max_pages,
                     crawler_strategy="bfs",
                     concurrent_limit=5,  # Reduced for single product
                     delay_between_requests=1.0,
@@ -159,8 +160,8 @@ def run_crawl_all_products_async(products: list[Product], max_parallel: int = 2)
                     async with semaphore:
                         try:
                             pipeline = LegalDocumentPipeline(
-                                max_depth=4,
-                                max_pages=500,
+                                max_depth=config.crawler.max_depth,
+                                max_pages=config.crawler.max_pages,
                                 crawler_strategy="bfs",
                                 concurrent_limit=5,
                                 delay_between_requests=1.0,

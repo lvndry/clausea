@@ -4,16 +4,18 @@ Manages pipeline job lifecycle: creation, status tracking, and background
 execution of the full crawl -> summarize -> overview pipeline.
 """
 
-from __future__ import annotations
-
+import asyncio
 from datetime import datetime
+from typing import Any
 
 import shortuuid
 import tldextract
 from motor.core import AgnosticDatabase
 
+from src.core.config import config
 from src.core.database import get_db
 from src.core.logging import get_logger
+from src.models.document import Document
 from src.models.pipeline_job import PipelineJob
 from src.models.product import Product
 from src.pipeline import LegalDocumentPipeline
@@ -23,6 +25,8 @@ from src.summarizer import generate_product_overview, summarize_all_product_docu
 
 logger = get_logger(__name__)
 
+_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+
 
 def _extract_domain(url: str) -> str:
     """Extract the root domain from a URL.
@@ -31,7 +35,8 @@ def _extract_domain(url: str) -> str:
         https://www.netflix.com/signup -> netflix.com
         https://app.slack.com/client -> slack.com
     """
-    extracted = tldextract.extract(url)
+    # Avoid network fetches for public suffix list on the event loop.
+    extracted = _TLD_EXTRACT(url)
     return f"{extracted.domain}.{extracted.suffix}"
 
 
@@ -73,18 +78,23 @@ class PipelineService:
         """Get the active (running) pipeline job for a product, if any."""
         return await self._pipeline_repo.find_active_by_product_slug(db, product_slug)
 
-    async def create_job_for_url(self, db: AgnosticDatabase, url: str) -> PipelineJob:
+    async def create_job_for_url(self, db: AgnosticDatabase, url: str) -> dict:
         """Create a pipeline job for a URL.
 
-        If the product already exists, reuses it. Otherwise, creates a new product
-        from the URL domain.
+        If the product is already fully indexed (completed overview exists), returns
+        ``{"already_indexed": True, "product_slug": ..., "product_name": ...}``.
+
+        If an active job exists, returns ``{"already_indexed": False, "job": <active_job>}``.
+
+        Otherwise, creates a new product (if needed) and a new pending job, returning
+        ``{"already_indexed": False, "job": <new_job>}``.
 
         Args:
             db: Database instance
             url: The URL to crawl and analyze
 
         Returns:
-            The created PipelineJob
+            A dict describing the outcome (see above).
         """
         # Normalize URL
         if not url.startswith(("http://", "https://")):
@@ -102,7 +112,25 @@ class PipelineService:
             # Also check by domain
             product = await product_svc.get_product_by_domain(db, domain)
 
-        if not product:
+        if product:
+            # Check if product is already fully indexed (has a completed overview)
+            overview = await product_svc.get_product_overview_data(db, product.slug)
+            if overview:
+                logger.info(f"Product {product.slug} is already indexed – skipping pipeline")
+                return {
+                    "already_indexed": True,
+                    "product_slug": product.slug,
+                    "product_name": product.name,
+                }
+
+            # Check for existing active job before creating a new one
+            active_job = await self._pipeline_repo.find_active_by_product_slug(db, product.slug)
+            if active_job:
+                logger.info(
+                    f"Active pipeline job already exists for {product.slug}: {active_job.id}"
+                )
+                return {"already_indexed": False, "job": active_job}
+        else:
             # Create new product from URL
             product = Product(
                 id=shortuuid.uuid(),
@@ -114,12 +142,6 @@ class PipelineService:
             await product_svc.create_product(db, product)
             logger.info(f"Created new product '{product.name}' ({product.slug}) from URL: {url}")
 
-        # Check for existing active job
-        active_job = await self._pipeline_repo.find_active_by_product_slug(db, product.slug)
-        if active_job:
-            logger.info(f"Active pipeline job already exists for {product.slug}: {active_job.id}")
-            return active_job
-
         # Create pipeline job
         job = PipelineJob(
             product_slug=product.slug,
@@ -129,7 +151,7 @@ class PipelineService:
         await self._pipeline_repo.create(db, job)
         logger.info(f"Created pipeline job {job.id} for {product.slug}")
 
-        return job
+        return {"already_indexed": False, "job": job}
 
     async def _update_step(
         self,
@@ -140,16 +162,91 @@ class PipelineService:
         message: str | None = None,
     ) -> None:
         """Update a specific step in the pipeline job."""
-        for step in job.steps:
+        update_data: dict[str, Any] = {
+            "status": job.status,
+            "documents_found": job.documents_found,
+            "documents_stored": job.documents_stored,
+        }
+        for i, step in enumerate(job.steps):
             if step.name == step_name:
                 step.status = status  # type: ignore[assignment]
                 step.message = message
+
+                update_data[f"steps.{i}.status"] = status
+                update_data[f"steps.{i}.message"] = message
+
                 if status == "running":
-                    step.started_at = datetime.now()
+                    now = datetime.now()
+                    step.started_at = now
+                    update_data[f"steps.{i}.started_at"] = now
                 elif status in ("completed", "failed"):
-                    step.completed_at = datetime.now()
+                    now = datetime.now()
+                    step.completed_at = now
+                    update_data[f"steps.{i}.completed_at"] = now
+
+                    # Clear progress fields on completion/failure to ensure clean UI state
+                    step.progress_current = None
+                    step.progress_total = None
+                    step.progress_percent = None
+                    update_data[f"steps.{i}.progress_current"] = None
+                    update_data[f"steps.{i}.progress_total"] = None
+                    update_data[f"steps.{i}.progress_percent"] = None
                 break
-        await self._pipeline_repo.update(db, job)
+
+        await self._pipeline_repo.update_fields(db, job.id, update_data)
+
+    async def _update_step_progress(
+        self,
+        db: AgnosticDatabase,
+        job: PipelineJob,
+        step_name: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Update progress metadata for a specific step."""
+        # Note: We do NOT update top-level status or document counts here.
+        # This prevents late-running progress tasks (e.g. from discovery phase)
+        # from overwriting more recent state changes in MongoDB.
+        update_data: dict[str, Any] = {}
+
+        for i, step in enumerate(job.steps):
+            if step.name == step_name:
+                # IMPORTANT: Skip updates if the step is already terminal.
+                # This prevents late "Discovery: 0/500..." messages from overwriting
+                # the final "Found X documents" message.
+                if step.status in ("completed", "failed"):
+                    logger.debug(
+                        f"Skipping progress update for terminal step {step_name} in job {job.id}"
+                    )
+                    return
+
+                if current is not None:
+                    step.progress_current = current
+                    update_data[f"steps.{i}.progress_current"] = current
+                if total is not None:
+                    step.progress_total = total
+                    update_data[f"steps.{i}.progress_total"] = total
+
+                if (
+                    step.progress_current is not None
+                    and step.progress_total is not None
+                    and step.progress_total > 0
+                ):
+                    percent = (step.progress_current / step.progress_total) * 100
+                    step.progress_percent = min(100.0, round(percent, 2))
+                    update_data[f"steps.{i}.progress_percent"] = step.progress_percent
+
+                if message is not None:
+                    step.message = message
+                    update_data[f"steps.{i}.message"] = message
+                break
+
+        if not update_data:
+            return
+
+        await self._pipeline_repo.update_fields(db, job.id, update_data)
 
     async def run_pipeline(self, job_id: str) -> None:
         """Execute the full pipeline for a job in the background.
@@ -181,14 +278,42 @@ class PipelineService:
                     db, job, "crawling", "running", "Discovering legal documents..."
                 )
 
+                # Track progress tasks to ensure they are all processed before switching phases.
+                # This prevents a race condition where a late 'Discovery' update overwrites
+                # the subsequent 'summarizing' job status in MongoDB.
+                crawl_tasks: list[asyncio.Task] = []
+
+                # Create progress callback for crawl phase
+                async def _on_crawl_progress(phase: str, current: int, total: int) -> None:
+                    remaining = max(total - current, 0)
+                    phase_name = "Discovery" if phase == "discovery" else "Deep Crawl"
+                    # We wrap this in a task so the crawler doesn't block on DB I/O,
+                    # but we keep track of it to await it before phase transitions.
+                    task = asyncio.create_task(
+                        self._update_step_progress(
+                            db,
+                            job,
+                            "crawling",
+                            current=current,
+                            total=total,
+                            message=f"{phase_name}: {current}/{total} pages scanned ({remaining} remaining)",
+                        )
+                    )
+                    crawl_tasks.append(task)
+
                 pipeline = LegalDocumentPipeline(
-                    max_depth=4,
-                    max_pages=500,
+                    max_depth=config.crawler.max_depth,
+                    max_pages=config.crawler.max_pages,
                     crawler_strategy="bfs",
                     concurrent_limit=5,
                     delay_between_requests=1.0,
+                    progress_callback=_on_crawl_progress,
                 )
                 stats = await pipeline.run([product])
+
+                # Drain pending progress tasks before finalizing the crawl step
+                if crawl_tasks:
+                    await asyncio.gather(*crawl_tasks, return_exceptions=True)
 
                 job.documents_found = stats.total_documents_found
                 job.documents_stored = stats.legal_documents_stored
@@ -228,7 +353,35 @@ class PipelineService:
                 )
 
                 doc_svc = create_document_service()
-                await summarize_all_product_documents(db, job.product_slug, doc_svc)
+                expected_total = int(job.documents_stored or job.documents_found or 0)
+                if expected_total > 0:
+                    await self._update_step_progress(
+                        db,
+                        job,
+                        "summarizing",
+                        current=0,
+                        total=expected_total,
+                        message=f"Queued {expected_total} documents for analysis",
+                    )
+
+                async def _on_summarize_progress(index: int, total: int, doc: Document) -> None:
+                    remaining = max(total - index, 0)
+                    title = f": {doc.title}" if doc.title else ""
+                    await self._update_step_progress(
+                        db,
+                        job,
+                        "summarizing",
+                        current=index,
+                        total=total,
+                        message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
+                    )
+
+                await summarize_all_product_documents(
+                    db,
+                    job.product_slug,
+                    doc_svc,
+                    progress_callback=_on_summarize_progress,
+                )
 
                 await self._update_step(
                     db, job, "summarizing", "completed", "All documents analyzed"
@@ -270,6 +423,26 @@ class PipelineService:
                     f"Pipeline job {job.id} completed for {job.product_slug} "
                     f"({job.documents_stored} documents)"
                 )
+
+                # Notify subscribers (best-effort)
+                try:
+                    from src.services.service_factory import (
+                        create_indexation_notification_service,
+                    )
+
+                    notify_svc = create_indexation_notification_service()
+                    await notify_svc.notify_indexation_completed(
+                        db,
+                        product_slug=job.product_slug,
+                        product_name=product.name,
+                        documents_found=int(job.documents_stored or job.documents_found),
+                    )
+                except Exception as notify_exc:  # noqa: BLE001
+                    logger.warning(
+                        "indexation completion notify failed",
+                        product_slug=job.product_slug,
+                        error=str(notify_exc),
+                    )
 
             except Exception as e:
                 logger.error(

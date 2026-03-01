@@ -1,6 +1,10 @@
+from typing import cast
+
+import aiohttp
+import pytest
 from bs4 import BeautifulSoup
 
-from src.crawler import ClauseaCrawler
+from src.crawler import ClauseaCrawler, PageContent
 
 
 def test_extract_links_various_sources():
@@ -44,6 +48,38 @@ def test_extract_links_various_sources():
     assert "https://example.com/jsonld" in urls
 
 
+def test_extract_links_propagates_page_title_for_alternate_links():
+    html = """
+    <!doctype html>
+    <html>
+      <head>
+        <title>Cookie Policy</title>
+        <link rel="alternate" hreflang="fr" href="https://www.airbnb.fr/help/article/2866" />
+        <link rel="canonical" href="https://www.airbnb.com/help/article/2866" />
+        <link rel="stylesheet" href="/styles.css" />
+      </head>
+      <body><p>Content</p></body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    crawler = ClauseaCrawler()
+    links = crawler.extract_links(soup, "https://www.airbnb.com/help/article/2866")
+    by_url = {link["url"]: link for link in links}
+
+    alt_link = by_url.get("https://www.airbnb.fr/help/article/2866")
+    assert alt_link is not None
+    assert alt_link["text"] == "Cookie Policy"
+
+    canonical_link = by_url.get("https://www.airbnb.com/help/article/2866")
+    assert canonical_link is not None
+    assert canonical_link["text"] == "Cookie Policy"
+
+    # Non-alternate/canonical link tags keep the generic label
+    css_link = by_url.get("https://www.airbnb.com/styles.css")
+    assert css_link is not None
+    assert css_link["text"] == "link:stylesheet"
+
+
 def test_add_urls_to_queue_respects_rel_nofollow_and_meta():
     crawler = ClauseaCrawler()
 
@@ -69,12 +105,16 @@ def test_add_urls_to_queue_respects_rel_nofollow_and_meta():
     )
     assert "https://example.com/privacy" in all_urls2
 
+    # Verify queued_urls tracking works with follow_nofollow
+    assert "https://example.com/privacy" in crawler2.queued_urls
+
     # Respect meta robots nofollow
     links2 = [{"url": "https://example.com/terms", "text": "Terms"}]
     crawler3 = ClauseaCrawler()
     page_meta = {"robots": "noindex, nofollow"}
     crawler3.add_urls_to_queue(links2, "https://example.com", depth=0, page_metadata=page_meta)
     assert len(crawler3.url_queue) == 0
+    assert "https://example.com/terms" not in crawler3.queued_urls
 
 
 def test_parse_sitemap_xml():
@@ -96,6 +136,25 @@ def test_parse_sitemap_xml():
     assert "https://example.com/terms" in urls
 
 
+def test_parse_sitemap_xml_index():
+    """Sitemap index files should return the child sitemap URLs."""
+    crawler = ClauseaCrawler()
+    index_xml = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <sitemap>
+        <loc>https://example.com/sitemap-articles.xml</loc>
+      </sitemap>
+      <sitemap>
+        <loc>https://example.com/sitemap-pages.xml</loc>
+      </sitemap>
+    </sitemapindex>
+    """
+    urls = crawler._parse_sitemap_xml(index_xml)
+    assert "https://example.com/sitemap-articles.xml" in urls
+    assert "https://example.com/sitemap-pages.xml" in urls
+
+
 def test_parse_robots_txt_sitemaps():
     crawler = ClauseaCrawler()
     robots = """
@@ -109,6 +168,45 @@ def test_parse_robots_txt_sitemaps():
     assert "sitemaps" in parsed
     assert "https://example.com/sitemap.xml" in parsed["sitemaps"]
     assert "https://cdn.example.com/sitemap-index.xml" in parsed["sitemaps"]
+
+
+def test_well_known_sitemap_paths_are_defined():
+    """ClauseaCrawler should probe common sitemap paths beyond robots.txt."""
+    paths = ClauseaCrawler._WELL_KNOWN_SITEMAP_PATHS
+    assert "/sitemap.xml" in paths
+    assert "/sitemap_index.xml" in paths
+    assert "/sitemap-index.xml" in paths
+
+
+def test_sitemap_seeded_skips_speculative_legal_urls():
+    """When sitemaps provide seeds, generate_potential_legal_urls should NOT run."""
+    crawler = ClauseaCrawler()
+    crawler._sitemap_seeded = True
+
+    links = [{"url": "https://example.com/page", "text": "Page"}]
+    crawler.add_urls_to_queue(links, "https://example.com", depth=0)
+
+    # Only the explicitly discovered link should be queued — no speculative
+    # legal paths like /privacy, /legal, /terms.
+    queued = {u for u, _ in crawler.url_queue}
+    assert "https://example.com/page" in queued
+    assert "https://example.com/privacy" not in queued
+    assert "https://example.com/legal" not in queued
+
+
+def test_no_sitemap_falls_back_to_speculative_legal_urls():
+    """When no sitemap provides seeds, generate_potential_legal_urls should run."""
+    crawler = ClauseaCrawler()
+    assert crawler._sitemap_seeded is False
+
+    links = [{"url": "https://example.com/page", "text": "Page"}]
+    crawler.add_urls_to_queue(links, "https://example.com", depth=0)
+
+    queued = {u for u, _ in crawler.url_queue}
+    assert "https://example.com/page" in queued
+    # Fallback speculative URLs should be present
+    assert "https://example.com/privacy" in queued
+    assert "https://example.com/legal" in queued
 
 
 def test_choose_effective_url_with_relative_canonical():
@@ -134,3 +232,100 @@ def test_choose_effective_url_accepts_cross_domain_if_allowed():
     metadata = {"canonical_url": "https://external.com/privacy"}
     effective = crawler._choose_effective_url(orig, metadata)
     assert effective == "https://external.com/privacy"
+
+
+def test_extract_main_content_preserves_cookie_policy_wrapper():
+    html = """
+    <!doctype html>
+    <html>
+      <body>
+        <div id="cookie-banner">Accept cookies</div>
+        <section class="cookie-policy legal-content">
+          <h1>Cookie Policy</h1>
+          <p>
+            This Cookie Policy explains how we use cookies, similar technologies,
+            and related tracking tools. We process personal data for analytics,
+            security, and service improvement. You can manage your consent
+            preferences, and you have rights under applicable privacy laws.
+          </p>
+          <p>
+            We may update this policy from time to time. Please review this
+            policy periodically for changes affecting data protection and usage.
+          </p>
+        </section>
+      </body>
+    </html>
+    """
+    crawler = ClauseaCrawler()
+    soup = BeautifulSoup(html, "html.parser")
+
+    cleaned = crawler._extract_main_content_soup(soup)
+    text = cleaned.get_text(" ", strip=True)
+
+    assert "Cookie Policy" in text
+    assert "data protection" in text.lower()
+    assert "Accept cookies" not in text
+
+
+@pytest.mark.asyncio
+async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
+    html = """
+    <!doctype html>
+    <html>
+      <head>
+        <title>Privacy Policy</title>
+        <script type="application/ld+json">
+          {"url": "https://example.com/legal/privacy-jsonld"}
+        </script>
+      </head>
+      <body>
+        <div id="cookie-banner">Enable JavaScript and accept cookies to continue</div>
+        <main>
+          <h1>Privacy Policy</h1>
+          <p>
+            We collect account, device, and usage data to provide and improve services.
+            We retain data as required by law and process it for fraud prevention,
+            support, analytics, and compliance obligations. We also describe user rights,
+            security practices, international transfers, and lawful bases for processing.
+          </p>
+        </main>
+      </body>
+    </html>
+    """
+
+    class FakeResponse:
+        def __init__(self, body: str):
+            self.status = 200
+            self.headers = {"content-type": "text/html; charset=utf-8"}
+            self._body = body
+
+        async def text(self) -> str:
+            return self._body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            return FakeResponse(html)
+
+    crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
+
+    async def fake_browser_fetch(url: str) -> PageContent | None:
+        return None
+
+    crawler._browser_fetch = fake_browser_fetch  # type: ignore[method-assign]
+
+    result = await crawler._fetch_page_internal(
+        cast(aiohttp.ClientSession, FakeSession()), "https://example.com/privacy"
+    )
+
+    assert result.success is True
+    assert "Privacy Policy" in result.content
+    assert "Enable JavaScript and accept cookies" not in result.content
+
+    discovered_urls = {link["url"] for link in result.discovered_links}
+    assert "https://example.com/legal/privacy-jsonld" in discovered_urls

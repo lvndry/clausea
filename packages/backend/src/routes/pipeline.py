@@ -17,6 +17,33 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
+_RUNNING_JOB_IDS: set[str] = set()
+_RUNNING_JOB_LOCK = asyncio.Lock()
+
+
+async def _schedule_pipeline_run(job_id: str) -> bool:
+    """Best-effort scheduler for background pipeline execution.
+
+    This is intentionally idempotent per-process: repeated calls for the same job_id
+    won't enqueue duplicate background tasks. This helps in dev where a job can be
+    left 'active' in Mongo after a server reload, and the frontend re-POSTs /crawl
+    to re-kick execution.
+    """
+    async with _RUNNING_JOB_LOCK:
+        if job_id in _RUNNING_JOB_IDS:
+            return False
+        _RUNNING_JOB_IDS.add(job_id)
+
+    async def _runner() -> None:
+        try:
+            await _run_pipeline_background(job_id)
+        finally:
+            async with _RUNNING_JOB_LOCK:
+                _RUNNING_JOB_IDS.discard(job_id)
+
+    asyncio.create_task(_runner())
+    return True
+
 
 class CrawlRequest(BaseModel):
     """Request body for triggering a crawl pipeline."""
@@ -32,6 +59,7 @@ class CrawlResponse(BaseModel):
     product_name: str
     status: str
     message: str
+    already_indexed: bool = False
 
 
 @router.post("/crawl", response_model=CrawlResponse)
@@ -55,29 +83,51 @@ async def start_crawl(request: CrawlRequest) -> CrawlResponse:
     pipeline_svc = create_pipeline_service()
 
     async with get_db() as db:
-        job = await pipeline_svc.create_job_for_url(db, url)
+        result = await pipeline_svc.create_job_for_url(db, url)
 
-        # If the job was just created (pending status), start the pipeline
-        if job.status == "pending":
-            # Fire-and-forget the pipeline execution
-            asyncio.create_task(_run_pipeline_background(job.id))
-
+        # Product already fully indexed – no job needed
+        if result.get("already_indexed"):
             return CrawlResponse(
-                job_id=job.id,
-                product_slug=job.product_slug,
-                product_name=job.product_name,
-                status=job.status,
-                message=f"Pipeline started for {job.product_name}. Poll /pipeline/jobs/{job.id} for status.",
+                job_id="",
+                product_slug=result["product_slug"],
+                product_name=result["product_name"],
+                status="completed",
+                message=f"{result['product_name']} is already indexed.",
+                already_indexed=True,
             )
 
-        # Job already exists (active)
+        job = result["job"]
+
+        # Best-effort: (re)kick background execution for any active job.
+        scheduled = await _schedule_pipeline_run(job.id)
+        message = (
+            f"Pipeline started for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
+            if scheduled
+            else f"Pipeline already running for {job.product_name}."
+        )
         return CrawlResponse(
             job_id=job.id,
             product_slug=job.product_slug,
             product_name=job.product_name,
             status=job.status,
-            message=f"Pipeline already running for {job.product_name}.",
+            message=message,
         )
+
+
+@router.get("/active", response_model=PipelineJob)
+async def get_active_job(product_slug: str) -> PipelineJob:
+    """Get the active (non-terminal) pipeline job for a product, if any.
+
+    Used by the frontend to check for in-progress jobs before firing a new crawl.
+    Returns 404 when no active job exists.
+    """
+    pipeline_svc = create_pipeline_service()
+
+    async with get_db() as db:
+        job = await pipeline_svc.get_active_job_for_product(db, product_slug)
+        if not job:
+            raise HTTPException(status_code=404, detail="No active job for this product")
+        return job
 
 
 @router.get("/jobs/{job_id}", response_model=PipelineJob)

@@ -403,4 +403,6 @@ class ProductService:
             compliance_status=meta.compliance_status,
             # Quick-scan privacy signals
             privacy_signals=meta.privacy_signals,
+            coverage=meta.coverage,
+            contract_clauses=meta.contract_clauses,
         )

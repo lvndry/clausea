@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -106,15 +107,20 @@ async def search_query(
     """
     # Convert text query to vector embedding
     query_vector = await embed_query(query)
-    index = pc.Index(INDEX_NAME)
     ns = namespace or product_slug
-    search_results = index.query(
-        namespace=ns,
-        top_k=top_k,
-        vector=query_vector,
-        include_metadata=True,
-        include_values=False,
-    )
+
+    # Pinecone client is synchronous; run in a worker thread to avoid blocking the event loop.
+    def _query() -> dict[str, Any]:
+        index = pc.Index(INDEX_NAME)
+        return index.query(  # type: ignore[no-any-return]
+            namespace=ns,
+            top_k=top_k,
+            vector=query_vector,
+            include_metadata=True,
+            include_values=False,
+        )
+
+    search_results = await asyncio.to_thread(_query)
 
     return search_results  # type: ignore
 

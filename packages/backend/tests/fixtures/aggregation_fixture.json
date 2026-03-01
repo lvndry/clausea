@@ -1,0 +1,15 @@
+{
+  "product_slug": "example",
+  "coverage": [
+    { "category": "data_collection", "status": "found" },
+    { "category": "user_rights", "status": "missing" }
+  ],
+  "findings": [
+    {
+      "category": "data_collection",
+      "value": "Email address",
+      "documents": ["doc-1"]
+    }
+  ],
+  "conflicts": []
+}

@@ -52,11 +52,10 @@ SupportedModel = Literal[
 ]
 
 DEFAULT_MODEL_PRIORITY: list[SupportedModel] = [
-    "gemini-3-flash-preview",
-    "grok-4-1-fast-non-reasoning",
     "gpt-5-mini",
+    "grok-4-1-fast-non-reasoning",
+    "gemini-3-flash-preview",
     "kimi-k2-thinking",
-    "claude-haiku-4-5",
 ]
 
 

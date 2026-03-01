@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import config
-from src.core.database import get_db
+from src.core.database import close_motor_client, get_db
 from src.core.db_indexes import ensure_all_indexes
 from src.core.logging import setup_logging
 from src.core.middleware import AuthMiddleware
@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await ensure_all_indexes(db)
 
     yield
+
+    # Shutdown: close shared DB client/pool
+    close_motor_client()
 
 
 app = FastAPI(title="Clausea API", lifespan=lifespan, version="1.0.0")  # type: ignore

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, Literal
 
@@ -26,12 +27,17 @@ from src.models.document import (
     ProductDeepAnalysis,
     RiskPrioritization,
 )
+from src.models.finding import Aggregation
 from src.prompts.summarizer_prompts import (
     AGGREGATE_DEEP_ANALYSIS_PROMPT,
     DOCUMENT_SUMMARY_SYSTEM_PROMPT,
     PRODUCT_OVERVIEW_SYSTEM_PROMPT,
     SINGLE_DOC_DEEP_ANALYSIS_PROMPT,
 )
+from src.repositories.aggregation_repository import AggregationRepository
+from src.repositories.document_repository import DocumentRepository
+from src.repositories.finding_repository import FindingRepository
+from src.services.aggregation_service import AggregationService
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
@@ -41,12 +47,20 @@ from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 load_dotenv()
 logger = get_logger(__name__)
 
+ProgressCallback = Callable[[int, int, Document], Awaitable[None] | None]
+
+
+async def _maybe_await(result: Awaitable[None] | None) -> None:
+    if asyncio.iscoroutine(result):
+        await result
+
 
 async def summarize_all_product_documents(
     db: AgnosticDatabase,
     product_slug: str,
     document_svc: DocumentService,
     cancellation_token: CancellationToken | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[Document]:
     """Summarize all documents for a product with cancellation support."""
     # For HTTP requests, create a fresh token if none provided
@@ -65,6 +79,8 @@ async def summarize_all_product_documents(
         await token.check_cancellation()
 
         logger.info(f"Processing document {index}/{total_docs}: {doc.title}")
+        if progress_callback:
+            await _maybe_await(progress_callback(index, total_docs, doc))
         try:
             analysis = await summarize_document(doc, cancellation_token=token)
             if analysis:
@@ -266,6 +282,11 @@ def _attach_keypoint_evidence(
         "dangers",
         "benefits",
         "recommended_actions",
+        "retention_policy",
+        "security_measures",
+        "advertising_practices",
+        "profiling_ai",
+        "contract_clauses",
     ]:
         items = extraction_json.get(key) or []
         if not isinstance(items, list):
@@ -315,6 +336,23 @@ def _attach_keypoint_evidence(
 
     if keypoints_with_evidence:
         analysis.keypoints_with_evidence = keypoints_with_evidence
+
+
+def _format_aggregation_payload(aggregation: Aggregation) -> dict[str, Any]:
+    by_category: dict[str, list[dict[str, Any]]] = {}
+    for finding in aggregation.findings:
+        by_category.setdefault(finding.category, []).append(
+            {
+                "value": finding.value,
+                "documents": finding.documents,
+                "attributes": finding.attributes,
+            }
+        )
+    return {
+        "findings": by_category,
+        "conflicts": [c.model_dump() for c in aggregation.conflicts],
+        "coverage": [c.model_dump() for c in (aggregation.coverage or [])],
+    }
 
 
 def should_use_reasoning_model(document: Document) -> bool:
@@ -638,8 +676,23 @@ Document content:
                         score=0, justification="Analysis parsing failed"
                     ),
                 }
+                # Extract the plain-text summary from the raw JSON blob when possible.
+                # summary_data is the raw LLM response (a JSON string), so we must
+                # not store it directly as the summary — that would persist JSON in the DB.
+                fallback_summary = "Analysis unavailable"
+                if summary_data:
+                    try:
+                        raw_dict = json.loads(summary_data)
+                        if isinstance(raw_dict, dict) and "summary" in raw_dict:
+                            extracted = str(raw_dict["summary"]).strip()
+                            fallback_summary = extracted if extracted else "Analysis unavailable"
+                        else:
+                            # Not the expected shape; store a short plain-text excerpt
+                            fallback_summary = summary_data[:500]
+                    except (json.JSONDecodeError, TypeError):
+                        fallback_summary = summary_data[:500]
                 parsed_fallback: DocumentAnalysis = DocumentAnalysis(
-                    summary=summary_data[:500] if summary_data else "Analysis unavailable",
+                    summary=fallback_summary,
                     scores=fallback_scores,
                     risk_score=5,  # Default middle risk score
                     verdict="moderate",  # Default verdict
@@ -750,6 +803,10 @@ async def generate_product_overview(
     documents = await doc_svc.get_product_documents_by_slug(db, product_slug)
     logger.info(f"Generating product overview for {product_slug} with {len(documents)} documents")
 
+    product = await prod_svc.get_product_by_slug(db, product_slug)
+    if not product:
+        raise ValueError(f"Product not found for slug {product_slug}")
+
     # Check cache unless force_regenerate is True
     if not force_regenerate:
         cached_overview_data = await prod_svc.get_product_overview_data(db, product_slug)
@@ -766,70 +823,31 @@ async def generate_product_overview(
     # Cache miss or invalid - generate new meta-summary
     logger.info(f"Generating new product overview for {product_slug}")
 
-    summaries = []
-    for doc in documents:
-        # Check for cancellation before processing each document
-        await token.check_cancellation()
+    await token.check_cancellation()
+    aggregation_service = AggregationService(
+        DocumentRepository(), FindingRepository(), AggregationRepository()
+    )
+    await aggregation_service.rebuild_findings_for_product(db, product.id)
+    aggregation = await aggregation_service.build_product_aggregation(
+        db, product_id=product.id, product_slug=product_slug
+    )
 
-        doc_type = doc.doc_type
-
-        # Ensure we have an analysis (use existing or generate)
-        analysis = doc.analysis
-        if not analysis:
-            logger.info(f"Generating analysis for document {doc.id} ({doc.title})")
-            try:
-                analysis = await summarize_document(doc, cancellation_token=token)
-            except asyncio.CancelledError:
-                logger.info(f"Meta-summary generation cancelled for {product_slug}")
-                raise
-            if analysis:
-                # Store the analysis in the database
-                doc.analysis = analysis
-                await doc_svc.update_document(db, doc)
-                logger.info(f"✓ Stored analysis for document {doc.id}")
-
-        # Format the analysis text (or add placeholder if no analysis)
-        if analysis:
-            summary = analysis.summary
-            keypoints = analysis.keypoints
-            analysis_text = f"""Document Type: {doc_type}
-Summary: {summary}
-
-"""
-            if keypoints:
-                analysis_text += "\nKey Points:\n"
-                for point in keypoints:
-                    analysis_text += f"  • {point}\n"
-            summaries.append(analysis_text)
-        else:
-            logger.warning(f"Failed to generate analysis for document {doc.id}")
-            summaries.append(f"Document Type: {doc_type}\nNo analysis available\n")
-
-    document_summaries = "\n---\n".join(summaries)
-    logger.debug(f"Document summaries: {document_summaries}")
-
+    aggregation_payload = _format_aggregation_payload(aggregation)
     num_documents = len(documents)
     document_types = list({doc.doc_type for doc in documents})
 
     prompt = f"""
-Synthesize the following {num_documents} document(s) ({", ".join(document_types)}) into a unified privacy overview.
+Synthesize the following {num_documents} document(s) ({", ".join(document_types)}) into a unified overview.
 
 **CRITICAL REQUIREMENTS:**
 1. **Summary field (MOST IMPORTANT)**: 2-6 concise sentences. Name the company. State what data is collected and the biggest concern or protection. Do NOT repeat what goes in other fields.
+2. **Use ONLY the aggregated facts below**. Do NOT invent or infer anything not present.
+3. **Be COMPREHENSIVE in other fields**: Fill data_collected, data_purposes, data_collection_details, third_party_details, your_rights, dangers, benefits, recommended_actions, privacy_signals, compliance_status.
+4. **Be SPECIFIC**: Name exact data types, exact recipients, and explicit rights with instructions.
+5. **If coverage indicates missing categories**, say "Not specified in document" for those fields.
 
-2. **Be COMPREHENSIVE in other fields**: Extract and aggregate information from ALL documents into data_collected, data_purposes, dangers, benefits, your_rights, keypoints, privacy_signals, and compliance_status. The summary stays short — the detail goes in these fields.
-
-3. **Be SPECIFIC**: Name exact data types (not "personal information"), exact recipients (not "third parties"), exact rights with instructions.
-
-4. **Be BALANCED**: Include both concerning practices (dangers) and positive protections (benefits).
-
-5. **Synthesize, don't list per-document**: Combine all documents into one unified picture.
-
-The following document summaries are provided:
-
-{document_summaries}
-
-Write clearly and directly. Make sure anyone, regardless of their privacy knowledge, can understand the overview.
+Aggregated facts (JSON):
+{json.dumps(aggregation_payload, indent=2)}
 """
 
     # Set up usage tracking for meta-summary generation
@@ -897,6 +915,7 @@ Write clearly and directly. Make sure anyone, regardless of their privacy knowle
 
         # Parse the meta-summary
         meta_summary = MetaSummary.model_validate_json(content, strict=False)
+        meta_summary.coverage = aggregation.coverage
 
         # Save to database (simple single-cache entry)
         await prod_svc.save_product_overview(
@@ -1060,6 +1079,25 @@ Existing Analysis:
     except Exception as e:
         logger.error(f"Error generating deep analysis for document {document.id}: {e}")
         return None
+
+
+async def generate_document_deep_analysis(
+    db: AgnosticDatabase,
+    document: Document,
+    document_svc: DocumentService,
+) -> DocumentDeepAnalysis:
+    """Generate deep analysis for a single document (paid)."""
+    if not document.analysis:
+        analysis = await summarize_document(document)
+        if analysis:
+            document.analysis = analysis
+            await document_svc.update_document(db, document)
+
+    usage_tracker = UsageTracker()
+    doc_analysis = await _generate_single_document_deep_analysis(document, usage_tracker)
+    if not doc_analysis:
+        raise ValueError(f"Failed to generate deep analysis for document {document.id}")
+    return doc_analysis
 
 
 async def generate_product_deep_analysis(
