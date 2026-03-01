@@ -66,6 +66,7 @@ from src.crawler import ClauseaCrawler, CrawlResult
 from src.llm import SupportedModel, acompletion_with_fallback
 from src.models.crawl import CrawlSession
 from src.models.document import Document
+from src.models.pipeline_job import classify_crawl_error
 from src.models.product import Product
 from src.repositories.crawl_repository import CrawlRepository
 from src.services.service_factory import create_document_service, create_product_service
@@ -100,6 +101,9 @@ class ProcessingStats(BaseModel):
     total_completion_tokens: int = 0
     total_tokens: int = 0
     total_cost: float = 0.0
+
+    # Per-URL crawl failures collected during the pipeline run
+    crawl_errors: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
@@ -1093,6 +1097,7 @@ class LegalDocumentPipeline:
         """Classify a batch of crawl results and return legal documents.
 
         Mutates *processed_urls* to track deduplication across calls.
+        Failed crawl results are collected in ``self.stats.crawl_errors``.
         """
         documents: list[Document] = []
         for result in results:
@@ -1105,6 +1110,16 @@ class LegalDocumentPipeline:
                     documents.append(document)
             else:
                 logger.warning(f"Failed to crawl {result.url}: {result.error_message}")
+                self.stats.crawl_errors.append(
+                    {
+                        "url": result.url,
+                        "status_code": result.status_code,
+                        "error_message": result.error_message,
+                        "error_type": classify_crawl_error(
+                            result.error_message, result.status_code
+                        ),
+                    }
+                )
         return documents
 
     async def _crawl_base_urls(
