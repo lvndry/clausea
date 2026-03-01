@@ -1,18 +1,19 @@
 "use client";
 
 import {
+  BarChart3,
   CheckCircle2,
   Circle,
-  Loader2,
-  XCircle,
   ExternalLink,
   FileSearch,
   FileText,
-  BarChart3,
+  Loader2,
+  XCircle,
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useCallback } from "react";
+
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +23,9 @@ interface PipelineStep {
   name: string;
   status: "pending" | "running" | "completed" | "failed";
   message: string | null;
+  progress_current?: number | null;
+  progress_total?: number | null;
+  progress_percent?: number | null;
 }
 
 interface PipelineJobData {
@@ -118,6 +122,22 @@ function StepIndicator({ step }: { step: PipelineStep }) {
             {step.message}
           </p>
         )}
+        {step.progress_percent !== undefined &&
+          step.progress_percent !== null &&
+          step.status === "running" && (
+            <div className="mt-2 space-y-1">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Progress</span>
+                <span>{step.progress_percent}%</span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-1.5">
+                <div
+                  className="bg-primary h-1.5 rounded-full transition-all duration-300 ease-in-out"
+                  style={{ width: `${Math.min(step.progress_percent, 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
         {step.status === "pending" && (
           <p className="text-xs text-muted-foreground/50 mt-0.5">
             {config.description}
@@ -136,14 +156,52 @@ export function PipelineProgress({
   const router = useRouter();
   const [job, setJob] = useState<PipelineJobData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const startedAtRef = useRef<number | null>(null);
 
-  const isTerminal =
-    job?.status === "completed" || job?.status === "failed";
+  const isTerminal = job?.status === "completed" || job?.status === "failed";
+
+  const clearScheduledPoll = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  const computePollDelayMs = useCallback(() => {
+    const startedAt = startedAtRef.current ?? Date.now();
+    const elapsedMs = Date.now() - startedAt;
+
+    // 0–60s: 3s (snappy)
+    // 60s–5m: 10s (reduce load)
+    // 5m+: 30s (long-running jobs)
+    if (elapsedMs >= 5 * 60 * 1000) return 30_000;
+    if (elapsedMs >= 60 * 1000) return 10_000;
+    return 3_000;
+  }, []);
 
   const pollJob = useCallback(async () => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      // Pause polling in background tabs.
+      return;
+    }
+    if (inFlightRef.current) return;
+
     try {
-      const res = await fetch(`/api/pipeline/jobs/${jobId}`);
+      inFlightRef.current = true;
+
+      if (!startedAtRef.current) startedAtRef.current = Date.now();
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const res = await fetch(`/api/pipeline/jobs/${jobId}`, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
       if (!res.ok) {
         throw new Error("Failed to fetch job status");
       }
@@ -151,33 +209,59 @@ export function PipelineProgress({
       setJob(data);
 
       if (data.status === "completed" || data.status === "failed") {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
+        clearScheduledPoll();
         if (data.status === "completed" && onComplete) {
           onComplete(data.product_slug);
         }
+        return;
       }
+
+      clearScheduledPoll();
+      timeoutRef.current = setTimeout(() => {
+        void pollJob();
+      }, computePollDelayMs());
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
       console.error("Error polling pipeline job:", err);
       setError(err instanceof Error ? err.message : "Failed to check status");
+      clearScheduledPoll();
+      timeoutRef.current = setTimeout(() => {
+        void pollJob();
+      }, 10_000);
+    } finally {
+      inFlightRef.current = false;
     }
-  }, [jobId, onComplete]);
+  }, [
+    jobId,
+    onComplete,
+    clearScheduledPoll,
+    computePollDelayMs,
+  ]);
 
   useEffect(() => {
-    // Initial fetch
-    pollJob();
+    startedAtRef.current = null;
+    setError(null);
 
-    // Poll every 3 seconds
-    intervalRef.current = setInterval(pollJob, 3000);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void pollJob();
+      } else {
+        clearScheduledPoll();
       }
     };
-  }, [pollJob]);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Initial fetch (and subsequent polls are scheduled dynamically)
+    void pollJob();
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      clearScheduledPoll();
+      abortRef.current?.abort();
+    };
+  }, [clearScheduledPoll, pollJob]);
 
   if (error && !job) {
     return (

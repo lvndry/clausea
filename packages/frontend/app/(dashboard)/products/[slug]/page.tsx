@@ -1,6 +1,12 @@
 "use client";
 
-import { ArrowLeft, Calendar, FileText, LayoutDashboard } from "lucide-react";
+import {
+  ArrowLeft,
+  Calendar,
+  FileText,
+  LayoutDashboard,
+  Shield,
+} from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -16,12 +22,15 @@ import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
 import { SourcesList } from "@/components/dashboard/sources-list";
+import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { ErrorDisplay } from "@/components/ui/error-display";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import type { Product } from "@/types";
 
 interface DataPurposeLink {
   data_type: string;
@@ -55,6 +64,12 @@ interface PrivacySignalsData {
   consent_model: "opt_in" | "opt_out" | "mixed" | "not_specified";
 }
 
+interface CoverageItem {
+  category: string;
+  status: "found" | "missing" | "ambiguous" | "not_analyzed";
+  notes?: string | null;
+}
+
 interface ProductOverview {
   product_name: string;
   product_slug: string;
@@ -83,6 +98,8 @@ interface ProductOverview {
   detailed_scores?: DetailedScores | null;
   compliance_status?: Record<string, number> | null;
   privacy_signals?: PrivacySignalsData | null;
+  coverage?: CoverageItem[] | null;
+  contract_clauses?: string[] | null;
 }
 
 interface DocumentSummary {
@@ -107,6 +124,25 @@ interface DocumentSummary {
       section_title?: string | null;
     }>;
   }> | null;
+}
+
+function derivePipelineUrl(product: Product): string | null {
+  const fromWebsite = product.website?.trim();
+  if (fromWebsite) return fromWebsite;
+
+  const fromCrawlBase =
+    Array.isArray(product.crawl_base_urls) && product.crawl_base_urls.length > 0
+      ? product.crawl_base_urls[0]?.trim()
+      : null;
+  if (fromCrawlBase) return fromCrawlBase;
+
+  const fromDomain =
+    Array.isArray(product.domains) && product.domains.length > 0
+      ? product.domains[0]?.trim()
+      : null;
+  if (fromDomain) return `https://${fromDomain}`;
+
+  return null;
 }
 
 function DeepAnalysisTab({ slug }: { slug: string }) {
@@ -157,137 +193,168 @@ function DeepAnalysisTab({ slug }: { slug: string }) {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-12">
       {/* Risk Prioritization */}
       {deepAnalysis.risk_prioritization && (
-        <Card variant="elevated">
-          <CardContent className="p-6">
-            <h2 className="text-xl font-semibold font-display mb-4">
-              Risk Prioritization
-            </h2>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              {deepAnalysis.risk_prioritization.critical?.length > 0 && (
-                <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20">
-                  <h3 className="font-medium text-red-600 dark:text-red-400 mb-2">
-                    Critical
-                  </h3>
-                  <ul className="space-y-1 text-sm">
-                    {deepAnalysis.risk_prioritization.critical.map(
-                      (risk: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 shrink-0" />
-                          {risk}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-              )}
-              {deepAnalysis.risk_prioritization.high?.length > 0 && (
-                <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20">
-                  <h3 className="font-medium text-orange-600 dark:text-orange-400 mb-2">
-                    High
-                  </h3>
-                  <ul className="space-y-1 text-sm">
-                    {deepAnalysis.risk_prioritization.high.map(
-                      (risk: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 shrink-0" />
-                          {risk}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-              )}
-              {deepAnalysis.risk_prioritization.medium?.length > 0 && (
-                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                  <h3 className="font-medium text-amber-600 dark:text-amber-400 mb-2">
-                    Medium
-                  </h3>
-                  <ul className="space-y-1 text-sm">
-                    {deepAnalysis.risk_prioritization.medium.map(
-                      (risk: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
-                          {risk}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-              )}
-              {deepAnalysis.risk_prioritization.low?.length > 0 && (
-                <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
-                  <h3 className="font-medium text-green-600 dark:text-green-400 mb-2">
-                    Low
-                  </h3>
-                  <ul className="space-y-1 text-sm">
-                    {deepAnalysis.risk_prioritization.low.map(
-                      (risk: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 mt-1.5 shrink-0" />
-                          {risk}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-              )}
+        <div className="border border-border bg-background">
+          <div className="p-6 border-b border-border">
+            <div className="flex items-center gap-3">
+              <LayoutDashboard
+                className="h-5 w-5 text-foreground"
+                strokeWidth={1.5}
+              />
+              <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                Risk Prioritization
+              </h3>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-x divide-border">
+            {/* Critical */}
+            <div className="p-6 space-y-4">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D]">
+                Critical
+              </span>
+              <ul className="space-y-3">
+                {deepAnalysis.risk_prioritization.critical?.map(
+                  (risk: string, i: number) => (
+                    <li
+                      key={i}
+                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
+                    >
+                      <div className="mt-1.5 h-1 w-1 bg-[#BD452D] shrink-0" />
+                      {risk}
+                    </li>
+                  ),
+                )}
+              </ul>
+            </div>
+            {/* High */}
+            <div className="p-6 space-y-4 border-t md:border-t-0">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D]">
+                High
+              </span>
+              <ul className="space-y-3">
+                {deepAnalysis.risk_prioritization.high?.map(
+                  (risk: string, i: number) => (
+                    <li
+                      key={i}
+                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
+                    >
+                      <div className="mt-1.5 h-1 w-1 bg-[#BD452D] shrink-0 opacity-60" />
+                      {risk}
+                    </li>
+                  ),
+                )}
+              </ul>
+            </div>
+            {/* Medium */}
+            <div className="p-6 space-y-4 border-t lg:border-t-0">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#B58D2D]">
+                Medium
+              </span>
+              <ul className="space-y-3">
+                {deepAnalysis.risk_prioritization.medium?.map(
+                  (risk: string, i: number) => (
+                    <li
+                      key={i}
+                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
+                    >
+                      <div className="mt-1.5 h-1 w-1 bg-[#B58D2D] shrink-0" />
+                      {risk}
+                    </li>
+                  ),
+                )}
+              </ul>
+            </div>
+            {/* Low */}
+            <div className="p-6 space-y-4 border-t lg:border-t-0">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#2B7A5C]">
+                Low Risk
+              </span>
+              <ul className="space-y-3">
+                {deepAnalysis.risk_prioritization.low?.map(
+                  (risk: string, i: number) => (
+                    <li
+                      key={i}
+                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
+                    >
+                      <div className="mt-1.5 h-1 w-1 bg-[#2B7A5C] shrink-0" />
+                      {risk}
+                    </li>
+                  ),
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Enhanced Compliance */}
       {deepAnalysis.enhanced_compliance &&
         Object.keys(deepAnalysis.enhanced_compliance).length > 0 && (
-          <Card variant="elevated">
-            <CardContent className="p-6">
-              <h2 className="text-xl font-semibold font-display mb-4">
-                Compliance Analysis
-              </h2>
-              <div className="grid gap-4 md:grid-cols-2">
-                {Object.entries(deepAnalysis.enhanced_compliance).map(
-                  ([reg, comp]: [string, any]) => (
-                    <div
-                      key={reg}
-                      className="p-4 rounded-xl border border-border/50 bg-muted/30"
-                    >
-                      <h3 className="font-semibold mb-2">{reg}</h3>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Status</span>
-                          <span className="font-medium">{comp.status}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Score</span>
-                          <span className="font-medium">{comp.score}/10</span>
-                        </div>
-                        {comp.violations?.length > 0 && (
-                          <div className="pt-2 border-t border-border/50">
-                            <span className="text-muted-foreground">
-                              Violations:
-                            </span>
-                            <ul className="mt-1 space-y-1">
-                              {comp.violations.map((v: any, i: number) => (
-                                <li
-                                  key={i}
-                                  className="text-red-600 dark:text-red-400"
-                                >
-                                  {v.requirement}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
+          <div className="border border-border bg-background">
+            <div className="p-6 border-b border-border">
+              <div className="flex items-center gap-3">
+                <Shield className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+                <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                  Regulatory Compliance Analysis
+                </h3>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 divide-x divide-border">
+              {Object.entries(deepAnalysis.enhanced_compliance).map(
+                ([reg, comp]: [string, any]) => (
+                  <div key={reg} className="p-6 space-y-6">
+                    <div className="flex justify-between items-start">
+                      <h4 className="font-display font-medium text-xl text-foreground">
+                        {reg}
+                      </h4>
+                      <div
+                        className={cn(
+                          "px-3 py-1 border text-[10px] font-bold uppercase tracking-widest",
+                          comp.score >= 7
+                            ? "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]"
+                            : comp.score >= 4
+                              ? "border-[#B58D2D]/20 bg-[#B58D2D]/5 text-[#B58D2D]"
+                              : "border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D]",
                         )}
+                      >
+                        {comp.status}
                       </div>
                     </div>
-                  ),
-                )}
-              </div>
-            </CardContent>
-          </Card>
+
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-4xl font-display font-medium text-foreground">
+                        {comp.score}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground leading-none">
+                        / 10 Score
+                      </span>
+                    </div>
+
+                    {comp.violations?.length > 0 && (
+                      <div className="pt-6 border-t border-border space-y-4">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D]">
+                          Detected Deviations
+                        </span>
+                        <ul className="space-y-3">
+                          {comp.violations.map((v: any, i: number) => (
+                            <li
+                              key={i}
+                              className="text-sm text-[#BD452D] italic flex items-start gap-3"
+                            >
+                              <span className="mt-1.5 h-1.5 w-1.5 bg-[#BD452D] shrink-0" />
+                              {v.requirement}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ),
+              )}
+            </div>
+          </div>
         )}
     </div>
   );
@@ -296,20 +363,62 @@ function DeepAnalysisTab({ slug }: { slug: string }) {
 export default function CompanyPage() {
   const params = useParams();
   const slug = params.slug as string;
+  const [product, setProduct] = useState<Product | null>(null);
   const [data, setData] = useState<ProductOverview | null>(null);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [indexationMode, setIndexationMode] = useState<
+    "ready" | "indexing" | "unknown"
+  >("unknown");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [notifyEmail, setNotifyEmail] = useState("");
+  const [notifyStatus, setNotifyStatus] = useState<
+    "idle" | "submitting" | "success" | "error"
+  >("idle");
+  const [notifyError, setNotifyError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
       try {
+        // Fetch the base product first so we can trigger indexation if needed
+        const prodRes = await fetch(`/api/products/${slug}`);
+        if (!prodRes.ok) {
+          setProduct(null);
+          setData(null);
+          setIndexationMode("ready"); // render not-found
+          return;
+        }
+        const prodJson = (await prodRes.json()) as Product;
+        setProduct(prodJson);
+
+        // Fetch documents next; if none, auto-trigger pipeline and show "indexing" UI
+        setDocumentsLoading(true);
+        const docsRes = await fetch(`/api/products/${slug}/documents`);
+        const docsJson = docsRes.ok
+          ? ((await docsRes.json()) as DocumentSummary[])
+          : [];
+        setDocuments(docsJson);
+        setDocumentsLoading(false);
+
+        if (!docsJson.length) {
+          await ensurePipelineRunning(slug, prodJson);
+          setIndexationMode("indexing");
+          setData(null);
+          return;
+        }
+
+        // Documents exist; try to fetch overview (may generate on the fly)
         const res = await fetch(`/api/products/${slug}/overview`);
         if (res.ok) {
           const json = await res.json();
           setData(json);
+          setIndexationMode("ready");
         } else {
-          console.error("Failed to fetch product overview:", res.statusText);
+          // If overview isn't available yet, treat as "indexing" and ensure pipeline is running.
+          await ensurePipelineRunning(slug, prodJson);
+          setIndexationMode("indexing");
+          setData(null);
         }
       } catch (error) {
         console.error("Failed to fetch product data", error);
@@ -320,25 +429,84 @@ export default function CompanyPage() {
     fetchData();
   }, [slug]);
 
-  useEffect(() => {
-    async function fetchDocuments() {
-      setDocumentsLoading(true);
-      try {
-        const res = await fetch(`/api/products/${slug}/documents`);
-        if (res.ok) {
-          const json = await res.json();
-          setDocuments(json);
-        } else {
-          console.error("Failed to fetch product documents:", res.statusText);
-        }
-      } catch (error) {
-        console.error("Failed to fetch product documents", error);
-      } finally {
-        setDocumentsLoading(false);
+  /**
+   * Ensures a pipeline job is running for the product.
+   * First checks for an existing active job (avoids a duplicate POST).
+   * Then POSTs /api/pipeline to (re)kick execution when needed (dev reload-safe).
+   */
+  async function ensurePipelineRunning(productSlug: string, product: Product) {
+    const url = derivePipelineUrl(product);
+
+    // 1. Check for an already-running job
+    const activeRes = await fetch(
+      `/api/pipeline/active?product_slug=${encodeURIComponent(productSlug)}`,
+    );
+    if (activeRes.ok) {
+      const activeJob = (await activeRes.json()) as {
+        id?: string;
+        status?: string;
+      };
+      if (activeJob?.id) {
+        setActiveJobId(activeJob.id);
+        // Dev reload-safe: active jobs can remain in Mongo after backend restarts.
+        // POSTing /api/pipeline is idempotent on the backend and will re-kick the runner
+        // if it isn't currently executing in this process.
+        if (!url) return;
+        void fetch("/api/pipeline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        return;
       }
     }
-    fetchDocuments();
-  }, [slug]);
+
+    // 2. No active job — start a new one
+    if (!url) return;
+    const pipelineRes = await fetch("/api/pipeline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (pipelineRes.ok) {
+      const pipelineJson = await pipelineRes.json();
+      setActiveJobId(pipelineJson.job_id ?? null);
+    }
+  }
+
+  async function handleSubscribeNotify() {
+    const email = notifyEmail.trim();
+    if (!email) {
+      setNotifyError("Please enter your email.");
+      setNotifyStatus("error");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setNotifyError("Please enter a valid email address.");
+      setNotifyStatus("error");
+      return;
+    }
+
+    setNotifyStatus("submitting");
+    setNotifyError(null);
+    try {
+      const res = await fetch(`/api/products/${slug}/indexation-notify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || "Failed to subscribe.");
+      }
+      setNotifyStatus("success");
+    } catch (err) {
+      setNotifyStatus("error");
+      setNotifyError(
+        err instanceof Error ? err.message : "Failed to subscribe.",
+      );
+    }
+  }
 
   if (loading) {
     return (
@@ -360,6 +528,89 @@ export default function CompanyPage() {
   }
 
   if (!data) {
+    // If product exists but indexation isn't ready, show the indexation message + email capture
+    if (product && indexationMode === "indexing") {
+      return (
+        <div className="space-y-6">
+          <div className="border-b border-border pb-8">
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+              {product.name}
+            </h1>
+            <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
+              Indexation is in progress for this company. Our systems are
+              currently mapping the privacy landscape. Please return shortly
+              once the analysis is complete.
+            </p>
+          </div>
+
+          <div className="border border-border bg-background">
+            <div className="p-6 border-b border-border bg-muted/5">
+              <div className="flex items-center gap-3">
+                <Shield className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+                <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                  Notification Service
+                </h3>
+              </div>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-xl font-display font-medium text-foreground">
+                  Get notified when analysis completes
+                </h2>
+                <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                  Secure your update by subscribing below
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-4">
+                <Input
+                  value={notifyEmail}
+                  onChange={(e) => {
+                    setNotifyEmail(e.target.value);
+                    if (notifyStatus !== "idle") setNotifyStatus("idle");
+                    if (notifyError) setNotifyError(null);
+                  }}
+                  placeholder="example@email.com"
+                  className="h-12 border-border bg-transparent rounded-none"
+                  type="email"
+                  autoComplete="email"
+                />
+                <Button
+                  onClick={handleSubscribeNotify}
+                  disabled={notifyStatus === "submitting"}
+                  className="h-12 px-8 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                >
+                  {notifyStatus === "submitting"
+                    ? "Processing..."
+                    : "Subscribe"}
+                </Button>
+              </div>
+
+              {notifyStatus === "success" && (
+                <div className="p-4 border border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C] text-[10px] uppercase tracking-widest font-bold">
+                  Subscription active. We will notify you upon completion.
+                </div>
+              )}
+              {notifyStatus === "error" && notifyError && (
+                <div className="p-4 border border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D] text-[10px] uppercase tracking-widest font-bold">
+                  {notifyError}
+                </div>
+              )}
+
+              {activeJobId && (
+                <div className="pt-6 border-t border-border">
+                  <div className="mb-4 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
+                    Analysis Pipeline Status
+                  </div>
+                  <PipelineProgress jobId={activeJobId} />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <ErrorDisplay
         variant="not-found"
@@ -382,45 +633,41 @@ export default function CompanyPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"
-      >
+      <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between border-b border-border pb-8">
         <div className="flex items-start gap-4">
           <Link href="/products">
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon"
-              className="rounded-xl h-10 w-10 shrink-0 hover:bg-muted"
+              className="h-10 w-10 shrink-0 border-border bg-transparent hover:bg-muted/5 transition-colors"
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold font-display tracking-tight text-foreground">
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
               {data.product_name}
             </h1>
-            <div className="flex flex-wrap items-center gap-3 mt-2">
-              <Badge variant="outline" className="gap-1.5">
+            <div className="flex flex-wrap items-center gap-4 mt-3">
+              <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground whitespace-nowrap">
                 Privacy Analysis
-              </Badge>
+              </span>
+              <div className="h-px w-8 bg-border hidden sm:block" />
               {formattedDate && (
-                <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
                   <Calendar className="h-3.5 w-3.5" />
-                  Updated {formattedDate}
+                  Last Updated {formattedDate}
                 </span>
               )}
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* Tabs */}
       <Tabs
         defaultValue="overview"
-        className="space-y-8"
+        className="space-y-12"
         onValueChange={(value) => {
           posthog.capture("product_tab_changed", {
             tab_name: value,
@@ -429,27 +676,27 @@ export default function CompanyPage() {
           });
         }}
       >
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.1 }}
-        >
-          <TabsList variant="pills" className="w-full sm:w-auto">
-            <TabsTrigger value="overview" variant="pills" className="gap-2">
-              <LayoutDashboard className="h-4 w-4" />
+        <div>
+          <TabsList className="w-full sm:w-auto h-auto p-0 bg-transparent border-b border-border gap-8">
+            <TabsTrigger
+              value="overview"
+              className="px-0 py-4 text-[10px] uppercase tracking-[0.2em] font-bold data-[state=active]:border-b-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent rounded-none transition-all"
+            >
               Overview
             </TabsTrigger>
-            <TabsTrigger value="sources" variant="pills" className="gap-2">
-              <FileText className="h-4 w-4" />
+            <TabsTrigger
+              value="sources"
+              className="px-0 py-4 text-[10px] uppercase tracking-[0.2em] font-bold data-[state=active]:border-b-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent rounded-none transition-all gap-2"
+            >
               Sources
               {documents.length > 0 && (
-                <Badge variant="secondary" size="sm" className="ml-1">
+                <span className="px-1.5 py-0.5 border border-border text-[8px] font-bold">
                   {documents.length}
-                </Badge>
+                </span>
               )}
             </TabsTrigger>
           </TabsList>
-        </motion.div>
+        </div>
 
         <TabsContent value="overview" className="space-y-6 mt-0">
           {/* Verdict Hero */}
@@ -465,6 +712,50 @@ export default function CompanyPage() {
           {/* Privacy Signals - Quick facts right after verdict */}
           {data.privacy_signals && (
             <PrivacySignals signals={data.privacy_signals} />
+          )}
+
+          {/* Coverage */}
+          {data.coverage && data.coverage.length > 0 && (
+            <div className="border border-border bg-background">
+              <div className="p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <LayoutDashboard
+                    className="h-5 w-5 text-foreground"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                    Policy Coverage
+                  </h3>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4">
+                {data.coverage.map((item, idx) => (
+                  <div
+                    key={`${item.category}-${item.status}`}
+                    className={cn(
+                      "p-6 flex flex-col gap-4 bg-background border-b border-border",
+                      idx % 4 !== 3 ? "md:border-r border-border" : "",
+                    )}
+                  >
+                    <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                      {item.category.replace(/_/g, " ")}
+                    </span>
+                    <div
+                      className={cn(
+                        "px-2 py-0.5 text-[8px] font-bold tracking-tighter border w-fit capitalize",
+                        item.status === "found"
+                          ? "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]"
+                          : item.status === "ambiguous"
+                            ? "border-[#B58D2D]/20 bg-[#B58D2D]/5 text-[#B58D2D]"
+                            : "border-border bg-muted/5 text-muted-foreground",
+                      )}
+                    >
+                      {item.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Score Breakdown - Why the score is what it is */}
@@ -495,10 +786,41 @@ export default function CompanyPage() {
             benefits={data.benefits}
           />
 
-          {/* Compliance Badges */}
-          {data.compliance_status && Object.keys(data.compliance_status).length > 0 && (
-            <ComplianceBadges complianceStatus={data.compliance_status} />
+          {/* Contract Highlights */}
+          {data.contract_clauses && data.contract_clauses.length > 0 && (
+            <div className="border border-border bg-background">
+              <div className="p-6 border-b border-border">
+                <div className="flex items-center gap-3">
+                  <FileText
+                    className="h-5 w-5 text-foreground"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                    Contract Highlights
+                  </h3>
+                </div>
+              </div>
+              <div className="divide-y divide-border">
+                {data.contract_clauses.map((clause, idx) => (
+                  <div
+                    key={idx}
+                    className="p-6 flex items-start gap-4 hover:bg-muted/5 transition-colors"
+                  >
+                    <div className="mt-1.5 h-1.5 w-1.5 border border-border bg-foreground shrink-0" />
+                    <p className="text-sm text-foreground/80 leading-relaxed italic font-serif">
+                      &ldquo;{clause}&rdquo;
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
+
+          {/* Compliance Badges */}
+          {data.compliance_status &&
+            Object.keys(data.compliance_status).length > 0 && (
+              <ComplianceBadges complianceStatus={data.compliance_status} />
+            )}
         </TabsContent>
 
         <TabsContent value="analysis" className="mt-0">

@@ -5,7 +5,9 @@ export interface Product {
   slug: string;
   description?: string;
   website?: string;
-  industry?: string;
+  categories?: string[];
   documentsCount?: number;
   logo?: string;
+  domains?: string[];
+  crawl_base_urls?: string[];
 }

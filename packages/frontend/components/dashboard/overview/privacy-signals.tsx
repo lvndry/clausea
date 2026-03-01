@@ -38,18 +38,20 @@ interface SignalDisplay {
 
 function getSignalIcon(sentiment: "positive" | "negative" | "neutral") {
   if (sentiment === "positive")
-    return <CheckCircle className="h-4 w-4 text-emerald-500" />;
+    return <CheckCircle className="h-4 w-4 text-[#2B7A5C]" strokeWidth={1.5} />;
   if (sentiment === "negative")
-    return <Ban className="h-4 w-4 text-red-500" />;
-  return <HelpCircle className="h-4 w-4 text-muted-foreground" />;
+    return <Ban className="h-4 w-4 text-[#BD452D]" strokeWidth={1.5} />;
+  return (
+    <HelpCircle className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
+  );
 }
 
 function getSentimentStyles(sentiment: "positive" | "negative" | "neutral") {
   if (sentiment === "positive")
-    return "border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/20";
+    return "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]";
   if (sentiment === "negative")
-    return "border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20";
-  return "border-border/50 bg-muted/30";
+    return "border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D]";
+  return "border-border bg-muted/5 text-muted-foreground";
 }
 
 function buildSignals(signals: PrivacySignalsData): SignalDisplay[] {
@@ -174,46 +176,54 @@ export function PrivacySignals({ signals }: PrivacySignalsProps) {
   }
 
   return (
-    <Card variant="default" className="border-border">
-      <CardHeader className="pb-4">
+    <div className="border border-border bg-background">
+      <div className="p-6 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
-            <Zap className="h-5 w-5 text-violet-600 dark:text-violet-400" />
-          </div>
-          <div>
-            <CardTitle className="text-lg">Quick Facts</CardTitle>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Key privacy signals at a glance
-            </p>
-          </div>
+          <Zap className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+            Privacy Signals
+          </h3>
         </div>
-      </CardHeader>
+      </div>
 
-      <CardContent>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {items.map((item) => (
-            <div
-              key={item.label}
-              className={cn(
-                "flex items-start gap-3 p-3.5 rounded-lg border",
-                getSentimentStyles(item.sentiment),
-              )}
-            >
-              <div className="mt-0.5 shrink-0">
-                {getSignalIcon(item.sentiment)}
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  {item.label}
-                </p>
-                <p className="text-sm font-medium text-foreground mt-0.5">
-                  {item.value}
-                </p>
+      <div className="grid grid-cols-1 md:grid-cols-3">
+        {items.map((item, idx) => (
+          <div
+            key={item.label}
+            className={cn(
+              "p-6 flex flex-col gap-4 border-b border-border transition-colors group",
+              idx % 3 !== 2 ? "md:border-r border-border" : "",
+            )}
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground group-hover:text-foreground transition-colors">
+                {item.label}
+              </span>
+              <div
+                className={cn(
+                  "px-2 py-0.5 text-[8px] font-bold tracking-tighter border",
+                  getSentimentStyles(item.sentiment),
+                )}
+              >
+                {item.sentiment === "positive"
+                  ? "SAFE"
+                  : item.sentiment === "negative"
+                    ? "RISK"
+                    : "NEUTRAL"}
               </div>
             </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+
+            <div className="flex items-start gap-3">
+              <div className="mt-1 shrink-0">
+                {getSignalIcon(item.sentiment)}
+              </div>
+              <p className="text-sm font-medium text-foreground leading-tight">
+                {item.value}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import logging
 import sys
-from typing import Any
+from collections.abc import Callable, Mapping, MutableMapping
+from typing import Any, cast
 
 import structlog
 
@@ -17,8 +18,23 @@ def component_processor(
     return event_dict
 
 
-structlog.configure(
-    processors=[
+Processor = Callable[
+    [Any, str, MutableMapping[str, Any]],
+    Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
+]
+
+
+json_or_console_renderer: Processor = cast(
+    Processor,
+    structlog.processors.JSONRenderer()
+    if not config.app.is_development
+    else structlog.dev.ConsoleRenderer(),
+)
+
+
+processors = cast(
+    list[Processor],
+    [
         structlog.stdlib.filter_by_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -36,10 +52,13 @@ structlog.configure(
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
         component_processor,
-        structlog.processors.JSONRenderer()
-        if not config.app.is_development
-        else structlog.dev.ConsoleRenderer(),
+        json_or_console_renderer,
     ],
+)
+
+
+structlog.configure(
+    processors=processors,
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
     wrapper_class=structlog.stdlib.BoundLogger,

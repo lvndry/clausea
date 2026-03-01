@@ -35,61 +35,31 @@ export function Sidebar({ className }: SidebarProps) {
   return (
     <div className={cn("h-full flex flex-col", className)}>
       {/* Logo Section */}
-      <div className="p-6 border-b border-border">
-        <Link href="/" className="flex items-center gap-3 group">
-          <Image
-            src="/static/favicons/logo.png"
-            alt="Clausea"
-            width={40}
-            height={40}
-            className="w-10 h-10 object-contain"
-          />
-          <div className="flex flex-col">
-            <span className="font-display font-bold text-lg tracking-tight text-foreground">
-              Clausea
-            </span>
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
-              Intelligence
-            </span>
-          </div>
+      <div className="p-6 border-b border-border flex items-center h-16 shrink-0">
+        <Link href="/" className="flex items-center group">
+          <span className="font-display font-medium text-2xl tracking-widest uppercase text-foreground group-hover:text-primary transition-colors">
+            CLAUSEA
+          </span>
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 px-3">
-        <div className="space-y-1">
+      <nav className="flex-1 py-6 px-4">
+        <div className="space-y-2">
           {routes.map((route) => (
             <Link key={route.href} href={route.href}>
               <div
                 className={cn(
-                  "group relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors",
+                  "group relative flex items-center gap-4 px-4 py-3 rounded-none transition-colors border-l-2",
                   route.active
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                    ? "bg-muted/5 text-foreground border-foreground"
+                    : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/5",
                 )}
               >
-                {/* Active indicator */}
-                {route.active && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-primary rounded-r-full" />
-                )}
-
-                <div
-                  className={cn(
-                    "flex items-center justify-center w-8 h-8 rounded-md transition-colors",
-                    route.active
-                      ? "bg-primary/15"
-                      : "bg-transparent group-hover:bg-muted",
-                  )}
-                >
-                  <route.icon className="h-[18px] w-[18px]" />
-                </div>
-
-                <div className="flex flex-col">
-                  <span className="font-medium text-sm">{route.label}</span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {route.description}
-                  </span>
-                </div>
+                <route.icon className="h-5 w-5 shrink-0" strokeWidth={1.5} />
+                <span className="text-xs uppercase tracking-widest font-medium">
+                  {route.label}
+                </span>
               </div>
             </Link>
           ))}
@@ -97,20 +67,16 @@ export function Sidebar({ className }: SidebarProps) {
       </nav>
 
       {/* Bottom Section */}
-      <div className="p-4 border-t border-border">
-        <div className="rounded-lg bg-muted/50 border border-border p-3">
-          <div className="flex items-start gap-2.5">
-            <div className="w-7 h-7 rounded-md bg-secondary/10 flex items-center justify-center shrink-0">
-              <Sparkles className="w-3.5 h-3.5 text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-xs text-foreground">
-                AI-Powered Analysis
-              </p>
-              <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                Legal docs simplified
-              </p>
-            </div>
+      <div className="p-6 border-t border-border">
+        <div className="border border-foreground bg-background p-4 flex flex-col gap-3">
+          <Sparkles className="w-5 h-5 text-foreground" strokeWidth={1.5} />
+          <div>
+            <p className="font-medium text-[10px] uppercase tracking-widest text-foreground">
+              AI-Powered Analysis
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+              Legal docs simplified
+            </p>
           </div>
         </div>
       </div>

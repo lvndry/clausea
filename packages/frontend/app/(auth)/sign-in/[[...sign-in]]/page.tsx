@@ -56,6 +56,7 @@ export default function SignInPage() {
               },
             }}
             signUpUrl="/sign-up"
+            forceRedirectUrl="/products"
             fallbackRedirectUrl="/products"
           />
         </div>

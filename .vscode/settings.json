@@ -1,16 +1,10 @@
 {
+  "editor.formatOnSave": true,
+
   "eslint.enable": true,
-  "eslint.workingDirectories": ["packages/frontend"],
+  "eslint.workingDirectories": ["packages/frontend", "packages/extension"],
   "eslint.format.enable": true,
   "eslint.lintTask.enable": true,
-  "eslint.options": {
-    "overrideConfigFile": "packages/frontend/eslint.config.mjs"
-  },
-
-  "editor.formatOnSave": true,
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "explicit"
-  },
 
   "files.exclude": {
     "**/.git": true,
@@ -94,23 +88,15 @@
     "editor.rulers": [100]
   },
 
-  "[typescript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[typescriptreact]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[javascriptreact]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[json]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[jsonc]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
   "[markdown]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.wordWrap": "on"
-  }
+  },
+  "cursorpyright.analysis.autoImportCompletions": true,
+  "cursorpyright.analysis.diagnosticMode": "workspace",
+  "cursorpyright.analysis.diagnosticSeverityOverrides": {
+    "reportUntypedDecorator": "error",
+    "reportUntypedFunctionDecorator": "error",
+    "reportUntypedClassDecorator": "error"
+  },
+  "cursorpyright.analysis.typeCheckingMode": "strict"
 }

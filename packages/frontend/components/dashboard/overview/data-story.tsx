@@ -33,121 +33,102 @@ export function DataStory({
   }
 
   return (
-    <Card variant="default" className="border-border">
-      <CardHeader className="pb-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-              <Database className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
-              <CardTitle className="text-lg">Your Data Story</CardTitle>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                What data is collected and why
-              </p>
-            </div>
-          </div>
-          {hasStructuredData && (
-            <Badge variant="outline" className="gap-1.5">
-              <Layers className="h-3 w-3" />
-              {dataCollectionDetails.length}
-            </Badge>
-          )}
+    <div className="border border-border bg-background">
+      <div className="p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Database className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+            Your Data Story
+          </h3>
         </div>
-      </CardHeader>
+        {hasStructuredData && (
+          <div className="px-3 py-1 border border-border text-[10px] uppercase tracking-widest font-bold bg-muted/5">
+            {dataCollectionDetails.length} Collections Identified
+          </div>
+        )}
+      </div>
 
-      <CardContent className="space-y-3">
+      <div className="divide-y divide-border">
         {hasStructuredData ? (
-          <div className="space-y-2.5">
-            {dataCollectionDetails.map((item, index) => (
-              <div
-                key={index}
-                className={cn(
-                  "flex flex-col sm:flex-row sm:items-start gap-3 p-3.5 rounded-lg",
-                  "border border-border/50 bg-muted/30",
-                )}
-              >
-                {/* Data type */}
-                <div className="flex items-center gap-2.5 sm:min-w-[140px]">
-                  <div className="w-7 h-7 rounded-md bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
-                    <Database className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <span className="font-medium text-sm text-foreground">
+          dataCollectionDetails.map((item, index) => (
+            <div key={index} className="grid grid-cols-1 md:grid-cols-12">
+              {/* Data type */}
+              <div className="col-span-12 md:col-span-4 p-6 border-b md:border-b-0 md:border-r border-border bg-muted/5">
+                <div className="flex items-center gap-3">
+                  <Database
+                    className="h-4 w-4 text-foreground"
+                    strokeWidth={1.5}
+                  />
+                  <span className="font-display font-medium text-lg text-foreground">
                     {item.data_type}
                   </span>
                 </div>
-
-                {/* Arrow */}
-                <ArrowRight className="h-4 w-4 text-muted-foreground/50 shrink-0 hidden sm:block mt-2" />
-
-                {/* Purposes */}
-                <div className="flex flex-wrap gap-1.5 flex-1">
-                  {item.purposes.map((purpose, pIndex) => (
-                    <Badge
-                      key={pIndex}
-                      variant="secondary"
-                      size="sm"
-                      className="gap-1 rounded-md"
-                    >
-                      <Target className="h-3 w-3" />
-                      {purpose}
-                    </Badge>
-                  ))}
-                </div>
               </div>
-            ))}
-          </div>
+
+              {/* Purposes */}
+              <div className="col-span-12 md:col-span-8 p-6 flex flex-wrap gap-2">
+                {item.purposes.map((purpose, pIndex) => (
+                  <div
+                    key={pIndex}
+                    className="px-3 py-1 border border-border text-[10px] uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground hover:border-foreground transition-colors cursor-default"
+                  >
+                    {purpose}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
         ) : (
-          <div className="space-y-5">
+          <div className="divide-y divide-border px-6">
             {dataCollected && dataCollected.length > 0 && (
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                  <Database className="h-3.5 w-3.5" />
+              <div className="py-6 space-y-4">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-foreground">
                   Data Collected
                 </h4>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {dataCollected.map((item, index) => (
-                    <Badge key={index} variant="outline" className="rounded-md">
+                    <div
+                      key={index}
+                      className="px-3 py-1 border border-border text-[10px] uppercase tracking-widest font-medium text-muted-foreground"
+                    >
                       {item}
-                    </Badge>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
 
             {dataPurposes && dataPurposes.length > 0 && (
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                  <Target className="h-3.5 w-3.5" />
-                  Used For
+              <div className="py-6 space-y-4">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-foreground">
+                  Intended Use
                 </h4>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {dataPurposes.map((purpose, index) => (
-                    <Badge
+                    <div
                       key={index}
-                      variant="secondary"
-                      className="rounded-md"
+                      className="px-3 py-1 border border-border text-[10px] uppercase tracking-widest font-medium text-muted-foreground"
                     >
                       {purpose}
-                    </Badge>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
           </div>
         )}
+      </div>
 
-        {/* Footer */}
-        <div className="pt-3 border-t border-border/50">
-          <p className="text-sm text-muted-foreground">
-            {hasStructuredData
-              ? `${dataCollectionDetails.length} data types collected`
-              : dataCollected
-                ? `${dataCollected.length} data types identified`
-                : null}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+      {/* Footer */}
+      <div className="p-6 border-t border-border bg-muted/5">
+        <p className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+          {hasStructuredData
+            ? `${dataCollectionDetails.length} data vectors mapped`
+            : dataCollected
+              ? `${dataCollected.length} data points identified`
+              : "Analysis complete"}
+        </p>
+      </div>
+    </div>
   );
 }
