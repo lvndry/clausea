@@ -1,16 +1,46 @@
-FROM python:3.11-slim
+# ── Stage 1: builder ─────────────────────────────────────────────────────────
+# Installs build-time tools, compiles Python dependencies, and fetches the
+# Camoufox Firefox binary. Nothing from this stage leaks into the final image.
+FROM python:3.11-slim AS builder
 
 ENV VENV_PATH="/opt/venv"
 ENV PATH="$VENV_PATH/bin:$PATH"
-ENV PYTHONPATH="/app"
-
-WORKDIR /app
+# Pin the Camoufox data directory to a known path so the binary is easy to
+# COPY into the final stage, regardless of the container's HOME.
+ENV XDG_DATA_HOME="/opt/camoufox-data"
 
 RUN apt-get update && apt-get install -y \
     curl \
     gcc \
     libffi-dev \
-    # System libraries required by Camoufox (Firefox-based headless browser)
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv==0.9
+RUN uv venv $VENV_PATH
+
+COPY pyproject.toml ./
+COPY uv.lock ./
+
+RUN uv sync --no-dev --frozen
+
+# Download the Camoufox Firefox binary at build time (stored at $XDG_DATA_HOME/camoufox).
+# Running this here avoids any network call at container startup.
+RUN uv run camoufox fetch
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+# Clean image containing only the venv, the Camoufox binary, runtime system
+# libraries, and application code. Build tools (gcc, libffi-dev, uv) are absent.
+FROM python:3.11-slim
+
+ENV VENV_PATH="/opt/venv"
+ENV PATH="$VENV_PATH/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV XDG_DATA_HOME="/opt/camoufox-data"
+
+# Runtime-only system libraries required by the Camoufox Firefox binary.
+# These satisfy the dynamic linker at process start; they are not used
+# during headless operation but Firefox links against them unconditionally.
+RUN apt-get update && apt-get install -y \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -30,19 +60,17 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv==0.9
-RUN uv venv $VENV_PATH
+WORKDIR /app
 
-COPY pyproject.toml ./
-COPY uv.lock ./
+# Copy compiled Python environment (no build tools, only runtime packages).
+COPY --from=builder /opt/venv /opt/venv
 
-RUN uv sync --no-dev --frozen
-
-# Download the Camoufox Firefox binary at build time so it is available at runtime
-RUN uv run camoufox fetch
+# Copy the pre-fetched Camoufox Firefox binary.
+COPY --from=builder /opt/camoufox-data /opt/camoufox-data
 
 COPY . .
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uv run uvicorn main:app --host 0.0.0.0 --port 8000"]
+# Exec form: uvicorn runs as PID 1 so Railway's SIGTERM is delivered directly.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

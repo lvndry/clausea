@@ -1524,19 +1524,34 @@ class ClauseaCrawler:
         else:
             return self._extract_xml_content(raw, url)
 
-    def _extract_html_content(self, raw: StaticFetchResult, url: str) -> PageContent:
-        soup = BeautifulSoup(raw.body, "html.parser")
+    def _parse_html_string(
+        self, html: str, url: str
+    ) -> tuple[str, str, str, dict[str, Any], list[dict[str, str]]]:
+        """Parse an HTML string and return (title, text, markdown, metadata, links).
+
+        This is the shared, synchronous CPU-bound core used by both
+        ``_extract_html_content`` (static fetch) and ``_browser_fetch``
+        (headless browser).  Callers that run inside an async context should
+        dispatch this via ``asyncio.to_thread`` to avoid blocking the event loop.
+        """
+        soup = BeautifulSoup(html, "html.parser")
         title_tag = soup.find("title")
-        title_text = title_tag.get_text().strip() if title_tag else ""
+        title = title_tag.get_text().strip() if title_tag else ""
         content_soup = self._extract_main_content_soup(soup)
-        text_content = self._extract_text_from_soup(content_soup)
-        markdown_content = markdownify.markdownify(str(content_soup), heading_style="ATX")
+        text = self._extract_text_from_soup(content_soup)
+        markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
         metadata = self.extract_metadata(soup)
-        discovered_links = self.extract_links(soup, url)
+        links = self.extract_links(soup, url)
+        return title, text, markdown, metadata, links
+
+    def _extract_html_content(self, raw: StaticFetchResult, url: str) -> PageContent:
+        title, text_content, markdown_content, metadata, discovered_links = self._parse_html_string(
+            raw.body, url
+        )
         return PageContent(
             text=text_content,
             markdown=markdown_content,
-            title=title_text,
+            title=title,
             metadata=metadata,
             discovered_links=discovered_links,
             status_code=raw.status_code,
@@ -1702,17 +1717,10 @@ class ClauseaCrawler:
             content = await page.content()
 
             # CPU-bound HTML parsing — offload to a thread to keep the event loop free.
-            def _parse_browser_html() -> tuple[str, str, dict[str, Any], list[dict[str, str]]]:
-                soup = BeautifulSoup(content, "html.parser")
-                content_soup = self._extract_main_content_soup(soup)
-                _text = self._extract_text_from_soup(content_soup)
-                _markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
-                _metadata = self.extract_metadata(soup)
-                _links = self.extract_links(soup, url)
-                return _text, _markdown, _metadata, _links
-
-            text_content, markdown_content, metadata, discovered_links = await asyncio.to_thread(
-                _parse_browser_html
+            # _parse_html_string derives its own title from the <title> tag; we override
+            # it with the live browser title which is more reliable for JS-rendered pages.
+            _, text_content, markdown_content, metadata, discovered_links = await asyncio.to_thread(
+                self._parse_html_string, content, url
             )
 
             return PageContent(
