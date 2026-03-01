@@ -73,11 +73,11 @@ export default defineBackground(() => {
       return;
     }
 
-    // Check cache first
+    // Check cache first (skip cache for pipeline-active results since they're transient)
     const domain = new URL(url).hostname;
     const cached = cache.get(domain);
 
-    if (cached) {
+    if (cached && !cached.pipeline_active) {
       const color = getVerdictColor(cached.verdict) as
         | "safe"
         | "caution"
@@ -90,7 +90,10 @@ export default defineBackground(() => {
     // Fetch from API
     try {
       const result = await checkUrl(url);
-      cache.set(domain, result);
+      // Only cache final results, not in-progress pipeline states
+      if (!result.pipeline_active) {
+        cache.set(domain, result);
+      }
 
       if (result.found && result.verdict) {
         const color = getVerdictColor(result.verdict) as
@@ -128,9 +131,9 @@ export default defineBackground(() => {
     if (message.type === "CHECK_URL") {
       const domain = new URL(message.url).hostname;
 
-      // Return cached result if available
+      // Return cached result if available (skip pipeline-active results)
       const cached = cache.get(domain);
-      if (cached) {
+      if (cached && !cached.pipeline_active) {
         sendResponse({ success: true, data: cached });
         return true;
       }
@@ -138,7 +141,9 @@ export default defineBackground(() => {
       // Fetch from API
       checkUrl(message.url)
         .then((result) => {
-          cache.set(domain, result);
+          if (!result.pipeline_active) {
+            cache.set(domain, result);
+          }
           sendResponse({ success: true, data: result });
         })
         .catch((error) => {

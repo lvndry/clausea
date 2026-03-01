@@ -16,7 +16,7 @@ from src.core.config import config
 from src.core.database import get_db
 from src.core.logging import get_logger
 from src.models.document import Document
-from src.models.pipeline_job import PipelineJob
+from src.models.pipeline_job import CrawlError, PipelineJob
 from src.models.product import Product
 from src.pipeline import LegalDocumentPipeline
 from src.repositories.pipeline_repository import PipelineRepository
@@ -317,6 +317,11 @@ class PipelineService:
 
                 job.documents_found = stats.total_documents_found
                 job.documents_stored = stats.legal_documents_stored
+
+                # Persist per-URL crawl failures on the job
+                if stats.crawl_errors:
+                    job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]
+
                 await self._update_step(
                     db,
                     job,
@@ -327,7 +332,30 @@ class PipelineService:
 
                 if stats.legal_documents_stored == 0:
                     job.status = "failed"
-                    job.error = "No legal documents found on this site"
+
+                    # Build a descriptive error based on crawl error types
+                    robots_blocked = [
+                        e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
+                    ]
+                    if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
+                        job.error = (
+                            "This site blocks automated access via robots.txt. "
+                            "We were unable to crawl any legal documents."
+                        )
+                    elif robots_blocked:
+                        job.error = (
+                            f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
+                            f"of {len(job.crawl_errors)} failed URLs). "
+                            "No legal documents could be found."
+                        )
+                    elif job.crawl_errors:
+                        job.error = (
+                            f"Crawling failed for {len(job.crawl_errors)} URL(s). "
+                            "No legal documents could be found."
+                        )
+                    else:
+                        job.error = "No legal documents found on this site"
+
                     job.completed_at = datetime.now()
                     await self._update_step(
                         db,

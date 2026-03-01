@@ -1,16 +1,22 @@
 import {
+  type ExtensionAnalyzeResponse,
   type ExtensionCheckResponse,
+  analyzeUrl,
   checkUrl,
   getVerdictColor,
   getVerdictLabel,
-  requestSupport,
+  subscribeEmail,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
-  BellPlus,
   CheckCircle2,
+  ExternalLink,
   Loader2,
+  Mail,
+  Play,
   Shield,
+  ShieldBan,
   TriangleAlert,
   XCircle,
 } from "lucide-react";
@@ -18,141 +24,102 @@ import { useEffect, useMemo, useState } from "react";
 
 export const CLAUSEA_URL = "https://clausea.co";
 
-type ViewState = "loading" | "loaded" | "error" | "not-found";
+type ViewState = "loading" | "loaded" | "error" | "not-found" | "crawl-failed";
 
-interface UiBlockProps {
-  title?: string;
-  children: React.ReactNode;
-  className?: string;
-}
+// Sub-states within the "not-found" view
+type NotFoundPhase =
+  | "initial" // Show "Analyze" button (no pipeline active)
+  | "pipeline-active" // Pipeline already running (detected on check)
+  | "triggering" // User clicked "Analyze", waiting for response
+  | "triggered" // Pipeline just started, show email input
+  | "subscribing" // Submitting email
+  | "subscribed" // Email subscribed successfully
+  | "trigger-error" // Analyze call failed
+  | "subscribe-error"; // Subscribe call failed
 
-const Card = ({ title, children, className = "" }: UiBlockProps) => (
-  <section
-    className={`rounded-2xl border border-slate-200/80 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.05)] ${className}`}
-  >
-    {title ? (
-      <div className="border-b border-slate-100 px-5 py-3">
-        <p className="text-sm font-medium text-slate-600">{title}</p>
-      </div>
-    ) : null}
-    <div className="px-5 py-4">{children}</div>
-  </section>
-);
+// ---------------------------------------------------------------------------
+// Verdict palette — aligned with frontend Badge variants & semantic hex colors
+// ---------------------------------------------------------------------------
 
-const FallbackCard = ({
-  icon,
-  title,
-  description,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}) => (
-  <Card>
-    <div className="flex flex-col items-center gap-3 text-center">
-      <div className="rounded-full bg-slate-100 p-3 text-slate-500">{icon}</div>
-      <div>
-        <p className="text-base font-semibold text-slate-800">{title}</p>
-        <p className="text-sm text-slate-500">{description}</p>
-      </div>
-    </div>
-  </Card>
-);
-
-const shimmerLine =
-  "h-3 rounded-full bg-gradient-to-r from-slate-100 via-slate-200 to-slate-100 animate-[shimmer_1.8s_infinite]";
-
-const LoadingState = () => (
-  <Card>
-    <div className="flex flex-col items-center gap-4 text-center">
-      <div className="rounded-full border border-slate-200 p-4 text-indigo-500">
-        <Loader2 className="h-6 w-6 animate-spin" />
-      </div>
-      <div>
-        <p className="text-base font-semibold text-slate-800">
-          Analyzing privacy policies…
-        </p>
-        <p className="text-sm text-slate-500">
-          This usually takes less than 2 seconds.
-        </p>
-      </div>
-      <div className="w-full space-y-3">
-        <div className={`${shimmerLine} w-3/4`} />
-        <div className={`${shimmerLine} w-full`} />
-        <div className={`${shimmerLine} w-2/3`} />
-      </div>
-    </div>
-  </Card>
-);
-
-const verdictPalette: Record<
-  string,
-  { bg: string; text: string; border: string }
-> = {
+const verdictPalette: Record<string, { badge: string; bar: string }> = {
   safe: {
-    bg: "bg-emerald-50",
-    text: "text-emerald-600",
-    border: "border-emerald-200",
+    badge: "border-green-600/30 bg-green-500/15 text-green-600",
+    bar: "bg-green-700",
   },
   caution: {
-    bg: "bg-amber-50",
-    text: "text-amber-600",
-    border: "border-amber-200",
+    badge: "border-amber-600/30 bg-amber-500/15 text-amber-600",
+    bar: "bg-amber-600",
   },
   danger: {
-    bg: "bg-rose-50",
-    text: "text-rose-600",
-    border: "border-rose-200",
+    badge: "border-red-600/30 bg-red-500/15 text-red-600",
+    bar: "bg-red-600",
   },
   gray: {
-    bg: "bg-slate-50",
-    text: "text-slate-600",
-    border: "border-slate-200",
+    badge: "border-border bg-muted text-muted-foreground",
+    bar: "bg-muted-foreground",
   },
 };
 
-const formatError = (error: unknown) => {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const formatError = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Something went wrong. Please try again.";
 };
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
 
 export default function App() {
   const [view, setView] = useState<ViewState>("loading");
   const [data, setData] = useState<ExtensionCheckResponse | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [error, setError] = useState<string>("");
-  const [supportStatus, setSupportStatus] = useState<
-    "idle" | "loading" | "success" | "error"
-  >("idle");
-  const [supportError, setSupportError] = useState<string>("");
 
+  // Not-found / pipeline state
+  const [notFoundPhase, setNotFoundPhase] = useState<NotFoundPhase>("initial");
+  const [analyzeResult, setAnalyzeResult] =
+    useState<ExtensionAnalyzeResponse | null>(null);
+  const [email, setEmail] = useState<string>("");
+  const [phaseError, setPhaseError] = useState<string>("");
+
+  // The product slug for the subscribe call — comes from either check or analyze
+  const productSlug = analyzeResult?.product_slug ?? data?.slug ?? null;
+
+  // ── Fetch privacy analysis on mount ──────────────────────────────────────
   useEffect(() => {
     let mounted = true;
 
-    const getActiveTabUrl = async () =>
-      new Promise<string>((resolve, reject) => {
+    const getActiveTabUrl = (): Promise<string> =>
+      new Promise((resolve, reject) => {
         try {
           chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (chrome.runtime.lastError) {
               reject(chrome.runtime.lastError.message);
               return;
             }
-            const tab = tabs[0];
-            if (!tab?.url) {
+            if (!tabs[0]?.url) {
               reject("Unable to detect the active tab URL.");
               return;
             }
-            resolve(tab.url);
+            resolve(tabs[0].url);
           });
         } catch (err) {
           reject(err);
         }
       });
 
-    const callBackground = async (url: string) => {
-      if (typeof chrome === "undefined" || !chrome.runtime?.id) return null;
-      return new Promise<ExtensionCheckResponse | null>((resolve, reject) => {
+    const callBackground = (
+      url: string,
+    ): Promise<ExtensionCheckResponse | null> => {
+      if (typeof chrome === "undefined" || !chrome.runtime?.id)
+        return Promise.resolve(null);
+
+      return new Promise((resolve, reject) => {
         try {
           chrome.runtime.sendMessage({ type: "CHECK_URL", url }, (response) => {
             if (chrome.runtime.lastError) {
@@ -192,9 +159,21 @@ export default function App() {
 
         if (!mounted) return;
         setData(analysis);
-        setView(analysis?.found ? "loaded" : "not-found");
-        setSupportStatus("idle");
-        setSupportError("");
+
+        if (analysis?.found) {
+          setView("loaded");
+        } else if (
+          analysis?.pipeline_failed &&
+          analysis.crawl_errors?.length
+        ) {
+          setView("crawl-failed");
+        } else {
+          setView("not-found");
+          // Determine initial not-found phase based on pipeline status
+          setNotFoundPhase(
+            analysis?.pipeline_active ? "pipeline-active" : "initial",
+          );
+        }
       } catch (err) {
         if (!mounted) return;
         setError(formatError(err));
@@ -208,223 +187,438 @@ export default function App() {
     };
   }, []);
 
-  const handleSupportRequest = async () => {
-    if (
-      !currentUrl ||
-      supportStatus === "loading" ||
-      supportStatus === "success"
-    )
-      return;
-    setSupportStatus("loading");
-    setSupportError("");
+  // ── Trigger pipeline analysis ────────────────────────────────────────────
+  const handleAnalyze = async () => {
+    if (!currentUrl) return;
+    setNotFoundPhase("triggering");
+    setPhaseError("");
     try {
-      await requestSupport(currentUrl);
-      setSupportStatus("success");
+      const result = await analyzeUrl(currentUrl);
+      setAnalyzeResult(result);
+
+      if (result.status === "already_indexed") {
+        // Product was indexed between our check and analyze — re-fetch
+        const fresh = await checkUrl(currentUrl);
+        setData(fresh);
+        if (fresh.found) {
+          setView("loaded");
+          return;
+        }
+      }
+
+      // "started" or "already_running" → show email input
+      setNotFoundPhase("triggered");
     } catch (err) {
-      setSupportStatus("error");
-      setSupportError(formatError(err));
+      setPhaseError(formatError(err));
+      setNotFoundPhase("trigger-error");
     }
   };
 
-  const verdictTone = useMemo(() => {
-    const paletteKey = getVerdictColor(data?.verdict as any);
-    return verdictPalette[paletteKey] ?? verdictPalette.gray;
+  // ── Subscribe email for notification ─────────────────────────────────────
+  const handleSubscribe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!productSlug || !email.trim()) return;
+    setNotFoundPhase("subscribing");
+    setPhaseError("");
+    try {
+      await subscribeEmail(productSlug, email.trim());
+      setNotFoundPhase("subscribed");
+    } catch (err) {
+      setPhaseError(formatError(err));
+      setNotFoundPhase("subscribe-error");
+    }
+  };
+
+  // ── Derived state ────────────────────────────────────────────────────────
+  const tone = useMemo(() => {
+    const key = getVerdictColor(data?.verdict ?? null);
+    return verdictPalette[key] ?? verdictPalette.gray;
   }, [data]);
 
   const verdictLabel = data?.verdict
     ? getVerdictLabel(data.verdict)
     : "Unknown";
 
+  // Is the pipeline running (either detected on check, or just triggered)?
+  const pipelineRunning =
+    notFoundPhase === "pipeline-active" ||
+    notFoundPhase === "triggered" ||
+    notFoundPhase === "subscribing" ||
+    notFoundPhase === "subscribed" ||
+    notFoundPhase === "subscribe-error";
+
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-50 text-slate-900">
-      <div className="mx-auto flex max-w-md flex-col gap-4 px-5 py-5">
-        <header className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-500 to-violet-500 p-5 text-white shadow-xl">
-          <div className="flex items-center gap-3">
-            <img
-              src="/logo.png"
-              alt="Clausea"
-              className="h-10 w-10 rounded-2xl bg-white/10 p-1"
-            />
-            <div>
-              <p className="text-xs uppercase tracking-widest text-white/80">
-                Clausea Privacy Pulse
-              </p>
-              <h1 className="text-lg font-semibold">
-                Trust what you sign in seconds
-              </h1>
-            </div>
+    <div className="flex min-h-[300px] w-[400px] flex-col bg-background text-foreground">
+      {/* ── Header ── */}
+      <header className="border-b border-border bg-card px-5 py-4">
+        <div className="flex items-center gap-3">
+          <img src="/logo.png" alt="Clausea" className="h-8 w-8" />
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+              Privacy Pulse
+            </p>
+            <h1 className="text-sm font-semibold text-foreground">
+              Trust what you sign in seconds
+            </h1>
           </div>
-        </header>
+        </div>
+      </header>
 
-        {view === "loading" && <LoadingState />}
-
-        {view === "error" && (
-          <FallbackCard
-            icon={<XCircle className="h-6 w-6" />}
-            title="We couldn’t complete the analysis"
-            description={
-              error || "Please refresh the page or try again in a moment."
-            }
-          />
-        )}
-
-        {view === "not-found" && (
-          <Card>
-            <div className="space-y-5 text-center">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-                <Shield className="h-7 w-7" />
+      {/* ── Content ── */}
+      <div className="stagger-children flex-1">
+        {/* Loading */}
+        {view === "loading" && (
+          <section className="border-b border-border bg-card px-5 py-6">
+            <div className="flex flex-col items-center gap-5 text-center">
+              <div className="border border-border p-4 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.5} />
               </div>
               <div>
-                <p className="text-lg font-semibold text-slate-900">
-                  Not in our database yet
+                <p className="text-sm font-semibold">
+                  Analyzing privacy policies...
                 </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  We haven&apos;t analyzed this site yet. Request support and
-                  we&apos;ll prioritize it.
+                <p className="mt-1 text-xs text-muted-foreground">
+                  This usually takes less than 2 seconds.
+                </p>
+              </div>
+              <div className="w-full space-y-3">
+                <div className="h-2.5 w-3/4 animate-pulse bg-muted" />
+                <div className="h-2.5 w-full animate-pulse bg-muted" />
+                <div className="h-2.5 w-2/3 animate-pulse bg-muted" />
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Error */}
+        {view === "error" && (
+          <section className="border-b border-border bg-card px-5 py-6">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="border border-border p-3 text-muted-foreground">
+                <XCircle className="h-5 w-5" strokeWidth={1.5} />
+              </div>
+              <p className="text-sm font-semibold">
+                Unable to complete analysis
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {error || "Please refresh the page or try again."}
+              </p>
+            </div>
+          </section>
+        )}
+
+        {/* ── Not Found ── */}
+        {view === "not-found" && (
+          <section className="border-b border-border bg-card px-5 py-6">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="border border-border p-4 text-muted-foreground">
+                <Shield className="h-6 w-6" strokeWidth={1.5} />
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold">
+                  {pipelineRunning
+                    ? "Analysis is underway"
+                    : "Not analyzed yet"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {pipelineRunning
+                    ? "We're crawling and analyzing this site's policies. This may take a few minutes."
+                    : "We haven't analyzed this site yet. Start an analysis and we'll crawl their privacy policies."}
                 </p>
               </div>
 
-              {supportStatus === "idle" && (
+              {/* ── Phase: initial — show Analyze button ── */}
+              {notFoundPhase === "initial" && (
                 <button
                   type="button"
-                  onClick={handleSupportRequest}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:-translate-y-0.5 hover:bg-indigo-600"
+                  onClick={handleAnalyze}
+                  className="flex w-full items-center justify-center gap-2 border border-foreground px-4 py-3 text-xs font-medium uppercase tracking-widest text-foreground transition-colors hover:bg-foreground hover:text-background"
                 >
-                  <BellPlus className="h-4 w-4" />
-                  Notify me when it&apos;s ready
+                  <Play className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Analyze this site
                 </button>
               )}
 
-              {supportStatus === "loading" && (
+              {/* ── Phase: triggering — spinner on button ── */}
+              {notFoundPhase === "triggering" && (
                 <button
                   type="button"
                   disabled
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-400 px-4 py-3 text-sm font-semibold text-white shadow-lg"
+                  className="flex w-full items-center justify-center gap-2 border border-border px-4 py-3 text-xs font-medium uppercase tracking-widest text-muted-foreground"
                 >
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Sending request...
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin"
+                    strokeWidth={1.5}
+                  />
+                  Starting analysis...
                 </button>
               )}
 
-              {supportStatus === "success" && (
-                <div className="flex flex-col items-center gap-2 rounded-2xl bg-emerald-50 p-4 text-emerald-700">
-                  <CheckCircle2 className="h-6 w-6" />
-                  <p className="font-medium">Request sent!</p>
-                  <p className="text-xs text-emerald-600">
-                    We&apos;ll add this site to our priority list.
-                  </p>
-                </div>
-              )}
-
-              {supportStatus === "error" && (
-                <div className="flex flex-col items-center gap-2 rounded-2xl bg-rose-50 p-4 text-rose-700">
-                  <AlertTriangle className="h-5 w-5" />
-                  <p className="text-sm">
-                    {supportError || "Something went wrong. Please try again."}
-                  </p>
+              {/* ── Phase: trigger-error ── */}
+              {notFoundPhase === "trigger-error" && (
+                <div className="flex w-full flex-col items-center gap-3">
+                  <div className="flex w-full flex-col items-center gap-2 border border-red-600/30 bg-red-500/10 p-4 text-red-600">
+                    <AlertTriangle className="h-4 w-4" strokeWidth={1.5} />
+                    <p className="text-xs">
+                      {phaseError || "Failed to start analysis."}
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    onClick={handleSupportRequest}
-                    className="text-xs font-semibold underline hover:no-underline"
+                    onClick={handleAnalyze}
+                    className="text-xs font-medium text-foreground underline hover:no-underline"
                   >
                     Try again
                   </button>
                 </div>
               )}
+
+              {/* ── Phase: pipeline running — email subscription form ── */}
+              {(notFoundPhase === "pipeline-active" ||
+                notFoundPhase === "triggered" ||
+                notFoundPhase === "subscribe-error") && (
+                <div className="w-full space-y-3">
+                  <div className="border-t border-border pt-4">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                      Get notified when ready
+                    </p>
+                  </div>
+                  <form
+                    onSubmit={handleSubscribe}
+                    className="flex w-full gap-2"
+                  >
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@email.com"
+                      className="flex-1 border border-border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <button
+                      type="submit"
+                      className="flex items-center gap-1.5 border border-foreground px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground hover:text-background"
+                    >
+                      <Mail className="h-3 w-3" strokeWidth={1.5} />
+                      Notify
+                    </button>
+                  </form>
+                  {notFoundPhase === "subscribe-error" && (
+                    <p className="text-xs text-red-600">
+                      {phaseError || "Failed to subscribe. Please try again."}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ── Phase: subscribing ── */}
+              {notFoundPhase === "subscribing" && (
+                <div className="flex w-full items-center justify-center gap-2 border border-border p-4 text-muted-foreground">
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin"
+                    strokeWidth={1.5}
+                  />
+                  <p className="text-xs">Subscribing...</p>
+                </div>
+              )}
+
+              {/* ── Phase: subscribed — success ── */}
+              {notFoundPhase === "subscribed" && (
+                <div className="flex w-full flex-col items-center gap-2 border border-green-600/30 bg-green-500/10 p-4 text-green-600">
+                  <CheckCircle2 className="h-5 w-5" strokeWidth={1.5} />
+                  <p className="text-xs font-medium">You&apos;re subscribed</p>
+                  <p className="text-[10px] text-green-600/70">
+                    We&apos;ll email{" "}
+                    <span className="font-medium">{email}</span> when the
+                    analysis is ready.
+                  </p>
+                </div>
+              )}
             </div>
-          </Card>
+          </section>
         )}
 
-        {view === "loaded" && data && (
-          <>
-            <Card>
-              <div className="flex flex-col gap-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm uppercase tracking-wide text-slate-400">
-                      Privacy verdict
-                    </p>
-                    <h2 className="text-2xl font-semibold text-slate-900">
-                      {data.product_name}
-                    </h2>
-                  </div>
-                  <div
-                    className={`rounded-full border px-3 py-1 text-sm font-semibold ${verdictTone.bg} ${verdictTone.text} ${verdictTone.border}`}
-                  >
-                    {verdictLabel}
-                  </div>
-                </div>
+        {/* ── Crawl Failed ── */}
+        {view === "crawl-failed" && data && (
+          <section className="border-b border-border bg-card px-5 py-6">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="border border-amber-600/30 bg-amber-500/10 p-4 text-amber-600">
+                <ShieldBan className="h-6 w-6" strokeWidth={1.5} />
+              </div>
 
-                {data.risk_score !== null && (
-                  <div>
-                    <div className="flex items-center justify-between text-sm text-slate-500">
-                      <span>Risk score</span>
-                      <span className="font-semibold text-slate-800">
-                        {data.risk_score}/10
+              <div>
+                <p className="text-sm font-semibold">Unable to analyze</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {data.crawl_errors?.every(
+                    (e) => e.error_type === "robots_txt_blocked",
+                  )
+                    ? "This site blocks automated access via robots.txt. We cannot crawl their legal documents."
+                    : data.pipeline_error ??
+                      "We were unable to crawl legal documents from this site."}
+                </p>
+              </div>
+
+              {data.crawl_errors && data.crawl_errors.length > 0 && (
+                <div className="w-full space-y-2 text-left">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                    Failed URLs
+                  </p>
+                  {data.crawl_errors.slice(0, 3).map((err) => (
+                    <div
+                      key={err.url}
+                      className="flex items-start gap-2 text-xs text-muted-foreground"
+                    >
+                      <ShieldBan
+                        className="mt-0.5 h-3 w-3 shrink-0 text-amber-500"
+                        strokeWidth={1.5}
+                      />
+                      <span className="break-all font-mono text-[10px]">
+                        {err.url}
                       </span>
                     </div>
-                    <div className="mt-2 h-2 rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all"
-                        style={{ width: `${data.risk_score * 10}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {data.one_line_summary && (
-                  <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                    {data.one_line_summary}
-                  </p>
-                )}
-              </div>
-            </Card>
-
-            {data.top_concerns && data.top_concerns.length > 0 && (
-              <Card title="Top concerns">
-                <ol className="space-y-3 text-sm text-slate-600">
-                  {data.top_concerns.slice(0, 3).map((concern, index) => (
-                    <li key={concern} className="flex gap-2">
-                      <TriangleAlert className="mt-1 h-4 w-4 text-amber-500" />
-                      <span>{concern}</span>
-                    </li>
                   ))}
-                </ol>
-              </Card>
+                  {data.crawl_errors.length > 3 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      ...and {data.crawl_errors.length - 3} more
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {data.analysis_url && (
+                <button
+                  type="button"
+                  onClick={() => window.open(data!.analysis_url!, "_blank")}
+                  className="flex w-full items-center justify-center gap-2 border border-border px-4 py-3 text-xs font-medium uppercase tracking-widest text-muted-foreground transition-colors hover:bg-muted"
+                >
+                  View details
+                  <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ── Loaded ── */}
+        {view === "loaded" && data && (
+          <>
+            {/* Verdict */}
+            <section className="border-b border-border bg-card">
+              <div className="border-b border-border px-5 py-3">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                  Privacy verdict
+                </p>
+              </div>
+              <div className="px-5 py-4">
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <h2 className="text-lg font-semibold">
+                      {data.product_name}
+                    </h2>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+                        tone.badge,
+                      )}
+                    >
+                      {verdictLabel}
+                    </span>
+                  </div>
+
+                  {data.risk_score !== null && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Risk score</span>
+                        <span className="font-semibold text-foreground">
+                          {data.risk_score}/10
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 bg-muted">
+                        <div
+                          className={cn(
+                            "h-full transition-all duration-500",
+                            tone.bar,
+                          )}
+                          style={{ width: `${data.risk_score * 10}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {data.one_line_summary && (
+                    <p className="border-l-2 border-border py-2 pl-3 text-xs leading-relaxed text-muted-foreground">
+                      {data.one_line_summary}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            {/* Top concerns */}
+            {data.top_concerns && data.top_concerns.length > 0 && (
+              <section className="border-b border-border bg-card">
+                <div className="border-b border-border px-5 py-3">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                    Top concerns
+                  </p>
+                </div>
+                <div className="px-5 py-4">
+                  <ol className="space-y-3">
+                    {data.top_concerns.slice(0, 3).map((concern) => (
+                      <li
+                        key={concern}
+                        className="flex gap-2.5 text-xs leading-relaxed text-muted-foreground"
+                      >
+                        <TriangleAlert
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500"
+                          strokeWidth={1.5}
+                        />
+                        <span>{concern}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </section>
             )}
 
-            <Card className="bg-gradient-to-br from-indigo-500 to-violet-500 text-white">
+            {/* CTA — inverted (matches frontend dark-on-light pattern) */}
+            <section className="bg-foreground px-5 py-5 text-background">
               <div className="space-y-3">
-                <p className="text-sm uppercase tracking-widest text-white/70">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-background/50">
                   Deep dive
                 </p>
-                <p className="text-xl font-semibold">
+                <p className="text-base font-semibold">
                   See the clause-by-clause analysis
                 </p>
-                <p className="text-sm text-white/80">
+                <p className="text-xs leading-relaxed text-background/60">
                   Read every policy excerpt, risk rationale, and recommended
-                  actions tailored to your use case.
+                  actions.
                 </p>
                 {data.analysis_url && (
                   <button
                     type="button"
                     onClick={() => window.open(data.analysis_url!, "_blank")}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white/15 px-4 py-3 text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/25"
+                    className="flex w-full items-center justify-center gap-2 border border-background/30 px-4 py-3 text-xs font-medium uppercase tracking-widest text-background transition-colors hover:bg-background hover:text-foreground"
                   >
                     View full report
-                    <CheckCircle2 className="h-4 w-4" />
+                    <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
                   </button>
                 )}
               </div>
-            </Card>
+            </section>
           </>
         )}
-
-        <footer className="pb-2 text-center text-xs text-slate-400">
-          Powered by{" "}
-          <span className="font-semibold text-slate-600">Clausea AI</span>
-        </footer>
       </div>
+
+      {/* ── Footer ── */}
+      <footer className="border-t border-border px-5 py-3 text-center">
+        <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+          Powered by{" "}
+          <span className="font-semibold text-foreground">Clausea</span>
+        </p>
+      </footer>
     </div>
   );
 }

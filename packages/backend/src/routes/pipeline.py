@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from src.core.database import get_db
 from src.core.logging import get_logger
 from src.models.pipeline_job import PipelineJob
+from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
@@ -128,6 +129,31 @@ async def get_active_job(product_slug: str) -> PipelineJob:
         if not job:
             raise HTTPException(status_code=404, detail="No active job for this product")
         return job
+
+
+@router.get("/latest", response_model=PipelineJob)
+async def get_latest_job(product_slug: str) -> PipelineJob:
+    """Get the most recent pipeline job for a product (any status).
+
+    Returns active jobs first; falls back to the most recently created job.
+    Used by the frontend to detect failed pipelines and show crawl errors.
+    """
+    pipeline_svc = create_pipeline_service()
+
+    async with get_db() as db:
+        # Prefer active job
+        job = await pipeline_svc.get_active_job_for_product(db, product_slug)
+        if job:
+            return job
+
+        # Fall back to most recent job (including completed/failed)
+
+        repo = PipelineRepository()
+        jobs = await repo.find_by_product_slug(db, product_slug)
+        if jobs:
+            return jobs[0]  # sorted by created_at desc
+
+        raise HTTPException(status_code=404, detail="No pipeline jobs found for this product")
 
 
 @router.get("/jobs/{job_id}", response_model=PipelineJob)

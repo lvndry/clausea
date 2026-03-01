@@ -15,6 +15,40 @@ PipelineJobStatus = Literal[
     "failed",
 ]
 
+CrawlErrorType = Literal[
+    "robots_txt_blocked",
+    "http_error",
+    "timeout",
+    "network_error",
+    "content_error",
+    "unknown",
+]
+
+
+def classify_crawl_error(error_message: str | None, status_code: int) -> "CrawlErrorType":
+    """Derive a categorical error type from the error message and status code."""
+    if not error_message:
+        return "unknown"
+    msg = error_message.lower()
+    if "robots.txt" in msg or "robots" in msg:
+        return "robots_txt_blocked"
+    if "timeout" in msg or "timed out" in msg:
+        return "timeout"
+    if any(kw in msg for kw in ("connection", "dns", "refused", "reset", "network")):
+        return "network_error"
+    if status_code >= 400:
+        return "http_error"
+    return "unknown"
+
+
+class CrawlError(BaseModel):
+    """A single URL that failed during crawling."""
+
+    url: str
+    status_code: int = 0
+    error_message: str | None = None
+    error_type: CrawlErrorType = "unknown"
+
 
 class PipelineStep(BaseModel):
     """Status of an individual pipeline step."""
@@ -55,3 +89,6 @@ class PipelineJob(BaseModel):
     # Stats from the crawl phase
     documents_found: int = 0
     documents_stored: int = 0
+
+    # Per-URL crawl failures (e.g. robots.txt blocks, HTTP errors)
+    crawl_errors: list[CrawlError] = Field(default_factory=list)

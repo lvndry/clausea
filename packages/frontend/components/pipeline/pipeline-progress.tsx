@@ -8,6 +8,7 @@ import {
   FileSearch,
   FileText,
   Loader2,
+  ShieldBan,
   XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -28,6 +29,19 @@ interface PipelineStep {
   progress_percent?: number | null;
 }
 
+interface CrawlError {
+  url: string;
+  status_code: number;
+  error_message: string | null;
+  error_type:
+    | "robots_txt_blocked"
+    | "http_error"
+    | "timeout"
+    | "network_error"
+    | "content_error"
+    | "unknown";
+}
+
 interface PipelineJobData {
   id: string;
   product_slug: string;
@@ -38,6 +52,7 @@ interface PipelineJobData {
   error: string | null;
   documents_found: number;
   documents_stored: number;
+  crawl_errors: CrawlError[];
 }
 
 interface PipelineProgressProps {
@@ -144,6 +159,83 @@ function StepIndicator({ step }: { step: PipelineStep }) {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function crawlErrorLabel(errorType: CrawlError["error_type"]): string {
+  switch (errorType) {
+    case "robots_txt_blocked":
+      return "Blocked by robots.txt";
+    case "http_error":
+      return "HTTP error";
+    case "timeout":
+      return "Request timed out";
+    case "network_error":
+      return "Network error";
+    case "content_error":
+      return "Content error";
+    default:
+      return "Unknown error";
+  }
+}
+
+function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
+  const robotsBlocked = errors.filter(
+    (e) => e.error_type === "robots_txt_blocked",
+  );
+  const otherErrors = errors.filter(
+    (e) => e.error_type !== "robots_txt_blocked",
+  );
+  const allBlocked =
+    robotsBlocked.length > 0 && robotsBlocked.length === errors.length;
+
+  return (
+    <div className="space-y-2">
+      {allBlocked ? (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+          <ShieldBan className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-amber-700">
+              Site blocked by robots.txt
+            </p>
+            <p className="text-xs text-amber-600/80">
+              This website restricts automated access. We were unable to crawl
+              any legal documents. You may need to review their policies
+              manually.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 space-y-2">
+          <p className="text-xs font-medium text-destructive">
+            {errors.length} URL{errors.length !== 1 ? "s" : ""} failed during
+            crawling
+          </p>
+          {robotsBlocked.length > 0 && (
+            <p className="text-xs text-amber-600">
+              {robotsBlocked.length} blocked by robots.txt
+            </p>
+          )}
+          <ul className="space-y-1">
+            {otherErrors.slice(0, 3).map((err) => (
+              <li key={err.url} className="text-xs text-muted-foreground">
+                <span className="font-mono text-[10px] break-all">
+                  {err.url}
+                </span>
+                <span className="ml-1 text-destructive/70">
+                  — {crawlErrorLabel(err.error_type)}
+                </span>
+              </li>
+            ))}
+            {otherErrors.length > 3 && (
+              <li className="text-xs text-muted-foreground">
+                ...and {otherErrors.length - 3} more
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -367,12 +459,18 @@ export function PipelineProgress({
               ))}
             </div>
 
-            {/* Error message */}
-            {job.error && (
-              <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
-                {job.error}
-              </p>
+            {/* Crawl errors detail */}
+            {job.crawl_errors && job.crawl_errors.length > 0 && (
+              <CrawlErrorsDisplay errors={job.crawl_errors} />
             )}
+
+            {/* Error message (only if no crawl errors already shown) */}
+            {job.error &&
+              !(job.crawl_errors && job.crawl_errors.length > 0) && (
+                <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+                  {job.error}
+                </p>
+              )}
 
             {/* Stats */}
             {job.documents_stored > 0 && (

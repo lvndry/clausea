@@ -2,6 +2,9 @@ FROM python:3.11-slim
 
 ENV VENV_PATH="/opt/venv"
 ENV PATH="$VENV_PATH/bin:$PATH"
+ENV PYTHONPATH="/app"
+
+WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -9,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv==0.4.30
+RUN pip install --no-cache-dir uv==0.9
 RUN uv venv $VENV_PATH
 
 COPY pyproject.toml ./

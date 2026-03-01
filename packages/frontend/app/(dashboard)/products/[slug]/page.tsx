@@ -6,6 +6,7 @@ import {
   FileText,
   LayoutDashboard,
   Shield,
+  ShieldBan,
 } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
@@ -124,6 +125,24 @@ interface DocumentSummary {
       section_title?: string | null;
     }>;
   }> | null;
+}
+
+interface CrawlError {
+  url: string;
+  status_code: number;
+  error_message: string | null;
+  error_type:
+    | "robots_txt_blocked"
+    | "http_error"
+    | "timeout"
+    | "network_error"
+    | "content_error"
+    | "unknown";
+}
+
+interface FailedCrawlJob {
+  error: string | null;
+  crawl_errors: CrawlError[];
 }
 
 function derivePipelineUrl(product: Product): string | null {
@@ -372,6 +391,7 @@ export default function CompanyPage() {
     "ready" | "indexing" | "unknown"
   >("unknown");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [failedJob, setFailedJob] = useState<FailedCrawlJob | null>(null);
   const [notifyEmail, setNotifyEmail] = useState("");
   const [notifyStatus, setNotifyStatus] = useState<
     "idle" | "submitting" | "success" | "error"
@@ -402,6 +422,27 @@ export default function CompanyPage() {
         setDocumentsLoading(false);
 
         if (!docsJson.length) {
+          // Check if there's a recently failed job before auto-triggering
+          const latestRes = await fetch(
+            `/api/pipeline/latest?product_slug=${encodeURIComponent(slug)}`,
+          );
+          if (latestRes.ok) {
+            const latestJob = await latestRes.json();
+            if (
+              latestJob?.status === "failed" &&
+              latestJob.crawl_errors?.length > 0
+            ) {
+              // Show the failure state instead of auto-retriggering
+              setFailedJob({
+                error: latestJob.error,
+                crawl_errors: latestJob.crawl_errors,
+              });
+              setIndexationMode("indexing");
+              setData(null);
+              return;
+            }
+          }
+
           await ensurePipelineRunning(slug, prodJson);
           setIndexationMode("indexing");
           setData(null);
@@ -530,6 +571,14 @@ export default function CompanyPage() {
   if (!data) {
     // If product exists but indexation isn't ready, show the indexation message + email capture
     if (product && indexationMode === "indexing") {
+      const hasCrawlFailure =
+        failedJob !== null && failedJob.crawl_errors.length > 0;
+      const allRobotsBlocked =
+        hasCrawlFailure &&
+        failedJob.crawl_errors.every(
+          (e) => e.error_type === "robots_txt_blocked",
+        );
+
       return (
         <div className="space-y-6">
           <div className="border-b border-border pb-8">
@@ -537,76 +586,165 @@ export default function CompanyPage() {
               {product.name}
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
-              Indexation is in progress for this company. Our systems are
-              currently mapping the privacy landscape. Please return shortly
-              once the analysis is complete.
+              {hasCrawlFailure
+                ? "We were unable to analyze this company's legal documents."
+                : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
             </p>
           </div>
 
-          <div className="border border-border bg-background">
-            <div className="p-6 border-b border-border bg-muted/5">
-              <div className="flex items-center gap-3">
-                <Shield className="h-5 w-5 text-foreground" strokeWidth={1.5} />
-                <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                  Notification Service
-                </h3>
-              </div>
-            </div>
-            <div className="p-6 space-y-6">
-              <div className="space-y-2">
-                <h2 className="text-xl font-display font-medium text-foreground">
-                  Get notified when analysis completes
-                </h2>
-                <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                  Secure your update by subscribing below
-                </p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-4">
-                <Input
-                  value={notifyEmail}
-                  onChange={(e) => {
-                    setNotifyEmail(e.target.value);
-                    if (notifyStatus !== "idle") setNotifyStatus("idle");
-                    if (notifyError) setNotifyError(null);
-                  }}
-                  placeholder="example@email.com"
-                  className="h-12 border-border bg-transparent rounded-none"
-                  type="email"
-                  autoComplete="email"
-                />
-                <Button
-                  onClick={handleSubscribeNotify}
-                  disabled={notifyStatus === "submitting"}
-                  className="h-12 px-8 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
-                >
-                  {notifyStatus === "submitting"
-                    ? "Processing..."
-                    : "Subscribe"}
-                </Button>
-              </div>
-
-              {notifyStatus === "success" && (
-                <div className="p-4 border border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C] text-[10px] uppercase tracking-widest font-bold">
-                  Subscription active. We will notify you upon completion.
+          {/* Crawl failure details */}
+          {hasCrawlFailure && (
+            <div className="border border-border bg-background">
+              <div className="p-6 border-b border-border bg-muted/5">
+                <div className="flex items-center gap-3">
+                  <ShieldBan
+                    className="h-5 w-5 text-amber-600"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                    Crawl Failed
+                  </h3>
                 </div>
-              )}
-              {notifyStatus === "error" && notifyError && (
-                <div className="p-4 border border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D] text-[10px] uppercase tracking-widest font-bold">
-                  {notifyError}
-                </div>
-              )}
-
-              {activeJobId && (
-                <div className="pt-6 border-t border-border">
-                  <div className="mb-4 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
-                    Analysis Pipeline Status
+              </div>
+              <div className="p-6 space-y-4">
+                {allRobotsBlocked ? (
+                  <div className="space-y-3">
+                    <h2 className="text-xl font-display font-medium text-foreground">
+                      Blocked by robots.txt
+                    </h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      This website restricts automated access via its robots.txt
+                      file. Our crawler was unable to fetch any legal documents.
+                      You may need to review their policies manually on their
+                      website.
+                    </p>
+                    <div className="space-y-2 pt-2">
+                      {failedJob.crawl_errors.map((err) => (
+                        <div
+                          key={err.url}
+                          className="flex items-start gap-2 text-xs text-muted-foreground"
+                        >
+                          <ShieldBan className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                          <a
+                            href={err.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-[11px] underline decoration-muted-foreground/30 hover:decoration-foreground break-all"
+                          >
+                            {err.url}
+                          </a>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <PipelineProgress jobId={activeJobId} />
-                </div>
-              )}
+                ) : (
+                  <div className="space-y-3">
+                    <h2 className="text-xl font-display font-medium text-foreground">
+                      Unable to crawl legal documents
+                    </h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {failedJob.error ??
+                        `${failedJob.crawl_errors.length} URL(s) failed during crawling.`}
+                    </p>
+                    <div className="space-y-2 pt-2">
+                      {failedJob.crawl_errors.slice(0, 5).map((err) => (
+                        <div
+                          key={err.url}
+                          className="flex items-start gap-2 text-xs text-muted-foreground"
+                        >
+                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 bg-destructive" />
+                          <div>
+                            <span className="font-mono text-[11px] break-all">
+                              {err.url}
+                            </span>
+                            <span className="ml-1.5 text-destructive/70">
+                              {err.error_message ?? err.error_type}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {failedJob.crawl_errors.length > 5 && (
+                        <p className="text-xs text-muted-foreground pl-4">
+                          ...and {failedJob.crawl_errors.length - 5} more
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Notification + pipeline progress (only when no crawl failure) */}
+          {!hasCrawlFailure && (
+            <div className="border border-border bg-background">
+              <div className="p-6 border-b border-border bg-muted/5">
+                <div className="flex items-center gap-3">
+                  <Shield
+                    className="h-5 w-5 text-foreground"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                    Notification Service
+                  </h3>
+                </div>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className="space-y-2">
+                  <h2 className="text-xl font-display font-medium text-foreground">
+                    Get notified when analysis completes
+                  </h2>
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                    Secure your update by subscribing below
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <Input
+                    value={notifyEmail}
+                    onChange={(e) => {
+                      setNotifyEmail(e.target.value);
+                      if (notifyStatus !== "idle") setNotifyStatus("idle");
+                      if (notifyError) setNotifyError(null);
+                    }}
+                    placeholder="example@email.com"
+                    className="h-12 border-border bg-transparent rounded-none"
+                    type="email"
+                    autoComplete="email"
+                  />
+                  <Button
+                    onClick={handleSubscribeNotify}
+                    disabled={notifyStatus === "submitting"}
+                    className="h-12 px-8 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                  >
+                    {notifyStatus === "submitting"
+                      ? "Processing..."
+                      : "Subscribe"}
+                  </Button>
+                </div>
+
+                {notifyStatus === "success" && (
+                  <div className="p-4 border border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C] text-[10px] uppercase tracking-widest font-bold">
+                    Subscription active. We will notify you upon completion.
+                  </div>
+                )}
+                {notifyStatus === "error" && notifyError && (
+                  <div className="p-4 border border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D] text-[10px] uppercase tracking-widest font-bold">
+                    {notifyError}
+                  </div>
+                )}
+
+                {activeJobId && (
+                  <div className="pt-6 border-t border-border">
+                    <div className="mb-4 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
+                      Analysis Pipeline Status
+                    </div>
+                    <PipelineProgress jobId={activeJobId} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       );
     }
