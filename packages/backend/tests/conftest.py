@@ -3,9 +3,18 @@
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# Mock Pinecone so unit tests can run without PINECONE_API_KEY.
+# Must be installed before any src code that transitively imports pinecone_client.
+if "src.pinecone_client" not in sys.modules:
+    _mock_pinecone = MagicMock()
+    _mock_pinecone.INDEX_NAME = "test-index"
+    _mock_pinecone.pc = MagicMock()
+    _mock_pinecone.init_pinecone_index = MagicMock()
+    sys.modules["src.pinecone_client"] = _mock_pinecone
 
 from src.models.clerkUser import ClerkUser
 
