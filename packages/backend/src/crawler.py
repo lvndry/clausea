@@ -24,7 +24,7 @@ import markdownify
 import tldextract
 from bs4 import BeautifulSoup
 from camoufox import AsyncCamoufox
-from playwright.async_api import Browser, BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page, Route
 from pydantic import BaseModel, Field
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -1311,15 +1311,27 @@ class ClauseaCrawler:
                     # Camoufox supports proxy configuration directly
                     init_kwargs["proxy"] = {"server": self.proxy}
 
-                # Create Camoufox browser instance
-                self.browser_instance = AsyncCamoufox(**init_kwargs)
-                await self.browser_instance.__aenter__()  # Manually enter context manager
-
-                # __aenter__ returns the launched Browser (or BrowserContext in persistent mode)
-                self.browser_context = self.browser_instance.browser
+                # __aenter__ launches Firefox, stores the result in self.browser, and
+                # returns it. We capture the return value as browser_context.
+                logger.debug("Launching Camoufox browser with kwargs: %s", init_kwargs)
+                try:
+                    self.browser_instance = AsyncCamoufox(**init_kwargs)
+                    self.browser_context = await self.browser_instance.__aenter__()
+                    logger.debug(
+                        "Camoufox browser launched successfully: context=%r", self.browser_context
+                    )
+                except Exception:
+                    logger.error(
+                        "Camoufox browser failed to start",
+                        exc_info=True,
+                    )
+                    self.browser_instance = None
+                    raise
 
             if self.browser_context is None:
-                raise RuntimeError("Camoufox browser failed to initialize")
+                raise RuntimeError(
+                    "Camoufox browser failed to initialize: __aenter__ returned None"
+                )
 
             return self.browser_instance, self.browser_context
 
@@ -1327,12 +1339,16 @@ class ClauseaCrawler:
         """Clean up Camoufox resources."""
         async with self.browser_lock:
             if self.browser_instance:
-                await self.browser_instance.__aexit__(
-                    None, None, None
-                )  # Manually exit context manager
-                self.browser_instance = None
-                self.browser_context = None
-                logger.debug("🌐 Camoufox browser closed")
+                try:
+                    await self.browser_instance.__aexit__(None, None, None)
+                except Exception:
+                    logger.warning("Error while closing Camoufox browser", exc_info=True)
+                finally:
+                    # Always null out state so the next call to _setup_browser
+                    # reinitialises instead of reusing a dead instance.
+                    self.browser_instance = None
+                    self.browser_context = None
+                logger.debug("Camoufox browser closed")
 
     @staticmethod
     def _is_garbled_content(text: str, *, sample_size: int = 1024) -> bool:
@@ -1685,6 +1701,17 @@ class ClauseaCrawler:
     # Browser fetch (returns PageContent)
     # ------------------------------------------------------------------
 
+    # Playwright error message fragments that indicate the browser process has died.
+    # We check these to distinguish a recoverable page-level error (timeout, navigation
+    # failure) from a fatal crash that requires reinitialising the browser.
+    _BROWSER_CRASH_MARKERS = (
+        "browser has been closed",
+        "target closed",
+        "connection closed",
+        "context or browser has been closed",
+        "browser closed",
+    )
+
     async def _browser_fetch(self, url: str) -> PageContent | None:
         """Fetch page with Camoufox headless browser, returning PageContent or None on failure."""
         _browser_manager, context = await self._setup_browser()
@@ -1693,7 +1720,13 @@ class ClauseaCrawler:
         try:
             # Only block heavy media. CSS and fonts are often required for SPA rendering
             # or for bot-detection scripts to verify "visibility".
-            await page.route("**/*.{png,jpg,jpeg,gif,svg}", lambda route: route.abort())
+            # Route handler MUST be async — a sync lambda returning a coroutine would
+            # produce an unawaited coroutine object that Playwright silently discards,
+            # meaning requests would never actually be aborted.
+            async def _abort_media(route: Route) -> None:
+                await route.abort()
+
+            await page.route("**/*.{png,jpg,jpeg,gif,svg}", _abort_media)
 
             total_timeout_ms = self.timeout * 1000
 
@@ -1757,10 +1790,25 @@ class ClauseaCrawler:
             )
 
         except Exception as e:
-            logger.warning(f"Browser fetch failed for {url}: {e}")
+            error_str = str(e).lower()
+            if any(marker in error_str for marker in self._BROWSER_CRASH_MARKERS):
+                # Firefox process died. Reset browser state so the next call to
+                # _setup_browser reinitialises instead of reusing a dead instance.
+                logger.warning(
+                    f"Browser crash detected fetching {url}; resetting browser state",
+                    exc_info=True,
+                )
+                await self._cleanup_browser()
+            else:
+                logger.warning(f"Browser fetch failed for {url}: {e}", exc_info=True)
             return None
         finally:
-            await page.close()
+            try:
+                await page.close()
+            except Exception:
+                # Page.close() raises if the browser already crashed; ignore it
+                # since the browser state has already been reset above.
+                pass
 
     # ------------------------------------------------------------------
     # Result building (no legal scoring – just assembles CrawlResult)
@@ -2588,7 +2636,7 @@ class ClauseaCrawler:
         except (aiohttp.ClientError, TimeoutError):
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching {url}: {e}")
+            logger.error(f"Unexpected error fetching {url}: {e}", exc_info=True)
             return CrawlResult(
                 url=url,
                 title="",
