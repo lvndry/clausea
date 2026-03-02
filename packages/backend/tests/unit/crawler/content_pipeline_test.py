@@ -176,9 +176,10 @@ class TestFetchPageInternalOrchestration:
         """.format("We collect data for analytics. " * 80)
 
         class FakeResponse:
-            def __init__(self):
+            def __init__(self, url: str):
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = url
 
             async def text(self):
                 return html
@@ -191,7 +192,7 @@ class TestFetchPageInternalOrchestration:
 
         class FakeSession:
             def get(self, url, **kwargs):
-                return FakeResponse()
+                return FakeResponse(url)
 
         crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
 
@@ -218,9 +219,10 @@ class TestFetchPageInternalOrchestration:
         thin_html = "<html><head><title>App</title></head><body>Loading...</body></html>"
 
         class FakeResponse:
-            def __init__(self):
+            def __init__(self, url: str):
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = url
 
             async def text(self):
                 return thin_html
@@ -233,7 +235,7 @@ class TestFetchPageInternalOrchestration:
 
         class FakeSession:
             def get(self, url, **kwargs):
-                return FakeResponse()
+                return FakeResponse(url)
 
         crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
 
@@ -266,9 +268,10 @@ class TestFetchPageInternalOrchestration:
         thin_html = "<html><head><title>Page</title></head><body>Loading...</body></html>"
 
         class FakeResponse:
-            def __init__(self):
+            def __init__(self, url: str):
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = url
 
             async def text(self):
                 return thin_html
@@ -281,7 +284,7 @@ class TestFetchPageInternalOrchestration:
 
         class FakeSession:
             def get(self, url, **kwargs):
-                return FakeResponse()
+                return FakeResponse(url)
 
         crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
 
@@ -302,12 +305,111 @@ class TestFetchPageInternalOrchestration:
         thin_html = "<html><head><title>Page</title></head><body>Hi</body></html>"
 
         class FakeResponse:
-            def __init__(self):
+            def __init__(self, url: str):
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = url
 
             async def text(self):
                 return thin_html
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse(url)
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=False)
+
+        result = await crawler._fetch_page_internal(
+            cast(aiohttp.ClientSession, FakeSession()), "https://example.com/page"
+        )
+        assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Redirect URL tracking
+# ---------------------------------------------------------------------------
+
+
+class TestRedirectURLTracking:
+    """The crawler should capture the final URL after HTTP redirects so that
+    link extraction, deduplication, and stored document URLs are correct.
+
+    A common real-world case: disneyplus.com/legal/privacy-policy redirects
+    to disneyplus.com/en-gb/legal/privacy-policy.
+    """
+
+    @pytest.mark.asyncio
+    async def test_static_fetch_captures_resolved_url(self):
+        """StaticFetchResult.resolved_url should reflect the final redirect target."""
+        from yarl import URL as YarlURL
+
+        original_url = "https://www.example.com/legal/privacy-policy"
+        redirected_url = "https://www.example.com/en-gb/legal/privacy-policy"
+
+        html = "<html><head><title>Privacy Policy</title></head><body><p>We collect data.</p></body></html>"
+
+        class FakeResponse:
+            def __init__(self):
+                self.status = 200
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                # aiohttp exposes the final URL via response.url (a yarl.URL)
+                self.url = YarlURL(redirected_url)
+
+            async def text(self):
+                return html
+
+            async def read(self):
+                return html.encode()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse()
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=False)
+
+        raw = await crawler._static_fetch(cast(aiohttp.ClientSession, FakeSession()), original_url)
+
+        assert raw.resolved_url == redirected_url, (
+            f"resolved_url should be the redirect target, got {raw.resolved_url}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_internal_uses_resolved_url_in_result(self):
+        """CrawlResult.url should be the final URL after redirects."""
+        from yarl import URL as YarlURL
+
+        original_url = "https://www.example.com/legal/privacy-policy"
+        redirected_url = "https://www.example.com/en-gb/legal/privacy-policy"
+
+        html = """
+        <html><head><title>Privacy Policy</title></head>
+        <body><main><p>{}</p></main></body>
+        </html>
+        """.format("We collect personal data for analytics. " * 80)
+
+        class FakeResponse:
+            def __init__(self):
+                self.status = 200
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = YarlURL(redirected_url)
+
+            async def text(self):
+                return html
+
+            async def read(self):
+                return html.encode()
 
             async def __aenter__(self):
                 return self
@@ -322,6 +424,55 @@ class TestFetchPageInternalOrchestration:
         crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=False)
 
         result = await crawler._fetch_page_internal(
-            cast(aiohttp.ClientSession, FakeSession()), "https://example.com/page"
+            cast(aiohttp.ClientSession, FakeSession()), original_url
         )
+
         assert result.success is True
+        assert result.url == redirected_url, (
+            f"CrawlResult.url should be the redirected URL, got {result.url}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_redirect_target_added_to_visited_urls(self):
+        """The redirect target should be marked as visited to prevent re-crawling."""
+        from yarl import URL as YarlURL
+
+        original_url = "https://www.example.com/legal/privacy-policy"
+        redirected_url = "https://www.example.com/en-gb/legal/privacy-policy"
+
+        html = """
+        <html><head><title>Privacy Policy</title></head>
+        <body><main><p>{}</p></main></body>
+        </html>
+        """.format("We collect personal data for analytics. " * 80)
+
+        class FakeResponse:
+            def __init__(self):
+                self.status = 200
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = YarlURL(redirected_url)
+
+            async def text(self):
+                return html
+
+            async def read(self):
+                return html.encode()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse()
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=False)
+
+        await crawler._fetch_page_internal(cast(aiohttp.ClientSession, FakeSession()), original_url)
+
+        normalized_redirect = crawler.normalize_url(redirected_url)
+        assert normalized_redirect in crawler.visited_urls, (
+            "Redirect target should be added to visited_urls to prevent duplicate crawling"
+        )

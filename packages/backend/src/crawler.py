@@ -61,6 +61,11 @@ class StaticFetchResult:
     is_error: bool = False
     error_message: str | None = None
     cached: bool = False
+    # The final URL after following HTTP redirects (301/302).  When the
+    # server responds with a redirect chain, aiohttp follows it silently
+    # and ``response.url`` gives the landing page.  We store it here so
+    # downstream code (link extraction, deduplication) uses the correct URL.
+    resolved_url: str | None = None
 
     def to_failed_crawl_result(self) -> "CrawlResult":
         return CrawlResult(
@@ -262,12 +267,12 @@ class URLScorer:
             "report": 2.0,
             "company": 1.0,
             # Negative keywords (reduce score)
-            "blog": -1.0,
+            # NOTE: Only penalise paths that are genuinely unlikely to host
+            # legal content.  Paths like /help, /support, /about and /blog
+            # are neutral — many companies publish legal documents under these
+            # sections (e.g. Airbnb ToS at /help/article/2908).
+            "contact": -1.0,
             "news": -1.0,
-            "product": -0.5,
-            "help": -0.5,
-            "contact": -0.5,
-            "about": -0.5,
         }
 
     @lru_cache(maxsize=10000)  # noqa: B019 - Cache is bounded and per-instance
@@ -1432,6 +1437,13 @@ class ClauseaCrawler:
             request_args["proxy"] = self.proxy
 
         async with session.get(url, **request_args) as response:
+            # Capture the final URL after any redirect chain (301/302).
+            # aiohttp follows redirects by default; response.url reflects
+            # the landing page.
+            final_url = str(response.url)
+            if final_url != url:
+                logger.debug(f"Redirect detected: {url} -> {final_url}")
+
             if response.status == 304:
                 logger.debug(f"Content not modified (304) for {url}, using cached metadata")
                 return StaticFetchResult(
@@ -1440,6 +1452,7 @@ class ClauseaCrawler:
                     content_type="",
                     body="",
                     cached=True,
+                    resolved_url=final_url,
                 )
 
             if response.status == 200:
@@ -1468,6 +1481,7 @@ class ClauseaCrawler:
                     content_type=content_type,
                     body=body,
                     headers=resp_headers,
+                    resolved_url=final_url,
                 )
             else:
                 raw_bytes = await response.read()
@@ -1478,6 +1492,7 @@ class ClauseaCrawler:
                     body="",
                     raw_bytes=raw_bytes,
                     headers=resp_headers,
+                    resolved_url=final_url,
                 )
 
     # ------------------------------------------------------------------
@@ -1716,12 +1731,21 @@ class ClauseaCrawler:
             title = await page.title()
             content = await page.content()
 
+            # Use the browser's actual URL (after redirects / JS navigation)
+            # so that relative links are resolved against the correct base.
+            final_url = page.url or url
+            if final_url != url:
+                logger.debug(f"Browser redirect detected: {url} -> {final_url}")
+
             # CPU-bound HTML parsing — offload to a thread to keep the event loop free.
             # _parse_html_string derives its own title from the <title> tag; we override
             # it with the live browser title which is more reliable for JS-rendered pages.
             _, text_content, markdown_content, metadata, discovered_links = await asyncio.to_thread(
-                self._parse_html_string, content, url
+                self._parse_html_string, content, final_url
             )
+
+            # Store the resolved URL so the caller can update dedup / result URL.
+            metadata["_browser_resolved_url"] = final_url
 
             return PageContent(
                 text=text_content,
@@ -2508,11 +2532,20 @@ class ClauseaCrawler:
             if raw.is_error:
                 return raw.to_failed_crawl_result()
 
-            page = await self._extract_page_content(raw, url)
+            # Use the resolved URL (after redirects) for all downstream work
+            # so that link extraction, deduplication, and the final CrawlResult
+            # URL reflect the actual page location.
+            effective_url = raw.resolved_url or url
+            if effective_url != url:
+                # Mark the redirect target as visited so we don't re-crawl it
+                # when it appears as a discovered link from another page.
+                self.visited_urls.add(self.normalize_url(effective_url))
+
+            page = await self._extract_page_content(raw, effective_url)
 
             if page is None:
                 return CrawlResult(
-                    url=url,
+                    url=effective_url,
                     title="",
                     content="",
                     markdown="",
@@ -2522,15 +2555,21 @@ class ClauseaCrawler:
                     error_message=f"Unsupported content type: {raw.content_type}",
                 )
 
-            if not self._content_is_sufficient(page, url) and self.use_browser:
-                logger.info(f"🔄 Static content insufficient, trying browser: {url}")
-                browser_page = await self._browser_fetch(url)
+            if not self._content_is_sufficient(page, effective_url) and self.use_browser:
+                logger.info(f"🔄 Static content insufficient, trying browser: {effective_url}")
+                browser_page = await self._browser_fetch(effective_url)
                 if browser_page is not None:
+                    # The browser may have followed additional redirects / JS
+                    # navigations; prefer its resolved URL if available.
+                    browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
+                    if browser_resolved and browser_resolved != effective_url:
+                        effective_url = browser_resolved
+                        self.visited_urls.add(self.normalize_url(effective_url))
                     page = browser_page
                 else:
-                    logger.info(f"⚠️ Browser fetch failed, using static content: {url}")
+                    logger.info(f"⚠️ Browser fetch failed, using static content: {effective_url}")
 
-            return self._build_crawl_result(url, page)
+            return self._build_crawl_result(effective_url, page)
 
         except aiohttp.ClientResponseError as e:
             if e.status >= 500 or e.status == 429:
@@ -2763,6 +2802,47 @@ class ClauseaCrawler:
 
         return potential_urls
 
+    # Keywords whose presence in a page title / description indicates the
+    # page is a "legal hub" — i.e. a page whose outgoing links are more
+    # likely to point to legal documents.
+    _LEGAL_HUB_KEYWORDS = frozenset(
+        [
+            "terms",
+            "privacy",
+            "policy",
+            "legal",
+            "cookie",
+            "agreement",
+            "gdpr",
+            "compliance",
+            "data protection",
+        ]
+    )
+
+    def _compute_parent_page_boost(self, page_metadata: dict[str, Any] | None) -> float:
+        """Return a score boost for links discovered on a page with legal indicators.
+
+        When the page title or meta description contains legal keywords the
+        page is likely a "legal hub" (e.g. a help centre section listing
+        policies).  Links FROM such pages deserve a priority boost in the
+        ``best_first`` strategy so that opaque URLs (``/help/article/2908``)
+        are not buried behind thousands of irrelevant sitemap entries.
+        """
+        if not page_metadata:
+            return 0.0
+
+        texts_to_check = [
+            (page_metadata.get("title") or "").lower(),
+            (page_metadata.get("description") or "").lower(),
+            (page_metadata.get("og:title") or "").lower(),
+        ]
+
+        for text in texts_to_check:
+            if any(kw in text for kw in self._LEGAL_HUB_KEYWORDS):
+                return 3.0
+
+        return 0.0
+
     def add_urls_to_queue(
         self,
         links: list[dict[str, str]],
@@ -2784,6 +2864,16 @@ class ClauseaCrawler:
                     f"Page meta robots contains 'nofollow'; skipping discovered links for {base_url}"
                 )
                 return
+
+        # Compute a priority boost for links coming from a "legal hub" page.
+        # Only relevant for best_first where score ordering matters.
+        parent_boost = (
+            self._compute_parent_page_boost(page_metadata) if self.strategy == "best_first" else 0.0
+        )
+        if parent_boost > 0:
+            logger.debug(
+                f"Legal hub detected on parent page; boosting discovered link scores by {parent_boost:.1f}"
+            )
 
         # Track URLs explicitly skipped due to rel='nofollow' so generated potential
         # legal URLs that match them are not redundantly added.
@@ -2810,10 +2900,16 @@ class ClauseaCrawler:
                 self.url_stack.append((url, depth + 1))
                 logger.debug(f"Added to DFS stack: {url} (depth: {depth + 1})")
             elif self.strategy == "best_first":
-                score = self.url_scorer.score_url(url, anchor_text=anchor_text)
+                score = self.url_scorer.score_url(url, anchor_text=anchor_text) + parent_boost
+                if score < self.min_legal_score:
+                    logger.debug(
+                        f"Skipping URL below min_legal_score ({score:.2f} < {self.min_legal_score}): {url}"
+                    )
+                    self.queued_urls.discard(url)
+                    continue
                 heapq.heappush(self.url_priority_queue, (-score, url, depth + 1))
                 logger.debug(
-                    f"Added to Best-First queue: {url} (score: {score:.2f}, title: {anchor_text})"
+                    f"Added to Best-First queue: {url} (score: {score:.2f}, anchor: {anchor_text})"
                 )
 
         # Fallback: if sitemaps didn't provide seeds, speculatively probe

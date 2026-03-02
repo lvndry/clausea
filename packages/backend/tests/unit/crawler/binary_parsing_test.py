@@ -42,10 +42,11 @@ async def test_crawler_respects_enable_binary_crawling_flag(monkeypatch):
 
     # Mock an aiohttp response via a lightweight fake
     class FakeResponse:
-        def __init__(self, status, headers, content_bytes):
+        def __init__(self, status, headers, content_bytes, url: str = ""):
             self.status = status
             self.headers = headers
             self._content = content_bytes
+            self.url = url
 
         async def read(self):
             return self._content
@@ -60,7 +61,9 @@ async def test_crawler_respects_enable_binary_crawling_flag(monkeypatch):
         def get(self, url, **kwargs):
             # Return an async context manager (not a coroutine)
             # In aiohttp, session.get() is a regular method that returns an async context manager
-            return FakeResponse(200, {"content-type": "application/pdf"}, b"%PDF-1.4 dummy")
+            return FakeResponse(
+                200, {"content-type": "application/pdf"}, b"%PDF-1.4 dummy", url=url
+            )
 
     # Monkeypatch DocumentProcessor._extract_text to return content
     # Note: _extract_text is an instance method, so it takes 'self' as first parameter

@@ -294,10 +294,11 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
     """
 
     class FakeResponse:
-        def __init__(self, body: str):
+        def __init__(self, body: str, url: str = ""):
             self.status = 200
             self.headers = {"content-type": "text/html; charset=utf-8"}
             self._body = body
+            self.url = url
 
         async def text(self) -> str:
             return self._body
@@ -310,7 +311,7 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
 
     class FakeSession:
         def get(self, url, **kwargs):
-            return FakeResponse(html)
+            return FakeResponse(html, url=url)
 
     crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
 
