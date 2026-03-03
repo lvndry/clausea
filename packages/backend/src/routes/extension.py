@@ -7,7 +7,8 @@ import asyncio
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
 
 from src.core.database import get_db
@@ -127,7 +128,7 @@ _RUNNING_JOB_IDS: set[str] = set()
 _RUNNING_JOB_LOCK = asyncio.Lock()
 
 
-async def _schedule_pipeline_run(job_id: str) -> bool:
+async def _schedule_pipeline_run(job_id: str, background_tasks: BackgroundTasks) -> bool:
     """Best-effort background scheduler, idempotent per-process."""
     async with _RUNNING_JOB_LOCK:
         if job_id in _RUNNING_JOB_IDS:
@@ -144,7 +145,7 @@ async def _schedule_pipeline_run(job_id: str) -> bool:
             async with _RUNNING_JOB_LOCK:
                 _RUNNING_JOB_IDS.discard(job_id)
 
-    asyncio.create_task(_runner())
+    background_tasks.add_task(_runner)
     return True
 
 
@@ -156,6 +157,7 @@ async def _schedule_pipeline_run(job_id: str) -> bool:
 @router.get("/check", response_model=ExtensionCheckResponse)
 async def check_url(
     url: str = Query(..., description="The URL to check (e.g., https://netflix.com/signup)"),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> ExtensionCheckResponse:
     """Check if we have privacy analysis for a given URL.
 
@@ -173,109 +175,106 @@ async def check_url(
     domain = extract_domain(url)
     logger.debug(f"Extension check for URL: {url} -> domain: {domain}")
 
-    async with get_db() as db:
-        product_svc = create_product_service()
-        pipeline_svc = create_pipeline_service()
+    product_svc = create_product_service()
+    pipeline_svc = create_pipeline_service()
 
-        # Try to find product by domain
-        product = await product_svc.get_product_by_domain(db, domain)
+    # Try to find product by domain (with base-domain fallback)
+    product = await product_svc.find_by_domain_variant(db, domain)
 
-        if not product:
-            # Try without subdomain variations
-            parts = domain.split(".")
-            if len(parts) > 2:
-                base_domain = ".".join(parts[-2:])
-                product = await product_svc.get_product_by_domain(db, base_domain)
+    if not product:
+        return ExtensionCheckResponse(found=False)
 
-        if not product:
-            return ExtensionCheckResponse(found=False)
+    # Check for active pipeline job
+    active_job = await pipeline_svc.get_active_job_for_product(db, product.slug)
 
-        # Check for active pipeline job
-        active_job = await pipeline_svc.get_active_job_for_product(db, product.slug)
+    # Get the overview if available
+    overview = await product_svc.get_product_overview(db, product.slug)
 
-        # Get the overview if available
-        overview = await product_svc.get_product_overview(db, product.slug)
+    if not overview:
+        # Product exists but no analysis yet — check for a recent failed job
+        failed_job = None
+        if not active_job:
+            pipeline_repo = PipelineRepository()
+            recent_jobs = await pipeline_repo.find_by_product_slug(db, product.slug)
+            for rj in recent_jobs:
+                if rj.status == "failed":
+                    failed_job = rj
+                    break
 
-        if not overview:
-            # Product exists but no analysis yet — check for a recent failed job
-            failed_job = None
-            if not active_job:
-                pipeline_repo = PipelineRepository()
-                recent_jobs = await pipeline_repo.find_by_product_slug(db, product.slug)
-                for rj in recent_jobs:
-                    if rj.status == "failed":
-                        failed_job = rj
-                        break
-
-            crawl_errors = None
-            if failed_job and failed_job.crawl_errors:
-                crawl_errors = [
-                    ExtensionCrawlError(
-                        url=e.url,
-                        error_type=e.error_type,
-                        error_message=e.error_message,
-                    )
-                    for e in failed_job.crawl_errors[:5]  # limit payload size
-                ]
-
-            return ExtensionCheckResponse(
-                found=False,
-                slug=product.slug,
-                product_name=product.name,
-                pipeline_active=active_job is not None,
-                pipeline_failed=failed_job is not None,
-                pipeline_error=failed_job.error if failed_job else None,
-                crawl_errors=crawl_errors,
-                analysis_url=f"https://clausea.co/products/{product.slug}",
-            )
-
-        # Extract top 3 concerns from dangers or keypoints
-        top_concerns = None
-        if overview.dangers:
-            top_concerns = overview.dangers[:3]
-        elif overview.keypoints:
-            # Filter for concerning keypoints (heuristic: contains risk words)
-            risk_keywords = ["share", "sell", "track", "collect", "third", "advertis", "retain"]
-            concerning = [
-                kp for kp in overview.keypoints if any(word in kp.lower() for word in risk_keywords)
+        crawl_errors = None
+        if failed_job and failed_job.crawl_errors:
+            crawl_errors = [
+                ExtensionCrawlError(
+                    url=e.url,
+                    error_type=e.error_type,
+                    error_message=e.error_message,
+                )
+                for e in failed_job.crawl_errors[:5]  # limit payload size
             ]
-            top_concerns = concerning[:3] if concerning else overview.keypoints[:3]
 
         return ExtensionCheckResponse(
-            found=True,
+            found=False,
             slug=product.slug,
-            product_name=overview.product_name,
+            product_name=product.name,
             pipeline_active=active_job is not None,
-            verdict=overview.verdict,
-            risk_score=overview.risk_score,
-            one_line_summary=overview.one_line_summary,
-            top_concerns=top_concerns,
+            pipeline_failed=failed_job is not None,
+            pipeline_error=failed_job.error if failed_job else None,
+            crawl_errors=crawl_errors,
             analysis_url=f"https://clausea.co/products/{product.slug}",
         )
 
+    # Extract top 3 concerns from dangers or keypoints
+    top_concerns = None
+    if overview.dangers:
+        top_concerns = overview.dangers[:3]
+    elif overview.keypoints:
+        # Filter for concerning keypoints (heuristic: contains risk words)
+        risk_keywords = ["share", "sell", "track", "collect", "third", "advertis", "retain"]
+        concerning = [
+            kp for kp in overview.keypoints if any(word in kp.lower() for word in risk_keywords)
+        ]
+        top_concerns = concerning[:3] if concerning else overview.keypoints[:3]
+
+    return ExtensionCheckResponse(
+        found=True,
+        slug=product.slug,
+        product_name=overview.product_name,
+        pipeline_active=active_job is not None,
+        verdict=overview.verdict,
+        risk_score=overview.risk_score,
+        one_line_summary=overview.one_line_summary,
+        top_concerns=top_concerns,
+        analysis_url=f"https://clausea.co/products/{product.slug}",
+    )
+
 
 @router.get("/domains", response_model=list[str])
-async def get_supported_domains() -> list[str]:
+async def get_supported_domains(
+    db: AgnosticDatabase = Depends(get_db),
+) -> list[str]:
     """Get list of all domains we have analysis for.
 
     The extension can use this to:
     1. Pre-cache which domains to watch for
     2. Show "X domains protected" in the popup
     """
-    async with get_db() as db:
-        service = create_product_service()
-        products = await service.get_products_with_documents(db)
+    service = create_product_service()
+    products = await service.get_products_with_documents(db)
 
-        domains = []
-        for product in products:
-            if product.domains:
-                domains.extend(product.domains)
+    domains = []
+    for product in products:
+        if product.domains:
+            domains.extend(product.domains)
 
-        return list(set(domains))
+    return list(set(domains))
 
 
-@router.post("/analyze", response_model=ExtensionAnalyzeResponse)
-async def analyze_url(payload: ExtensionAnalyzeRequest) -> ExtensionAnalyzeResponse:
+@router.post("/analyze", response_model=ExtensionAnalyzeResponse, status_code=202)
+async def analyze_url(
+    payload: ExtensionAnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    db: AgnosticDatabase = Depends(get_db),
+) -> ExtensionAnalyzeResponse:
     """Trigger the analysis pipeline for a URL.
 
     Creates the product from URL metadata (domain, name, slug) if it doesn't
@@ -294,29 +293,31 @@ async def analyze_url(payload: ExtensionAnalyzeRequest) -> ExtensionAnalyzeRespo
 
     pipeline_svc = create_pipeline_service()
 
-    async with get_db() as db:
-        result = await pipeline_svc.create_job_for_url(db, normalized_url)
+    result = await pipeline_svc.create_job_for_url(db, normalized_url)
 
-        if result.get("already_indexed"):
-            return ExtensionAnalyzeResponse(
-                status="already_indexed",
-                product_slug=result["product_slug"],
-                product_name=result["product_name"],
-            )
-
-        job = result["job"]
-        scheduled = await _schedule_pipeline_run(job.id)
-
+    if result.get("already_indexed"):
         return ExtensionAnalyzeResponse(
-            status="started" if scheduled else "already_running",
-            product_slug=job.product_slug,
-            product_name=job.product_name,
-            job_id=job.id,
+            status="already_indexed",
+            product_slug=result["product_slug"],
+            product_name=result["product_name"],
         )
 
+    job = result["job"]
+    scheduled = await _schedule_pipeline_run(job.id, background_tasks)
 
-@router.post("/subscribe", response_model=ExtensionSubscribeResponse)
-async def subscribe_email(payload: ExtensionSubscribeRequest) -> ExtensionSubscribeResponse:
+    return ExtensionAnalyzeResponse(
+        status="started" if scheduled else "already_running",
+        product_slug=job.product_slug,
+        product_name=job.product_name,
+        job_id=job.id,
+    )
+
+
+@router.post("/subscribe", response_model=ExtensionSubscribeResponse, status_code=201)
+async def subscribe_email(
+    payload: ExtensionSubscribeRequest,
+    db: AgnosticDatabase = Depends(get_db),
+) -> ExtensionSubscribeResponse:
     """Subscribe an email to be notified when analysis completes for a product.
 
     Uses the existing IndexationNotificationService which automatically sends
@@ -324,18 +325,17 @@ async def subscribe_email(payload: ExtensionSubscribeRequest) -> ExtensionSubscr
     """
     notify_svc = create_indexation_notification_service()
 
-    async with get_db() as db:
-        # Verify the product exists
-        product_svc = create_product_service()
-        product = await product_svc.get_product_by_slug(db, payload.product_slug)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
+    # Verify the product exists
+    product_svc = create_product_service()
+    product = await product_svc.get_product_by_slug(db, payload.product_slug)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
 
-        await notify_svc.subscribe(
-            db,
-            product_slug=payload.product_slug,
-            email=str(payload.email),
-        )
+    await notify_svc.subscribe(
+        db,
+        product_slug=payload.product_slug,
+        email=str(payload.email),
+    )
 
     logger.info(
         "extension email subscription",

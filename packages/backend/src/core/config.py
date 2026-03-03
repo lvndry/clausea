@@ -99,7 +99,7 @@ class ApiConfig:
     """API configuration"""
 
     def __init__(self) -> None:
-        self.v1_prefix: str = ""
+        self.rate_limit_default: str = os.getenv("API_RATE_LIMIT", "120/minute")
 
 
 class EmbeddingConfig:

@@ -39,7 +39,7 @@ class PatchConversationRequest(BaseModel):
     product_description: str | None = None
 
 
-@router.post("")
+@router.post("", status_code=201)
 async def create_new_conversation(
     request: CreateConversationRequest, db: AgnosticDatabase = Depends(get_db)
 ) -> Conversation:
@@ -57,8 +57,10 @@ async def create_new_conversation(
         )
         return created_conversation
     except Exception as e:
-        logger.error(f"Error creating conversation: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error creating conversation", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to create conversation. Please try again later."
+        ) from e
 
 
 @router.get("/{conversation_id}")
@@ -75,8 +77,10 @@ async def get_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting conversation: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error getting conversation", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to load conversation. Please try again later."
+        ) from e
 
 
 @router.get("/user/{user_id}")
@@ -102,11 +106,14 @@ async def get_user_conversations_route(
         )
         return conversations
     except Exception as e:
-        logger.error(f"Error getting user conversations: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error getting user conversations", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load conversations. Please try again later.",
+        ) from e
 
 
-@router.post("/{conversation_id}/messages")
+@router.post("/{conversation_id}/messages", status_code=201)
 async def send_message(
     request: SendMessageRequest, db: AgnosticDatabase = Depends(get_db)
 ) -> dict[str, Message]:
@@ -119,15 +126,17 @@ async def send_message(
             )
             return result
         except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            raise HTTPException(status_code=404, detail="Conversation not found") from e
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error sending message: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error sending message", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to send message. Please try again later."
+        ) from e
 
 
-@router.post("/{conversation_id}/messages/stream")
+@router.post("/{conversation_id}/messages/stream", status_code=201)
 async def send_message_stream(
     conversation_id: str, request: SendMessageRequest, db: AgnosticDatabase = Depends(get_db)
 ) -> StreamingResponse:
@@ -139,8 +148,11 @@ async def send_message_stream(
             media_type="text/event-stream",
         )
     except Exception as e:
-        logger.error(f"Error streaming message: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error streaming message", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to stream response. Please try again later.",
+        ) from e
 
 
 @router.patch("/{conversation_id}")
@@ -161,11 +173,13 @@ async def patch_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error patching conversation: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error patching conversation", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to update conversation. Please try again later."
+        ) from e
 
 
-@router.post("/{conversation_id}/upload")
+@router.post("/{conversation_id}/upload", status_code=201)
 async def upload_document(
     conversation_id: str,
     file: UploadFile = File(...),
@@ -214,12 +228,14 @@ async def upload_document(
                 "analysis_available": result.analysis is not None,
             }
         except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            raise HTTPException(status_code=404, detail="Conversation not found") from e
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error uploading document: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error uploading document", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to upload document. Please try again later."
+        ) from e
 
 
 @router.delete("/{conversation_id}")
@@ -236,5 +252,7 @@ async def delete_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting conversation: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error deleting conversation", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to delete conversation. Please try again later."
+        ) from e

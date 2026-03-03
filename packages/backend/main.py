@@ -2,6 +2,11 @@ from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from src.core.config import config
 from src.core.database import close_motor_client, get_db
@@ -12,7 +17,6 @@ from src.routes import (
     contact,
     conversations,
     extension,
-    list,
     paddle,
     pipeline,
     products,
@@ -39,6 +43,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="Clausea API", lifespan=lifespan, version="1.0.0")  # type: ignore
 
+limiter = Limiter(key_func=get_remote_address, default_limits=[config.api.rate_limit_default])
+app.state.limiter = limiter
+
+app.add_exception_handler(
+    RateLimitExceeded,
+    lambda request, exc: JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please try again later."},
+    ),
+)
+app.add_middleware(SlowAPIMiddleware)  # type: ignore
+
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore
@@ -60,7 +76,6 @@ routes = [
     q.router,
     products.router,
     conversations.router,
-    list.router,
     promotion.router,
     users.router,
     paddle.router,

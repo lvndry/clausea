@@ -109,8 +109,8 @@ class PipelineService:
         product = await product_svc.get_product_by_slug(db, slug)
 
         if not product:
-            # Also check by domain
-            product = await product_svc.get_product_by_domain(db, domain)
+            # Also check by domain with base-domain fallback
+            product = await product_svc.find_by_domain_variant(db, domain)
 
         if product:
             # Check if product is already fully indexed (has a completed overview)

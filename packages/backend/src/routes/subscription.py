@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
 from src.core.database import get_db
@@ -25,10 +26,11 @@ class CheckoutRequest(BaseModel):
     price_id: str
 
 
-@router.post("/checkout")
+@router.post("/checkout", status_code=201)
 async def create_checkout(
     req: CheckoutRequest,
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Create a Paddle checkout session for subscription purchase.
@@ -44,11 +46,10 @@ async def create_checkout(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        async with get_db() as db:
-            user_service = create_user_service()
-            user = await user_service.get_user_by_id(db, current.user_id)
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
         # Create checkout session with user_id in custom_data for webhook linking
         session = await paddle_service.create_checkout_session(
@@ -81,6 +82,7 @@ async def create_checkout(
 @router.get("/me")
 async def get_my_subscription(
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Get current user's subscription details.
@@ -92,11 +94,10 @@ async def get_my_subscription(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        async with get_db() as db:
-            user_service = create_user_service()
-            user = await user_service.get_user_by_id(db, current.user_id)
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
         subscription_data: dict[str, Any] = {
             "tier": user.tier.value,
@@ -128,6 +129,7 @@ async def get_my_subscription(
 @router.post("/cancel")
 async def cancel_subscription(
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Cancel current user's subscription (effective at end of billing period).
@@ -139,14 +141,13 @@ async def cancel_subscription(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        async with get_db() as db:
-            user_service = create_user_service()
-            user = await user_service.get_user_by_id(db, current.user_id)
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-            if not user.paddle_subscription_id:
-                raise HTTPException(status_code=400, detail="No active subscription")
+        if not user.paddle_subscription_id:
+            raise HTTPException(status_code=400, detail="No active subscription")
 
         # Cancel subscription in Paddle
         result = await paddle_service.cancel_subscription(
@@ -171,6 +172,7 @@ async def cancel_subscription(
 @router.post("/pause")
 async def pause_subscription(
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Pause current user's subscription.
@@ -182,14 +184,13 @@ async def pause_subscription(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        async with get_db() as db:
-            user_service = create_user_service()
-            user = await user_service.get_user_by_id(db, current.user_id)
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-            if not user.paddle_subscription_id:
-                raise HTTPException(status_code=400, detail="No active subscription")
+        if not user.paddle_subscription_id:
+            raise HTTPException(status_code=400, detail="No active subscription")
 
         # Pause subscription in Paddle
         result = await paddle_service.pause_subscription(user.paddle_subscription_id)
@@ -208,6 +209,7 @@ async def pause_subscription(
 @router.post("/resume")
 async def resume_subscription(
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Resume a paused subscription.
@@ -219,14 +221,13 @@ async def resume_subscription(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        async with get_db() as db:
-            user_service = create_user_service()
-            user = await user_service.get_user_by_id(db, current.user_id)
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-            if not user.paddle_subscription_id:
-                raise HTTPException(status_code=400, detail="No subscription to resume")
+        if not user.paddle_subscription_id:
+            raise HTTPException(status_code=400, detail="No subscription to resume")
 
         # Resume subscription in Paddle
         result = await paddle_service.resume_subscription(user.paddle_subscription_id)
@@ -249,6 +250,7 @@ async def resume_subscription(
 @router.get("/portal")
 async def get_billing_portal(
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     """
     Get Paddle billing portal URL for self-service subscription management.
@@ -260,14 +262,13 @@ async def get_billing_portal(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        async with get_db() as db:
-            user_service = create_user_service()
-            user = await user_service.get_user_by_id(db, current.user_id)
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-            if not user.paddle_customer_id:
-                raise HTTPException(status_code=400, detail="No Paddle customer record found")
+        if not user.paddle_customer_id:
+            raise HTTPException(status_code=400, detail="No Paddle customer record found")
 
         # Get portal session
         portal = await paddle_service.get_customer_portal_session(user.paddle_customer_id)

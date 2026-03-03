@@ -33,8 +33,10 @@ async def get_promotion_summary() -> PromotionResponse:
             data=summary,
         )
     except Exception as e:
-        logger.error(f"Error getting promotion summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error getting promotion summary", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to fetch promotion summary. Please try again later."
+        ) from e
 
 
 @router.post("/dry-run", response_model=PromotionResponse)
@@ -49,8 +51,10 @@ async def run_dry_promotion() -> PromotionResponse:
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in dry run promotion: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in dry run promotion", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to run dry promotion. Please try again later."
+        ) from e
 
 
 @router.post("/execute", response_model=PromotionResponse)
@@ -66,8 +70,10 @@ async def execute_promotion(request: PromotionRequest) -> PromotionResponse:
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in promotion execution: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in promotion execution", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to run promotion. Please try again later."
+        ) from e
 
 
 @router.post("/promote-products", response_model=PromotionResponse)
@@ -83,8 +89,10 @@ async def promote_products_only(request: PromotionRequest) -> PromotionResponse:
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in products promotion: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in products promotion", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to promote products. Please try again later."
+        ) from e
 
 
 @router.post("/promote-documents", response_model=PromotionResponse)
@@ -100,8 +108,10 @@ async def promote_documents_only(request: PromotionRequest) -> PromotionResponse
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in documents promotion: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in documents promotion", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to promote documents. Please try again later."
+        ) from e
 
 
 @router.post("/promote-product-overviews", response_model=PromotionResponse)
@@ -117,8 +127,11 @@ async def promote_product_overviews_only(request: PromotionRequest) -> Promotion
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in product overviews promotion: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in product overviews promotion", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to promote product overviews. Please try again later.",
+        ) from e
 
 
 @router.post("/promote-users-to-tier-system", response_model=PromotionResponse)
@@ -134,8 +147,11 @@ async def promote_users_to_tier_system_only(request: PromotionRequest) -> Promot
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in user tier promotion: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in user tier promotion", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to promote users to tier system. Please try again later.",
+        ) from e
 
 
 # Download endpoints (production -> local)
@@ -154,8 +170,10 @@ async def download_all(request: PromotionRequest) -> PromotionResponse:
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in download execution: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in download execution", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to download data. Please try again later."
+        ) from e
 
 
 @router.post("/download-products", response_model=PromotionResponse)
@@ -171,8 +189,10 @@ async def download_products_only(request: PromotionRequest) -> PromotionResponse
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in products download: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in products download", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to download products. Please try again later."
+        ) from e
 
 
 @router.post("/download-documents", response_model=PromotionResponse)
@@ -188,8 +208,10 @@ async def download_documents_only(request: PromotionRequest) -> PromotionRespons
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in documents download: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in documents download", error=str(e))
+        raise HTTPException(
+            status_code=500, detail="Unable to download documents. Please try again later."
+        ) from e
 
 
 @router.post("/download-product-overviews", response_model=PromotionResponse)
@@ -205,5 +227,8 @@ async def download_product_overviews_only(request: PromotionRequest) -> Promotio
             data=result,
         )
     except Exception as e:
-        logger.error(f"Error in product overviews download: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error in product overviews download", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to download product overviews. Please try again later.",
+        ) from e
