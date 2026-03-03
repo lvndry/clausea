@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
 
 from src.core.logging import get_logger
-from src.services.email_service import EmailServiceError, get_email_service
+from src.services.email_service import EmailService, EmailServiceError, get_email_service
 
 logger = get_logger(__name__)
 
@@ -20,11 +20,12 @@ class ContactRequest(BaseModel):
     message: str
 
 
-@router.post("")
-async def submit_contact_form(req: ContactRequest) -> dict[str, str]:
+@router.post("", status_code=202)
+async def submit_contact_form(
+    req: ContactRequest,
+    email_service: EmailService = Depends(get_email_service),
+) -> dict[str, str]:
     """Handle contact form submissions."""
-    email_service = get_email_service()
-
     company_line = f"Company: {req.company}\n" if req.company else ""
     subject = f"Clausea - Contact form: {req.name}"
     body = (

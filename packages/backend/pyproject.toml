@@ -30,6 +30,7 @@ dependencies = [
     "rich>=14.2.0",
     "resend>=2.19.0",
     "shortuuid>=1.0.13",
+    "slowapi>=0.1.9",
     "streamlit>=1.43.2",
     "streamlit-tags>=1.2.8",
     "structlog>=25.4.0",

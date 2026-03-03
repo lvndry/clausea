@@ -308,7 +308,7 @@ async def get_product_by_slug(
     return product
 
 
-@router.post("/{slug}/indexation-notify")
+@router.post("/{slug}/indexation-notify", status_code=201)
 async def subscribe_indexation_notify(
     slug: str,
     payload: IndexationNotifyRequest,

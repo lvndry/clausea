@@ -5,7 +5,8 @@ Provides a DeepWiki-style API: submit a URL, get a job ID, poll for status.
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
 from src.core.database import get_db
@@ -22,7 +23,7 @@ _RUNNING_JOB_IDS: set[str] = set()
 _RUNNING_JOB_LOCK = asyncio.Lock()
 
 
-async def _schedule_pipeline_run(job_id: str) -> bool:
+async def _schedule_pipeline_run(job_id: str, background_tasks: BackgroundTasks) -> bool:
     """Best-effort scheduler for background pipeline execution.
 
     This is intentionally idempotent per-process: repeated calls for the same job_id
@@ -42,7 +43,7 @@ async def _schedule_pipeline_run(job_id: str) -> bool:
             async with _RUNNING_JOB_LOCK:
                 _RUNNING_JOB_IDS.discard(job_id)
 
-    asyncio.create_task(_runner())
+    background_tasks.add_task(_runner)
     return True
 
 
@@ -63,8 +64,12 @@ class CrawlResponse(BaseModel):
     already_indexed: bool = False
 
 
-@router.post("/crawl", response_model=CrawlResponse)
-async def start_crawl(request: CrawlRequest) -> CrawlResponse:
+@router.post("/crawl", response_model=CrawlResponse, status_code=202)
+async def start_crawl(
+    request: CrawlRequest,
+    background_tasks: BackgroundTasks,
+    db: AgnosticDatabase = Depends(get_db),
+) -> CrawlResponse:
     """Start a background crawl + analysis pipeline for a URL.
 
     If the product already exists and has an active job, returns that job.
@@ -83,40 +88,42 @@ async def start_crawl(request: CrawlRequest) -> CrawlResponse:
 
     pipeline_svc = create_pipeline_service()
 
-    async with get_db() as db:
-        result = await pipeline_svc.create_job_for_url(db, url)
+    result = await pipeline_svc.create_job_for_url(db, url)
 
-        # Product already fully indexed – no job needed
-        if result.get("already_indexed"):
-            return CrawlResponse(
-                job_id="",
-                product_slug=result["product_slug"],
-                product_name=result["product_name"],
-                status="completed",
-                message=f"{result['product_name']} is already indexed.",
-                already_indexed=True,
-            )
-
-        job = result["job"]
-
-        # Best-effort: (re)kick background execution for any active job.
-        scheduled = await _schedule_pipeline_run(job.id)
-        message = (
-            f"Pipeline started for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
-            if scheduled
-            else f"Pipeline already running for {job.product_name}."
-        )
+    # Product already fully indexed – no job needed
+    if result.get("already_indexed"):
         return CrawlResponse(
-            job_id=job.id,
-            product_slug=job.product_slug,
-            product_name=job.product_name,
-            status=job.status,
-            message=message,
+            job_id="",
+            product_slug=result["product_slug"],
+            product_name=result["product_name"],
+            status="completed",
+            message=f"{result['product_name']} is already indexed.",
+            already_indexed=True,
         )
+
+    job = result["job"]
+
+    # Best-effort: (re)kick background execution for any active job.
+    scheduled = await _schedule_pipeline_run(job.id, background_tasks)
+    message = (
+        f"Pipeline started for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
+        if scheduled
+        else f"Pipeline already running for {job.product_name}."
+    )
+    return CrawlResponse(
+        job_id=job.id,
+        product_slug=job.product_slug,
+        product_name=job.product_name,
+        status=job.status,
+        message=message,
+    )
 
 
 @router.get("/active", response_model=PipelineJob)
-async def get_active_job(product_slug: str) -> PipelineJob:
+async def get_active_job(
+    product_slug: str,
+    db: AgnosticDatabase = Depends(get_db),
+) -> PipelineJob:
     """Get the active (non-terminal) pipeline job for a product, if any.
 
     Used by the frontend to check for in-progress jobs before firing a new crawl.
@@ -124,15 +131,17 @@ async def get_active_job(product_slug: str) -> PipelineJob:
     """
     pipeline_svc = create_pipeline_service()
 
-    async with get_db() as db:
-        job = await pipeline_svc.get_active_job_for_product(db, product_slug)
-        if not job:
-            raise HTTPException(status_code=404, detail="No active job for this product")
-        return job
+    job = await pipeline_svc.get_active_job_for_product(db, product_slug)
+    if not job:
+        raise HTTPException(status_code=404, detail="No active job for this product")
+    return job
 
 
 @router.get("/latest", response_model=PipelineJob)
-async def get_latest_job(product_slug: str) -> PipelineJob:
+async def get_latest_job(
+    product_slug: str,
+    db: AgnosticDatabase = Depends(get_db),
+) -> PipelineJob:
     """Get the most recent pipeline job for a product (any status).
 
     Returns active jobs first; falls back to the most recently created job.
@@ -140,35 +149,36 @@ async def get_latest_job(product_slug: str) -> PipelineJob:
     """
     pipeline_svc = create_pipeline_service()
 
-    async with get_db() as db:
-        # Prefer active job
-        job = await pipeline_svc.get_active_job_for_product(db, product_slug)
-        if job:
-            return job
+    # Prefer active job
+    job = await pipeline_svc.get_active_job_for_product(db, product_slug)
+    if job:
+        return job
 
-        # Fall back to most recent job (including completed/failed)
+    # Fall back to most recent job (including completed/failed)
 
-        repo = PipelineRepository()
-        jobs = await repo.find_by_product_slug(db, product_slug)
-        if jobs:
-            return jobs[0]  # sorted by created_at desc
+    repo = PipelineRepository()
+    jobs = await repo.find_by_product_slug(db, product_slug)
+    if jobs:
+        return jobs[0]  # sorted by created_at desc
 
-        raise HTTPException(status_code=404, detail="No pipeline jobs found for this product")
+    raise HTTPException(status_code=404, detail="No pipeline jobs found for this product")
 
 
 @router.get("/jobs/{job_id}", response_model=PipelineJob)
-async def get_job_status(job_id: str) -> PipelineJob:
+async def get_job_status(
+    job_id: str,
+    db: AgnosticDatabase = Depends(get_db),
+) -> PipelineJob:
     """Get the current status of a pipeline job.
 
     Returns the full job object with step-by-step progress.
     """
     pipeline_svc = create_pipeline_service()
 
-    async with get_db() as db:
-        job = await pipeline_svc.get_job(db, job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Pipeline job not found")
-        return job
+    job = await pipeline_svc.get_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Pipeline job not found")
+    return job
 
 
 async def _run_pipeline_background(job_id: str) -> None:

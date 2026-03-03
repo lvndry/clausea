@@ -1,6 +1,7 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
 from src.constants import TIER_DESCRIPTIONS, TIER_DISPLAY_NAMES, TIER_LIMITS
@@ -24,6 +25,7 @@ class CreateUserRequest(BaseModel):
 async def upsert_user(
     req: CreateUserRequest,
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     if not current.user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
@@ -35,40 +37,43 @@ async def upsert_user(
         last_name=req.last_name,
     )
 
-    async with get_db() as db:
-        user_service = create_user_service()
-        await user_service.upsert_user(db, user)
+    user_service = create_user_service()
+    await user_service.upsert_user(db, user)
 
     return {"status": "ok", "user_id": user.id}
 
 
 @router.get("/me")
-async def me(current: ClerkUser = Depends(get_current_user)) -> User:
+async def me(
+    current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
+) -> User:
     if not current.user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
 
-    async with get_db() as db:
-        user_service = create_user_service()
-        user = await user_service.get_user_by_id(db, current.user_id)
-        if user is None:
-            # Create minimal user record on first access
-            new_user = User(
-                id=current.user_id,
-                email=current.email,
-            )
-            await user_service.upsert_user(db, new_user)
-            return new_user
-        return user
+    user_service = create_user_service()
+    user = await user_service.get_user_by_id(db, current.user_id)
+    if user is None:
+        # Create minimal user record on first access
+        new_user = User(
+            id=current.user_id,
+            email=current.email,
+        )
+        await user_service.upsert_user(db, new_user)
+        return new_user
+    return user
 
 
 @router.get("/usage")
-async def get_usage(current: ClerkUser = Depends(get_current_user)) -> dict[str, Any]:
+async def get_usage(
+    current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
+) -> dict[str, Any]:
     """Get current user's usage information and limits"""
     if not current.user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
 
-    async with get_db() as db:
-        usage_summary: dict[str, Any] = await UsageService.get_usage_summary(db, current.user_id)
+    usage_summary: dict[str, Any] = await UsageService.get_usage_summary(db, current.user_id)
     return usage_summary
 
 
@@ -100,11 +105,11 @@ class CompleteOnboardingRequest(BaseModel):
 async def complete_onboarding_route(
     _: CompleteOnboardingRequest,
     current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
 ) -> dict[str, Any]:
     if not current.user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
 
-    async with get_db() as db:
-        user_service = create_user_service()
-        await user_service.set_user_onboarding_completed(db, current.user_id)
+    user_service = create_user_service()
+    await user_service.set_user_onboarding_completed(db, current.user_id)
     return {"status": "ok"}
