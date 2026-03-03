@@ -178,15 +178,8 @@ async def check_url(
     product_svc = create_product_service()
     pipeline_svc = create_pipeline_service()
 
-    # Try to find product by domain
-    product = await product_svc.get_product_by_domain(db, domain)
-
-    if not product:
-        # Try without subdomain variations
-        parts = domain.split(".")
-        if len(parts) > 2:
-            base_domain = ".".join(parts[-2:])
-            product = await product_svc.get_product_by_domain(db, base_domain)
+    # Try to find product by domain (with base-domain fallback)
+    product = await product_svc.find_by_domain_variant(db, domain)
 
     if not product:
         return ExtensionCheckResponse(found=False)

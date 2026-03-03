@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from motor.core import AgnosticDatabase
 
@@ -88,6 +89,25 @@ class ProductService:
             Product or None if not found
         """
         return await self._product_repo.find_by_domain(db, domain)
+
+    async def find_by_domain_variant(self, db: AgnosticDatabase, domain: str) -> Product | None:
+        """Find a product by domain with base-domain fallback.
+
+        This normalizes the input and falls back to the base domain
+        (e.g., "app.slack.com" -> "slack.com", "www.netflix.com" -> "netflix.com").
+        """
+        if not domain:
+            return None
+
+        normalized = self._normalize_domain(domain)
+        product = await self._product_repo.find_by_domain(db, normalized)
+        if product:
+            return product
+
+        base_domain = self._base_domain(normalized)
+        if base_domain and base_domain != normalized:
+            return await self._product_repo.find_by_domain(db, base_domain)
+        return None
 
     async def create_product(self, db: AgnosticDatabase, product: Product) -> Product:
         """Create a new product.
@@ -406,3 +426,27 @@ class ProductService:
             coverage=meta.coverage,
             contract_clauses=meta.contract_clauses,
         )
+
+    @staticmethod
+    def _normalize_domain(domain: str) -> str:
+        candidate = domain.strip().lower()
+        if "://" not in candidate and "/" in candidate:
+            candidate = "https://" + candidate
+        if "://" in candidate:
+            parsed = urlparse(candidate)
+            candidate = parsed.netloc or parsed.path
+        if candidate.startswith("www."):
+            candidate = candidate[4:]
+        return candidate
+
+    @staticmethod
+    def _base_domain(domain: str) -> str:
+        parts = domain.split(".")
+        two_part_tlds = {"co.uk", "com.au", "co.nz", "co.jp", "com.br", "co.in"}
+
+        if len(parts) >= 3:
+            potential_tld = ".".join(parts[-2:])
+            if potential_tld in two_part_tlds:
+                return ".".join(parts[-3:])
+            return ".".join(parts[-2:])
+        return domain
