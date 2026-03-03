@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiEndpoints } from "@lib/config";
-import { httpJson } from "@lib/http";
+import { http } from "@lib/http";
 
 export async function GET(
   request: NextRequest,
@@ -9,9 +9,19 @@ export async function GET(
 ) {
   const { slug } = await params;
   try {
-    const product = await httpJson(`${apiEndpoints.products()}/${slug}`, {
+    const response = await http(`${apiEndpoints.products()}/${slug}`, {
       method: "GET",
     });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return NextResponse.json(
+        { error: text || response.statusText },
+        { status: response.status },
+      );
+    }
+
+    const product = await response.json();
     return NextResponse.json(product);
   } catch (error) {
     console.error("Error fetching product:", error);
