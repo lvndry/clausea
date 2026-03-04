@@ -14,11 +14,14 @@ export async function GET(
     });
 
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      return NextResponse.json(
-        { error: text || response.statusText },
-        { status: response.status },
-      );
+      let errorPayload: unknown;
+      try {
+        errorPayload = await response.json();
+      } catch {
+        const text = await response.text().catch(() => "");
+        errorPayload = { error: text || response.statusText };
+      }
+      return NextResponse.json(errorPayload, { status: response.status });
     }
 
     const product = await response.json();
