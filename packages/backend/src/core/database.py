@@ -90,18 +90,12 @@ def close_motor_client() -> None:
     logger.info("Closed MongoDB client")
 
 
-@asynccontextmanager
 async def get_db() -> AsyncIterator[AgnosticDatabase]:
-    """Create a database session in the current event loop.
+    """FastAPI dependency that yields a database bound to current event loop.
 
-    This context manager ensures:
+    This dependency ensures:
     - Motor client is created in the correct event loop (important for threading)
     - A single shared client is reused (connection pool)
-
-    Usage:
-        async with get_db() as db:
-            # Use db for queries
-            result = await db.products.find_one({"slug": "example"})
 
     Yields:
         AgnosticDatabase: MongoDB database instance bound to current event loop
@@ -114,6 +108,18 @@ async def get_db() -> AsyncIterator[AgnosticDatabase]:
         yield db
 
 
+@asynccontextmanager
+async def db_session() -> AsyncIterator[AgnosticDatabase]:
+    """Context-manager wrapper for scripts/background tasks.
+
+    Usage:
+        async with db_session() as db:
+            result = await db.products.find_one({"slug": "example"})
+    """
+    async for db in get_db():
+        yield db
+
+
 async def test_db_connection() -> bool:
     """Test database connection using the context manager.
 
@@ -121,7 +127,7 @@ async def test_db_connection() -> bool:
         bool: True if connection successful
     """
     try:
-        async with get_db() as db:
+        async with db_session() as db:
             # Test connection
             await db.command("ping")
             logger.info("Successfully connected to MongoDB")

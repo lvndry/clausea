@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 from datetime import datetime
 
-from src.core.database import get_db
+from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document_section import DocumentSection
 from src.models.document_version import DocumentVersion
@@ -22,7 +22,7 @@ def _hash_content(text: str | None, doc_type: str | None) -> str | None:
 
 
 async def migrate() -> None:
-    async with get_db() as db:
+    async with db_session() as db:
         documents = await db.documents.find().to_list(length=None)
         logger.info(f"Found {len(documents)} documents to migrate")
 

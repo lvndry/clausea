@@ -51,13 +51,15 @@ export function LenisProvider({ children }: { children: React.ReactNode }) {
     // Disable lag smoothing in GSAP to prevent any delay in scroll animations
     gsap.ticker.lagSmoothing(0);
 
-    // Refresh ScrollTrigger after layout settles
-    const refreshTimeout = setTimeout(() => {
-      ScrollTrigger.refresh();
-    }, 100);
+    // ScrollTrigger measures scroll positions; Lenis + pinned sections can miscalculate
+    // until layout is stable. Refresh once Lenis has settled, then again after fonts
+    // and async content have loaded (prevents cropped sections like pricing/footer).
+    const initialRefreshId = setTimeout(() => ScrollTrigger.refresh(), 100);
+    const deferredRefreshId = setTimeout(() => ScrollTrigger.refresh(), 500);
 
     return () => {
-      clearTimeout(refreshTimeout);
+      clearTimeout(initialRefreshId);
+      clearTimeout(deferredRefreshId);
       // Remove the same callback reference that was added
       gsap.ticker.remove(rafCallback);
       lenis.destroy();

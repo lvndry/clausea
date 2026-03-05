@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from src.core.database import get_db
+from src.core.database import db_session
 from src.core.logging import get_logger
 from src.dashboard.db_utils import get_all_products_isolated
 from src.dashboard.utils import run_async
@@ -56,7 +56,7 @@ def show_deep_analysis() -> None:
 
     # Check for existing deep analysis
     async def check_existing_analysis() -> ProductDeepAnalysis | None:
-        async with get_db() as db:
+        async with db_session() as db:
             product_svc, _ = create_services()
             return await product_svc.get_product_deep_analysis(db, selected_product.slug)
 
@@ -133,7 +133,7 @@ async def generate_deep_analysis_wrapper(product_slug: str) -> bool:
     solving the threading issues with Streamlit.
     """
     try:
-        async with get_db() as db:
+        async with db_session() as db:
             # Create services with fresh repositories
             product_svc, doc_svc = create_services()
 
