@@ -21,7 +21,7 @@ RUN uv venv $VENV_PATH
 COPY pyproject.toml ./
 COPY uv.lock ./
 
-RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
+RUN --mount=type=cache,id=cacheKey-uv-cache,target=/root/.cache/uv \
     UV_HTTP_TIMEOUT=300 UV_RETRIES=5 uv sync --no-dev --frozen
 
 # Download the Camoufox Firefox binary at build time (stored at $XDG_DATA_HOME/camoufox).
