@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from src.core.database import db_dry_run, get_db
+from src.core.database import db_dry_run, db_session
 from src.core.logging import get_logger, setup_logging
 from src.pipeline import DocumentAnalyzer, LegalDocumentPipeline
 from src.services.service_factory import create_document_service, create_product_service
@@ -138,7 +138,7 @@ async def _run_crawl_only(products: list) -> None:
 async def _run_classify_only(products: list) -> None:
     logger.info("Starting classify-only run", product_count=len(products))
     analyzer = DocumentAnalyzer()
-    async with get_db() as db:
+    async with db_session() as db:
         doc_svc = create_document_service()
         for product in products:
             documents = await doc_svc.get_product_documents(db, product.id)
@@ -200,7 +200,7 @@ async def _run_classify_only(products: list) -> None:
 
 async def _run_full_pipeline(products: list) -> None:
     await _run_crawl_only(products)
-    async with get_db() as db:
+    async with db_session() as db:
         product_svc = create_product_service()
         doc_svc = create_document_service()
         for product in products:
@@ -245,7 +245,7 @@ async def _main() -> None:
         )
 
     with db_dry_run(is_dry_run):
-        async with get_db() as db:
+        async with db_session() as db:
             product_svc = create_product_service()
             products = await product_svc.get_all_products(db)
 

@@ -43,11 +43,13 @@ export default function ComplexityToClarity() {
       const tl = gsap.timeline({
         scrollTrigger: {
           trigger: containerRef.current,
-          start: "center center",
-          // Reduced scroll duration for tighter experience
-          end: "+=150%",
+          start: "top top",
+          end: "+=140%",
+          scrub: 1.5,
           pin: true,
-          scrub: 2,
+          pinSpacing: true,
+          anticipatePin: 1,
+          invalidateOnRefresh: true,
         },
       });
 
@@ -95,6 +97,8 @@ export default function ComplexityToClarity() {
         0.5,
       );
 
+      ScrollTrigger.refresh();
+
       // useGSAP handles cleanup automatically via revert()
     },
     { scope: containerRef, dependencies: [isDesktop] },
@@ -103,7 +107,7 @@ export default function ComplexityToClarity() {
   return (
     <section
       ref={containerRef}
-      className="col-span-12 relative bg-background border-b border-border text-foreground flex flex-col items-center justify-center overflow-hidden py-16 md:py-0 min-h-[80vh] md:min-h-0 md:h-[200vh]"
+      className="col-span-12 relative bg-background border-b border-border text-foreground flex flex-col items-center justify-center overflow-hidden py-16 md:py-0 min-h-[80vh] md:min-h-screen"
     >
       {/* Background "Complexity" - Dense Jargon Pattern */}
       <div className="absolute inset-0 opacity-[0.05] select-none pointer-events-none font-mono text-[10px] leading-tight whitespace-pre overflow-hidden text-foreground">

@@ -1355,10 +1355,10 @@ Perform cross-document analysis, compliance assessment, and business impact anal
 
 
 async def main() -> None:
-    from src.core.database import get_db
+    from src.core.database import db_session
     from src.services.service_factory import create_services
 
-    async with get_db() as db:
+    async with db_session() as db:
         product_svc, doc_svc = create_services()
 
         await summarize_all_product_documents(db, "notion", doc_svc)

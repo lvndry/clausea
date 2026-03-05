@@ -13,7 +13,7 @@ import tldextract
 from motor.core import AgnosticDatabase
 
 from src.core.config import config
-from src.core.database import get_db
+from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document import Document
 from src.models.pipeline_job import CrawlError, PipelineJob
@@ -257,7 +257,7 @@ class PipelineService:
         Args:
             job_id: The pipeline job ID to execute
         """
-        async with get_db() as db:
+        async with db_session() as db:
             job = await self._pipeline_repo.find_by_id(db, job_id)
             if not job:
                 logger.error(f"Pipeline job {job_id} not found")

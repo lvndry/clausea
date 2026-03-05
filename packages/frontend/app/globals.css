@@ -297,6 +297,10 @@
   * {
     @apply border-border;
   }
+  html {
+    overflow-y: auto;
+    scroll-behavior: auto; /* Lenis handles smooth scroll */
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-family:
