@@ -22,7 +22,7 @@ COPY pyproject.toml ./
 COPY uv.lock ./
 
 RUN --mount=type=cache,id=cacheKey-uv-cache,target=/root/.cache/uv \
-    UV_HTTP_TIMEOUT=300 UV_RETRIES=5 uv sync --no-dev --frozen
+    UV_HTTP_TIMEOUT=600 UV_RETRIES=5 uv sync --no-dev --frozen
 
 # Download the Camoufox Firefox binary at build time (stored at $XDG_DATA_HOME/camoufox).
 # Running this here avoids any network call at container startup.
