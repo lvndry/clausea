@@ -21,11 +21,13 @@ RUN uv venv $VENV_PATH
 COPY pyproject.toml ./
 COPY uv.lock ./
 
-RUN uv sync --no-dev --frozen
+RUN --mount=type=cache,id=s/ab4b3277-a93e-4523-ad9a-2c96ad9d103c-/root/.cache/uv,target=/root/.cache/uv \
+    uv sync --no-dev --frozen
 
 # Download the Camoufox Firefox binary at build time (stored at $XDG_DATA_HOME/camoufox).
 # Running this here avoids any network call at container startup.
-RUN uv run camoufox fetch
+RUN --mount=type=cache,id=s/ab4b3277-a93e-4523-ad9a-2c96ad9d103c-/root/.cache/uv,target=/root/.cache/uv \
+    uv run camoufox fetch
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Clean image containing only the venv, the Camoufox binary, runtime system
