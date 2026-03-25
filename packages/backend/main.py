@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from src.core.config import config
-from src.core.database import close_motor_client, get_db
+from src.core.database import close_motor_client, db_session
 from src.core.db_indexes import ensure_all_indexes
 from src.core.logging import setup_logging
 from src.core.middleware import AuthMiddleware
@@ -32,7 +32,7 @@ setup_logging()
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle events."""
     # Startup: Ensure database indexes are created
-    async with get_db() as db:
+    async with db_session() as db:
         await ensure_all_indexes(db)
 
     yield

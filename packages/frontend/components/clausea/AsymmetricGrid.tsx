@@ -67,7 +67,7 @@ export default function AsymmetricGrid() {
   return (
     <section
       ref={containerRef}
-      className="col-span-12 grid grid-cols-1 md:grid-cols-12 border-b border-border bg-background"
+      className="col-span-12 grid grid-cols-1 md:grid-cols-12 border-b border-border bg-background relative z-10 overflow-visible"
     >
       {/* Section Header */}
       <div className="col-span-12 md:col-span-4 px-6 md:px-10 py-16 md:py-20 border-b md:border-b-0 md:border-r border-border flex flex-col justify-between">

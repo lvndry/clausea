@@ -60,7 +60,7 @@ from src.analyzers.date_extractor import DateExtractor
 from src.analyzers.document_classifier import DocumentClassifier
 from src.analyzers.locale_analyzer import LocaleAnalyzer
 from src.analyzers.region_detector import RegionDetector
-from src.core.database import get_db
+from src.core.database import db_session
 from src.core.logging import get_logger
 from src.crawler import ClauseaCrawler, CrawlResult
 from src.llm import SupportedModel, acompletion_with_fallback
@@ -792,7 +792,7 @@ class LegalDocumentPipeline:
         duplicate_count = 0
         error_count = 0
 
-        async with get_db() as db:
+        async with db_session() as db:
             document_service = create_document_service()
 
             for document in documents:
@@ -1066,7 +1066,7 @@ class LegalDocumentPipeline:
             },
             stats={"mode": "hybrid"},
         )
-        async with get_db() as db:
+        async with db_session() as db:
             repo = CrawlRepository()
             await repo.create_session(db, session)
         return session
@@ -1078,7 +1078,7 @@ class LegalDocumentPipeline:
         session.status = "failed" if error else "completed"
         session.error = error
         session.completed_at = datetime.now()
-        async with get_db() as db:
+        async with db_session() as db:
             repo = CrawlRepository()
             await repo.update_session(db, session)
 
@@ -1295,7 +1295,7 @@ class LegalDocumentPipeline:
         try:
             # Get all products
             if products is None:
-                async with get_db() as db:
+                async with db_session() as db:
                     product_service = create_product_service()
                     products = await product_service.get_all_products(db)
             logger.info(f"📊 Processing {len(products)} products")
