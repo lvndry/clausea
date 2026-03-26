@@ -5,9 +5,11 @@ FROM python:3.11-slim AS builder
 
 ENV VENV_PATH="/opt/venv"
 ENV PATH="$VENV_PATH/bin:$PATH"
-# Pin the Camoufox data directory to a known path so the binary is easy to
-# COPY into the final stage, regardless of the container's HOME.
-ENV XDG_DATA_HOME="/opt/camoufox-data"
+# UV_PROJECT_ENVIRONMENT tells uv sync where to create/use the project venv.
+ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
+# Camoufox uses XDG_CACHE_HOME to determine where to install the browser binary.
+# Pin it to a known path so the COPY into the final stage is predictable.
+ENV XDG_CACHE_HOME="/opt/camoufox-cache"
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -16,16 +18,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv==0.9
-RUN uv venv $VENV_PATH
 
 COPY pyproject.toml ./
 COPY uv.lock ./
 
-RUN UV_HTTP_TIMEOUT=600 UV_RETRIES=5 UV_CONCURRENT_DOWNLOADS=2 UV_CONCURRENT_INSTALLS=2 uv sync --no-dev --frozen && uv cache clean
+# --no-install-project skips building the local `clausea` package (source isn't
+# copied here). All external dependencies are still installed into /opt/venv.
+RUN uv sync --no-dev --frozen --no-install-project && uv cache clean
 
 # Download the Camoufox Firefox binary at build time (stored at $XDG_DATA_HOME/camoufox).
 # Running this here avoids any network call at container startup.
-RUN uv run camoufox fetch
+RUN /opt/venv/bin/camoufox fetch
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Clean image containing only the venv, the Camoufox binary, runtime system
@@ -35,7 +38,7 @@ FROM python:3.11-slim
 ENV VENV_PATH="/opt/venv"
 ENV PATH="$VENV_PATH/bin:$PATH"
 ENV PYTHONPATH="/app"
-ENV XDG_DATA_HOME="/opt/camoufox-data"
+ENV XDG_CACHE_HOME="/opt/camoufox-cache"
 
 # Runtime-only system libraries required by the Camoufox Firefox binary.
 # These satisfy the dynamic linker at process start; they are not used
@@ -62,11 +65,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy compiled Python environment (no build tools, only runtime packages).
+# Copy the compiled virtual environment (all external deps, no local package).
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy the pre-fetched Camoufox Firefox binary.
-COPY --from=builder /opt/camoufox-data /opt/camoufox-data
+# Copy the pre-fetched Camoufox Firefox binary (stored under XDG_CACHE_HOME).
+COPY --from=builder /opt/camoufox-cache /opt/camoufox-cache
 
 COPY . .
 
