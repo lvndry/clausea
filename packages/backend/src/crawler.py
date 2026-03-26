@@ -50,7 +50,11 @@ ACCEPT_HEADER = (
 
 @dataclass
 class StaticFetchResult:
-    """Raw result from an HTTP GET before any content extraction."""
+    """Raw result from an HTTP GET before any content extraction.
+
+    When ``blocked_by_robots_txt`` is True, the crawler did not perform the GET
+    because robots.txt disallows the URL.
+    """
 
     url: str
     status_code: int
@@ -58,7 +62,7 @@ class StaticFetchResult:
     body: str
     raw_bytes: bytes | None = None
     headers: dict[str, str] = dataclass_field(default_factory=dict)
-    is_error: bool = False
+    blocked_by_robots_txt: bool = False
     error_message: str | None = None
     cached: bool = False
     # The final URL after following HTTP redirects (301/302).  When the
@@ -1393,17 +1397,18 @@ class ClauseaCrawler:
 
         If this returns False and ``use_browser`` is enabled the caller should
         retry with the headless browser.
+
+        High URL legal-relevance scores use a higher minimum length so thin
+        static HTML (common for SPAs) still triggers a browser retry.
         """
-        if not page.text or len(page.text) < 500:
+        text = page.text or ""
+        if self._is_garbled_content(text):
             return False
-        if self._is_garbled_content(page.text):
-            return False
-        if self._has_js_required_markers(page.text):
+        if self._has_js_required_markers(text):
             return False
         url_score = self.url_scorer.score_url(url)
-        if url_score >= 5.0 and len(page.text) < 1000:
-            return False
-        return True
+        min_len = 1000 if url_score >= 5.0 else 500
+        return len(text) >= min_len
 
     # ------------------------------------------------------------------
     # Static fetch (pure HTTP, no content processing)
@@ -1435,7 +1440,7 @@ class ClauseaCrawler:
                     status_code=403,
                     content_type="",
                     body="",
-                    is_error=True,
+                    blocked_by_robots_txt=True,
                     error_message=f"Blocked by robots.txt: {reason}",
                 )
 
@@ -2608,7 +2613,7 @@ class ClauseaCrawler:
         try:
             raw = await self._static_fetch(session, url)
 
-            if raw.is_error:
+            if raw.blocked_by_robots_txt:
                 return raw.to_failed_crawl_result()
 
             # Use the resolved URL (after redirects) for all downstream work
