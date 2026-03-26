@@ -160,7 +160,7 @@ class ProductRepository(BaseRepository):
         """
         summary_data = meta_summary.model_dump()
         summary_data["product_slug"] = product_slug
-        summary_data["updated_at"] = datetime.now().isoformat()
+        summary_data["updated_at"] = datetime.now()
 
         await db.product_overviews.update_one(
             {"product_slug": product_slug},
@@ -222,7 +222,7 @@ class ProductRepository(BaseRepository):
         analysis_data = deep_analysis.model_dump()
         analysis_data["product_slug"] = product_slug
         analysis_data["document_signature"] = document_signature
-        analysis_data["updated_at"] = datetime.now().isoformat()
+        analysis_data["updated_at"] = datetime.now()
 
         await db.deep_analyses.update_one(
             {"product_slug": product_slug},

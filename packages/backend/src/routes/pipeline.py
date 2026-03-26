@@ -3,7 +3,7 @@
 Provides a DeepWiki-style API: submit a URL, get a job ID, poll for status.
 """
 
-import asyncio
+from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from motor.core import AgnosticDatabase
@@ -13,38 +13,12 @@ from src.core.database import get_db
 from src.core.logging import get_logger
 from src.models.pipeline_job import PipelineJob
 from src.repositories.pipeline_repository import PipelineRepository
+from src.services.pipeline_scheduler import schedule_pipeline_run
 from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
-
-_RUNNING_JOB_IDS: set[str] = set()
-_RUNNING_JOB_LOCK = asyncio.Lock()
-
-
-async def _schedule_pipeline_run(job_id: str, background_tasks: BackgroundTasks) -> bool:
-    """Best-effort scheduler for background pipeline execution.
-
-    This is intentionally idempotent per-process: repeated calls for the same job_id
-    won't enqueue duplicate background tasks. This helps in dev where a job can be
-    left 'active' in Mongo after a server reload, and the frontend re-POSTs /crawl
-    to re-kick execution.
-    """
-    async with _RUNNING_JOB_LOCK:
-        if job_id in _RUNNING_JOB_IDS:
-            return False
-        _RUNNING_JOB_IDS.add(job_id)
-
-    async def _runner() -> None:
-        try:
-            await _run_pipeline_background(job_id)
-        finally:
-            async with _RUNNING_JOB_LOCK:
-                _RUNNING_JOB_IDS.discard(job_id)
-
-    background_tasks.add_task(_runner)
-    return True
 
 
 class CrawlRequest(BaseModel):
@@ -104,7 +78,7 @@ async def start_crawl(
     job = result["job"]
 
     # Best-effort: (re)kick background execution for any active job.
-    scheduled = await _schedule_pipeline_run(job.id, background_tasks)
+    scheduled = await schedule_pipeline_run(job.id, background_tasks)
     message = (
         f"Pipeline started for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
         if scheduled
@@ -181,10 +155,27 @@ async def get_job_status(
     return job
 
 
-async def _run_pipeline_background(job_id: str) -> None:
-    """Wrapper to run the pipeline in the background and handle errors."""
-    try:
-        pipeline_svc = create_pipeline_service()
-        await pipeline_svc.run_pipeline(job_id)
-    except Exception as e:
-        logger.error(f"Background pipeline failed for job {job_id}: {e}", exc_info=True)
+@router.delete("/jobs/{job_id}", status_code=200)
+async def cancel_job(
+    job_id: str,
+    db: AgnosticDatabase = Depends(get_db),
+) -> dict[str, str]:
+    """Cancel a running pipeline job."""
+    pipeline_svc = create_pipeline_service()
+    job = await pipeline_svc.get_job(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Pipeline job not found")
+    if job.status in ("completed", "failed"):
+        raise HTTPException(status_code=409, detail=f"Job already {job.status}")
+
+    repo = PipelineRepository()
+    await repo.update_fields(
+        db,
+        job_id,
+        {
+            "status": "failed",
+            "error": "Cancelled by user",
+            "completed_at": datetime.now(),
+        },
+    )
+    return {"status": "cancelled", "job_id": job_id}

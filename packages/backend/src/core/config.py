@@ -44,9 +44,6 @@ class DatabaseConfig:
         # TODO: Change to clausea
         self.mongodb_database: str = os.getenv("MONGODB_DATABASE", "clausea")
 
-        if self.mongodb_uri is None:
-            raise ValueError("MONGO_URI is not set")
-
     @property
     def database_url(self) -> str | None:
         """Get the database URL with fallback"""

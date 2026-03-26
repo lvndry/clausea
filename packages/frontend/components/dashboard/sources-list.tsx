@@ -15,7 +15,6 @@ import { useState } from "react";
 
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getVerdictConfig } from "@/lib/verdict";
@@ -79,22 +78,6 @@ interface DocumentSummary {
   summary?: string;
   keypoints?: string[];
   keypoints_with_evidence?: KeypointWithEvidence[] | null;
-}
-
-interface DocumentDeepAnalysis {
-  document_risk_breakdown?: {
-    overall_risk: number;
-    top_concerns?: string[];
-    positive_protections?: string[];
-    missing_information?: string[];
-  };
-  critical_clauses?: Array<{
-    clause_type: string;
-    quote: string;
-    analysis: string;
-    risk_level: string;
-    section_title?: string | null;
-  }>;
 }
 
 interface SourcesListProps {
@@ -162,23 +145,11 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
   const [expandedKeypoints, setExpandedKeypoints] = useState<
     Record<string, Set<number>>
   >({});
-  const [expandedDeepAnalysis, setExpandedDeepAnalysis] = useState<Set<string>>(
-    new Set(),
-  );
   const [extractions, setExtractions] = useState<
     Record<string, DocumentExtraction>
   >({});
   const [extractionLoading, setExtractionLoading] = useState<
     Record<string, boolean>
-  >({});
-  const [deepAnalysis, setDeepAnalysis] = useState<
-    Record<string, DocumentDeepAnalysis>
-  >({});
-  const [deepAnalysisLoading, setDeepAnalysisLoading] = useState<
-    Record<string, boolean>
-  >({});
-  const [deepAnalysisError, setDeepAnalysisError] = useState<
-    Record<string, string | null>
   >({});
 
   function toggleExpanded(docId: string, docTitle?: string | null) {
@@ -229,52 +200,6 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
     }
   }
 
-  function toggleDeepAnalysis(docId: string) {
-    setExpandedDeepAnalysis((prev) => {
-      const next = new Set(prev);
-      if (next.has(docId)) {
-        next.delete(docId);
-      } else {
-        next.add(docId);
-      }
-      return next;
-    });
-  }
-
-  async function ensureDeepAnalysisLoaded(docId: string) {
-    if (deepAnalysis[docId] || deepAnalysisLoading[docId]) return;
-    setDeepAnalysisLoading((s) => ({ ...s, [docId]: true }));
-    setDeepAnalysisError((s) => ({ ...s, [docId]: null }));
-    try {
-      const res = await fetch(
-        `/api/products/${productSlug}/documents/${docId}/deep-analysis`,
-      );
-      if (res.status === 402) {
-        setDeepAnalysisError((s) => ({
-          ...s,
-          [docId]: "Upgrade to Pro to unlock deep analysis for this document.",
-        }));
-        return;
-      }
-      if (!res.ok) {
-        setDeepAnalysisError((s) => ({
-          ...s,
-          [docId]: "Deep analysis is not available for this document.",
-        }));
-        return;
-      }
-      const json = (await res.json()) as DocumentDeepAnalysis;
-      setDeepAnalysis((s) => ({ ...s, [docId]: json }));
-    } catch {
-      setDeepAnalysisError((s) => ({
-        ...s,
-        [docId]: "Deep analysis is not available for this document.",
-      }));
-    } finally {
-      setDeepAnalysisLoading((s) => ({ ...s, [docId]: false }));
-    }
-  }
-
   if (documents.length === 0) {
     return (
       <Card variant="default" className="border-border">
@@ -302,7 +227,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
             <div>
               <CardTitle className="text-lg">Source Documents</CardTitle>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Legal documents analyzed for this product
+                Policy documents analyzed for this product
               </p>
             </div>
           </div>
@@ -316,10 +241,6 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
       <CardContent className="space-y-2.5">
         {documents.map((doc) => {
           const isExpanded = expandedDocs.has(doc.id);
-          const isDeepExpanded = expandedDeepAnalysis.has(doc.id);
-          const docDeepAnalysis = deepAnalysis[doc.id];
-          const docDeepError = deepAnalysisError[doc.id];
-          const docDeepLoading = deepAnalysisLoading[doc.id];
           const verdictConfig = doc.verdict
             ? getVerdictConfig(doc.verdict)
             : null;
@@ -635,102 +556,6 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           </div>
                         )}
 
-                        {/* Deep analysis (paid) */}
-                        <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <h5 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                                Deep analysis (Pro)
-                              </h5>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Clause-level risks, key clauses, and detailed
-                                context for this document.
-                              </p>
-                            </div>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                if (!docDeepAnalysis) {
-                                  await ensureDeepAnalysisLoaded(doc.id);
-                                }
-                                toggleDeepAnalysis(doc.id);
-                              }}
-                            >
-                              {isDeepExpanded ? "Hide" : "Unlock"}
-                            </Button>
-                          </div>
-
-                          {docDeepLoading && (
-                            <div className="text-xs text-muted-foreground mt-2">
-                              Loading deep analysis…
-                            </div>
-                          )}
-
-                          {docDeepError && (
-                            <div className="mt-2 rounded-md border border-border/60 bg-card/60 p-2 text-xs text-muted-foreground">
-                              <p>{docDeepError}</p>
-                              <a
-                                href="/pricing"
-                                className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600 dark:text-violet-400 mt-2"
-                              >
-                                Upgrade to Pro
-                              </a>
-                            </div>
-                          )}
-
-                          {docDeepAnalysis && isDeepExpanded && (
-                            <div className="mt-3 space-y-2 text-xs">
-                              {docDeepAnalysis.document_risk_breakdown && (
-                                <div className="rounded-md border border-border/60 bg-card/60 p-2">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-muted-foreground">
-                                      Overall risk
-                                    </span>
-                                    <span className="font-semibold">
-                                      {docDeepAnalysis.document_risk_breakdown
-                                        .overall_risk ?? "-"}
-                                      /10
-                                    </span>
-                                  </div>
-                                  {docDeepAnalysis.document_risk_breakdown
-                                    .top_concerns?.length ? (
-                                    <div className="mt-2">
-                                      <span className="text-muted-foreground">
-                                        Top concerns:
-                                      </span>
-                                      <ul className="mt-1 space-y-1">
-                                        {docDeepAnalysis.document_risk_breakdown.top_concerns
-                                          .slice(0, 3)
-                                          .map((c, idx) => (
-                                            <li key={idx}>• {c}</li>
-                                          ))}
-                                      </ul>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              )}
-
-                              {docDeepAnalysis.critical_clauses?.length ? (
-                                <div className="rounded-md border border-border/60 bg-card/60 p-2">
-                                  <span className="text-muted-foreground">
-                                    Critical clauses:
-                                  </span>
-                                  <ul className="mt-1 space-y-1">
-                                    {docDeepAnalysis.critical_clauses
-                                      .slice(0, 3)
-                                      .map((c, idx) => (
-                                        <li key={idx}>
-                                          • {c.clause_type}: {c.analysis}
-                                        </li>
-                                      ))}
-                                  </ul>
-                                </div>
-                              ) : null}
-                            </div>
-                          )}
-                        </div>
                       </div>
                     </div>
                   </motion.div>

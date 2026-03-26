@@ -67,7 +67,8 @@ class DocumentProcessor:
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",
-            "safety_policy",
+            "community_guidelines",
+            "children_privacy_policy",
             "other",
         ]
 

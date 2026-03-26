@@ -18,7 +18,7 @@ from src.models.document import (
     DocumentExtraction,
     DocumentSummary,
     EvidenceSpan,
-    ExtractedTextItem,
+    ExtractedDataItem,
     ExtractedThirdPartyRecipient,
     MetaSummary,
     MetaSummaryScore,
@@ -289,14 +289,14 @@ class TestCoverageItem:
 class TestDocumentExtraction:
     def test_defaults(self) -> None:
         extraction = DocumentExtraction(source_content_hash="hash123")
-        assert extraction.version == "v3"
+        assert extraction.version == "v4"
         assert extraction.data_collected == []
         assert extraction.privacy_signals is None
 
     def test_with_data(self) -> None:
         extraction = DocumentExtraction(
             source_content_hash="hash123",
-            data_collected=[ExtractedTextItem(value="Email address")],
+            data_collected=[ExtractedDataItem(data_type="Email address")],
             privacy_signals=PrivacySignals(sells_data="no"),
         )
         assert len(extraction.data_collected) == 1

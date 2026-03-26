@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Any
 
 import shortuuid
-import tldextract
 from motor.core import AgnosticDatabase
 
 from src.core.config import config
@@ -22,22 +21,11 @@ from src.pipeline import LegalDocumentPipeline
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service, create_product_service
 from src.summarizer import generate_product_overview, summarize_all_product_documents
+from src.utils.domain import extract_domain as _extract_domain
 
 logger = get_logger(__name__)
 
-_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
-
-
-def _extract_domain(url: str) -> str:
-    """Extract the root domain from a URL.
-
-    Examples:
-        https://www.netflix.com/signup -> netflix.com
-        https://app.slack.com/client -> slack.com
-    """
-    # Avoid network fetches for public suffix list on the event loop.
-    extracted = _TLD_EXTRACT(url)
-    return f"{extracted.domain}.{extracted.suffix}"
+MAX_PIPELINE_DURATION_SECONDS = 1800
 
 
 def _domain_to_product_name(domain: str) -> str:
@@ -122,14 +110,6 @@ class PipelineService:
                     "product_slug": product.slug,
                     "product_name": product.name,
                 }
-
-            # Check for existing active job before creating a new one
-            active_job = await self._pipeline_repo.find_active_by_product_slug(db, product.slug)
-            if active_job:
-                logger.info(
-                    f"Active pipeline job already exists for {product.slug}: {active_job.id}"
-                )
-                return {"already_indexed": False, "job": active_job}
         else:
             # Create new product from URL
             product = Product(
@@ -142,14 +122,17 @@ class PipelineService:
             await product_svc.create_product(db, product)
             logger.info(f"Created new product '{product.name}' ({product.slug}) from URL: {url}")
 
-        # Create pipeline job
         job = PipelineJob(
             product_slug=product.slug,
+            product_id=product.id,
             product_name=product.name,
             url=url,
         )
-        await self._pipeline_repo.create(db, job)
-        logger.info(f"Created pipeline job {job.id} for {product.slug}")
+        job, created = await self._pipeline_repo.find_or_create_active(db, job)
+        if created:
+            logger.info(f"Created pipeline job {job.id} for {product.slug}")
+        else:
+            logger.info(f"Active pipeline job already exists for {product.slug}: {job.id}")
 
         return {"already_indexed": False, "job": job}
 
@@ -271,221 +254,249 @@ class PipelineService:
                 await self._pipeline_repo.update(db, job)
                 return
 
-            try:
-                # === Step 1: Crawl ===
-                job.status = "crawling"
-                await self._update_step(
-                    db, job, "crawling", "running", "Discovering legal documents..."
-                )
-
-                # Track progress tasks to ensure they are all processed before switching phases.
-                # This prevents a race condition where a late 'Discovery' update overwrites
-                # the subsequent 'summarizing' job status in MongoDB.
-                crawl_tasks: list[asyncio.Task] = []
-
-                # Create progress callback for crawl phase
-                async def _on_crawl_progress(phase: str, current: int, total: int) -> None:
-                    remaining = max(total - current, 0)
-                    phase_name = "Discovery" if phase == "discovery" else "Deep Crawl"
-                    # We wrap this in a task so the crawler doesn't block on DB I/O,
-                    # but we keep track of it to await it before phase transitions.
-                    task = asyncio.create_task(
-                        self._update_step_progress(
-                            db,
-                            job,
-                            "crawling",
-                            current=current,
-                            total=total,
-                            message=f"{phase_name}: {current}/{total} pages scanned ({remaining} remaining)",
+            async def _run_pipeline_core() -> None:
+                try:
+                    if job.started_at is None:
+                        job.started_at = datetime.now()
+                        await self._pipeline_repo.update_fields(
+                            db, job.id, {"started_at": job.started_at}
                         )
+
+                    # === Step 1: Crawl ===
+                    job.status = "crawling"
+                    await self._update_step(
+                        db, job, "crawling", "running", "Discovering legal documents..."
                     )
-                    crawl_tasks.append(task)
 
-                pipeline = LegalDocumentPipeline(
-                    max_depth=config.crawler.max_depth,
-                    max_pages=config.crawler.max_pages,
-                    crawler_strategy="bfs",
-                    concurrent_limit=5,
-                    delay_between_requests=1.0,
-                    progress_callback=_on_crawl_progress,
-                )
-                stats = await pipeline.run([product])
+                    # Track progress tasks to ensure they are all processed before switching phases.
+                    # This prevents a race condition where a late 'Discovery' update overwrites
+                    # the subsequent 'summarizing' job status in MongoDB.
+                    crawl_tasks: list[asyncio.Task] = []
 
-                # Drain pending progress tasks before finalizing the crawl step
-                if crawl_tasks:
-                    await asyncio.gather(*crawl_tasks, return_exceptions=True)
-
-                job.documents_found = stats.total_documents_found
-                job.documents_stored = stats.legal_documents_stored
-
-                # Persist per-URL crawl failures on the job
-                if stats.crawl_errors:
-                    job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]
-
-                await self._update_step(
-                    db,
-                    job,
-                    "crawling",
-                    "completed",
-                    f"Found {stats.legal_documents_stored} legal documents",
-                )
-
-                if stats.legal_documents_stored == 0:
-                    job.status = "failed"
-
-                    # Build a descriptive error based on crawl error types
-                    robots_blocked = [
-                        e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
-                    ]
-                    if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
-                        job.error = (
-                            "This site blocks automated access via robots.txt. "
-                            "We were unable to crawl any legal documents."
+                    # Create progress callback for crawl phase
+                    async def _on_crawl_progress(phase: str, current: int, total: int) -> None:
+                        remaining = max(total - current, 0)
+                        phase_name = "Discovery" if phase == "discovery" else "Deep Crawl"
+                        # We wrap this in a task so the crawler doesn't block on DB I/O,
+                        # but we keep track of it to await it before phase transitions.
+                        task = asyncio.create_task(
+                            self._update_step_progress(
+                                db,
+                                job,
+                                "crawling",
+                                current=current,
+                                total=total,
+                                message=f"{phase_name}: {current}/{total} pages scanned ({remaining} remaining)",
+                            )
                         )
-                    elif robots_blocked:
-                        job.error = (
-                            f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
-                            f"of {len(job.crawl_errors)} failed URLs). "
-                            "No legal documents could be found."
-                        )
-                    elif job.crawl_errors:
-                        job.error = (
-                            f"Crawling failed for {len(job.crawl_errors)} URL(s). "
-                            "No legal documents could be found."
-                        )
-                    else:
-                        job.error = "No legal documents found on this site"
+                        crawl_tasks.append(task)
 
-                    job.completed_at = datetime.now()
+                    pipeline = LegalDocumentPipeline(
+                        max_depth=config.crawler.max_depth,
+                        max_pages=config.crawler.max_pages,
+                        crawler_strategy="bfs",
+                        concurrent_limit=config.crawler.concurrent_limit,
+                        delay_between_requests=config.crawler.delay_between_requests,
+                        progress_callback=_on_crawl_progress,
+                    )
+                    stats = await pipeline.run([product])
+
+                    # Drain pending progress tasks before finalizing the crawl step
+                    if crawl_tasks:
+                        await asyncio.gather(*crawl_tasks, return_exceptions=True)
+
+                    job.documents_found = stats.total_documents_found
+                    job.documents_stored = stats.legal_documents_stored
+
+                    # Persist per-URL crawl failures on the job
+                    if stats.crawl_errors:
+                        job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]
+
                     await self._update_step(
                         db,
                         job,
-                        "summarizing",
-                        "failed",
-                        "Skipped - no documents to analyze",
+                        "crawling",
+                        "completed",
+                        f"Found {stats.legal_documents_stored} legal documents",
                     )
+
+                    if stats.legal_documents_stored == 0:
+                        job.status = "failed"
+
+                        # Build a descriptive error based on crawl error types
+                        robots_blocked = [
+                            e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
+                        ]
+                        if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
+                            job.error = (
+                                "This site blocks automated access via robots.txt. "
+                                "We were unable to crawl any legal documents."
+                            )
+                        elif robots_blocked:
+                            job.error = (
+                                f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
+                                f"of {len(job.crawl_errors)} failed URLs). "
+                                "No legal documents could be found."
+                            )
+                        elif job.crawl_errors:
+                            job.error = (
+                                f"Crawling failed for {len(job.crawl_errors)} URL(s). "
+                                "No legal documents could be found."
+                            )
+                        else:
+                            job.error = "No legal documents found on this site"
+
+                        job.completed_at = datetime.now()
+                        await self._update_step(
+                            db,
+                            job,
+                            "summarizing",
+                            "failed",
+                            "Skipped - no documents to analyze",
+                        )
+                        await self._update_step(
+                            db,
+                            job,
+                            "generating_overview",
+                            "failed",
+                            "Skipped - no documents to analyze",
+                        )
+                        await self._pipeline_repo.update(db, job)
+                        return
+
+                    # === Step 2: Summarize ===
+                    job.status = "summarizing"
+                    await self._update_step(
+                        db, job, "summarizing", "running", "Analyzing document contents..."
+                    )
+
+                    doc_svc = create_document_service()
+                    expected_total = int(job.documents_stored or job.documents_found or 0)
+                    if expected_total > 0:
+                        await self._update_step_progress(
+                            db,
+                            job,
+                            "summarizing",
+                            current=0,
+                            total=expected_total,
+                            message=f"Queued {expected_total} documents for analysis",
+                        )
+
+                    async def _on_summarize_progress(index: int, total: int, doc: Document) -> None:
+                        remaining = max(total - index, 0)
+                        title = f": {doc.title}" if doc.title else ""
+                        await self._update_step_progress(
+                            db,
+                            job,
+                            "summarizing",
+                            current=index,
+                            total=total,
+                            message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
+                        )
+
+                    await summarize_all_product_documents(
+                        db,
+                        job.product_slug,
+                        doc_svc,
+                        progress_callback=_on_summarize_progress,
+                    )
+
+                    await self._update_step(
+                        db, job, "summarizing", "completed", "All documents analyzed"
+                    )
+
+                    # === Step 3: Generate Overview ===
+                    job.status = "generating_overview"
                     await self._update_step(
                         db,
                         job,
                         "generating_overview",
-                        "failed",
-                        "Skipped - no documents to analyze",
+                        "running",
+                        "Generating privacy overview...",
                     )
+
+                    product_svc_for_overview = create_product_service()
+                    doc_svc_for_overview = create_document_service()
+                    await generate_product_overview(
+                        db,
+                        job.product_slug,
+                        force_regenerate=True,
+                        product_svc=product_svc_for_overview,
+                        document_svc=doc_svc_for_overview,
+                    )
+
+                    await self._update_step(
+                        db,
+                        job,
+                        "generating_overview",
+                        "completed",
+                        "Privacy overview ready",
+                    )
+
+                    # === Done ===
+                    job.status = "completed"
+                    job.completed_at = datetime.now()
                     await self._pipeline_repo.update(db, job)
-                    return
-
-                # === Step 2: Summarize ===
-                job.status = "summarizing"
-                await self._update_step(
-                    db, job, "summarizing", "running", "Analyzing document contents..."
-                )
-
-                doc_svc = create_document_service()
-                expected_total = int(job.documents_stored or job.documents_found or 0)
-                if expected_total > 0:
-                    await self._update_step_progress(
-                        db,
-                        job,
-                        "summarizing",
-                        current=0,
-                        total=expected_total,
-                        message=f"Queued {expected_total} documents for analysis",
+                    logger.info(
+                        f"Pipeline job {job.id} completed for {job.product_slug} "
+                        f"({job.documents_stored} documents)"
                     )
 
-                async def _on_summarize_progress(index: int, total: int, doc: Document) -> None:
-                    remaining = max(total - index, 0)
-                    title = f": {doc.title}" if doc.title else ""
-                    await self._update_step_progress(
-                        db,
-                        job,
-                        "summarizing",
-                        current=index,
-                        total=total,
-                        message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
+                    # Notify subscribers (best-effort)
+                    try:
+                        from src.services.service_factory import (
+                            create_indexation_notification_service,
+                        )
+
+                        notify_svc = create_indexation_notification_service()
+                        await notify_svc.notify_indexation_completed(
+                            db,
+                            product_slug=job.product_slug,
+                            product_name=product.name,
+                            documents_found=int(job.documents_stored or job.documents_found),
+                        )
+                    except Exception as notify_exc:  # noqa: BLE001
+                        logger.warning(
+                            "indexation completion notify failed",
+                            product_slug=job.product_slug,
+                            error=str(notify_exc),
+                        )
+
+                except Exception as e:
+                    logger.error(
+                        f"Pipeline job {job.id} failed: {e}",
+                        exc_info=True,
                     )
+                    job.status = "failed"
+                    job.error = str(e)
+                    job.completed_at = datetime.now()
 
-                await summarize_all_product_documents(
-                    db,
-                    job.product_slug,
-                    doc_svc,
-                    progress_callback=_on_summarize_progress,
+                    # Mark any running steps as failed
+                    for step in job.steps:
+                        if step.status == "running":
+                            step.status = "failed"
+                            step.message = f"Failed: {e}"
+                            step.completed_at = datetime.now()
+
+                    await self._pipeline_repo.update(db, job)
+
+            try:
+                await asyncio.wait_for(
+                    _run_pipeline_core(),
+                    timeout=MAX_PIPELINE_DURATION_SECONDS,
                 )
-
-                await self._update_step(
-                    db, job, "summarizing", "completed", "All documents analyzed"
-                )
-
-                # === Step 3: Generate Overview ===
-                job.status = "generating_overview"
-                await self._update_step(
-                    db,
-                    job,
-                    "generating_overview",
-                    "running",
-                    "Generating privacy overview...",
-                )
-
-                product_svc_for_overview = create_product_service()
-                doc_svc_for_overview = create_document_service()
-                await generate_product_overview(
-                    db,
-                    job.product_slug,
-                    force_regenerate=True,
-                    product_svc=product_svc_for_overview,
-                    document_svc=doc_svc_for_overview,
-                )
-
-                await self._update_step(
-                    db,
-                    job,
-                    "generating_overview",
-                    "completed",
-                    "Privacy overview ready",
-                )
-
-                # === Done ===
-                job.status = "completed"
-                job.completed_at = datetime.now()
-                await self._pipeline_repo.update(db, job)
-                logger.info(
-                    f"Pipeline job {job.id} completed for {job.product_slug} "
-                    f"({job.documents_stored} documents)"
-                )
-
-                # Notify subscribers (best-effort)
-                try:
-                    from src.services.service_factory import (
-                        create_indexation_notification_service,
-                    )
-
-                    notify_svc = create_indexation_notification_service()
-                    await notify_svc.notify_indexation_completed(
-                        db,
-                        product_slug=job.product_slug,
-                        product_name=product.name,
-                        documents_found=int(job.documents_stored or job.documents_found),
-                    )
-                except Exception as notify_exc:  # noqa: BLE001
-                    logger.warning(
-                        "indexation completion notify failed",
-                        product_slug=job.product_slug,
-                        error=str(notify_exc),
-                    )
-
-            except Exception as e:
+            except TimeoutError:
                 logger.error(
-                    f"Pipeline job {job.id} failed: {e}",
-                    exc_info=True,
+                    "Pipeline job %s timed out after %s seconds",
+                    job_id,
+                    MAX_PIPELINE_DURATION_SECONDS,
                 )
                 job.status = "failed"
-                job.error = str(e)
+                job.error = "Pipeline timed out after 30 minutes"
                 job.completed_at = datetime.now()
-
-                # Mark any running steps as failed
                 for step in job.steps:
                     if step.status == "running":
                         step.status = "failed"
-                        step.message = f"Failed: {e}"
+                        step.message = "Pipeline timed out after 30 minutes"
                         step.completed_at = datetime.now()
-
                 await self._pipeline_repo.update(db, job)

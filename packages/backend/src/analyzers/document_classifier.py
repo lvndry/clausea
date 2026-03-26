@@ -41,7 +41,8 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",
-            "safety_policy",
+            "community_guidelines",
+            "children_privacy_policy",
             "other",
         ]
 
@@ -58,6 +59,76 @@ class DocumentClassifier(LLMUsageTrackingMixin):
 
         # Navigation indicators to avoid false positives
         self.nav_indicators = ["home", "about", "contact", "menu", "navigation", "search"]
+
+    @staticmethod
+    def _is_policy_content(text: str) -> tuple[bool, float]:
+        """Determine if text is a policy document vs a help/instructional article.
+
+        Returns (is_policy, confidence) based on obligation language density.
+        NEVER uses URL path as a signal.
+        """
+        text_lower = text.lower()
+        word_count = max(len(text_lower.split()), 1)
+
+        obligation_phrases = [
+            "we collect",
+            "we may collect",
+            "you agree",
+            "your rights",
+            "we will",
+            "you must",
+            "we may",
+            "we use",
+            "we share",
+            "we process",
+            "we retain",
+            "we store",
+            "we disclose",
+            "you consent",
+            "by using",
+            "you acknowledge",
+            "shall not",
+            "shall be",
+            "is prohibited",
+            "we are committed",
+            "we reserve the right",
+            "personal data",
+            "personal information",
+            "data controller",
+            "data processor",
+        ]
+
+        instructional_phrases = [
+            "learn more",
+            "how to",
+            "here's how",
+            "tips for",
+            "step 1",
+            "step 2",
+            "click on",
+            "go to",
+            "navigate to",
+            "follow these steps",
+            "getting started",
+            "tutorial",
+            "frequently asked",
+            "faq",
+            "help center",
+            "troubleshoot",
+            "fix this",
+            "solve this",
+        ]
+
+        obligation_count = sum(1 for p in obligation_phrases if p in text_lower)
+        instructional_count = sum(1 for p in instructional_phrases if p in text_lower)
+
+        obligation_density = obligation_count / word_count * 1000
+        instructional_density = instructional_count / word_count * 1000
+
+        is_policy = obligation_density > instructional_density and obligation_count >= 3
+        confidence = min(1.0, obligation_density / max(instructional_density, 0.1))
+
+        return is_policy, confidence
 
     async def classify_document(
         self, url: str, text: str, metadata: dict[str, Any]
@@ -146,10 +217,16 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 r"/eu-privacy",
                 r"/european-privacy",
             ],
-            "safety_policy": [
+            "community_guidelines": [
                 r"/safety(?:[-_]?(?:policy|guidelines|standards))?(?:/\w+)*",
                 r"/community-guidelines",
                 r"/content-policy",
+            ],
+            "children_privacy_policy": [
+                r"/children(?:['-]?s)?[-_]privacy(?:[-_]?(?:policy|notice))?(?:/\w+)*",
+                r"/kids[-_]privacy",
+                r"/child(?:ren)?[-_]privacy",
+                r"/coppa",
             ],
         }
 
@@ -254,13 +331,21 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                     "european privacy",
                     "general data protection regulation",
                 ],
-                "safety_policy": [
+                "community_guidelines": [
                     "safety policy",
                     "community guidelines",
                     "content policy",
                     "acceptable use",
                     "community standards",
                     "platform rules",
+                ],
+                "children_privacy_policy": [
+                    "children's privacy",
+                    "children privacy",
+                    "child privacy",
+                    "kids privacy",
+                    "coppa",
+                    "privacy for children",
                 ],
             }
 
@@ -387,7 +472,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 "article 17",
                 "right to erasure",
             ],
-            "safety_policy": [
+            "community_guidelines": [
                 "safety policy",
                 "community guidelines",
                 "acceptable use policy",
@@ -398,6 +483,18 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 "content moderation",
                 "reporting abuse",
                 "platform rules",
+            ],
+            "children_privacy_policy": [
+                "children's privacy",
+                "children privacy",
+                "child privacy",
+                "kids privacy",
+                "coppa",
+                "parental consent",
+                "under 13",
+                "under 16",
+                "minor",
+                "privacy for children",
             ],
         }
 
@@ -505,6 +602,24 @@ Note: Cookie banners, navigation elements, or links to legal documents don't cou
             logger.debug(
                 f"LLM classification result: {result['classification']} (is_legal: {result['is_legal_document']})"
             )
+
+            classification = result.get("classification", "other")
+            if result.get("is_legal_document") and classification in (
+                "community_guidelines",
+                "other",
+            ):
+                is_policy, _conf = self._is_policy_content(text)
+                if not is_policy:
+                    result["is_legal_document"] = False
+                    prev = (result.get("is_legal_document_justification") or "").strip()
+                    suffix = (
+                        "Obligation-density check suggests help or instructional content, "
+                        "not a substantive policy document."
+                    )
+                    result["is_legal_document_justification"] = (
+                        f"{prev} {suffix}".strip() if prev else suffix
+                    )
+
             return result  # type: ignore
 
         except Exception as e:

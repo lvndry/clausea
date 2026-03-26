@@ -111,8 +111,9 @@ class CrawlResult(BaseModel):
     error_message: str | None = Field(
         default=None, description="Detailed error message if crawl failed"
     )
-    legal_score: float = Field(
-        default=0.0, description="Calculated relevance score for legal content"
+    legal_score: float | None = Field(
+        default=None,
+        description="Content-based legal relevance score (0.0–1.0); None if not analyzed",
     )
     discovered_links: list[dict[str, str]] = Field(
         default_factory=list, description="List of links with both URL and original anchor text"
@@ -728,12 +729,9 @@ class RobotsTxtChecker:
                 )
                 return True, "No robots.txt rules found"
 
-            # If sitemaps exist in parsed rules, expose them to the caller
-            return (
-                self._check_url_allowed(url, robots_rules)
-                if not robots_rules.get("sitemaps")
-                else (True, "Sitemap directives present")
-            )
+            # Sitemap directives are stored on robots_rules for callers; they must not
+            # bypass Allow/Disallow — always apply URL rules.
+            return self._check_url_allowed(url, robots_rules)
 
         except Exception as e:
             logger_robots.warning(f"error checking robots.txt for {url}: {e}")
@@ -1140,6 +1138,7 @@ class ClauseaCrawler:
 
         # Components
         self.url_scorer = URLScorer()
+        self.content_analyzer = ContentAnalyzer()
         self.robots_checker = RobotsTxtChecker(max_cache_size=1000) if respect_robots_txt else None
         self.http_cache = HTTPCache(
             max_cache_size=10000
@@ -1730,10 +1729,10 @@ class ClauseaCrawler:
 
             total_timeout_ms = self.timeout * 1000
 
-            # Initiate navigation once. 'commit' ensures the response started.
-            # This is much faster and more resilient than restarting for each state.
+            # Initiate navigation once; domcontentloaded balances speed vs. DOM readiness.
+            # Progressive load-state waits below refine readiness further.
             logger.debug(f"🌐 Initiating browser fetch for {url}")
-            response = await page.goto(url, wait_until="commit", timeout=total_timeout_ms)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=total_timeout_ms)
 
             if not response:
                 logger.warning(f"❌ Browser fetch failed to initiate for {url}")
@@ -1777,6 +1776,29 @@ class ClauseaCrawler:
                 self._parse_html_string, content, final_url
             )
 
+            # Wait for SPA hydration if initial content is too thin
+            body_text_len = len(text_content) if text_content else 0
+            if body_text_len < 500:
+                for _ in range(3):
+                    await asyncio.sleep(1)
+                    new_content = await page.content()
+                    _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
+                        self._parse_html_string, new_content, final_url
+                    )
+                    new_len = len(new_text) if new_text else 0
+                    if new_len >= 500 or new_len == body_text_len:
+                        if new_len > body_text_len:
+                            text_content = new_text
+                            markdown_content = new_md
+                            metadata = new_meta
+                            discovered_links = new_links
+                        break
+                    body_text_len = new_len
+                    text_content = new_text
+                    markdown_content = new_md
+                    metadata = new_meta
+                    discovered_links = new_links
+
             # Store the resolved URL so the caller can update dedup / result URL.
             metadata["_browser_resolved_url"] = final_url
 
@@ -1811,13 +1833,14 @@ class ClauseaCrawler:
                 pass
 
     # ------------------------------------------------------------------
-    # Result building (no legal scoring – just assembles CrawlResult)
+    # Result building (content legal score + CrawlResult assembly)
     # ------------------------------------------------------------------
 
     def _build_crawl_result(self, url: str, page: PageContent) -> CrawlResult:
         """Assemble a :class:`CrawlResult` from extracted :class:`PageContent`.
 
-        Resolves canonical URLs.  Does **not** perform legal scoring.
+        Resolves canonical URLs and populates ``legal_score`` from
+        :class:`ContentAnalyzer` when configured.
         """
         resolved_url = self._choose_effective_url(url, page.metadata)
         if resolved_url != url:
@@ -1825,7 +1848,7 @@ class ClauseaCrawler:
             logger.debug(f"Using canonical URL for result: {resolved_url} (original: {url})")
             url = resolved_url
 
-        return CrawlResult(
+        result = CrawlResult(
             url=url,
             title=page.title,
             content=page.text,
@@ -1835,6 +1858,14 @@ class ClauseaCrawler:
             success=True,
             discovered_links=page.discovered_links,
         )
+        if self.content_analyzer:
+            text = result.content or result.markdown
+            _, raw_score, _ = self.content_analyzer.analyze_content(
+                text, title=result.title, metadata=result.metadata
+            )
+            # Normalize analyzer's 0–10 scale to 0.0–1.0 for pipeline thresholds
+            result = result.model_copy(update={"legal_score": min(1.0, raw_score / 10.0)})
+        return result
 
     def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
         """Extract likely primary content region and remove common boilerplate."""
@@ -2572,7 +2603,7 @@ class ClauseaCrawler:
           1. Static HTTP fetch
           2. Content extraction (route by content-type)
           3. Quality gate — if content is insufficient and browser is enabled, retry with Camoufox
-          4. Build CrawlResult (no legal scoring)
+          4. Build CrawlResult (includes content ``legal_score`` when analyzer is set)
         """
         try:
             raw = await self._static_fetch(session, url)
@@ -2607,6 +2638,18 @@ class ClauseaCrawler:
                 logger.info(f"🔄 Static content insufficient, trying browser: {effective_url}")
                 browser_page = await self._browser_fetch(effective_url)
                 if browser_page is not None:
+                    if not self._content_is_sufficient(browser_page, effective_url):
+                        logger.warning(f"⚠️ Browser content still insufficient: {effective_url}")
+                        return CrawlResult(
+                            url=effective_url,
+                            title=browser_page.title,
+                            content="",
+                            markdown="",
+                            metadata=browser_page.metadata,
+                            status_code=browser_page.status_code,
+                            success=False,
+                            error_message="Browser rendered content is still insufficient",
+                        )
                     # The browser may have followed additional redirects / JS
                     # navigations; prefer its resolved URL if available.
                     browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
@@ -2615,7 +2658,17 @@ class ClauseaCrawler:
                         self.visited_urls.add(self.normalize_url(effective_url))
                     page = browser_page
                 else:
-                    logger.info(f"⚠️ Browser fetch failed, using static content: {effective_url}")
+                    logger.warning(f"⚠️ Browser and static fetch both failed for: {effective_url}")
+                    return CrawlResult(
+                        url=effective_url,
+                        title=page.title if page else "",
+                        content="",
+                        markdown="",
+                        metadata=page.metadata if page else {},
+                        status_code=page.status_code if page else 0,
+                        success=False,
+                        error_message="Static content insufficient and browser rendering failed",
+                    )
 
             return self._build_crawl_result(effective_url, page)
 
@@ -3296,5 +3349,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
     asyncio.run(main())

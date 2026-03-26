@@ -27,8 +27,7 @@ DATABASE_NAME = "clausea"
 MONGO_URI = config.database.mongodb_uri
 
 
-_motor_client: AsyncIOMotorClient | None = None
-_motor_client_loop_id: int | None = None
+_motor_clients: dict[int, AsyncIOMotorClient] = {}
 
 _db_dry_run: ContextVar[bool] = ContextVar("db_dry_run", default=False)
 
@@ -61,33 +60,30 @@ def get_motor_client() -> AsyncIOMotorClient:
 
     In typical FastAPI usage we want a single process-wide client to avoid
     reconnecting on every request. If the active asyncio event loop changes
-    (e.g., in a threaded Streamlit context), we re-create the client.
+    (e.g., in a threaded Streamlit context), we create a new client for that loop.
     """
-    global _motor_client, _motor_client_loop_id
+    global _motor_clients
 
     loop = asyncio.get_running_loop()
     loop_id = id(loop)
 
-    if _motor_client is None or _motor_client_loop_id != loop_id:
-        if _motor_client is not None:
-            _motor_client.close()
-        _motor_client = _create_motor_client()
-        _motor_client_loop_id = loop_id
-        logger.info("Initialized MongoDB client")
+    if loop_id not in _motor_clients:
+        _motor_clients[loop_id] = _create_motor_client()
+        logger.info(f"Initialized MongoDB client for loop {loop_id}")
 
-    return _motor_client
+    return _motor_clients[loop_id]
 
 
 def close_motor_client() -> None:
-    global _motor_client, _motor_client_loop_id
+    global _motor_clients
 
-    if _motor_client is None:
-        return
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
 
-    _motor_client.close()
-    _motor_client = None
-    _motor_client_loop_id = None
-    logger.info("Closed MongoDB client")
+    if loop_id in _motor_clients:
+        _motor_clients[loop_id].close()
+        del _motor_clients[loop_id]
+        logger.info(f"Closed MongoDB client for loop {loop_id}")
 
 
 async def get_db() -> AsyncIterator[AgnosticDatabase]:

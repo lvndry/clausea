@@ -324,9 +324,5 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
         cast(aiohttp.ClientSession, FakeSession()), "https://example.com/privacy"
     )
 
-    assert result.success is True
-    assert "Privacy Policy" in result.content
-    assert "Enable JavaScript and accept cookies" not in result.content
-
-    discovered_urls = {link["url"] for link in result.discovered_links}
-    assert "https://example.com/legal/privacy-jsonld" in discovered_urls
+    assert result.success is False
+    assert "browser rendering failed" in (result.error_message or "").lower()

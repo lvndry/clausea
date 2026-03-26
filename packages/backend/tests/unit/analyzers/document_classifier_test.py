@@ -112,13 +112,13 @@ class TestURLPatternClassification:
         assert result["is_legal_document"] is True
 
     @pytest.mark.asyncio
-    async def test_safety_policy_url(self, classifier: DocumentClassifier) -> None:
+    async def test_community_guidelines_url(self, classifier: DocumentClassifier) -> None:
         result = await classifier.classify_document(
             url="https://example.com/community-guidelines",
             text="Our community guidelines protect users. Governing law and liability apply. " * 15,
             metadata={},
         )
-        assert result["classification"] == "safety_policy"
+        assert result["classification"] == "community_guidelines"
         assert result["is_legal_document"] is True
 
     @pytest.mark.asyncio
@@ -287,7 +287,8 @@ class TestCategoryCompleteness:
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",
-            "safety_policy",
+            "community_guidelines",
+            "children_privacy_policy",
             "other",
         }
         assert set(classifier.categories) == expected

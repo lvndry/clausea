@@ -5,6 +5,17 @@ from typing import Any, Literal
 import shortuuid
 from pydantic import BaseModel, Field, field_validator
 
+TierRelevance = Literal["core", "extended"]
+
+CORE_DOC_TYPES = {
+    "privacy_policy",
+    "terms_of_service",
+    "cookie_policy",
+    "gdpr_policy",
+    "terms_of_use",
+    "terms_and_conditions",
+}
+
 
 class DocumentAnalysisScores(BaseModel):
     score: int
@@ -21,6 +32,7 @@ class EvidenceSpan(BaseModel):
     start_char: int | None = None
     end_char: int | None = None
     section_title: str | None = None
+    verified: bool = True
 
 
 class ExtractedTextItem(BaseModel):
@@ -52,53 +64,240 @@ ContractClauseType = Literal["liability", "arbitration", "governing_law", "juris
 
 
 class ExtractedContractClause(BaseModel):
-    """Evidence-backed contract clause."""
+    """Evidence-backed contract clause (v3 legacy, kept for aggregation compat)."""
 
     clause_type: ContractClauseType
     value: str
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
-class PrivacySignals(BaseModel):
-    """High-level binary/simple signals extracted from legal documents.
+# ---------------------------------------------------------------------------
+# v4 extraction models — richer, purpose-built types
+# ---------------------------------------------------------------------------
 
-    These are quick-scan indicators that answer the most common user questions
-    about a service's privacy practices.
-    """
+
+class ExtractedDataItem(BaseModel):
+    """A specific data type collected, with sensitivity and optionality."""
+
+    data_type: str
+    sensitivity: Literal["low", "medium", "high", "sensitive"] = "medium"
+    required: Literal["required", "optional", "unclear"] = "unclear"
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedRetentionRule(BaseModel):
+    """Retention policy linked to a data scope."""
+
+    data_scope: str
+    duration: str
+    conditions: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedCookieTracker(BaseModel):
+    """A cookie or tracking technology with its properties."""
+
+    name_or_type: str
+    category: Literal["essential", "analytics", "advertising", "social", "other"] = "other"
+    duration: str | None = None
+    third_party: bool = False
+    opt_out_mechanism: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedInternationalTransfer(BaseModel):
+    """Cross-border data transfer with legal mechanism."""
+
+    destination: str
+    mechanism: str | None = None
+    data_types: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedGovernmentAccess(BaseModel):
+    """Conditions under which data is shared with government or law enforcement."""
+
+    authority_type: str
+    conditions: str
+    data_scope: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedCorporateFamilySharing(BaseModel):
+    """Data sharing within a corporate group or set of affiliated entities."""
+
+    entities: list[str] = Field(default_factory=list)
+    data_shared: list[str] = Field(default_factory=list)
+    purpose: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedUserRight(BaseModel):
+    """A user right with the mechanism to exercise it."""
+
+    right_type: str
+    description: str
+    mechanism: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedAIUsage(BaseModel):
+    """How AI, ML, or automated decision-making is applied to user data."""
+
+    usage_type: Literal[
+        "training_on_user_data",
+        "automated_decisions",
+        "profiling",
+        "content_generation",
+        "recommendation",
+        "moderation",
+        "other",
+    ]
+    description: str
+    data_involved: list[str] = Field(default_factory=list)
+    opt_out_available: Literal["yes", "no", "unclear"] = "unclear"
+    opt_out_mechanism: str | None = None
+    consequences: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedChildrenPolicy(BaseModel):
+    """Policies specifically about children and minors."""
+
+    minimum_age: int | None = None
+    parental_consent_required: bool = False
+    special_protections: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedLiability(BaseModel):
+    """Liability limitation, waiver, or indemnification clause."""
+
+    scope: str
+    limitation_type: Literal["cap", "waiver", "exclusion", "indemnification"]
+    description: str
+    extends_beyond_product: bool = False
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedDisputeResolution(BaseModel):
+    """Dispute resolution mechanism and associated waivers."""
+
+    mechanism: Literal["arbitration", "litigation", "mediation", "other"]
+    class_action_waiver: bool = False
+    jury_trial_waiver: bool = False
+    venue: str | None = None
+    governing_law: str | None = None
+    description: str | None = None
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedContentOwnership(BaseModel):
+    """Rights the company claims over user-generated content or likeness."""
+
+    ownership_type: Literal[
+        "license_to_company",
+        "user_retains",
+        "company_owns",
+        "ai_training_rights",
+        "likeness_rights",
+        "other",
+    ]
+    scope: str
+    description: str
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class ExtractedScopeExpansion(BaseModel):
+    """Clauses that extend the reach of the agreement beyond what users expect."""
+
+    scope_type: Literal[
+        "cross_entity",
+        "survival_clause",
+        "unilateral_modification",
+        "binding_heirs",
+        "physical_world",
+        "other",
+    ]
+    description: str
+    entities_affected: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Privacy signals (v4 — expanded with AI, breach, minimization, children)
+# ---------------------------------------------------------------------------
+
+
+class PrivacySignals(BaseModel):
+    """Quick-scan indicators answering the most common user questions."""
 
     sells_data: Literal["yes", "no", "unclear"] = "unclear"
     cross_site_tracking: Literal["yes", "no", "unclear"] = "unclear"
     account_deletion: Literal["self_service", "request_required", "not_specified"] = "not_specified"
-    data_retention_summary: str | None = None  # e.g., "30 days after deletion", "indefinite"
+    data_retention_summary: str | None = None
     consent_model: Literal["opt_in", "opt_out", "mixed", "not_specified"] = "not_specified"
+    ai_training_on_user_data: Literal["yes", "no", "unclear"] = "unclear"
+    breach_notification: Literal["yes", "no", "not_specified"] = "not_specified"
+    data_minimization: Literal["yes", "no", "unclear"] = "unclear"
+    children_data_collection: Literal["yes", "no", "not_specified"] = "not_specified"
+    evidence: list[EvidenceSpan] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Document extraction (v4)
+# ---------------------------------------------------------------------------
 
 
 class DocumentExtraction(BaseModel):
-    """
-    Extraction-first, evidence-backed structured facts for a single document.
+    """Evidence-backed structured facts for a single document (v4).
 
-    This is designed to be used as the ONLY input to downstream summaries, so every
-    claim is traceable to an exact quote in the source document.
+    Organised into four extraction clusters:
+      1. Data Practices — collection, purposes, retention, security, cookies
+      2. Sharing & Transfers — third parties, international, government, corporate family
+      3. Rights & AI — user rights, consent, account lifecycle, AI/profiling, children
+      4. Legal Terms & Scope — liability, disputes, content ownership, scope expansion
     """
 
-    version: str = "v3"
+    version: str = "v4"
     generated_at: datetime = Field(default_factory=datetime.now)
     source_content_hash: str
 
-    data_collected: list[ExtractedTextItem] = Field(default_factory=list)
-    data_purposes: list[ExtractedTextItem] = Field(default_factory=list)
-    data_collection_details: list[ExtractedDataPurposeLink] = Field(default_factory=list)
+    # Cluster 1: Data Practices
+    data_collected: list[ExtractedDataItem] = Field(default_factory=list)
+    data_purposes: list[ExtractedDataPurposeLink] = Field(default_factory=list)
+    retention_policies: list[ExtractedRetentionRule] = Field(default_factory=list)
+    security_measures: list[ExtractedTextItem] = Field(default_factory=list)
+    cookies_and_trackers: list[ExtractedCookieTracker] = Field(default_factory=list)
+
+    # Cluster 2: Sharing & Transfers
     third_party_details: list[ExtractedThirdPartyRecipient] = Field(default_factory=list)
-    your_rights: list[ExtractedTextItem] = Field(default_factory=list)
+    international_transfers: list[ExtractedInternationalTransfer] = Field(default_factory=list)
+    government_access: list[ExtractedGovernmentAccess] = Field(default_factory=list)
+    corporate_family_sharing: list[ExtractedCorporateFamilySharing] = Field(default_factory=list)
+
+    # Cluster 3: Rights & AI
+    user_rights: list[ExtractedUserRight] = Field(default_factory=list)
+    consent_mechanisms: list[ExtractedTextItem] = Field(default_factory=list)
+    account_lifecycle: list[ExtractedTextItem] = Field(default_factory=list)
+    ai_usage: list[ExtractedAIUsage] = Field(default_factory=list)
+    children_policy: ExtractedChildrenPolicy | None = None
+
+    # Cluster 4: Legal Terms & Scope
+    liability: list[ExtractedLiability] = Field(default_factory=list)
+    dispute_resolution: list[ExtractedDisputeResolution] = Field(default_factory=list)
+    content_ownership: list[ExtractedContentOwnership] = Field(default_factory=list)
+    scope_expansion: list[ExtractedScopeExpansion] = Field(default_factory=list)
+    indemnification: list[ExtractedTextItem] = Field(default_factory=list)
+    termination_consequences: list[ExtractedTextItem] = Field(default_factory=list)
+
+    # Synthesised signals
+    privacy_signals: PrivacySignals | None = None
+
+    # Cross-cutting assessments (populated by all clusters)
     dangers: list[ExtractedTextItem] = Field(default_factory=list)
     benefits: list[ExtractedTextItem] = Field(default_factory=list)
     recommended_actions: list[ExtractedTextItem] = Field(default_factory=list)
-    privacy_signals: PrivacySignals | None = None
-    retention_policy: list[ExtractedTextItem] = Field(default_factory=list)
-    security_measures: list[ExtractedTextItem] = Field(default_factory=list)
-    advertising_practices: list[ExtractedTextItem] = Field(default_factory=list)
-    profiling_ai: list[ExtractedTextItem] = Field(default_factory=list)
-    contract_clauses: list[ExtractedContractClause] = Field(default_factory=list)
 
 
 class KeypointWithEvidence(BaseModel):
@@ -128,6 +327,20 @@ InsightCategory = Literal[
     "arbitration",
     "governing_law",
     "jurisdiction",
+    # v4 additions
+    "international_transfers",
+    "government_access",
+    "corporate_family_sharing",
+    "ai_training",
+    "automated_decisions",
+    "content_ownership",
+    "scope_expansion",
+    "indemnification",
+    "termination_consequences",
+    "consent_mechanisms",
+    "account_lifecycle",
+    "breach_notification",
+    "dispute_resolution",
 ]
 
 
@@ -302,9 +515,10 @@ DocType = Literal[
     "terms_of_use",
     "terms_and_conditions",
     "data_processing_agreement",
+    "community_guidelines",
+    "children_privacy_policy",
     "gdpr_policy",
     "copyright_policy",
-    "safety_policy",
     "other",
     "unclassified",
 ]
@@ -683,3 +897,4 @@ class Document(BaseModel):
     regions: list[Region] = Field(default_factory=list)
     effective_date: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.now)
+    tier_relevance: TierRelevance = "extended"

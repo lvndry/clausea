@@ -296,8 +296,8 @@ class TestFetchPageInternalOrchestration:
         result = await crawler._fetch_page_internal(
             cast(aiohttp.ClientSession, FakeSession()), "https://example.com/page"
         )
-        assert result.success is True
-        assert result.title == "Page"
+        assert result.success is False
+        assert "browser rendering failed" in (result.error_message or "").lower()
 
     @pytest.mark.asyncio
     async def test_no_browser_when_disabled(self):

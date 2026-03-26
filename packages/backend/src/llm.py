@@ -13,6 +13,20 @@ from src.utils.llm_usage import track_usage
 logger = get_logger(__name__)
 
 
+class CircuitBreakerError(Exception):
+    """Raised when too many consecutive LLM failures have occurred."""
+
+    pass
+
+
+class AllModelsFailedError(Exception):
+    """Raised when every model in the priority list failed for one completion request."""
+
+
+_consecutive_total_failures: int = 0
+_CIRCUIT_BREAKER_THRESHOLD: int = 3
+
+
 class Model:
     model: str
     api_key: str
@@ -30,6 +44,7 @@ SupportedModel = Literal[
     "gpt-5",
     "gpt-5-pro",
     "gpt-5-mini",
+    "gpt-5.4-mini",
     "gpt-5-nano",
     # gemini
     "gemini-3-flash-preview",
@@ -52,10 +67,7 @@ SupportedModel = Literal[
 ]
 
 DEFAULT_MODEL_PRIORITY: list[SupportedModel] = [
-    "gpt-5-mini",
-    "grok-4-1-fast-non-reasoning",
-    "gemini-3-flash-preview",
-    "kimi-k2-thinking",
+    "gpt-5.4-mini",
 ]
 
 
@@ -65,7 +77,7 @@ def _sanitize_model_kwargs(model_name: SupportedModel, kwargs: dict[str, Any]) -
     """
     sanitized_kwargs = dict(kwargs)
 
-    if model_name in {"gpt-5-mini", "gpt-5-nano", "gemini-3-flash-preview"}:
+    if model_name in {"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano", "gemini-3-flash-preview"}:
         temperature = sanitized_kwargs.get("temperature")
         if temperature is not None and temperature != 1:
             logger.debug(
@@ -201,7 +213,7 @@ async def _completion_with_fallback_impl(
         ModelResponse from the first model that succeeds
 
     Raises:
-        Exception: If all models fail, raises the last exception encountered
+        AllModelsFailedError: If all models fail.
     """
     # Use provided priority or default
     models_to_try = model_priority.copy() if model_priority else DEFAULT_MODEL_PRIORITY.copy()
@@ -245,7 +257,7 @@ async def _completion_with_fallback_impl(
         f"Last error: {last_exception}"
     )
     logger.error(error_msg)
-    raise Exception(error_msg) from last_exception
+    raise AllModelsFailedError(error_msg) from last_exception
 
 
 async def acompletion_with_fallback(
@@ -272,14 +284,31 @@ async def acompletion_with_fallback(
         ModelResponse from the first model that succeeds
 
     Raises:
-        Exception: If all models fail, raises the last exception encountered
+        AllModelsFailedError: If all models fail (below circuit breaker threshold).
+        CircuitBreakerError: If the circuit is open after repeated all-model failures.
     """
-    return await _completion_with_fallback_impl(
-        messages=messages,
-        completion_fn=acompletion,
-        model_priority=model_priority,
-        **kwargs,
-    )
+    global _consecutive_total_failures
+
+    if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+        raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
+
+    try:
+        result = await _completion_with_fallback_impl(
+            messages=messages,
+            completion_fn=acompletion,
+            model_priority=model_priority,
+            **kwargs,
+        )
+    except AllModelsFailedError:
+        _consecutive_total_failures += 1
+        if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            raise CircuitBreakerError(
+                "LLM service unavailable: too many consecutive failures"
+            ) from None
+        raise
+    else:
+        _consecutive_total_failures = 0
+        return result
 
 
 def completion_with_fallback(
@@ -307,7 +336,7 @@ def completion_with_fallback(
         ModelResponse from the first model that succeeds
 
     Raises:
-        Exception: If all models fail, raises the last exception encountered
+        AllModelsFailedError: If all models fail.
     """
     return asyncio.run(
         _completion_with_fallback_impl(

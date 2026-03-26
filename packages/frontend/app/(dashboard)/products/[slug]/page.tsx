@@ -164,221 +164,6 @@ function derivePipelineUrl(product: Product): string | null {
   return null;
 }
 
-function DeepAnalysisTab({ slug }: { slug: string }) {
-  const [loading, setLoading] = useState(true);
-  const [deepAnalysis, setDeepAnalysis] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchDeepAnalysis() {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/products/${slug}/deep-analysis`);
-        if (res.ok) {
-          const json = await res.json();
-          setDeepAnalysis(json);
-        } else {
-          setError("Failed to fetch deep analysis");
-        }
-      } catch (err) {
-        console.error("Failed to fetch deep analysis", err);
-        setError("Failed to fetch deep analysis");
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchDeepAnalysis();
-  }, [slug]);
-
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-12 w-full rounded-2xl" />
-        <Skeleton className="h-64 w-full rounded-2xl" />
-        <Skeleton className="h-64 w-full rounded-2xl" />
-      </div>
-    );
-  }
-
-  if (error || !deepAnalysis) {
-    return (
-      <ErrorDisplay
-        variant="error"
-        title="Analysis Unavailable"
-        message={error || "Deep analysis is not available for this product."}
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-12">
-      {/* Risk Prioritization */}
-      {deepAnalysis.risk_prioritization && (
-        <div className="border border-border bg-background">
-          <div className="p-6 border-b border-border">
-            <div className="flex items-center gap-3">
-              <LayoutDashboard
-                className="h-5 w-5 text-foreground"
-                strokeWidth={1.5}
-              />
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                Risk Prioritization
-              </h3>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-x divide-border">
-            {/* Critical */}
-            <div className="p-6 space-y-4">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D]">
-                Critical
-              </span>
-              <ul className="space-y-3">
-                {deepAnalysis.risk_prioritization.critical?.map(
-                  (risk: string, i: number) => (
-                    <li
-                      key={i}
-                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
-                    >
-                      <div className="mt-1.5 h-1 w-1 bg-[#BD452D] shrink-0" />
-                      {risk}
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
-            {/* High */}
-            <div className="p-6 space-y-4 border-t md:border-t-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D]">
-                High
-              </span>
-              <ul className="space-y-3">
-                {deepAnalysis.risk_prioritization.high?.map(
-                  (risk: string, i: number) => (
-                    <li
-                      key={i}
-                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
-                    >
-                      <div className="mt-1.5 h-1 w-1 bg-[#BD452D] shrink-0 opacity-60" />
-                      {risk}
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
-            {/* Medium */}
-            <div className="p-6 space-y-4 border-t lg:border-t-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#B58D2D]">
-                Medium
-              </span>
-              <ul className="space-y-3">
-                {deepAnalysis.risk_prioritization.medium?.map(
-                  (risk: string, i: number) => (
-                    <li
-                      key={i}
-                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
-                    >
-                      <div className="mt-1.5 h-1 w-1 bg-[#B58D2D] shrink-0" />
-                      {risk}
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
-            {/* Low */}
-            <div className="p-6 space-y-4 border-t lg:border-t-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#2B7A5C]">
-                Low Risk
-              </span>
-              <ul className="space-y-3">
-                {deepAnalysis.risk_prioritization.low?.map(
-                  (risk: string, i: number) => (
-                    <li
-                      key={i}
-                      className="text-sm text-foreground leading-relaxed flex items-start gap-3"
-                    >
-                      <div className="mt-1.5 h-1 w-1 bg-[#2B7A5C] shrink-0" />
-                      {risk}
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Enhanced Compliance */}
-      {deepAnalysis.enhanced_compliance &&
-        Object.keys(deepAnalysis.enhanced_compliance).length > 0 && (
-          <div className="border border-border bg-background">
-            <div className="p-6 border-b border-border">
-              <div className="flex items-center gap-3">
-                <Shield className="h-5 w-5 text-foreground" strokeWidth={1.5} />
-                <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                  Regulatory Compliance Analysis
-                </h3>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 divide-x divide-border">
-              {Object.entries(deepAnalysis.enhanced_compliance).map(
-                ([reg, comp]: [string, any]) => (
-                  <div key={reg} className="p-6 space-y-6">
-                    <div className="flex justify-between items-start">
-                      <h4 className="font-display font-medium text-xl text-foreground">
-                        {reg}
-                      </h4>
-                      <div
-                        className={cn(
-                          "px-3 py-1 border text-[10px] font-bold uppercase tracking-widest",
-                          comp.score >= 7
-                            ? "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]"
-                            : comp.score >= 4
-                              ? "border-[#B58D2D]/20 bg-[#B58D2D]/5 text-[#B58D2D]"
-                              : "border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D]",
-                        )}
-                      >
-                        {comp.status}
-                      </div>
-                    </div>
-
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-4xl font-display font-medium text-foreground">
-                        {comp.score}
-                      </span>
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground leading-none">
-                        / 10 Score
-                      </span>
-                    </div>
-
-                    {comp.violations?.length > 0 && (
-                      <div className="pt-6 border-t border-border space-y-4">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D]">
-                          Detected Deviations
-                        </span>
-                        <ul className="space-y-3">
-                          {comp.violations.map((v: any, i: number) => (
-                            <li
-                              key={i}
-                              className="text-sm text-[#BD452D] italic flex items-start gap-3"
-                            >
-                              <span className="mt-1.5 h-1.5 w-1.5 bg-[#BD452D] shrink-0" />
-                              {v.requirement}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
-        )}
-    </div>
-  );
-}
-
 export default function CompanyPage() {
   const params = useParams();
   const slug = params.slug as string;
@@ -587,7 +372,7 @@ export default function CompanyPage() {
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
               {hasCrawlFailure
-                ? "We were unable to analyze this company's legal documents."
+                ? "We were unable to analyze this company's policy documents."
                 : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
             </p>
           </div>
@@ -614,7 +399,7 @@ export default function CompanyPage() {
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       This website restricts automated access via its robots.txt
-                      file. Our crawler was unable to fetch any legal documents.
+                      file. Our crawler was unable to fetch any policy documents.
                       You may need to review their policies manually on their
                       website.
                     </p>
@@ -640,7 +425,7 @@ export default function CompanyPage() {
                 ) : (
                   <div className="space-y-3">
                     <h2 className="text-xl font-display font-medium text-foreground">
-                      Unable to crawl legal documents
+                      Unable to crawl policy documents
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       {failedJob.error ??
@@ -959,10 +744,6 @@ export default function CompanyPage() {
             Object.keys(data.compliance_status).length > 0 && (
               <ComplianceBadges complianceStatus={data.compliance_status} />
             )}
-        </TabsContent>
-
-        <TabsContent value="analysis" className="mt-0">
-          <DeepAnalysisTab slug={slug} />
         </TabsContent>
 
         <TabsContent value="sources" className="mt-0">

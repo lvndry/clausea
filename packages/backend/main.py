@@ -13,6 +13,7 @@ from src.core.database import close_motor_client, db_session
 from src.core.db_indexes import ensure_all_indexes
 from src.core.logging import setup_logging
 from src.core.middleware import AuthMiddleware
+from src.repositories.pipeline_repository import PipelineRepository
 from src.routes import (
     contact,
     conversations,
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: Ensure database indexes are created
     async with db_session() as db:
         await ensure_all_indexes(db)
+        await PipelineRepository().mark_stale_as_failed(db)
 
     yield
 

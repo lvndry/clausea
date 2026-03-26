@@ -68,7 +68,7 @@ const STEP_CONFIG: Record<
   crawling: {
     label: "Discovering Documents",
     icon: FileSearch,
-    description: "Scanning website for legal documents",
+    description: "Scanning website for policy documents",
   },
   summarizing: {
     label: "Analyzing Content",
@@ -201,7 +201,7 @@ function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
             </p>
             <p className="text-xs text-amber-600/80">
               This website restricts automated access. We were unable to crawl
-              any legal documents. You may need to review their policies
+              any policy documents. You may need to review their policies
               manually.
             </p>
           </div>
@@ -475,7 +475,7 @@ export function PipelineProgress({
             {/* Stats */}
             {job.documents_stored > 0 && (
               <p className="text-xs text-muted-foreground">
-                {job.documents_stored} legal document
+                {job.documents_stored} policy document
                 {job.documents_stored !== 1 ? "s" : ""} found
               </p>
             )}

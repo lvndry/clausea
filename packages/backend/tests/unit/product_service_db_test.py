@@ -159,7 +159,7 @@ async def test_get_product_analysis(
             keypoints=["Key Point"],
         ),
     )
-    mock_document_repo.find_by_product_id.return_value = [mock_doc]
+    mock_document_repo.find_by_product_id_full.return_value = [mock_doc]
 
     analysis = await product_service.get_product_analysis(mock_db, "test-product")
     assert analysis is not None
@@ -213,10 +213,10 @@ async def test_get_product_documents(
             keypoints=["Point A"],
         ),
     )
-    mock_document_repo.find_by_product_id.return_value = [mock_doc]
+    mock_document_repo.find_by_product_id_full.return_value = [mock_doc]
 
     documents = await product_service.get_product_documents(mock_db, "test-product")
     assert len(documents) == 1
     assert documents[0].id == "doc1"
     assert documents[0].summary == "JSON SUMMARY"
-    mock_document_repo.find_by_product_id.assert_called_once_with(mock_db, "123")
+    mock_document_repo.find_by_product_id_full.assert_called_once_with(mock_db, "123")

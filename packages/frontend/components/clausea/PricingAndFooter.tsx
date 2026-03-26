@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
 import { cn } from "@/lib/utils";
 
+type PricingFeature = string | { label: string; comingSoon: boolean };
+
 const PRO_PRICE_ID =
   process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
   process.env.NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY ||
@@ -29,7 +31,15 @@ export function Pricing() {
   const router = useRouter();
   const { startCheckout, isLoading, error } = useCheckout();
 
-  const tiers = [
+  const tiers: Array<{
+    name: string;
+    price: string;
+    description: string;
+    features: PricingFeature[];
+    cta: string;
+    popular: boolean;
+    action: () => void;
+  }> = [
     {
       name: "Free",
       price: "0",
@@ -37,7 +47,8 @@ export function Pricing() {
         "Perfect for trying out Clausea with basic privacy analysis.",
       features: [
         "3 analyses per month",
-        "AI-powered summaries",
+        "Core documents only (Privacy Policy, ToS, GDPR)",
+        "AI-powered analysis",
         "Risk scoring",
         "Chat with documents",
       ],
@@ -52,10 +63,10 @@ export function Pricing() {
         "Unlimited analysis for privacy-conscious individuals and teams.",
       features: [
         "Unlimited analyses",
-        "Advanced semantic search",
-        "Deep analysis (Level 3)",
+        "All policy documents analyzed",
+        "Semantic search",
         "Priority support",
-        "Export reports",
+        { label: "Export reports", comingSoon: true },
       ],
       cta: "Upgrade to Pro",
       popular: true,
@@ -144,18 +155,34 @@ export function Pricing() {
             </p>
 
             <ul className="space-y-4 mb-12">
-              {tier.features.map((feature) => (
-                <li
-                  key={feature}
-                  className="flex items-start gap-4 text-sm text-muted-foreground"
-                >
-                  <CheckCircle2
-                    className="w-4 h-4 shrink-0 text-foreground mt-0.5"
-                    strokeWidth={1.5}
-                  />
-                  <span>{feature}</span>
-                </li>
-              ))}
+              {tier.features.map((feature) => {
+                const label =
+                  typeof feature === "string" ? feature : feature.label;
+                const comingSoon =
+                  typeof feature === "object" && feature.comingSoon;
+                return (
+                  <li
+                    key={label}
+                    className="flex items-start gap-4 text-sm text-muted-foreground"
+                  >
+                    <CheckCircle2
+                      className="w-4 h-4 shrink-0 text-foreground mt-0.5"
+                      strokeWidth={1.5}
+                    />
+                    <span className="flex flex-wrap items-center gap-2">
+                      {label}
+                      {comingSoon ? (
+                        <>
+                          {/* TODO: Export Reports feature not yet implemented in backend */}
+                          <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground border border-border px-2 py-0.5 rounded-none">
+                            Coming soon
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
 
             <Button

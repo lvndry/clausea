@@ -201,7 +201,7 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     for score_name in required_scores:
         if score_name not in parsed.scores:
             parsed.scores[score_name] = DocumentAnalysisScores(
-                score=0, justification="Score not provided by model"
+                score=5, justification="Not assessed"
             )
 
     # Ensure optional scores (data_retention_score, security_score) are always present
@@ -278,15 +278,26 @@ def _attach_keypoint_evidence(
     for key in [
         "data_collected",
         "data_purposes",
-        "your_rights",
+        "retention_policies",
+        "security_measures",
+        "cookies_and_trackers",
+        "third_party_details",
+        "international_transfers",
+        "government_access",
+        "corporate_family_sharing",
+        "user_rights",
+        "consent_mechanisms",
+        "account_lifecycle",
+        "ai_usage",
+        "liability",
+        "dispute_resolution",
+        "content_ownership",
+        "scope_expansion",
+        "indemnification",
+        "termination_consequences",
         "dangers",
         "benefits",
         "recommended_actions",
-        "retention_policy",
-        "security_measures",
-        "advertising_practices",
-        "profiling_ai",
-        "contract_clauses",
     ]:
         items = extraction_json.get(key) or []
         if not isinstance(items, list):
@@ -294,7 +305,17 @@ def _attach_keypoint_evidence(
         for item in items:
             if not isinstance(item, dict):
                 continue
-            value = str(item.get("value") or "").strip()
+            value = str(
+                item.get("value")
+                or item.get("description")
+                or item.get("data_type")
+                or item.get("right_type")
+                or item.get("recipient")
+                or item.get("destination")
+                or item.get("name_or_type")
+                or item.get("scope")
+                or ""
+            ).strip()
             evidence = item.get("evidence") or []
             if value and isinstance(evidence, list) and evidence:
                 evidence_pool.append((value.lower(), evidence))
@@ -917,6 +938,19 @@ Aggregated facts (JSON):
         meta_summary = MetaSummary.model_validate_json(content, strict=False)
         meta_summary.coverage = aggregation.coverage
 
+        # Product risk_score: deterministic mean of document analyses (LLM value discarded).
+        # PRODUCT_OVERVIEW_SYSTEM_PROMPT still lists risk_score/verdict in SUMMARY_JSON_SCHEMA
+        # (shared with document prompts) — redundant tokens; split schema later if desired.
+        if meta_summary and documents:
+            doc_scores = [
+                doc.analysis.risk_score
+                for doc in documents
+                if doc.analysis and doc.analysis.risk_score is not None
+            ]
+            if doc_scores:
+                meta_summary.risk_score = round(sum(doc_scores) / len(doc_scores))
+                meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
+
         # Save to database (simple single-cache entry)
         await prod_svc.save_product_overview(
             db,
@@ -1196,16 +1230,50 @@ async def generate_product_deep_analysis(
     # Phase 2: Aggregate Analysis
     logger.info("Generating aggregate deep analysis...")
 
-    # Prepare input for aggregation
+    # Prepare rich input for aggregation — include actual evidence and risk breakdowns
     doc_summaries = []
     for da in document_analyses:
         scope = getattr(da.document_risk_breakdown, "scope", None)
+        risk_breakdown = da.document_risk_breakdown
+
+        risk_cats = ""
+        if hasattr(risk_breakdown, "risk_by_category") and risk_breakdown.risk_by_category:
+            cats = risk_breakdown.risk_by_category
+            if isinstance(cats, dict):
+                risk_cats = ", ".join(f"{k}: {v}" for k, v in cats.items())
+
+        # Include up to 10 critical clauses with their actual text
+        clause_details = []
+        for clause in da.critical_clauses[:10]:
+            clause_text = (
+                f"  - [{clause.clause_type}] ({clause.risk_level}): {clause.analysis[:200]}"
+            )
+            if clause.quote:
+                clause_text += f'\n    Quote: "{clause.quote[:200]}"'
+            clause_details.append(clause_text)
+        clauses_str = "\n".join(clause_details) if clause_details else "  None found"
+
+        positive = (
+            ", ".join(risk_breakdown.positive_protections[:5])
+            if risk_breakdown.positive_protections
+            else "None noted"
+        )
+        missing = (
+            ", ".join(risk_breakdown.missing_information[:5])
+            if risk_breakdown.missing_information
+            else "None noted"
+        )
+
         doc_summaries.append(f"""
 Document: {da.title or da.document_type} ({da.document_type})
 Scope: {scope or "Not specified"}
-Risk Score: {da.document_risk_breakdown.overall_risk}
-Top Concerns: {", ".join(da.document_risk_breakdown.top_concerns)}
-Critical Clauses: {len(da.critical_clauses)} found
+Overall Risk Score: {risk_breakdown.overall_risk}/10
+Risk by Category: {risk_cats or "N/A"}
+Top Concerns: {", ".join(da.document_risk_breakdown.top_concerns[:5])}
+Positive Protections: {positive}
+Missing Information: {missing}
+Critical Clauses ({len(da.critical_clauses)} total):
+{clauses_str}
 """)
 
     aggregate_prompt = f"""

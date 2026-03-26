@@ -83,6 +83,16 @@ logger_analysis = get_logger(__name__, component="pipeline:analysis")
 logger_storage = get_logger(__name__, component="pipeline:storage")
 
 
+def _content_fingerprint(text: str) -> str:
+    """Generate a fingerprint for near-duplicate detection.
+
+    Normalizes whitespace and lowercases before hashing to catch
+    slight formatting differences between URLs serving the same content.
+    """
+    normalized = re.sub(r"\s+", " ", text.lower().strip())
+    return hashlib.md5(normalized[:5000].encode()).hexdigest()
+
+
 class ProcessingStats(BaseModel):
     """Statistics for document processing pipeline."""
 
@@ -298,7 +308,8 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
             "data_processing_agreement": "Data Processing Agreement",
             "gdpr_policy": "GDPR Policy",
             "copyright_policy": "Copyright Policy",
-            "safety_policy": "Safety Policy",
+            "community_guidelines": "Community Guidelines",
+            "children_privacy_policy": "Children's Privacy Policy",
         }
 
         title = f"{type_titles.get(doc_type, 'Legal Document')} - {domain}"
@@ -878,6 +889,12 @@ class LegalDocumentPipeline:
                 )
                 return None
 
+            if result.legal_score is not None and result.legal_score < 0.2:
+                logger.debug(
+                    f"Skipping low legal-score page ({result.legal_score:.2f}): {result.url}"
+                )
+                return None
+
             # Always classify before storing; skip non-legal and get proper title
             classification = await self.analyzer.classify_document(
                 result.url, text_content, result.metadata
@@ -1093,10 +1110,12 @@ class LegalDocumentPipeline:
         results: list[CrawlResult],
         product: Product,
         processed_urls: set[str],
+        seen_fingerprints: set[str],
     ) -> list[Document]:
         """Classify a batch of crawl results and return legal documents.
 
         Mutates *processed_urls* to track deduplication across calls.
+        Mutates *seen_fingerprints* for near-duplicate content skipping across passes.
         Failed crawl results are collected in ``self.stats.crawl_errors``.
         """
         documents: list[Document] = []
@@ -1105,6 +1124,11 @@ class LegalDocumentPipeline:
                 continue
             processed_urls.add(result.url)
             if result.success:
+                fp = _content_fingerprint(result.content or "")
+                if fp in seen_fingerprints:
+                    logger.debug(f"Skipping near-duplicate: {result.url}")
+                    continue
+                seen_fingerprints.add(fp)
                 document = await self._process_crawl_result(result, product)
                 if document:
                     documents.append(document)
@@ -1174,6 +1198,7 @@ class LegalDocumentPipeline:
             crawl_session = await self._start_crawl_session(product, crawl_urls)
 
             processed_urls: set[str] = set()
+            seen_fingerprints: set[str] = set()
             total_results = 0
 
             # ----------------------------------------------------------
@@ -1203,7 +1228,7 @@ class LegalDocumentPipeline:
             # ----------------------------------------------------------
 
             processed_documents = await self._classify_results(
-                discovery_results, product, processed_urls
+                discovery_results, product, processed_urls, seen_fingerprints
             )
 
             # Fallback deep crawl (recall-first) if coverage is low
@@ -1226,7 +1251,7 @@ class LegalDocumentPipeline:
                 total_results += len(fallback_results)
 
                 fallback_docs = await self._classify_results(
-                    fallback_results, product, processed_urls
+                    fallback_results, product, processed_urls, seen_fingerprints
                 )
                 processed_documents.extend(fallback_docs)
 
