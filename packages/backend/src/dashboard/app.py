@@ -14,7 +14,7 @@ from src.dashboard.components.product_creation import show_product_creation
 from src.dashboard.components.product_view import show_product_view
 from src.dashboard.components.promotion import show_promotion
 from src.dashboard.components.rag import show_rag
-from src.dashboard.components.summarization import show_summarization
+from src.dashboard.components.summarization import show_analysis
 
 # Suppress Streamlit ScriptRunContext warnings globally
 warnings.filterwarnings("ignore", message="missing ScriptRunContext")
@@ -42,7 +42,7 @@ def main() -> None:
         {"id": "complete_workflow", "display_name": "Complete Workflow"},
         {"id": "start_crawling", "display_name": "Start Crawling"},
         {"id": "generate_embeddings", "display_name": "Generate & Store Embeddings"},
-        {"id": "summarization", "display_name": "Summarization"},
+        {"id": "analysis", "display_name": "Analysis"},
         {"id": "deep_analysis", "display_name": "Deep Analysis & Overview"},
         {"id": "rag", "display_name": "RAG"},
     ]
@@ -64,7 +64,7 @@ def main() -> None:
         "Start Crawling": "start_crawling",
         "Generate Embeddings": "generate_embeddings",
         "Generate & Store Embeddings": "generate_embeddings",
-        "Summarization": "summarization",
+        "Analysis": "analysis",
         "Deep Analysis & Overview": "deep_analysis",
         "RAG": "rag",
         "Promotion": "promotion",
@@ -117,8 +117,8 @@ def main() -> None:
         show_crawling()
     elif page_id == "generate_embeddings":
         show_embedding()
-    elif page_id == "summarization":
-        show_summarization()
+    elif page_id == "analysis":
+        show_analysis()
     elif page_id == "deep_analysis":
         show_deep_analysis()
     elif page_id == "rag":

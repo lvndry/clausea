@@ -7,11 +7,11 @@ from typing import Any
 
 from motor.core import AgnosticDatabase
 
+from src.agent.agent import get_answer, get_answer_stream
 from src.core.logging import get_logger
 from src.document_processor import DocumentProcessingResult, DocumentProcessor
 from src.llm import acompletion_with_fallback
 from src.models.conversation import Conversation, Message
-from src.rag import get_answer, get_answer_stream
 from src.repositories.conversation_repository import ConversationRepository
 from src.services.embedding_service import EmbeddingService
 

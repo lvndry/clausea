@@ -54,7 +54,7 @@ async def schedule_pipeline_run(job_id: str, background_tasks: BackgroundTasks) 
             # Clean up motor client for this loop
             from src.core.database import close_motor_client
 
-            close_motor_client()
+            close_motor_client(new_loop)
             new_loop.close()
 
             # Clean up the lock in the main loop

@@ -50,7 +50,7 @@ async def start_crawl(
     Otherwise, creates a new product (if needed) and starts the pipeline.
 
     The pipeline runs in the background:
-    1. Crawl the site for legal documents
+    1. Crawl the site for policy documents
     2. Summarize each document
     3. Generate a privacy overview
 

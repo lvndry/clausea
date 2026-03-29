@@ -27,7 +27,7 @@ class SubscriptionAPI {
   private async fetchWithAuth(
     endpoint: string,
     token: string | null,
-    options: RequestInit = {}
+    options: RequestInit = {},
   ) {
     const url = getBackendUrl(endpoint);
     const headers: HeadersInit = {
@@ -57,7 +57,7 @@ class SubscriptionAPI {
 
   async createCheckout(
     request: CheckoutRequest,
-    token: string | null
+    token: string | null,
   ): Promise<CheckoutResponse> {
     return this.fetchWithAuth("/subscriptions/checkout", token, {
       method: "POST",
@@ -70,7 +70,7 @@ class SubscriptionAPI {
   }
 
   async cancelSubscription(
-    token: string | null
+    token: string | null,
   ): Promise<{ success: boolean; message: string }> {
     return this.fetchWithAuth("/subscriptions/cancel", token, {
       method: "POST",
@@ -78,7 +78,7 @@ class SubscriptionAPI {
   }
 
   async pauseSubscription(
-    token: string | null
+    token: string | null,
   ): Promise<{ success: boolean; message: string }> {
     return this.fetchWithAuth("/subscriptions/pause", token, {
       method: "POST",
@@ -86,7 +86,7 @@ class SubscriptionAPI {
   }
 
   async resumeSubscription(
-    token: string | null
+    token: string | null,
   ): Promise<{ success: boolean; message: string }> {
     return this.fetchWithAuth("/subscriptions/resume", token, {
       method: "POST",

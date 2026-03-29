@@ -1,4 +1,4 @@
-"""Evidence-first extraction for legal documents (v4).
+"""Evidence-first extraction for policy documents (v4).
 
 Extracts structured facts from a document WITH evidence (exact quotes),
 so downstream summaries can be generated from extracted facts only.
@@ -680,7 +680,7 @@ def _get_extraction_prompt(document: Document, chunk: str, cluster: str) -> str:
     schema_hint, notes = _CLUSTER_SPECS[cluster]
 
     header = f"""\
-Extract evidence-backed facts from this legal document chunk.
+Extract evidence-backed facts from this policy document chunk.
 
 Document URL: {document.url}
 Document Type: {document.doc_type}

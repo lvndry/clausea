@@ -1,7 +1,7 @@
 """
 Document Classification Analyzer
 
-Specialized analyzer for classifying legal documents through multiple detection methods:
+Specialized analyzer for classifying policy documents through multiple detection methods:
 URL pattern analysis, metadata inspection, content heuristics, and LLM fallback.
 """
 
@@ -19,7 +19,7 @@ logger = get_logger(__name__, component="document classification")
 
 class DocumentClassifier(LLMUsageTrackingMixin):
     """
-    AI-powered document classifier for determining legal document types.
+    AI-powered document classifier for determining policy document types.
 
     Uses a multi-layered approach prioritizing speed and accuracy:
     1. URL pattern analysis (fastest)
@@ -33,11 +33,13 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         self.max_content_length = max_content_length
 
         # Document type categories for classification
+        # Must stay in sync with DocType in models/document.py.
+        # terms_of_use and terms_and_conditions are intentionally absent:
+        # the classifier maps all such URLs/metadata to terms_of_service.
         self.categories = [
             "privacy_policy",
             "terms_of_service",
             "cookie_policy",
-            "terms_and_conditions",
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",
@@ -46,7 +48,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             "other",
         ]
 
-        # Basic legal content indicators for URL pattern verification
+        # Basic policy/legal content indicators for URL pattern verification
         self.legal_indicators = [
             "effective date",
             "last updated",
@@ -96,6 +98,18 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             "personal information",
             "data controller",
             "data processor",
+            "community guidelines",
+            "community standards",
+            "safety policy",
+            "safety center",
+            "transparency report",
+            "transparency center",
+            "platform rules",
+            "acceptable use",
+            "content moderation",
+            "enforcement",
+            "appeals",
+            "policy center",
         ]
 
         instructional_phrases = [
@@ -134,7 +148,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         self, url: str, text: str, metadata: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Classify if document is a legal document and determine its type.
+        Classify if document is a policy document and determine its type.
 
         Priority order:
         1. Check URL patterns for document type indicators
@@ -148,7 +162,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             metadata: Document metadata
 
         Returns:
-            Dict containing classification, justification, and is_legal_document flag
+            Dict containing classification, justification, and is_policy_document flag
         """
         # 1. Pre-filter using URL patterns (very fast, no LLM needed)
         url_lower = url.lower()
@@ -221,6 +235,10 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 r"/safety(?:[-_]?(?:policy|guidelines|standards))?(?:/\w+)*",
                 r"/community-guidelines",
                 r"/content-policy",
+                r"/community(?:[-_]?guidelines|[-_]?standards|[-_]?safety)?(?:/\w+)*",
+                r"/transparency(?:[-_]?center|[-_]?report|[-_]?hub|[-_]?policy|[-_]?safety)?(?:/\w+)*",
+                r"/rules?(?:/\w+)*",
+                r"/guidelines?(?:/\w+)*",
             ],
             "children_privacy_policy": [
                 r"/children(?:['-]?s)?[-_]privacy(?:[-_]?(?:policy|notice))?(?:/\w+)*",
@@ -233,7 +251,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         for doc_type, patterns in url_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, url_lower):
-                    # Verify it's actually a legal document (not just a link)
+                    # Verify it's actually a substantive policy document (not just a link)
                     text_lower = text.lower()
                     has_legal_content = any(
                         indicator in text_lower for indicator in self.legal_indicators
@@ -244,8 +262,8 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                         return {
                             "classification": doc_type,
                             "classification_justification": f"Detected from URL pattern: {pattern}",
-                            "is_legal_document": True,
-                            "is_legal_document_justification": "URL pattern and content indicate legal document",
+                            "is_policy_document": True,
+                            "is_policy_document_justification": "URL pattern and content indicate substantive policy document",
                         }
 
         # 2. Check metadata for document type indicators
@@ -338,6 +356,11 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                     "acceptable use",
                     "community standards",
                     "platform rules",
+                    "transparency center",
+                    "transparency report",
+                    "safety center",
+                    "enforcement",
+                    "appeals",
                 ],
                 "children_privacy_policy": [
                     "children's privacy",
@@ -357,15 +380,15 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                         return {
                             "classification": doc_type,
                             "classification_justification": "Detected from metadata keywords",
-                            "is_legal_document": True,
-                            "is_legal_document_justification": "Metadata and content indicate legal document",
+                            "is_policy_document": True,
+                            "is_policy_document_justification": "Metadata and content indicate substantive policy document",
                         }
 
         # 3. Check content heuristics (keywords and structure)
         text_lower = text.lower()
         text_sample = text_lower[:2000]  # Check first 2000 chars
 
-        # Legal document indicators with expanded keywords
+        # Policy document indicators with expanded keywords
         legal_keywords = {
             "privacy_policy": [
                 "personal information",
@@ -483,6 +506,11 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 "content moderation",
                 "reporting abuse",
                 "platform rules",
+                "transparency center",
+                "transparency report",
+                "safety center",
+                "enforcement",
+                "appeals",
             ],
             "children_privacy_policy": [
                 "children's privacy",
@@ -519,31 +547,31 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                     return {
                         "classification": best_type[0],
                         "classification_justification": f"Detected from content keywords (score: {best_type[1]})",
-                        "is_legal_document": True,
-                        "is_legal_document_justification": "Content keywords and structure indicate legal document",
+                        "is_policy_document": True,
+                        "is_policy_document_justification": "Content keywords and structure indicate substantive policy document",
                     }
 
-        # 4. Quick rejection: If content is too short or lacks legal structure, likely not legal
+        # 4. Quick rejection: If content is too short or lacks policy/legal structure, likely not useful
         if len(text) < 200:
-            logger.debug("document content too short to be a legal document (less than 200 chars)")
+            logger.debug("document content too short to be a policy document (less than 200 chars)")
             return {
                 "classification": "other",
-                "classification_justification": "Document too short to be substantive legal content",
-                "is_legal_document": False,
-                "is_legal_document_justification": "Content length indicates this is not a legal document",
+                "classification_justification": "Document too short to be substantive policy content",
+                "is_policy_document": False,
+                "is_policy_document_justification": "Content length indicates this is not a policy document",
             }
 
-        # Check for navigation/page structure indicators (not legal documents)
+        # Check for navigation/page structure indicators (not policy documents)
         if (
             any(indicator in text_lower[:500] for indicator in self.nav_indicators)
             and len(text) < 1000
         ):
-            logger.debug("detected navigation or page structure elements; not a legal document")
+            logger.debug("detected navigation or page structure elements; not a policy document")
             return {
                 "classification": "other",
-                "classification_justification": "Content structure indicates navigation/page, not legal document",
-                "is_legal_document": False,
-                "is_legal_document_justification": "Lacks substantive legal content structure",
+                "classification_justification": "Content structure indicates navigation/page, not a policy document",
+                "is_policy_document": False,
+                "is_policy_document_justification": "Lacks substantive policy content structure",
             }
 
         # 5. Use LLM for classification (only if pre-filtering couldn't determine)
@@ -551,7 +579,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         content_sample = text[: self.max_content_length]
         categories_list = "\n".join(f"- {cat}" for cat in self.categories)
 
-        prompt = f"""Analyze webpage content to determine if it's a legal document and classify its type.
+        prompt = f"""Analyze webpage content to determine if it's a policy document and classify its type.
 
 URL: {url}
 Content: {content_sample}
@@ -561,22 +589,22 @@ Categories:
 {categories_list}
 
 Return JSON with:
-- classification: most appropriate category (use "other" if not legal/unclear)
+- classification: most appropriate category (use "other" if not a policy document or unclear)
 - classification_justification: brief explanation of category choice
-- is_legal_document: boolean (True only for substantive legal text)
-- is_legal_document_justification: rationale for legal classification
+- is_policy_document: boolean (True only for substantive policy documents like privacy policies, terms of service, cookie policies, safety policies, community guidelines, etc.)
+- is_policy_document_justification: rationale for policy document classification
 
 Example output:
 {{
   "classification": "privacy_policy",
   "classification_justification": "The content is a privacy policy for a website.",
-  "is_legal_document": true,
-  "is_legal_document_justification": "The content is a privacy policy for a website."
+  "is_policy_document": true,
+  "is_policy_document_justification": "The content is a privacy policy for a website."
 }}
 
-Note: Cookie banners, navigation elements, or links to legal documents don't count as legal documents themselves."""
+Note: Cookie banners, navigation elements, or links to policy documents don't count as policy documents themselves."""
 
-        system_prompt = """You are a legal document classifier. Identify substantive legal content and categorize accurately."""
+        system_prompt = """You are a policy document classifier. Identify substantive policy content (privacy policies, terms of service, cookie policies, safety policies, community guidelines, etc.) and categorize accurately."""
 
         try:
             async with usage_tracking(self._create_usage_tracker("classify_document")):
@@ -600,23 +628,23 @@ Note: Cookie banners, navigation elements, or links to legal documents don't cou
 
             result = json.loads(content)
             logger.debug(
-                f"LLM classification result: {result['classification']} (is_legal: {result['is_legal_document']})"
+                f"LLM classification result: {result['classification']} (is_policy: {result['is_policy_document']})"
             )
 
             classification = result.get("classification", "other")
-            if result.get("is_legal_document") and classification in (
+            if result.get("is_policy_document") and classification in (
                 "community_guidelines",
                 "other",
             ):
                 is_policy, _conf = self._is_policy_content(text)
                 if not is_policy:
-                    result["is_legal_document"] = False
-                    prev = (result.get("is_legal_document_justification") or "").strip()
+                    result["is_policy_document"] = False
+                    prev = (result.get("is_policy_document_justification") or "").strip()
                     suffix = (
                         "Obligation-density check suggests help or instructional content, "
                         "not a substantive policy document."
                     )
-                    result["is_legal_document_justification"] = (
+                    result["is_policy_document_justification"] = (
                         f"{prev} {suffix}".strip() if prev else suffix
                     )
 
@@ -627,6 +655,6 @@ Note: Cookie banners, navigation elements, or links to legal documents don't cou
             return {
                 "classification": "other",
                 "classification_justification": f"Classification failed: {e}",
-                "is_legal_document": False,
-                "is_legal_document_justification": "Could not analyze due to error",
+                "is_policy_document": False,
+                "is_policy_document_justification": "Could not analyze due to error",
             }

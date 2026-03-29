@@ -7,6 +7,11 @@ from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
 from starlette.status import HTTP_404_NOT_FOUND, HTTP_424_FAILED_DEPENDENCY, HTTP_425_TOO_EARLY
 
+from src.analyser import (
+    generate_document_deep_analysis,
+    generate_product_deep_analysis,
+    generate_product_overview,
+)
 from src.core.database import get_db
 from src.core.logging import get_logger
 from src.core.tier_deps import check_usage_limit, get_user_tier, increment_usage
@@ -28,11 +33,6 @@ from src.services.service_factory import (
     create_indexation_notification_service,
     create_product_service,
     create_services,
-)
-from src.summarizer import (
-    generate_document_deep_analysis,
-    generate_product_deep_analysis,
-    generate_product_overview,
 )
 
 logger = get_logger(__name__)

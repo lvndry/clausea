@@ -1,4 +1,13 @@
-"""Document summarization module for privacy-focused analysis of legal documents."""
+"""Document analysis module — evidence-first, deep analysis of policy documents.
+
+Flow per document:
+  1. extract_document_facts()  — structured evidence-backed extraction (chunked, parallel).
+  2. analyse_document()        — unified deep analysis from extraction (one LLM call).
+
+Flow for product overview (powers cached JSON on `/products/{slug}` in the app):
+  3. generate_product_overview() — LLM synthesis from CORE documents only; saved via ProductService.
+     This is separate from chat: the product page does not run embedding search to render the overview.
+"""
 
 import asyncio
 import hashlib
@@ -24,15 +33,16 @@ from src.models.document import (
     EnhancedComplianceBreakdown,
     IndividualImpact,
     MetaSummary,
+    ProductContradiction,
     ProductDeepAnalysis,
     RiskPrioritization,
 )
 from src.models.finding import Aggregation
-from src.prompts.summarizer_prompts import (
-    AGGREGATE_DEEP_ANALYSIS_PROMPT,
-    DOCUMENT_SUMMARY_SYSTEM_PROMPT,
-    PRODUCT_OVERVIEW_SYSTEM_PROMPT,
-    SINGLE_DOC_DEEP_ANALYSIS_PROMPT,
+from src.prompts.analysis_prompts import (
+    DOCUMENT_ANALYSIS_PROMPT,
+    OVERVIEW_CORE_DOC_TYPES,
+    PRODUCT_DEEP_ANALYSIS_PROMPT,
+    PRODUCT_OVERVIEW_PROMPT,
 )
 from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
@@ -55,45 +65,45 @@ async def _maybe_await(result: Awaitable[None] | None) -> None:
         await result
 
 
-async def summarize_all_product_documents(
+async def analyse_product_documents(
     db: AgnosticDatabase,
     product_slug: str,
     document_svc: DocumentService,
     cancellation_token: CancellationToken | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> list[Document]:
-    """Summarize all documents for a product with cancellation support."""
-    # For HTTP requests, create a fresh token if none provided
-    # The global token is for signal-based cancellation (Ctrl+C) and may be in a cancelled state
-    if cancellation_token is None:
-        token = CancellationToken()
-    else:
-        token = cancellation_token
+    """Analyse all documents for a product concurrently (up to 3 at once).
 
+    Each document analysis itself runs 4 parallel extraction clusters, so capping at 3
+    concurrent documents balances throughput against LLM rate limits.
+    """
+    token = cancellation_token or CancellationToken()
     documents: list[Document] = await document_svc.get_product_documents_by_slug(db, product_slug)
     total_docs: int = len(documents)
-    logger.info(f"Summarizing {total_docs} documents for {product_slug}")
+    logger.info(f"Analysing {total_docs} documents for {product_slug} (up to 3 concurrently)")
 
-    for index, doc in enumerate(documents, 1):
-        # Check for cancellation before processing each document
+    sem = asyncio.Semaphore(3)
+
+    async def _analyse_one(index: int, doc: Document) -> None:
         await token.check_cancellation()
+        async with sem:
+            logger.info(f"Processing document {index}/{total_docs}: {doc.title}")
+            if progress_callback:
+                await _maybe_await(progress_callback(index, total_docs, doc))
+            try:
+                analysis = await analyse_document(doc, cancellation_token=token)
+                if analysis:
+                    doc.analysis = analysis
+                    await document_svc.update_document(db, doc)
+                    logger.info(f"✓ Stored analysis for document {doc.id}")
+                else:
+                    logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
+            except asyncio.CancelledError:
+                logger.info(f"Summarization cancelled at document {index}/{total_docs}")
+                raise
 
-        logger.info(f"Processing document {index}/{total_docs}: {doc.title}")
-        if progress_callback:
-            await _maybe_await(progress_callback(index, total_docs, doc))
-        try:
-            analysis = await summarize_document(doc, cancellation_token=token)
-            if analysis:
-                doc.analysis = analysis
-                await document_svc.update_document(db, doc)
-                logger.info(f"✓ Stored analysis for document {doc.id}")
-            else:
-                logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
-        except asyncio.CancelledError:
-            logger.info(f"Summarization cancelled at document {index}/{total_docs}")
-            raise
-
-    logger.info(f"✓ Successfully summarized all {total_docs} documents for {product_slug}")
+    await asyncio.gather(*[_analyse_one(i, doc) for i, doc in enumerate(documents, 1)])
+    logger.info(f"✓ Successfully analysed all {total_docs} documents for {product_slug}")
     return documents
 
 
@@ -240,22 +250,12 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
                     score=score_value, justification="Not specified in document"
                 )
 
-    # Calculate risk_score if not provided
-    if not hasattr(parsed, "risk_score"):
-        parsed.risk_score = _calculate_risk_score(parsed.scores)
-
-    # Calculate verdict if not provided or doesn't match risk_score
-    if not hasattr(parsed, "verdict"):
-        parsed.verdict = _calculate_verdict(parsed.risk_score)
-    else:
-        # Verify verdict matches risk_score (recalculate if mismatch)
-        expected_verdict = _calculate_verdict(parsed.risk_score)
-        if parsed.verdict != expected_verdict:
-            logger.warning(
-                f"Verdict '{parsed.verdict}' doesn't match risk_score {parsed.risk_score}, "
-                f"recalculating to '{expected_verdict}'"
-            )
-            parsed.verdict = expected_verdict
+    # Always recalculate risk_score and verdict deterministically from component scores.
+    # This ignores the LLM-provided values, which are approximate, in favour of a
+    # consistent weighted formula. The formula matches what the prompt asks the LLM to compute,
+    # so the results should agree; this just guarantees they always do.
+    parsed.risk_score = _calculate_risk_score(parsed.scores)
+    parsed.verdict = _calculate_verdict(parsed.risk_score)
 
     return parsed
 
@@ -425,7 +425,54 @@ def _extract_last_updated_from_metadata(metadata: dict[str, Any] | None) -> date
     return None
 
 
-async def summarize_document(
+def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> None:
+    """Parse deep analysis fields (critical_clauses, risk_breakdown, key_sections)
+    from the unified analysis response dict and attach them to the analysis object.
+
+    Best-effort: individual parsing failures are logged but do not abort the analysis.
+    """
+    from src.models.document import CriticalClause, DocumentSection
+
+    risk_breakdown_raw = data.get("document_risk_breakdown", {})
+    if isinstance(risk_breakdown_raw, dict):
+        if "overall_risk" not in risk_breakdown_raw:
+            risk_breakdown_raw["overall_risk"] = analysis.risk_score
+        try:
+            analysis.document_risk_breakdown = DocumentRiskBreakdown(**risk_breakdown_raw)
+        except Exception as e:
+            logger.warning(f"Failed to parse document_risk_breakdown: {e}")
+
+    raw_clauses = data.get("critical_clauses", [])
+    if isinstance(raw_clauses, list):
+        try:
+            parsed_clauses = []
+            for c in raw_clauses:
+                if not isinstance(c, dict):
+                    continue
+                # Backfill analysis from plain_english for backward compat
+                if not c.get("analysis") and c.get("plain_english"):
+                    c["analysis"] = c["plain_english"]
+                parsed_clauses.append(CriticalClause.model_validate(c))
+            analysis.critical_clauses = parsed_clauses
+        except Exception as e:
+            logger.warning(f"Failed to parse critical_clauses: {e}")
+
+    raw_sections = data.get("key_sections", [])
+    if isinstance(raw_sections, list):
+        try:
+            analysis.key_sections = [
+                DocumentSection.model_validate(s) for s in raw_sections if isinstance(s, dict)
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to parse key_sections: {e}")
+
+    analysis.analysis_completeness = data.get("analysis_completeness", "full")
+    raw_gaps = data.get("coverage_gaps", [])
+    if isinstance(raw_gaps, list):
+        analysis.coverage_gaps = [str(g) for g in raw_gaps if g]
+
+
+async def analyse_document(
     document: Document,
     use_cache: bool = True,
     max_retries: int = 3,
@@ -480,10 +527,13 @@ async def summarize_document(
                     "Re-analyzing to generate fresh analysis."
                 )
 
-    # Evidence-first: extract structured facts WITH quotes, then generate analysis only from extracted facts.
-    # Fallback to raw text only if extraction fails unexpectedly.
+    # Phase 1: Extract structured facts (chunked, 4 parallel clusters per chunk).
+    # Phase 2: Deep analysis from extracted facts (one unified call).
+    # Fallback: raw text if extraction fails unexpectedly.
     extracted_prompt: str | None = None
     extraction_for_evidence: dict[str, Any] | None = None
+    extraction_is_partial = False
+
     try:
         await token.check_cancellation()
         extraction = await extract_document_facts(
@@ -492,73 +542,86 @@ async def summarize_document(
             cancellation_token=token,
         )
         extraction_for_evidence = extraction.model_dump()
-        extracted_prompt = f"""
-Document Title: {document.title or "Not specified"}
+
+        # Determine whether the extraction covered the full document.
+        # The extraction service chunks the full text, so extraction is always full
+        # unless the document text itself was absent or very short.
+        doc_chars = len(document.text or "")
+        extraction_is_partial = doc_chars == 0
+
+        completeness_note = (
+            "Extraction completeness: PARTIAL — document text was unavailable or very short. "
+            "Set analysis_completeness to 'partial' and list known gaps in coverage_gaps."
+            if extraction_is_partial
+            else "Extraction completeness: FULL — the entire document was processed."
+        )
+
+        extracted_prompt = f"""Document Title: {document.title or "Not specified"}
 Document Type: {document.doc_type}
 Document URL: {document.url}
 Document Regions: {document.regions}
 Document Locale: {document.locale or "Not specified"}
 
-CRITICAL REQUIREMENT:
-- Use ONLY the extracted facts below. Do NOT add any new data types, purposes, rights, third parties, or claims that are not present in the extracted facts.
-- If something is missing from the extracted facts, explicitly say "Not specified in document" (or equivalent).
+{completeness_note}
+
+Rules:
+- Use ONLY the extracted facts below. Do NOT add data types, purposes, rights, third parties, or claims not present in the extraction.
+- If something is absent from the extraction, state "Not specified in document".
+- Every critical clause quote must come from the extraction's evidence fields.
 
 Extracted facts (evidence-backed JSON):
-{extraction.model_dump_json()}
-""".strip()
+{extraction.model_dump_json()}""".strip()
+
     except Exception as e:
         logger.warning(
             f"Extraction failed for document {document.id}: {e}. Falling back to raw text."
         )
+        extraction_is_partial = True
 
     if extracted_prompt is not None:
         prompt = extracted_prompt
     else:
-        # Prepare document content (legacy fallback path)
+        # Fallback: raw text path (extraction unavailable)
         doc_text = document.text
-        max_tokens = 200000  # Approximate token limit (roughly 4 chars per token)
+        max_chars = 200000
 
-        if len(doc_text) > max_tokens:
+        if len(doc_text) > max_chars:
             logger.warning(
-                f"Document {document.id} is very long ({len(doc_text)} chars). "
-                "Consider implementing chunking for better results."
+                f"Document {document.id} is very long ({len(doc_text)} chars), truncating for fallback path."
             )
             doc_text = (
-                doc_text[: max_tokens // 2]
-                + "\n\n[... document truncated ...]\n\n"
-                + doc_text[-max_tokens // 2 :]
+                doc_text[: max_chars // 2]
+                + "\n\n[... document truncated — set analysis_completeness to 'partial' ...]\n\n"
+                + doc_text[-max_chars // 2 :]
             )
 
-        prompt = f"""
-Document Title: {document.title or "Not specified"}
+        prompt = f"""Document Title: {document.title or "Not specified"}
 Document Type: {document.doc_type}
 Document URL: {document.url}
 Document Regions: {document.regions}
 Document Locale: {document.locale or "Not specified"}
 
-**IMPORTANT: Determine document scope from the above metadata and content below.**
-Consider if this is a global policy, product-specific, region-specific, or service-specific document.
+Extraction completeness: PARTIAL — structured extraction unavailable, analyzing raw text.
+Set analysis_completeness to 'partial' in your response.
 
 Document content:
-{doc_text}
-""".strip()
+{doc_text}""".strip()
 
     # Select appropriate model based on document complexity
 
     last_exception: Exception | None = None
+    last_raw_content: str | None = None  # preserved across retries for the parse-error fallback
 
     # Set up usage tracking for this document summarization
     usage_tracker = UsageTracker()
-    tracker_callback = usage_tracker.create_tracker("summarize_document")
+    tracker_callback = usage_tracker.create_tracker("analyse_document")
 
     for attempt in range(max_retries):
         # Check for cancellation before each retry attempt
         await token.check_cancellation()
 
         try:
-            logger.debug(
-                f"Summarizing document {document.id} (attempt {attempt + 1}/{max_retries}) "
-            )
+            logger.debug(f"Analysing document {document.id} (attempt {attempt + 1}/{max_retries}) ")
 
             async with usage_tracking(tracker_callback):
                 # Wrap the LLM call in a cancellable task
@@ -567,7 +630,7 @@ Document content:
                         messages=[
                             {
                                 "role": "system",
-                                "content": DOCUMENT_SUMMARY_SYSTEM_PROMPT,
+                                "content": DOCUMENT_ANALYSIS_PROMPT,
                             },
                             {"role": "user", "content": prompt},
                         ],
@@ -597,7 +660,7 @@ Document content:
                         await llm_task
                     except asyncio.CancelledError:
                         pass
-                    raise asyncio.CancelledError("Document summarization cancelled")
+                    raise asyncio.CancelledError("Document analysis cancelled")
 
                 # Get the response
                 response = await llm_task
@@ -611,45 +674,22 @@ Document content:
             content = message.content  # type: ignore[attr-defined]
             if not content:
                 raise ValueError("Empty response from LLM")
-            summary_data = content
-            if not summary_data:
-                raise ValueError("Empty response from LLM")
+            last_raw_content = content
 
             # Parse and validate response
             try:
-                # First parse as dict to handle null scores before validation
-                parsed_dict = json.loads(summary_data)
+                parsed_dict = json.loads(content)
 
-                # Fix null scores for data_retention_score and security_score
-                if "scores" in parsed_dict:
-                    for score_name in ["data_retention_score", "security_score"]:
-                        if score_name in parsed_dict["scores"]:
-                            score_obj = parsed_dict["scores"][score_name]
-                            if score_obj is None or (
-                                isinstance(score_obj, dict) and score_obj.get("score") is None
-                            ):
-                                parsed_dict["scores"][score_name] = {
-                                    "score": 5,
-                                    "justification": "Not specified in document",
-                                }
-                            elif (
-                                isinstance(score_obj, dict)
-                                and "score" in score_obj
-                                and score_obj["score"] is None
-                            ):
-                                parsed_dict["scores"][score_name]["score"] = 5
-                                if not parsed_dict["scores"][score_name].get("justification"):
-                                    parsed_dict["scores"][score_name]["justification"] = (
-                                        "Not specified in document"
-                                    )
-
-                # Now validate the cleaned dict
                 parsed: DocumentAnalysis = DocumentAnalysis.model_validate(
                     parsed_dict, strict=False
                 )
 
                 # Ensure all required scores are present, normalize names, and calculate risk_score/verdict
                 parsed = _ensure_required_scores(parsed)
+
+                # Parse deep analysis fields (critical_clauses, risk_breakdown, key_sections,
+                # analysis_completeness, coverage_gaps) from the same response — deep is default.
+                _attach_deep_fields(parsed, parsed_dict)
 
                 # Attach evidence spans to keypoints when possible (best-effort)
                 _attach_keypoint_evidence(parsed, extraction_for_evidence)
@@ -661,17 +701,19 @@ Document content:
                 document.metadata["analysis_hash_stored_at"] = datetime.now().isoformat()
 
                 logger.info(
-                    f"Successfully summarized document {document.id} (hash: {content_hash[:8]}...)"
+                    f"Successfully analysed document {document.id} "
+                    f"(hash: {content_hash[:8]}..., "
+                    f"completeness: {parsed.analysis_completeness})"
                 )
 
-                # Log LLM usage for this document summarization (success case)
+                # Log LLM usage for this document analysis (success case)
                 summary, records = usage_tracker.consume_summary()
                 log_usage_summary(
                     summary,
                     records,
                     context=f"document_{document.id}",
                     reason="success",
-                    operation_type="summarization",
+                    operation_type="analysis",
                     product_id=document.product_id,
                     document_id=document.id,
                     document_url=document.url,
@@ -681,64 +723,17 @@ Document content:
                 return parsed
 
             except Exception as parse_error:
-                logger.warning(f"Failed to parse LLM response: {parse_error}")
-                # Fallback: create minimal valid structure
-                fallback_scores = {
-                    "transparency": DocumentAnalysisScores(
-                        score=0, justification="Analysis parsing failed"
-                    ),
-                    "data_collection_scope": DocumentAnalysisScores(
-                        score=0, justification="Analysis parsing failed"
-                    ),
-                    "user_control": DocumentAnalysisScores(
-                        score=0, justification="Analysis parsing failed"
-                    ),
-                    "third_party_sharing": DocumentAnalysisScores(
-                        score=0, justification="Analysis parsing failed"
-                    ),
-                }
-                # Extract the plain-text summary from the raw JSON blob when possible.
-                # summary_data is the raw LLM response (a JSON string), so we must
-                # not store it directly as the summary — that would persist JSON in the DB.
-                fallback_summary = "Analysis unavailable"
-                if summary_data:
-                    try:
-                        raw_dict = json.loads(summary_data)
-                        if isinstance(raw_dict, dict) and "summary" in raw_dict:
-                            extracted = str(raw_dict["summary"]).strip()
-                            fallback_summary = extracted if extracted else "Analysis unavailable"
-                        else:
-                            # Not the expected shape; store a short plain-text excerpt
-                            fallback_summary = summary_data[:500]
-                    except (json.JSONDecodeError, TypeError):
-                        fallback_summary = summary_data[:500]
-                parsed_fallback: DocumentAnalysis = DocumentAnalysis(
-                    summary=fallback_summary,
-                    scores=fallback_scores,
-                    risk_score=5,  # Default middle risk score
-                    verdict="moderate",  # Default verdict
-                    keypoints=[],
+                last_exception = parse_error
+                logger.warning(
+                    f"Failed to parse LLM response on attempt {attempt + 1}/{max_retries} "
+                    f"for document {document.id}: {parse_error}"
                 )
-
-                # Log LLM usage even for fallback case
-                summary, records = usage_tracker.consume_summary()
-                log_usage_summary(
-                    summary,
-                    records,
-                    context=f"document_{document.id}",
-                    reason="parsing_fallback",
-                    operation_type="summarization",
-                    product_id=document.product_id,
-                    document_id=document.id,
-                    document_url=document.url,
-                    document_title=document.title,
-                )
-
-                return parsed_fallback
+                # Do NOT return a fallback immediately — allow remaining retries to run.
+                # The fallback is only built after all attempts are exhausted (below the loop).
 
         except asyncio.CancelledError:
             # Re-raise cancellation errors immediately
-            logger.info(f"Document summarization cancelled for {document.id}")
+            logger.info(f"Document analysis cancelled for {document.id}")
             raise
         except Exception as e:
             last_exception = e
@@ -763,23 +758,57 @@ Document content:
                     raise
             continue
 
-    # All retries failed - log usage even on failure
+    # All retries exhausted.
+    # If we have raw content from the last attempt, try to salvage a summary from it
+    # rather than returning None (which causes the document to show as "not analysed").
+    fallback_summary = "Analysis unavailable"
+    if last_raw_content:
+        try:
+            raw_dict = json.loads(last_raw_content)
+            if isinstance(raw_dict, dict) and "summary" in raw_dict:
+                extracted = str(raw_dict["summary"]).strip()
+                fallback_summary = extracted if extracted else "Analysis unavailable"
+            else:
+                fallback_summary = last_raw_content[:500]
+        except (json.JSONDecodeError, TypeError):
+            fallback_summary = last_raw_content[:500]
+
+    fallback_scores = {
+        "transparency": DocumentAnalysisScores(score=5, justification="Analysis parsing failed"),
+        "data_collection_scope": DocumentAnalysisScores(
+            score=5, justification="Analysis parsing failed"
+        ),
+        "user_control": DocumentAnalysisScores(score=5, justification="Analysis parsing failed"),
+        "third_party_sharing": DocumentAnalysisScores(
+            score=5, justification="Analysis parsing failed"
+        ),
+    }
+    parsed_fallback = DocumentAnalysis(
+        summary=fallback_summary,
+        scores=fallback_scores,
+        risk_score=5,
+        verdict="moderate",
+        keypoints=[],
+        analysis_completeness="partial",
+        coverage_gaps=["Analysis failed after all retry attempts"],
+    )
+
     summary, records = usage_tracker.consume_summary()
     log_usage_summary(
         summary,
         records,
         context=f"document_{document.id}",
         reason="failed",
-        operation_type="summarization",
+        operation_type="analysis",
         document_id=document.id,
         document_url=document.url,
         document_title=document.title,
     )
 
     logger.error(
-        f"Failed to summarize document {document.id} after {max_retries} attempts: {last_exception}"
+        f"Failed to analyse document {document.id} after {max_retries} attempts: {last_exception}"
     )
-    return None
+    return parsed_fallback
 
 
 async def generate_product_overview(
@@ -791,9 +820,14 @@ async def generate_product_overview(
     cancellation_token: CancellationToken | None = None,
 ) -> MetaSummary:
     """
-    Generate a cached product overview based on all analyzed documents for a product.
+    Generate a cached product overview from analyzed core policy documents.
 
-    This is intentionally simple right now:
+    Called by the crawl pipeline after `analyse_product_documents`. The result is stored on
+    the product record and returned by the HTTP API for the public/dashboard product page
+    (`GET .../products/{slug}/overview`). This path uses structured per-document
+    extraction + analysis as context — not Pinecone embedding search.
+
+    Cache behaviour:
     - If a cached overview exists and force_regenerate is False, return it.
     - When any document changes, the DocumentService deletes the cached overview.
 
@@ -841,7 +875,7 @@ async def generate_product_overview(
                     f"Failed to parse cached product overview for {product_slug}: {e}. Regenerating..."
                 )
 
-    # Cache miss or invalid - generate new meta-summary
+    # Cache miss or invalid — generate new product overview.
     logger.info(f"Generating new product overview for {product_slug}")
 
     await token.check_cancellation()
@@ -853,27 +887,123 @@ async def generate_product_overview(
         db, product_id=product.id, product_slug=product_slug
     )
 
-    aggregation_payload = _format_aggregation_payload(aggregation)
-    num_documents = len(documents)
-    document_types = list({doc.doc_type for doc in documents})
+    # Filter to core documents only for the synthesis.
+    # Non-core docs (community_guidelines, copyright_policy, etc.) are analysed
+    # per-document but excluded from the product overview — they address editorial/IP
+    # rules rather than data/privacy risk and would dilute the signal.
+    core_docs = [doc for doc in documents if doc.doc_type in OVERVIEW_CORE_DOC_TYPES]
+    excluded_types = {doc.doc_type for doc in documents} - OVERVIEW_CORE_DOC_TYPES
+    if excluded_types:
+        logger.info(
+            f"Excluding {len(excluded_types)} non-core doc type(s) from overview: {excluded_types}"
+        )
 
-    prompt = f"""
-Synthesize the following {num_documents} document(s) ({", ".join(document_types)}) into a unified overview.
+    if not core_docs:
+        # No core documents at all — fall back to all documents
+        logger.warning(
+            f"No core documents found for {product_slug}. Using all {len(documents)} documents."
+        )
+        core_docs = documents
 
-**CRITICAL REQUIREMENTS:**
-1. **Summary field (MOST IMPORTANT)**: 2-6 concise sentences. Name the company. State what data is collected and the biggest concern or protection. Do NOT repeat what goes in other fields.
-2. **Use ONLY the aggregated facts below**. Do NOT invent or infer anything not present.
-3. **Be COMPREHENSIVE in other fields**: Fill data_collected, data_purposes, data_collection_details, third_party_details, your_rights, dangers, benefits, recommended_actions, privacy_signals, compliance_status.
-4. **Be SPECIFIC**: Name exact data types, exact recipients, and explicit rights with instructions.
-5. **If coverage indicates missing categories**, say "Not specified in document" for those fields.
+    # Build rich per-document input: extraction + analysis for each core doc.
+    # This gives the model concrete evidence rather than just aggregated findings.
+    doc_inputs: list[dict[str, Any]] = []
+    for doc in core_docs:
+        if not doc.analysis:
+            logger.debug(f"Skipping document {doc.id} ({doc.doc_type}) — not yet analysed")
+            continue
+        entry: dict[str, Any] = {
+            "document_type": doc.doc_type,
+            "title": doc.title or doc.doc_type,
+            "url": doc.url,
+            "locale": doc.locale,
+            "regions": [r.value if hasattr(r, "value") else r for r in (doc.regions or [])],
+            "analysis": {
+                "summary": doc.analysis.summary,
+                "scores": {
+                    k: {"score": v.score, "justification": v.justification}
+                    for k, v in doc.analysis.scores.items()
+                },
+                "risk_score": doc.analysis.risk_score,
+                "keypoints": doc.analysis.keypoints or [],
+                "applicability": doc.analysis.applicability,
+                "coverage_gaps": doc.analysis.coverage_gaps or [],
+                "critical_clauses": [
+                    {
+                        "clause_type": c.clause_type,
+                        "section_title": c.section_title,
+                        "quote": c.quote,
+                        "risk_level": c.risk_level,
+                        "plain_english": c.plain_english or c.analysis,
+                        "why_notable": c.why_notable,
+                        "compliance_impact": c.compliance_impact,
+                    }
+                    for c in (doc.analysis.critical_clauses or [])
+                ],
+            },
+        }
+        if doc.extraction:
+            entry["extraction"] = {
+                "data_collected": [
+                    {"data_type": d.data_type, "sensitivity": d.sensitivity}
+                    for d in doc.extraction.data_collected
+                ],
+                "data_purposes": [
+                    {"data_type": p.data_type, "purposes": p.purposes}
+                    for p in doc.extraction.data_purposes
+                ],
+                "third_party_details": [
+                    {
+                        "recipient": t.recipient,
+                        "data_shared": t.data_shared,
+                        "purpose": t.purpose,
+                        "risk_level": t.risk_level,
+                    }
+                    for t in doc.extraction.third_party_details
+                ],
+                "user_rights": [
+                    {"right_type": r.right_type, "mechanism": r.mechanism}
+                    for r in doc.extraction.user_rights
+                ],
+                "ai_usage": [
+                    {
+                        "usage_type": a.usage_type,
+                        "description": a.description,
+                        "opt_out_available": a.opt_out_available,
+                    }
+                    for a in doc.extraction.ai_usage
+                ],
+                "privacy_signals": doc.extraction.privacy_signals.model_dump()
+                if doc.extraction.privacy_signals
+                else None,
+                "dangers": [d.value for d in doc.extraction.dangers],
+                "benefits": [b.value for b in doc.extraction.benefits],
+            }
+        doc_inputs.append(entry)
 
-Aggregated facts (JSON):
-{json.dumps(aggregation_payload, indent=2)}
+    # Include cross-document conflicts from the aggregation engine.
+    # These are deterministically detected facts (e.g., one doc says data is not sold,
+    # another says it can be shared with commercial partners) that the LLM should weigh.
+    conflicts_section = ""
+    if aggregation.conflicts:
+        conflicts_section = (
+            "\nCross-document conflicts detected by the analysis engine "
+            "(report these in the contradictions field):\n"
+            + json.dumps([c.model_dump() for c in aggregation.conflicts], indent=2)
+            + "\n"
+        )
+
+    prompt = f"""Product: {product_slug}
+Core documents analyzed: {len(doc_inputs)} of {len(core_docs)} core documents
+Document types: {", ".join(doc.doc_type for doc in core_docs if doc.analysis)}
+{conflicts_section}
+Per-document analyses and extractions:
+{json.dumps(doc_inputs, indent=2)}
 """
 
     # Set up usage tracking for meta-summary generation
     usage_tracker = UsageTracker()
-    tracker_callback = usage_tracker.create_tracker("generate_product_overview")
+    tracker_callback = usage_tracker.create_tracker("generate_overview")
 
     # Check for cancellation before making LLM call
     await token.check_cancellation()
@@ -886,7 +1016,7 @@ Aggregated facts (JSON):
                     messages=[
                         {
                             "role": "system",
-                            "content": PRODUCT_OVERVIEW_SYSTEM_PROMPT,
+                            "content": PRODUCT_OVERVIEW_PROMPT,
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -934,17 +1064,32 @@ Aggregated facts (JSON):
 
         logger.debug(content)
 
-        # Parse the meta-summary
-        meta_summary = MetaSummary.model_validate_json(content, strict=False)
+        # Parse the product overview
+        overview_dict = json.loads(content)
+
+        # Parse contradictions before model validation
+        raw_contradictions = overview_dict.pop("contradictions", None)
+
+        meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
         meta_summary.coverage = aggregation.coverage
 
-        # Product risk_score: deterministic mean of document analyses (LLM value discarded).
-        # PRODUCT_OVERVIEW_SYSTEM_PROMPT still lists risk_score/verdict in SUMMARY_JSON_SCHEMA
-        # (shared with document prompts) — redundant tokens; split schema later if desired.
-        if meta_summary and documents:
+        # Attach contradictions
+        if isinstance(raw_contradictions, list):
+            try:
+                meta_summary.contradictions = [
+                    ProductContradiction.model_validate(c)
+                    for c in raw_contradictions
+                    if isinstance(c, dict)
+                ]
+            except Exception as e:
+                logger.warning(f"Failed to parse contradictions: {e}")
+
+        # Product risk_score: deterministic mean of core document analyses.
+        # The LLM's risk_score value is discarded in favour of this deterministic calculation.
+        if meta_summary and core_docs:
             doc_scores = [
                 doc.analysis.risk_score
-                for doc in documents
+                for doc in core_docs
                 if doc.analysis and doc.analysis.risk_score is not None
             ]
             if doc_scores:
@@ -999,120 +1144,32 @@ Aggregated facts (JSON):
         ) from e
 
 
-async def _generate_single_document_deep_analysis(
-    document: Document,
-    usage_tracker: UsageTracker,
-) -> DocumentDeepAnalysis | None:
-    """
-    Generate deep analysis for a single document.
+def _document_to_deep_analysis(document: Document) -> DocumentDeepAnalysis | None:
+    """Build a DocumentDeepAnalysis from a document whose analysis already includes deep fields.
+
+    Since analyse_document() now always runs the deep analysis step, this is a
+    pure data-mapping function — no additional LLM calls required.
     """
     if not document.analysis:
-        logger.warning(f"Document {document.id} has no analysis, skipping deep analysis")
         return None
 
-    # Check if document has text
-    if not document.text or len(document.text.strip()) == 0:
-        logger.warning(f"Document {document.id} has no text content, skipping deep analysis")
-        return None
+    last_updated = _extract_last_updated_from_metadata(document.metadata)
 
-    # Safely extract text (handle potential None or empty string)
-    text_preview = document.text[:15000] if len(document.text) > 15000 else document.text
-
-    prompt = f"""
-Document: {document.title or document.doc_type}
-Type: {document.doc_type}
-URL: {document.url}
-Effective Date: {document.effective_date}
-Locale: {document.locale}
-Regions: {document.regions}
-
-**IMPORTANT: Determine document scope from title, URL, content, and regions:**
-- Title: {document.title}
-- URL: {document.url}
-- Regions: {document.regions}
-- Consider if this is a global policy, product-specific, region-specific, or service-specific document
-
-Document Text (first 15,000 characters):
-{text_preview}
-
-Existing Analysis:
-{document.analysis.model_dump_json()}
-"""
-
-    tracker_callback = usage_tracker.create_tracker("single_doc_deep_analysis")
-
-    try:
-        async with usage_tracking(tracker_callback):
-            response = await acompletion_with_fallback(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": SINGLE_DOC_DEEP_ANALYSIS_PROMPT,
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-
-        import json
-
-        choice = response.choices[0]
-        if not hasattr(choice, "message"):
-            raise ValueError("Unexpected response format: missing message attribute")
-        message = choice.message  # type: ignore[attr-defined]
-        if not message:
-            raise ValueError("Unexpected response format: message is None")
-        content = message.content  # type: ignore[attr-defined]
-        if not content:
-            raise ValueError("Empty response from LLM")
-
-        data = json.loads(content)
-
-        # Safely construct DocumentRiskBreakdown with defaults if needed
-        risk_breakdown_data = data.get("document_risk_breakdown", {})
-        if not isinstance(risk_breakdown_data, dict):
-            risk_breakdown_data = {}
-        # Ensure overall_risk is present and valid
-        if "overall_risk" not in risk_breakdown_data:
-            # Default to the document's existing risk score if available
-            risk_breakdown_data["overall_risk"] = (
-                document.analysis.risk_score if document.analysis else 5
-            )
-
-        try:
-            document_risk_breakdown = DocumentRiskBreakdown(**risk_breakdown_data)
-        except Exception as e:
-            logger.warning(
-                f"Failed to parse document_risk_breakdown for document {document.id}: {e}. Using defaults."
-            )
-            # Fallback to a safe default
-            document_risk_breakdown = DocumentRiskBreakdown(
-                overall_risk=document.analysis.risk_score if document.analysis else 5,
-                risk_by_category=risk_breakdown_data.get("risk_by_category", {}),
-                top_concerns=risk_breakdown_data.get("top_concerns", []),
-                positive_protections=risk_breakdown_data.get("positive_protections", []),
-                missing_information=risk_breakdown_data.get("missing_information", []),
-            )
-
-        last_updated = _extract_last_updated_from_metadata(document.metadata)
-
-        return DocumentDeepAnalysis(
-            document_id=document.id,
-            document_type=document.doc_type,
-            title=document.title,
-            url=document.url,
-            effective_date=document.effective_date,
-            last_updated=last_updated,
-            locale=document.locale,
-            regions=document.regions,
-            analysis=document.analysis,
-            critical_clauses=data.get("critical_clauses", []),
-            document_risk_breakdown=document_risk_breakdown,
-            key_sections=data.get("key_sections", []),
-        )
-    except Exception as e:
-        logger.error(f"Error generating deep analysis for document {document.id}: {e}")
-        return None
+    return DocumentDeepAnalysis(
+        document_id=document.id,
+        document_type=document.doc_type,
+        title=document.title,
+        url=document.url,
+        effective_date=document.effective_date,
+        last_updated=last_updated,
+        locale=document.locale,
+        regions=document.regions,
+        analysis=document.analysis,
+        critical_clauses=document.analysis.critical_clauses or [],
+        document_risk_breakdown=document.analysis.document_risk_breakdown
+        or DocumentRiskBreakdown(overall_risk=document.analysis.risk_score),
+        key_sections=document.analysis.key_sections or [],
+    )
 
 
 async def generate_document_deep_analysis(
@@ -1120,18 +1177,21 @@ async def generate_document_deep_analysis(
     document: Document,
     document_svc: DocumentService,
 ) -> DocumentDeepAnalysis:
-    """Generate deep analysis for a single document (paid)."""
+    """Return deep analysis for a single document.
+
+    If the document has not been analysed yet, run analysis first (which always
+    includes the clause-level deep analysis step).
+    """
     if not document.analysis:
-        analysis = await summarize_document(document)
+        analysis = await analyse_document(document)
         if analysis:
             document.analysis = analysis
             await document_svc.update_document(db, document)
 
-    usage_tracker = UsageTracker()
-    doc_analysis = await _generate_single_document_deep_analysis(document, usage_tracker)
-    if not doc_analysis:
-        raise ValueError(f"Failed to generate deep analysis for document {document.id}")
-    return doc_analysis
+    result = _document_to_deep_analysis(document)
+    if not result:
+        raise ValueError(f"Failed to generate analysis for document {document.id}")
+    return result
 
 
 async def generate_product_deep_analysis(
@@ -1203,23 +1263,20 @@ async def generate_product_deep_analysis(
 
     usage_tracker = UsageTracker()
 
-    # Phase 1: Generate deep analysis for each document
+    # Phase 1: Build DocumentDeepAnalysis from each document's already-enriched analysis.
+    # analyse_document() always runs the clause-level deep analysis step, so no additional
+    # LLM calls are needed here.
     document_analyses: list[DocumentDeepAnalysis] = []
 
-    # Process documents in parallel (with some concurrency limit implicitly handled by acompletion if needed,
-    # but here we'll just use gather for simplicity as we don't have too many docs usually)
-    # Ideally we should use a semaphore if there are many documents.
-
-    # For now, let's do it sequentially to avoid rate limits and for better error handling visibility
-    # or use a small batch size.
-
     for doc in documents:
-        logger.info(f"Generating deep analysis for document: {doc.title or doc.doc_type}")
-        doc_analysis = await _generate_single_document_deep_analysis(doc, usage_tracker)
+        doc_analysis = _document_to_deep_analysis(doc)
         if doc_analysis:
             document_analyses.append(doc_analysis)
         else:
-            logger.warning(f"Failed to generate deep analysis for {doc.id}")
+            logger.warning(
+                f"Document {doc.id} ({doc.title or doc.doc_type}) has no analysis — "
+                "run analyse_product_documents() first"
+            )
 
     if not document_analyses:
         raise ValueError(
@@ -1233,7 +1290,7 @@ async def generate_product_deep_analysis(
     # Prepare rich input for aggregation — include actual evidence and risk breakdowns
     doc_summaries = []
     for da in document_analyses:
-        scope = getattr(da.document_risk_breakdown, "scope", None)
+        applicability = getattr(da.document_risk_breakdown, "applicability", None)
         risk_breakdown = da.document_risk_breakdown
 
         risk_cats = ""
@@ -1266,7 +1323,7 @@ async def generate_product_deep_analysis(
 
         doc_summaries.append(f"""
 Document: {da.title or da.document_type} ({da.document_type})
-Scope: {scope or "Not specified"}
+Applies to: {applicability or "Not specified"}
 Overall Risk Score: {risk_breakdown.overall_risk}/10
 Risk by Category: {risk_cats or "N/A"}
 Top Concerns: {", ".join(da.document_risk_breakdown.top_concerns[:5])}
@@ -1299,14 +1356,12 @@ Perform cross-document analysis, compliance assessment, and business impact anal
                 messages=[
                     {
                         "role": "system",
-                        "content": AGGREGATE_DEEP_ANALYSIS_PROMPT,
+                        "content": PRODUCT_DEEP_ANALYSIS_PROMPT,
                     },
                     {"role": "user", "content": aggregate_prompt},
                 ],
                 response_format={"type": "json_object"},
             )
-
-        import json
 
         choice = response.choices[0]
         if not hasattr(choice, "message"):
@@ -1337,15 +1392,19 @@ Perform cross-document analysis, compliance assessment, and business impact anal
                 if not isinstance(comp_data, dict):
                     logger.warning(f"Invalid compliance data for {reg}, skipping")
                     continue
-                enhanced_compliance[reg] = EnhancedComplianceBreakdown(**comp_data)
+                enhanced_compliance[reg] = EnhancedComplianceBreakdown.model_validate(comp_data)
             except Exception as e:
                 logger.warning(f"Failed to parse compliance data for {reg}: {e}. Skipping.")
 
         biz_impact_data = agg_data.get("business_impact", {})
         try:
             business_impact = BusinessImpactAssessment(
-                for_individuals=IndividualImpact(**biz_impact_data.get("for_individuals", {})),
-                for_businesses=BusinessImpact(**biz_impact_data.get("for_businesses", {})),
+                for_individuals=IndividualImpact.model_validate(
+                    biz_impact_data.get("for_individuals", {})
+                ),
+                for_businesses=BusinessImpact.model_validate(
+                    biz_impact_data.get("for_businesses", {})
+                ),
             )
         except Exception as e:
             logger.warning(f"Failed to parse business impact data: {e}. Using defaults.")
@@ -1429,7 +1488,7 @@ async def main() -> None:
     async with db_session() as db:
         product_svc, doc_svc = create_services()
 
-        await summarize_all_product_documents(db, "notion", doc_svc)
+        await analyse_product_documents(db, "notion", doc_svc)
 
         print("Generating product overview:")
         print("=" * 50)

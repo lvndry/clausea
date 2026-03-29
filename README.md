@@ -4,7 +4,7 @@
 
 # Clausea
 
-**The definitive legal document intelligence platform** - Transform complex legal documents into clear, actionable insights with AI-powered analysis.
+**The definitive policy document intelligence platform** - Transform complex policy documents into clear, actionable insights with AI-powered analysis.
 
 <a href="https://clausea.co" style="display: inline-block; padding: 6px 14px; background: #0070f3; color: white; text-decoration: none; border-radius: 4px; font-weight: 500;">Try now</a>
 
@@ -24,7 +24,7 @@ Clausea democratizes legal understanding by making complex privacy policies, ter
 - **Plain Language Summaries**: Complex legal jargon made accessible
 - **Risk Scoring**: Get quantified risk assessments (0-10 scale)
 - **Compliance Checking**: Verify GDPR, CCPA, and other regulatory compliance
-- **Document Analysis**: Upload any legal document for instant AI analysis
+- **Document Analysis**: Upload any policy document for instant AI analysis
 - **Change Monitoring**: Track policy changes across websites
 - **Comparison Tools**: Side-by-side policy comparisons
 

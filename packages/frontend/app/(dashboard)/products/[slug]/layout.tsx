@@ -75,11 +75,7 @@ async function fetchProductForMetadata(
     }
 
     if (!response.ok) {
-      console.error(
-        "Product metadata: API error",
-        response.status,
-        slug,
-      );
+      console.error("Product metadata: API error", response.status, slug);
       return { kind: "uncertain", displayName: humanizeSlug(slug) };
     }
 
@@ -91,7 +87,7 @@ async function fetchProductForMetadata(
 }
 
 function neutralProductMetadata(displayName: string, slug: string): Metadata {
-  const description = `Privacy policy and terms of service analysis for ${displayName}.`;
+  const description = `Policy overview for ${displayName} — data practices, terms, and risks from crawled documents.`;
   return {
     title: `${displayName} | Clausea AI`,
     description,
@@ -100,7 +96,14 @@ function neutralProductMetadata(displayName: string, slug: string): Metadata {
       description,
       url: `${siteUrl}/products/${slug}`,
       siteName: "Clausea AI",
-      images: [{ url: `${siteUrl}/og`, width: 1200, height: 630, alt: `${displayName}` }],
+      images: [
+        {
+          url: `${siteUrl}/og`,
+          width: 1200,
+          height: 630,
+          alt: `${displayName}`,
+        },
+      ],
       locale: "en_US",
       type: "website",
     },
@@ -143,7 +146,7 @@ export async function generateMetadata({
   const productName = product.name || product.company_name || "Product";
   const description =
     product.one_line_summary ||
-    `Privacy policy and terms of service analysis for ${productName}. Get insights into data collection, sharing practices, and user rights.`;
+    `Policy overview for ${productName} — data collection, sharing, terms, and user-facing risks from analyzed documents.`;
 
   // Create a risk description based on verdict
   const riskDescription =
@@ -164,7 +167,7 @@ export async function generateMetadata({
     : description;
 
   return {
-    title: `${productName} - Privacy Policy Analysis | Clausea AI`,
+    title: `${productName} - Policy overview | Clausea AI`,
     description: fullDescription,
     keywords: [
       `${productName} privacy policy`,
@@ -175,7 +178,7 @@ export async function generateMetadata({
       "legal document analysis",
     ],
     openGraph: {
-      title: `${productName} - Privacy Policy Analysis | Clausea AI`,
+      title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
       url: `${siteUrl}/products/${product.slug}`,
       siteName: "Clausea AI",
@@ -184,7 +187,7 @@ export async function generateMetadata({
           url: `${siteUrl}/og`,
           width: 1200,
           height: 630,
-          alt: `${productName} Privacy Analysis`,
+          alt: `${productName} policy overview`,
         },
       ],
       locale: "en_US",
@@ -192,7 +195,7 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title: `${productName} - Privacy Policy Analysis | Clausea AI`,
+      title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
       images: [`${siteUrl}/og`],
     },

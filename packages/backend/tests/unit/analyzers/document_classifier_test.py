@@ -28,7 +28,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "privacy_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_privacy_url_short_path(self, classifier: DocumentClassifier) -> None:
@@ -38,7 +38,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "privacy_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_terms_of_service_url(self, classifier: DocumentClassifier) -> None:
@@ -48,7 +48,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "terms_of_service"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_tos_url(self, classifier: DocumentClassifier) -> None:
@@ -58,7 +58,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "terms_of_service"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_cookie_policy_url(self, classifier: DocumentClassifier) -> None:
@@ -68,7 +68,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "cookie_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_copyright_url(self, classifier: DocumentClassifier) -> None:
@@ -78,7 +78,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "copyright_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_dmca_url(self, classifier: DocumentClassifier) -> None:
@@ -88,7 +88,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "copyright_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_dpa_url(self, classifier: DocumentClassifier) -> None:
@@ -99,7 +99,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "data_processing_agreement"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_gdpr_url(self, classifier: DocumentClassifier) -> None:
@@ -109,7 +109,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "gdpr_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_community_guidelines_url(self, classifier: DocumentClassifier) -> None:
@@ -119,7 +119,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "community_guidelines"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_international_privacy_url_german(self, classifier: DocumentClassifier) -> None:
@@ -174,7 +174,7 @@ class TestMetadataClassification:
             metadata={"title": "Privacy Policy - Example Corp"},
         )
         assert result["classification"] == "privacy_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_metadata_terms_title(self, classifier: DocumentClassifier) -> None:
@@ -248,7 +248,7 @@ class TestContentHeuristics:
 
 
 class TestQuickRejection:
-    """Tests for non-legal document rejection."""
+    """Tests for non-policy document rejection."""
 
     @pytest.mark.asyncio
     async def test_very_short_content_rejected(self, classifier: DocumentClassifier) -> None:
@@ -258,7 +258,7 @@ class TestQuickRejection:
             metadata={},
         )
         assert result["classification"] == "other"
-        assert result["is_legal_document"] is False
+        assert result["is_policy_document"] is False
 
     @pytest.mark.asyncio
     async def test_navigation_page_rejected(self, classifier: DocumentClassifier) -> None:
@@ -268,7 +268,7 @@ class TestQuickRejection:
             metadata={},
         )
         assert result["classification"] == "other"
-        assert result["is_legal_document"] is False
+        assert result["is_policy_document"] is False
 
 
 # ── Category list completeness ──────────────────────────────────────
@@ -283,7 +283,6 @@ class TestCategoryCompleteness:
             "privacy_policy",
             "terms_of_service",
             "cookie_policy",
-            "terms_and_conditions",
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",

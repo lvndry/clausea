@@ -1,8 +1,8 @@
 """
-Enterprise Legal Document Crawling Pipeline
+Enterprise Policy Document Crawling Pipeline
 
 This module provides a comprehensive crawling pipeline that integrates the ClauseaCrawler
-with AI-powered document analysis for legal document discovery and processing.
+with AI-powered document analysis for policy document discovery and processing.
 
 Architecture Decisions:
 1. **Modular Design**: Separates concerns into distinct classes for crawling, analysis,
@@ -37,9 +37,9 @@ Usage:
     python -m src.pipeline
 
     # Or use programmatically
-    from src.pipeline import LegalDocumentPipeline
+    from src.pipeline import PolicyDocumentPipeline
 
-    pipeline = LegalDocumentPipeline()
+    pipeline = PolicyDocumentPipeline()
     results = await pipeline.run()
 """
 
@@ -101,8 +101,8 @@ class ProcessingStats(BaseModel):
     failed_product_slugs: list[str] = Field(default_factory=list)
     total_urls_crawled: int = 0
     total_documents_found: int = 0
-    legal_documents_processed: int = 0
-    legal_documents_stored: int = 0
+    policy_documents_processed: int = 0
+    policy_documents_stored: int = 0
     english_documents: int = 0
     non_english_skipped: int = 0
     duplicates_skipped: int = 0
@@ -123,9 +123,9 @@ class ProcessingStats(BaseModel):
 
     @property
     def legal_detection_rate(self) -> float:
-        """Calculate legal document detection rate."""
+        """Calculate policy document detection rate."""
         return (
-            (self.legal_documents_processed / self.total_documents_found * 100)
+            (self.policy_documents_processed / self.total_documents_found * 100)
             if self.total_documents_found > 0
             else 0.0
         )
@@ -234,7 +234,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
         self, url: str, text: str, metadata: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Classify if document is a legal document and determine its type.
+        Classify if document is a policy document and determine its type.
 
         Delegates to the specialized DocumentClassifier.
 
@@ -244,7 +244,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
             metadata: Document metadata
 
         Returns:
-            Dict containing classification, justification, and is_legal_document flag
+            Dict containing classification, justification, and is_policy_document flag
         """
         return await self.document_classifier.classify_document(url, text, metadata)
 
@@ -312,12 +312,12 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
             "children_privacy_policy": "Children's Privacy Policy",
         }
 
-        title = f"{type_titles.get(doc_type, 'Legal Document')} - {domain}"
+        title = f"{type_titles.get(doc_type, 'Policy Document')} - {domain}"
         return {"title": title, "confidence": 0.5}
 
     async def extract_effective_date(self, content: str, metadata: dict[str, Any]) -> str | None:
         """
-        Extract the effective date from a legal document.
+        Extract the effective date from a policy document.
 
         Args:
             content: Document text content
@@ -352,7 +352,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
                     if parsed_date:
                         return parsed_date
 
-        # Common effective date patterns in legal documents (ordered by specificity)
+        # Common effective date patterns in policy documents (ordered by specificity)
         # More specific patterns first to avoid false matches
         patterns = [
             # Explicit "Effective date:" or "Effective as of:"
@@ -434,7 +434,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
         # Use first portion of content where dates are typically mentioned
         content_sample = content[:3000] if len(content) > 3000 else content
 
-        prompt = f"""Analyze this legal document to find the effective date.
+        prompt = f"""Analyze this policy document to find the effective date.
 
 Content: {content_sample}
 Metadata: {json.dumps(metadata, indent=2) if metadata else "None"}
@@ -455,7 +455,7 @@ Return JSON:
 
 IMPORTANT: Return null for effective_date if you cannot find a clear effective date. Do not guess or infer dates."""
 
-        system_prompt = """You are an expert at extracting effective dates from legal documents. Only return dates that are explicitly stated as effective dates, last updated dates, or similar. Do not guess or infer dates."""
+        system_prompt = """You are an expert at extracting effective dates from policy documents. Only return dates that are explicitly stated as effective dates, last updated dates, or similar. Do not guess or infer dates."""
 
         try:
             async with usage_tracking(self._create_usage_tracker("extract_effective_date")):
@@ -643,9 +643,9 @@ IMPORTANT: Return null for effective_date if you cannot find a clear effective d
         return None
 
 
-class LegalDocumentPipeline:
+class PolicyDocumentPipeline:
     """
-    Main pipeline orchestrator for legal document crawling and processing.
+    Main pipeline orchestrator for policy document crawling and processing.
 
     This class coordinates the entire pipeline from product retrieval to document storage,
     providing comprehensive error handling, logging, and performance monitoring.
@@ -655,69 +655,101 @@ class LegalDocumentPipeline:
         self,
         max_depth: int | None = None,
         max_pages: int | None = None,
-        crawler_strategy: str = "bfs",
+        crawler_strategy: str | None = None,
         concurrent_limit: int | None = None,
-        delay_between_requests: float = 1.0,
-        timeout: int = 30,
-        respect_robots_txt: bool = True,
-        max_parallel_products: int = 3,
-        use_browser: bool = True,
+        delay_between_requests: float | None = None,
+        timeout: int | None = None,
+        respect_robots_txt: bool | None = None,
+        max_parallel_products: int | None = None,
+        use_browser: bool | None = None,
         proxy: str | None = None,
-        discovery_max_depth: int | None = None,
-        discovery_max_pages: int | None = None,
-        fallback_max_depth: int | None = None,
-        fallback_max_pages: int | None = None,
-        fallback_min_legal_score: float = 1.5,
-        min_docs_before_fallback: int = 2,
+        fallback_min_legal_score: float | None = None,
+        discovery_min_legal_score: float | None = None,
+        discovery_strategy: str | None = None,
+        fallback_strategy: str | None = None,
+        min_docs_before_fallback: int | None = None,
         required_doc_types: list[str] | None = None,
+        user_agent: str | None = None,
         progress_callback: Callable[[str, int, int], None]
         | Callable[[str, int, int], Awaitable[None]]
         | None = None,  # Optional progress callback (phase, current, total)
     ):
         """
-        Initialize the legal document pipeline.
+        Initialize the policy document pipeline.
 
         Args:
-            max_depth: Maximum crawl depth per product
+            max_depth: Maximum crawl depth per product (default: ``CrawlerConfig`` / env)
             max_pages: Maximum pages to crawl per product
-            crawler_strategy: Crawling strategy ("bfs", "dfs", "best_first")
+            crawler_strategy: Default ClauseaCrawler strategy when not overridden per pass
             concurrent_limit: Maximum concurrent requests
             delay_between_requests: Delay between requests in seconds
             timeout: Request timeout in seconds
             respect_robots_txt: Whether to respect robots.txt
             max_parallel_products: Maximum number of products to process in parallel
             use_browser: Whether to use browser for crawling
-            proxy: Optional proxy URL
-            discovery_max_depth: Max depth for discovery pass
-            discovery_max_pages: Max pages for discovery pass
-            fallback_max_depth: Max depth for fallback crawl
-            fallback_max_pages: Max pages for fallback crawl
-            fallback_min_legal_score: Min legal score for fallback crawl
-            min_docs_before_fallback: Minimum legal docs before skipping fallback
-            required_doc_types: Required document types before skipping fallback
+            proxy: Optional proxy URL (overrides ``CRAWLER_PROXY`` when set)
+            fallback_min_legal_score: Min legal score for fallback (mainly for best_first)
+            discovery_min_legal_score: Min legal URL score for discovery pass
+            discovery_strategy: Crawl strategy for discovery pass (e.g. best_first)
+            fallback_strategy: Crawl strategy for fallback pass (e.g. bfs)
+            min_docs_before_fallback: Minimum classified policy docs before skipping fallback
+            required_doc_types: Doc types that must be present to skip fallback
+            user_agent: HTTP User-Agent for the crawler
         """
-        from src.core.config import config
+        from src.core.config import config, discovery_crawl_limits
 
-        self.max_depth = max_depth or config.crawler.max_depth
-        self.max_pages = max_pages or config.crawler.max_pages
-        self.crawler_strategy = crawler_strategy
-        self.concurrent_limit = concurrent_limit or config.crawler.concurrent_limit
-        self.delay_between_requests = delay_between_requests
-        self.timeout = timeout
-        self.respect_robots_txt = respect_robots_txt
-        self.max_parallel_products = max_parallel_products
-        self.use_browser = use_browser
-        self.proxy = proxy
-        self.discovery_max_depth = discovery_max_depth or config.crawler.discovery_max_depth
-        self.discovery_max_pages = discovery_max_pages or config.crawler.discovery_max_pages
-        self.fallback_max_depth = fallback_max_depth or self.max_depth
-        self.fallback_max_pages = fallback_max_pages or self.max_pages
-        self.fallback_min_legal_score = fallback_min_legal_score
-        self.min_docs_before_fallback = min_docs_before_fallback
-        self.required_doc_types = required_doc_types or [
-            "privacy_policy",
-            "terms_of_service",
-        ]
+        c = config.crawler
+
+        self.max_depth = max_depth if max_depth is not None else c.max_depth
+        self.max_pages = max_pages if max_pages is not None else c.max_pages
+        self.discovery_max_pages, self.discovery_max_depth = discovery_crawl_limits(
+            self.max_pages, self.max_depth
+        )
+        self.crawler_strategy = (
+            crawler_strategy if crawler_strategy is not None else c.crawler_strategy
+        )
+        self.concurrent_limit = (
+            concurrent_limit if concurrent_limit is not None else c.concurrent_limit
+        )
+        self.delay_between_requests = (
+            delay_between_requests
+            if delay_between_requests is not None
+            else c.delay_between_requests
+        )
+        self.timeout = timeout if timeout is not None else c.timeout
+        self.respect_robots_txt = (
+            respect_robots_txt if respect_robots_txt is not None else c.respect_robots_txt
+        )
+        self.max_parallel_products = (
+            max_parallel_products if max_parallel_products is not None else c.max_parallel_products
+        )
+        self.use_browser = use_browser if use_browser is not None else c.use_browser
+        self.proxy = proxy if proxy is not None else c.proxy
+        self.fallback_min_legal_score = (
+            fallback_min_legal_score
+            if fallback_min_legal_score is not None
+            else c.fallback_min_legal_score
+        )
+        self.discovery_min_legal_score = (
+            discovery_min_legal_score
+            if discovery_min_legal_score is not None
+            else c.discovery_min_legal_score
+        )
+        self.discovery_strategy = (
+            discovery_strategy if discovery_strategy is not None else c.discovery_strategy
+        )
+        self.fallback_strategy = (
+            fallback_strategy if fallback_strategy is not None else c.fallback_strategy
+        )
+        self.min_docs_before_fallback = (
+            min_docs_before_fallback
+            if min_docs_before_fallback is not None
+            else c.min_docs_before_fallback
+        )
+        self.required_doc_types = (
+            required_doc_types if required_doc_types is not None else list(c.required_doc_types)
+        )
+        self.user_agent = user_agent if user_agent is not None else c.user_agent
         self.progress_callback: (
             Callable[[str, int, int], None] | Callable[[str, int, int], Awaitable[None]] | None
         ) = progress_callback
@@ -728,8 +760,14 @@ class LegalDocumentPipeline:
         self.stats = ProcessingStats()
 
         logger.info(
-            f"Pipeline initialized with max_depth={self.max_depth}, "
-            f"max_pages={self.max_pages}, strategy={crawler_strategy}"
+            "Pipeline initialized: max_depth=%s max_pages=%s discovery=%s/%s (pages/depth) "
+            "discovery_strategy=%s fallback_strategy=%s",
+            self.max_depth,
+            self.max_pages,
+            self.discovery_max_pages,
+            self.discovery_max_depth,
+            self.discovery_strategy,
+            self.fallback_strategy,
         )
 
     def _create_crawler_for_product(
@@ -776,7 +814,7 @@ class LegalDocumentPipeline:
             timeout=self.timeout,
             allowed_domains=product.domains,
             respect_robots_txt=self.respect_robots_txt,
-            user_agent="ClauseaCrawler/2.0 (Legal Document Discovery Bot of Clausea)",
+            user_agent=self.user_agent,
             follow_external_links=False,
             min_legal_score=min_legal_score if min_legal_score is not None else 0.0,
             strategy=strategy or self.crawler_strategy,
@@ -895,24 +933,24 @@ class LegalDocumentPipeline:
                 )
                 return None
 
-            # Always classify before storing; skip non-legal and get proper title
+            # Always classify before storing; skip non-policy/legal pages and get proper title
             classification = await self.analyzer.classify_document(
                 result.url, text_content, result.metadata
             )
 
             logger_analysis.debug(
-                f"classified as '{classification.get('classification')}' (is_legal: {classification.get('is_legal_document')})"
+                f"classified as '{classification.get('classification')}' (is_policy: {classification.get('is_policy_document')})"
             )
 
-            # Skip non-legal documents
-            if not classification.get("is_legal_document", False):
-                logger_analysis.debug(f"skipping non-legal document: {result.url}")
+            # Skip pages that are not policy documents
+            if not classification.get("is_policy_document", False):
+                logger_analysis.debug(f"skipping non-policy document: {result.url}")
                 usage_reason = (
-                    f"non-legal classification: {classification.get('classification', 'unknown')}"
+                    f"non-policy classification: {classification.get('classification', 'unknown')}"
                 )
                 return None
 
-            # Detect locale only for legal documents
+            # Detect locale only for policy documents
             locale_result = await self.analyzer.detect_locale(
                 text_content, result.metadata, result.url
             )
@@ -934,7 +972,7 @@ class LegalDocumentPipeline:
                 return None
 
             self.stats.english_documents += 1
-            self.stats.legal_documents_processed += 1
+            self.stats.policy_documents_processed += 1
 
             # Detect regions
             region_detection = await self.analyzer.detect_regions(
@@ -963,7 +1001,7 @@ class LegalDocumentPipeline:
 
             # Create document
             document = Document(
-                title=title_result.get("title", "Untitled Legal Document"),
+                title=title_result.get("title", "Untitled Policy Document"),
                 url=result.url,
                 product_id=product.id,
                 markdown=result.markdown,
@@ -1075,11 +1113,14 @@ class LegalDocumentPipeline:
             seed_urls=crawl_urls,
             status="running",
             settings={
+                "max_depth": self.max_depth,
+                "max_pages": self.max_pages,
                 "discovery_max_depth": self.discovery_max_depth,
                 "discovery_max_pages": self.discovery_max_pages,
-                "fallback_max_depth": self.fallback_max_depth,
-                "fallback_max_pages": self.fallback_max_pages,
-                "strategy": self.crawler_strategy,
+                "discovery_strategy": self.discovery_strategy,
+                "discovery_min_legal_score": self.discovery_min_legal_score,
+                "fallback_strategy": self.fallback_strategy,
+                "default_strategy": self.crawler_strategy,
             },
             stats={"mode": "hybrid"},
         )
@@ -1112,7 +1153,7 @@ class LegalDocumentPipeline:
         processed_urls: set[str],
         seen_fingerprints: set[str],
     ) -> list[Document]:
-        """Classify a batch of crawl results and return legal documents.
+        """Classify a batch of crawl results and return policy documents.
 
         Mutates *processed_urls* to track deduplication across calls.
         Mutates *seen_fingerprints* for near-duplicate content skipping across passes.
@@ -1150,13 +1191,12 @@ class LegalDocumentPipeline:
         self, crawler: ClauseaCrawler, crawl_urls: list[str]
     ) -> list[CrawlResult]:
         results: list[CrawlResult] = []
-        try:
-            for base_url in crawl_urls:
-                logger.info(f"Crawling base URL: {base_url}")
-                results.extend(await crawler.crawl(base_url))
-        finally:
-            crawler._cleanup_file_logging()
-            await crawler._cleanup_browser()
+        logger.info(f"Starting crawl across {len(crawl_urls)} seed URL(s): {', '.join(crawl_urls)}")
+        results = await crawler.crawl_multiple(crawl_urls)
+        logger.info(
+            f"Finished crawl across {len(crawl_urls)} seed URL(s): "
+            f"{len(results)} result(s) returned"
+        )
         return results
 
     async def _process_product(self, product: Product) -> list[Document]:
@@ -1213,8 +1253,8 @@ class LegalDocumentPipeline:
                 product,
                 max_depth=self.discovery_max_depth,
                 max_pages=self.discovery_max_pages,
-                min_legal_score=2.5,
-                strategy="best_first",
+                min_legal_score=self.discovery_min_legal_score,
+                strategy=self.discovery_strategy,
                 progress_phase="discovery",
             )
             discovery_results = await self._crawl_base_urls(discovery_crawler, crawl_urls)
@@ -1234,14 +1274,14 @@ class LegalDocumentPipeline:
             # Fallback deep crawl (recall-first) if coverage is low
             if self._should_fallback_crawl(processed_documents):
                 logger_discovery.info(
-                    f"discovery coverage insufficient for '{product.name}'; starting fallback deep crawl (max_depth={self.fallback_max_depth}, max_pages={self.fallback_max_pages})"
+                    f"discovery coverage insufficient for '{product.name}'; starting fallback deep crawl (max_depth={self.max_depth}, max_pages={self.max_pages})"
                 )
                 fallback_crawler = self._create_crawler_for_product(
                     product,
-                    max_depth=self.fallback_max_depth,
-                    max_pages=self.fallback_max_pages,
+                    max_depth=self.max_depth,
+                    max_pages=self.max_pages,
                     min_legal_score=self.fallback_min_legal_score,
-                    strategy="bfs",
+                    strategy=self.fallback_strategy,
                     progress_phase="fallback",
                 )
                 fallback_results = await self._crawl_base_urls(fallback_crawler, crawl_urls)
@@ -1263,19 +1303,19 @@ class LegalDocumentPipeline:
             # Store processed documents
             if processed_documents:
                 stored_count = await self._store_documents(processed_documents)
-                self.stats.legal_documents_stored += stored_count
+                self.stats.policy_documents_stored += stored_count
                 logger.info(
                     f"💾 Stored {stored_count}/{len(processed_documents)} "
-                    f"legal documents for {product.name}"
+                    f"policy documents for {product.name}"
                 )
             else:
-                logger.info(f"No legal documents found for {product.name}")
+                logger.info(f"No policy documents found for {product.name}")
 
             await self._finish_crawl_session(
                 crawl_session,
                 stats={
                     "pages_crawled": total_results,
-                    "legal_documents": len(processed_documents),
+                    "policy_documents": len(processed_documents),
                 },
             )
 
@@ -1285,7 +1325,7 @@ class LegalDocumentPipeline:
             log_memory_usage(f"Completed {product.name}")
             logger.info(
                 f"✅ Completed {product.name} in {product_duration:.2f}s "
-                f"({len(processed_documents)} legal docs)"
+                f"({len(processed_documents)} policy/legal docs)"
             )
 
             return processed_documents
@@ -1294,7 +1334,7 @@ class LegalDocumentPipeline:
             logger.error(f"Failed to process product {product.name}: {e}")
             if crawl_session:
                 await self._finish_crawl_session(
-                    crawl_session, stats={"pages_crawled": 0, "legal_documents": 0}, error=str(e)
+                    crawl_session, stats={"pages_crawled": 0, "policy_documents": 0}, error=str(e)
                 )
             self.stats.products_failed += 1
             self.stats.failed_product_slugs.append(product.slug)
@@ -1302,7 +1342,7 @@ class LegalDocumentPipeline:
 
     async def run(self, products: list[Product] | None = None) -> ProcessingStats:
         """
-        Execute the complete legal document crawling pipeline.
+        Execute the complete policy document crawling pipeline.
 
         Returns:
             ProcessingStats with comprehensive pipeline metrics
@@ -1311,7 +1351,7 @@ class LegalDocumentPipeline:
         tracemalloc.start()
         pipeline_start_time = time.time()
 
-        logger.info("🚀 Starting Legal Document Crawling Pipeline")
+        logger.info("🚀 Starting Policy Document Crawling Pipeline")
         log_memory_usage("Pipeline start")
 
         # Start background memory monitoring
@@ -1360,8 +1400,8 @@ class LegalDocumentPipeline:
                 )
             logger.info(f"🌐 Total URLs crawled: {self.stats.total_urls_crawled}")
             logger.info(f"📄 Total documents found: {self.stats.total_documents_found}")
-            logger.info(f"⚖️ Legal documents processed: {self.stats.legal_documents_processed}")
-            logger.info(f"💾 Legal documents stored: {self.stats.legal_documents_stored}")
+            logger.info(f"📋 Policy documents processed: {self.stats.policy_documents_processed}")
+            logger.info(f"💾 Policy documents stored: {self.stats.policy_documents_stored}")
             logger.info(f"🗣️ English documents: {self.stats.english_documents}")
             logger.info(f"🌍 Non-English skipped: {self.stats.non_english_skipped}")
             logger.info(f"🔄 Duplicates skipped: {self.stats.duplicates_skipped}")
@@ -1406,13 +1446,7 @@ class LegalDocumentPipeline:
 async def main() -> None:
     """Main entry point for the crawling pipeline."""
     try:
-        pipeline = LegalDocumentPipeline(
-            max_depth=4,
-            max_pages=1000,
-            crawler_strategy="bfs",
-            concurrent_limit=10,
-            delay_between_requests=1.0,
-        )
+        pipeline = PolicyDocumentPipeline()
 
         stats = await pipeline.run()
 

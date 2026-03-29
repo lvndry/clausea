@@ -16,6 +16,7 @@ from src.models.document import (
     DocumentAnalysis,
     DocumentAnalysisScores,
     DocumentExtraction,
+    DocumentRiskBreakdown,
     DocumentSummary,
     EvidenceSpan,
     ExtractedDataItem,
@@ -118,6 +119,39 @@ class TestDocumentAnalysisCleanComplianceStatus:
             compliance_status={"GDPR": "8", "CCPA": 7, "bad": "not_a_number", "none_val": None},  # type: ignore[dict-item]
         )
         assert analysis.compliance_status == {"GDPR": 8, "CCPA": 7}
+
+
+class TestDocumentAnalysisApplicabilityAlias:
+    """Legacy JSON used `scope`; LLM output and new code use `applicability`."""
+
+    def test_legacy_scope_key_in_model_validate(self) -> None:
+        analysis = DocumentAnalysis.model_validate(
+            {
+                "summary": "S",
+                "scores": {"transparency": {"score": 5, "justification": "x"}},
+                "scope": "EU-specific",
+            }
+        )
+        assert analysis.applicability == "EU-specific"
+
+    def test_applicability_key(self) -> None:
+        analysis = DocumentAnalysis.model_validate(
+            {
+                "summary": "S",
+                "scores": {"transparency": {"score": 5, "justification": "x"}},
+                "applicability": "Global",
+            }
+        )
+        assert analysis.applicability == "Global"
+
+    def test_document_risk_breakdown_scope_alias(self) -> None:
+        br = DocumentRiskBreakdown.model_validate(
+            {
+                "overall_risk": 5,
+                "scope": "US-only",
+            }
+        )
+        assert br.applicability == "US-only"
 
 
 # ── DocumentAnalysis risk_score bounds ──────────────────────────────

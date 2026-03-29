@@ -11,21 +11,20 @@ from typing import Any
 import shortuuid
 from motor.core import AgnosticDatabase
 
-from src.core.config import config
+from src.analyser import analyse_product_documents, generate_product_overview
 from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document import Document
 from src.models.pipeline_job import CrawlError, PipelineJob
 from src.models.product import Product
-from src.pipeline import LegalDocumentPipeline
+from src.pipeline import PolicyDocumentPipeline
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service, create_product_service
-from src.summarizer import generate_product_overview, summarize_all_product_documents
 from src.utils.domain import extract_domain as _extract_domain
 
 logger = get_logger(__name__)
 
-MAX_PIPELINE_DURATION_SECONDS = 1800
+MAX_PIPELINE_DURATION_SECONDS = 7200  # 2 hours
 
 
 def _domain_to_product_name(domain: str) -> str:
@@ -265,7 +264,7 @@ class PipelineService:
                     # === Step 1: Crawl ===
                     job.status = "crawling"
                     await self._update_step(
-                        db, job, "crawling", "running", "Discovering legal documents..."
+                        db, job, "crawling", "running", "Discovering policy documents..."
                     )
 
                     # Track progress tasks to ensure they are all processed before switching phases.
@@ -291,14 +290,7 @@ class PipelineService:
                         )
                         crawl_tasks.append(task)
 
-                    pipeline = LegalDocumentPipeline(
-                        max_depth=config.crawler.max_depth,
-                        max_pages=config.crawler.max_pages,
-                        crawler_strategy="bfs",
-                        concurrent_limit=config.crawler.concurrent_limit,
-                        delay_between_requests=config.crawler.delay_between_requests,
-                        progress_callback=_on_crawl_progress,
-                    )
+                    pipeline = PolicyDocumentPipeline(progress_callback=_on_crawl_progress)
                     stats = await pipeline.run([product])
 
                     # Drain pending progress tasks before finalizing the crawl step
@@ -306,7 +298,7 @@ class PipelineService:
                         await asyncio.gather(*crawl_tasks, return_exceptions=True)
 
                     job.documents_found = stats.total_documents_found
-                    job.documents_stored = stats.legal_documents_stored
+                    job.documents_stored = stats.policy_documents_stored
 
                     # Persist per-URL crawl failures on the job
                     if stats.crawl_errors:
@@ -317,10 +309,10 @@ class PipelineService:
                         job,
                         "crawling",
                         "completed",
-                        f"Found {stats.legal_documents_stored} legal documents",
+                        f"Found {stats.policy_documents_stored} policy documents",
                     )
 
-                    if stats.legal_documents_stored == 0:
+                    if stats.policy_documents_stored == 0:
                         job.status = "failed"
 
                         # Build a descriptive error based on crawl error types
@@ -330,21 +322,21 @@ class PipelineService:
                         if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
                             job.error = (
                                 "This site blocks automated access via robots.txt. "
-                                "We were unable to crawl any legal documents."
+                                "We were unable to crawl any policy documents."
                             )
                         elif robots_blocked:
                             job.error = (
                                 f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
                                 f"of {len(job.crawl_errors)} failed URLs). "
-                                "No legal documents could be found."
+                                "No policy documents could be found."
                             )
                         elif job.crawl_errors:
                             job.error = (
                                 f"Crawling failed for {len(job.crawl_errors)} URL(s). "
-                                "No legal documents could be found."
+                                "No policy documents could be found."
                             )
                         else:
-                            job.error = "No legal documents found on this site"
+                            job.error = "No policy documents found on this site"
 
                         job.completed_at = datetime.now()
                         await self._update_step(
@@ -394,7 +386,7 @@ class PipelineService:
                             message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
                         )
 
-                    await summarize_all_product_documents(
+                    await analyse_product_documents(
                         db,
                         job.product_slug,
                         doc_svc,
@@ -492,11 +484,11 @@ class PipelineService:
                     MAX_PIPELINE_DURATION_SECONDS,
                 )
                 job.status = "failed"
-                job.error = "Pipeline timed out after 30 minutes"
+                job.error = "Pipeline timed out after 2 hours"
                 job.completed_at = datetime.now()
                 for step in job.steps:
                     if step.status == "running":
                         step.status = "failed"
-                        step.message = "Pipeline timed out after 30 minutes"
+                        step.message = "Pipeline timed out after 2 hours"
                         step.completed_at = datetime.now()
                 await self._pipeline_repo.update(db, job)

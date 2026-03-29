@@ -74,10 +74,22 @@ def get_motor_client() -> AsyncIOMotorClient:
     return _motor_clients[loop_id]
 
 
-def close_motor_client() -> None:
+def close_motor_client(loop: asyncio.AbstractEventLoop | None = None) -> None:
+    """Close the Motor client bound to *loop*.
+
+    When called from a worker thread there may not be a running event loop,
+    so callers can pass the loop explicitly. If no loop is provided we fall
+    back to the current running loop.
+    """
     global _motor_clients
 
-    loop = asyncio.get_running_loop()
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("No running event loop available when closing MongoDB client")
+            return
+
     loop_id = id(loop)
 
     if loop_id in _motor_clients:

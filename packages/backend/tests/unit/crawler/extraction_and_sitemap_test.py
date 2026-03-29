@@ -179,7 +179,7 @@ def test_well_known_sitemap_paths_are_defined():
 
 
 def test_sitemap_seeded_skips_speculative_legal_urls():
-    """When sitemaps provide seeds, generate_potential_legal_urls should NOT run."""
+    """When sitemaps provide seeds, generate_potential_policy_urls should NOT run."""
     crawler = ClauseaCrawler()
     crawler._sitemap_seeded = True
 
@@ -195,7 +195,7 @@ def test_sitemap_seeded_skips_speculative_legal_urls():
 
 
 def test_no_sitemap_falls_back_to_speculative_legal_urls():
-    """When no sitemap provides seeds, generate_potential_legal_urls should run."""
+    """When no sitemap provides seeds, generate_potential_policy_urls should run."""
     crawler = ClauseaCrawler()
     assert crawler._sitemap_seeded is False
 

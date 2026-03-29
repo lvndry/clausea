@@ -11,11 +11,11 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from src.analyser import analyse_product_documents, generate_product_overview
 from src.core.database import db_dry_run, db_session
 from src.core.logging import get_logger, setup_logging
-from src.pipeline import DocumentAnalyzer, LegalDocumentPipeline
+from src.pipeline import DocumentAnalyzer, PolicyDocumentPipeline
 from src.services.service_factory import create_document_service, create_product_service
-from src.summarizer import generate_product_overview, summarize_all_product_documents
 
 logger = get_logger(__name__)
 console = Console()
@@ -64,7 +64,7 @@ def _prompt_action() -> str:
     )
     table.add_column("Key", justify="right", style="bold")
     table.add_column("Action", style="white")
-    table.add_row("1", "Crawl + classify (discover, classify, store legal docs only)")
+    table.add_row("1", "Crawl + classify (discover, classify, store policy docs only)")
     table.add_row("2", "Classify only (re-run doc classification)")
     table.add_row("3", "Full pipeline (crawl → summarize → overview)")
     console.print(table)
@@ -123,7 +123,7 @@ def _format_duration(seconds: float) -> str:
 
 async def _run_crawl_only(products: list) -> None:
     logger.info("Starting crawl + classify run", product_count=len(products))
-    pipeline = LegalDocumentPipeline()
+    pipeline = PolicyDocumentPipeline()
     start = time.perf_counter()
     with console.status(
         f"[cyan]Crawling & classifying {len(products)} product(s)...[/cyan]", spinner="dots"
@@ -159,7 +159,7 @@ async def _run_classify_only(products: list) -> None:
                     classification = await analyzer.classify_document(
                         doc.url, doc.text, doc.metadata
                     )
-                    is_legal = classification.get("is_legal_document", False)
+                    is_policy = classification.get("is_policy_document", False)
                     doc.doc_type = classification.get("classification", doc.doc_type)
 
                     locale = await analyzer.detect_locale(doc.text, doc.metadata, doc.url)
@@ -188,7 +188,7 @@ async def _run_classify_only(products: list) -> None:
                         "Document classified",
                         document_id=doc.id,
                         doc_type=doc.doc_type,
-                        is_legal=is_legal,
+                        is_policy=is_policy,
                     )
 
             elapsed = time.perf_counter() - start
@@ -207,7 +207,7 @@ async def _run_full_pipeline(products: list) -> None:
             start = time.perf_counter()
             with console.status(f"[cyan]Summarizing {product.slug}...[/cyan]", spinner="dots"):
                 logger.info("Summarizing documents", product_slug=product.slug)
-                await summarize_all_product_documents(db, product.slug, doc_svc)
+                await analyse_product_documents(db, product.slug, doc_svc)
             elapsed = time.perf_counter() - start
             console.print(
                 f"[green]Summarize done:[/green] {product.slug} [dim]({_format_duration(elapsed)})[/dim]"

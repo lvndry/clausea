@@ -1,7 +1,7 @@
 """
 Document Analysis Modules
 
-This package contains specialized analyzers for legal document processing,
+This package contains specialized analyzers for policy document processing,
 split from the monolithic DocumentAnalyzer class for better maintainability.
 """
 

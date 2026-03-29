@@ -40,10 +40,7 @@ describe("categorizeQuestion (tested via trackUserJourney.questionAsked)", () =>
   });
 
   it("categorizes terms questions", () => {
-    trackUserJourney.questionAsked(
-      "What are the terms of service?",
-      30,
-    );
+    trackUserJourney.questionAsked("What are the terms of service?", 30);
     expect(posthog.capture).toHaveBeenCalledWith(
       "question_asked",
       expect.objectContaining({
@@ -73,10 +70,7 @@ describe("categorizeQuestion (tested via trackUserJourney.questionAsked)", () =>
   });
 
   it("categorizes data sharing questions", () => {
-    trackUserJourney.questionAsked(
-      "Do they share data with third party?",
-      36,
-    );
+    trackUserJourney.questionAsked("Do they share data with third party?", 36);
     expect(posthog.capture).toHaveBeenCalledWith(
       "question_asked",
       expect.objectContaining({

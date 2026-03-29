@@ -25,10 +25,11 @@ export default function BotPage() {
                 About ClauseaBot
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                ClauseaBot is a legal document discovery crawler operated by
+                ClauseaBot is a policy document discovery crawler operated by
                 Clausea AI. Our bot crawls websites to discover and analyze
-                legal documents such as privacy policies, terms of service, and
-                other legal agreements to help users understand what
+                policy documents such as privacy policies, terms of service,
+                cookie policies, safety policies, community guidelines, and
+                other agreements to help users understand what
                 they&apos;re agreeing to.
               </p>
             </section>
@@ -42,18 +43,18 @@ export default function BotPage() {
               </p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>
-                  Discover legal documents (privacy policies, terms of service,
-                  etc.) on websites
+                  Discover policy documents (privacy policies, terms of service,
+                  cookie policies, safety policies, community guidelines, etc.) on websites
                 </li>
                 <li>
-                  Analyze and extract key information from legal documents
+                  Analyze and extract key information from policy documents
                 </li>
                 <li>
-                  Help users understand complex legal agreements in plain
+                  Help users understand complex policy agreements in plain
                   language
                 </li>
                 <li>
-                  Provide compliance analysis and risk assessment for legal
+                  Provide compliance analysis and risk assessment for policy
                   documents
                 </li>
               </ul>
@@ -76,7 +77,7 @@ export default function BotPage() {
                   minimize bandwidth usage
                 </li>
                 <li>
-                  Focuses on legal document pages and policy-related content
+                  Focuses on policy document pages and policy-related content
                 </li>
                 <li>
                   Operates with reasonable rate limits to avoid overloading

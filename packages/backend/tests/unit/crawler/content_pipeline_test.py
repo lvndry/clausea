@@ -330,6 +330,113 @@ class TestFetchPageInternalOrchestration:
         )
         assert result.success is True
 
+    @pytest.mark.asyncio
+    async def test_http_404_skips_browser_and_extraction(self):
+        """HTTP 404 should fail fast without browser or HTML parsing."""
+        from yarl import URL as YarlURL
+
+        class FakeResponse:
+            def __init__(self):
+                self.status = 404
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = YarlURL("https://example.com/missing")
+
+            async def text(self):
+                return "<html><body>Not found</body></html>"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse()
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
+
+        browser_called = False
+
+        async def fake_browser_fetch(url: str) -> PageContent | None:
+            nonlocal browser_called
+            browser_called = True
+            return None
+
+        crawler._browser_fetch = fake_browser_fetch  # type: ignore[method-assign]
+
+        result = await crawler._fetch_page_internal(
+            cast(aiohttp.ClientSession, FakeSession()), "https://example.com/missing"
+        )
+        assert result.success is False
+        assert result.status_code == 404
+        assert (result.error_message or "") == "Not found (404)"
+        assert browser_called is False
+
+    @pytest.mark.asyncio
+    async def test_soft_404_path_skips_browser(self):
+        """Redirect target /404 (200 shell) should skip browser retry."""
+        from yarl import URL as YarlURL
+
+        thin_html = "<html><head><title>Oops</title></head><body>404</body></html>"
+        final_url = "https://www.example.com/404?fromUrl=/docs"
+
+        class FakeResponse:
+            def __init__(self):
+                self.status = 200
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = YarlURL(final_url)
+
+            async def text(self):
+                return thin_html
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse()
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
+
+        browser_called = False
+
+        async def fake_browser_fetch(url: str) -> PageContent | None:
+            nonlocal browser_called
+            browser_called = True
+            return None
+
+        crawler._browser_fetch = fake_browser_fetch  # type: ignore[method-assign]
+
+        result = await crawler._fetch_page_internal(
+            cast(aiohttp.ClientSession, FakeSession()), "https://www.example.com/docs"
+        )
+        assert result.success is False
+        assert result.url == final_url
+        assert (result.error_message or "") == "Not found (404)"
+        assert browser_called is False
+
+
+class TestUrlLooksLikeNotFoundLanding:
+    def test_tiktok_style_404_query(self):
+        assert ClauseaCrawler._url_looks_like_not_found_landing(
+            "https://www.tiktok.com/404?fromUrl=/policy/terms"
+        )
+
+    def test_plain_404_path(self):
+        assert ClauseaCrawler._url_looks_like_not_found_landing("https://example.com/404")
+
+    def test_locale_prefix_404(self):
+        assert ClauseaCrawler._url_looks_like_not_found_landing("https://example.com/en/404")
+
+    def test_normal_legal_path_not_not_found(self):
+        assert not ClauseaCrawler._url_looks_like_not_found_landing(
+            "https://www.tiktok.com/legal/page/eea/terms-of-service/en"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Redirect URL tracking

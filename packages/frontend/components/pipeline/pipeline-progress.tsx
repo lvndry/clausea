@@ -275,7 +275,10 @@ export function PipelineProgress({
   }, []);
 
   const pollJob = useCallback(async () => {
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
       // Pause polling in background tabs.
       return;
     }
@@ -325,12 +328,7 @@ export function PipelineProgress({
     } finally {
       inFlightRef.current = false;
     }
-  }, [
-    jobId,
-    onComplete,
-    clearScheduledPoll,
-    computePollDelayMs,
-  ]);
+  }, [jobId, onComplete, clearScheduledPoll, computePollDelayMs]);
 
   useEffect(() => {
     startedAtRef.current = null;
@@ -484,7 +482,7 @@ export function PipelineProgress({
             {job.status === "completed" && (
               <Button
                 size="sm"
-                className="w-full rounded-lg"
+                className="w-full rounded-lg cursor-pointer"
                 onClick={() => router.push(`/products/${job.product_slug}`)}
               >
                 View Analysis

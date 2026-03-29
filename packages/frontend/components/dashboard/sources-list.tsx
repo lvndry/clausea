@@ -555,7 +555,6 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                             </div>
                           </div>
                         )}
-
                       </div>
                     </div>
                   </motion.div>

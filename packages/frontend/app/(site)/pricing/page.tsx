@@ -97,7 +97,8 @@ export default function PricingPage() {
                   <td
                     className={cn(
                       "py-6 text-primary font-bold",
-                      feature === "Export Reports" && "text-muted-foreground font-medium",
+                      feature === "Export Reports" &&
+                        "text-muted-foreground font-medium",
                     )}
                   >
                     {pro}

@@ -17,7 +17,7 @@ export function OrganizationStructuredData({
     url: siteUrl,
     logo: `${siteUrl}/static/favicons/logo.png`,
     description:
-      "Navigate legal complexities with AI precision. Summarize, analyze and ask questions to dense legal documents instantly.",
+      "Navigate legal complexities with AI precision. Summarize, analyze and ask questions to legal agreements and policies instantly.",
     sameAs: [
       "https://twitter.com/clauseaai",
       // Add other social media profiles here
@@ -53,7 +53,7 @@ export function WebsiteStructuredData({ siteUrl }: WebsiteStructuredDataProps) {
     name: "Clausea AI",
     url: siteUrl,
     description:
-      "Navigate legal complexities with AI precision. Summarize, analyze and ask questions to dense legal documents instantly.",
+      "Navigate legal complexities with AI precision. Summarize, analyze and ask questions to legal agreements and policies instantly.",
     potentialAction: {
       "@type": "SearchAction",
       target: {
@@ -91,7 +91,7 @@ export function SoftwareApplicationStructuredData({
       priceCurrency: "USD",
     },
     description:
-      "AI-powered legal document analysis platform that helps users understand, analyze, and compare legal documents such as privacy policies, terms of service, and contracts.",
+      "AI-powered platform that helps users understand, analyze, and compare legal agreements and policies — privacy policies, terms of service, cookie policies, and more.",
     featureList: [
       "Document upload and processing",
       "AI-powered summarization and analysis",

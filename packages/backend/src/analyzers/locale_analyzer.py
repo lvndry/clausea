@@ -47,7 +47,7 @@ class LocaleAnalyzer(LLMUsageTrackingMixin):
             r"/ko[-_]?kr?/": "ko-KR",
         }
 
-        # Common English words/phrases in legal documents
+        # Common English words/phrases in policy documents
         self.english_indicators = [
             "privacy policy",
             "terms of service",

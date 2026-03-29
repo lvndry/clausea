@@ -56,7 +56,7 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                   <strong className="text-foreground">Documents:</strong> We
-                  process legal documents you upload to our Service for
+                  process policy documents you upload to our Service for
                   analysis. Documents are processed securely and are not stored
                   longer than necessary for analysis.
                 </li>
@@ -112,7 +112,7 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>Provide, maintain, and improve our Service</li>
-                <li>Process and analyze legal documents you upload</li>
+                <li>Process and analyze policy documents you upload</li>
                 <li>Authenticate your account and process payments</li>
                 <li>Send you service-related communications and updates</li>
                 <li>Respond to your inquiries and provide customer support</li>
@@ -285,7 +285,6 @@ export default function PrivacyPolicyPage() {
                 If you believe we have collected information from a child,
                 please contact us immediately, and we will delete such
                 information.
-
               </p>
             </section>
 
@@ -310,8 +309,8 @@ export default function PrivacyPolicyPage() {
                 We may update this Privacy Policy from time to time. We will
                 notify you of any material changes by posting the new Privacy
                 Policy on this page and updating the &ldquo;Last updated&rdquo;
-                date. We
-                encourage you to review this Privacy Policy periodically.
+                date. We encourage you to review this Privacy Policy
+                periodically.
               </p>
             </section>
 

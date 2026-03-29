@@ -1,5 +1,5 @@
 """
-Legal document crawler for extracting privacy policies, terms of service, and other legal content.
+Policy document crawler for extracting privacy policies, terms of service, cookie policies, safety policies, and other policy content.
 """
 
 import asyncio
@@ -142,7 +142,7 @@ class CrawlStats(BaseModel):
 
 
 class URLScorer:
-    """Scores URLs based on legal document relevance."""
+    """Scores URLs based on policy document relevance."""
 
     def __init__(self) -> None:
         # Compile regex patterns once for efficiency
@@ -213,6 +213,18 @@ class URLScorer:
                 r"/legal/policies/privacy/?": 5.0,
                 r"/legal/policies/terms/?": 5.0,
                 r"/legal/policies/cookies/?": 4.5,
+                r"/policy/privacy/?": 5.0,
+                r"/policy/terms/?": 5.0,
+                r"/policy/cookies/?": 4.5,
+                r"/policy/cookie/?": 4.5,
+                r"/policy/terms-of-service/?": 5.0,
+                r"/policy/terms-of-use/?": 5.0,
+                r"/policy/data/?": 4.0,
+                r"/policy/gdpr/?": 4.5,
+                r"/policy/ccpa/?": 4.5,
+                r"/policy/community/?": 4.0,
+                r"/policy/safety/?": 4.0,
+                r"/policy/copyright/?": 4.0,
             }.items()
         }
 
@@ -273,8 +285,8 @@ class URLScorer:
             "company": 1.0,
             # Negative keywords (reduce score)
             # NOTE: Only penalise paths that are genuinely unlikely to host
-            # legal content.  Paths like /help, /support, /about and /blog
-            # are neutral — many companies publish legal documents under these
+            # policy content.  Paths like /help, /support, /about and /blog
+            # are neutral — many companies publish policy documents under these
             # sections (e.g. Airbnb ToS at /help/article/2908).
             "contact": -1.0,
             "news": -1.0,
@@ -283,7 +295,7 @@ class URLScorer:
     @lru_cache(maxsize=10000)  # noqa: B019 - Cache is bounded and per-instance
     def score_url(self, url: str, anchor_text: str | None = None) -> float:
         """
-        Score a URL based on legal document relevance.
+        Score a URL based on policy document relevance.
 
         Uses LRU cache to avoid recomputing scores for the same URLs.
         Lowercases URL once and reuses for all pattern matching.
@@ -339,8 +351,8 @@ class URLScorer:
                 score += self.legal_keywords[word]
                 scored_keywords.add(word.lower())
 
-        # Check for legal keywords as substrings in path and words
-        # This catches cases where legal keywords are embedded in compound words
+        # Check for policy keywords as substrings in path and words
+        # This catches cases where policy keywords are embedded in compound words
         path_lower = path.lower()
         for keyword, weight in self.legal_keywords.items():
             # Only check positive-weight keywords (skip negative ones like "blog")
@@ -366,7 +378,7 @@ class URLScorer:
 
 
 class ContentAnalyzer:
-    """Analyzes page content for legal document characteristics."""
+    """Analyzes page content for policy document characteristics."""
 
     def __init__(self) -> None:
         self.compiled_legal_phrases = [
@@ -400,7 +412,7 @@ class ContentAnalyzer:
         ]
 
         # Quick check pattern for early exit (compiled once)
-        # This pattern matches common legal keywords for fast filtering
+        # This pattern matches common policy keywords for fast filtering
         self.quick_check_pattern = re.compile(
             r"\b(?:privacy|terms|policy|agreement|legal|gdpr|ccpa|cookie|data protection|"
             r"liability|disclaimer|jurisdiction|compliance|consent|rights)\b",
@@ -486,10 +498,10 @@ class ContentAnalyzer:
         self, content: str, title: str = "", metadata: dict[str, Any] | None = None
     ) -> tuple[bool, float, list[str]]:
         """
-        Analyze content to determine if it's a legal document.
+        Analyze content to determine if it's a policy document.
 
         Returns:
-            Tuple of (is_legal, confidence_score, matched_indicators)
+            Tuple of (is_policy, confidence_score, matched_indicators)
         """
         if not content:
             return False, 0.0, []
@@ -502,11 +514,11 @@ class ContentAnalyzer:
         if word_count < 50 or char_count < 300:
             return False, 0.0, ["content_too_short"]
 
-        # Early exit: Quick check for obvious non-legal content
-        # This avoids expensive full analysis for clearly non-legal documents
+        # Early exit: Quick check for obvious non-policy content
+        # This avoids expensive full analysis for clearly non-policy documents
         if not self.quick_check_pattern.search(content):
-            # No legal keywords found at all - very unlikely to be legal
-            return False, 0.0, ["no_legal_keywords"]
+            # No policy keywords found at all - very unlikely to be a policy document
+            return False, 0.0, ["no_policy_keywords"]
 
         # Now do full analysis (only if quick check passed)
         content_lower = content.lower()
@@ -518,7 +530,7 @@ class ContentAnalyzer:
         # Track matched content for density calculation
         matched_content_chars = 0
 
-        # Check for legal indicators in content
+        # Check for policy indicators in content
         for indicator in self.legal_indicators:
             if indicator in content_lower:
                 matched_indicators.append(indicator)
@@ -526,7 +538,7 @@ class ContentAnalyzer:
                 # Add to matched content length (count occurrences)
                 matched_content_chars += len(indicator) * content_lower.count(indicator)
 
-        # Check for legal phrases using compiled regex patterns
+        # Check for policy phrases using compiled regex patterns
         for compiled_pattern in self.compiled_legal_phrases:
             matches = compiled_pattern.finditer(content_lower)
             for match in matches:
@@ -535,10 +547,10 @@ class ContentAnalyzer:
                 raw_score += 2.0
                 matched_content_chars += len(match.group())
 
-        # Calculate legal content density
+        # Calculate policy content density
         legal_density = matched_content_chars / char_count
 
-        # Bonus for legal terms in title (more important)
+        # Bonus for policy terms in title (more important)
         title_bonus = 0.0
         for keyword in self.title_keywords:
             if keyword in title_lower:
@@ -564,14 +576,14 @@ class ContentAnalyzer:
         normalized_score = min(10.0, final_score)
 
         # More sophisticated thresholds
-        min_density_threshold = 0.05  # At least 5% of content should be legal-related
+        min_density_threshold = 0.05  # At least 5% of content should be policy-related
         min_score_threshold = 2.0
 
-        # Document is legal if:
-        # 1. Has sufficient legal density (5%+)
+        # Document is a policy document if:
+        # 1. Has sufficient policy density (5%+)
         # 2. Meets minimum score threshold
-        # 3. OR has strong title indicators (overrides density for short legal docs)
-        is_legal = (
+        # 3. OR has strong title indicators (overrides density for short policy docs)
+        is_policy = (
             (legal_density >= min_density_threshold and normalized_score >= min_score_threshold)
             or title_bonus >= 6.0  # Strong title indicators
         )
@@ -580,7 +592,7 @@ class ContentAnalyzer:
         matched_indicators.append(f"density:{legal_density:.3f}")
         matched_indicators.append(f"word_count:{word_count}")
 
-        return is_legal, normalized_score, matched_indicators
+        return is_policy, normalized_score, matched_indicators
 
 
 class DomainRateLimiter:
@@ -1050,7 +1062,7 @@ class AsyncFileLogHandler(logging.Handler):
 
 
 class ClauseaCrawler:
-    """Powerful legal document crawler."""
+    """Powerful policy document crawler."""
 
     def __init__(
         self,
@@ -1391,6 +1403,20 @@ class ClauseaCrawler:
     def _has_js_required_markers(text: str) -> bool:
         text_lower = text.lower()
         return any(m in text_lower for m in ClauseaCrawler._JS_REQUIRED_MARKERS)
+
+    @staticmethod
+    def _url_looks_like_not_found_landing(url: str) -> bool:
+        """True when the path is a dedicated Not Found document (e.g. ``/404``).
+
+        Many sites respond **200** with a thin shell and redirect the browser to a
+        path whose last segment is ``404`` (e.g. ``/404?fromUrl=...``).
+        Treating these like 404 avoids pointless browser retries and SPA waits.
+        """
+        path = (urlparse(url).path or "/").rstrip("/") or "/"
+        if path == "/404":
+            return True
+        segments = [seg for seg in path.split("/") if seg]
+        return bool(segments) and segments[-1].casefold() == "404"
 
     def _content_is_sufficient(self, page: PageContent, url: str) -> bool:
         """Decide whether the statically-fetched content is good enough to keep.
@@ -2391,7 +2417,7 @@ class ClauseaCrawler:
 
         # <link> tags (canonical, alternate, etc.)
         # For alternate/canonical links, propagate the page title as anchor text
-        # so the URL scorer can see legal keywords.
+        # so the URL scorer can see policy keywords.
         # Prioritize meta titles over standard <title> tag.
         page_title = ""
         meta_title = (
@@ -2625,6 +2651,23 @@ class ClauseaCrawler:
                 # when it appears as a discovered link from another page.
                 self.visited_urls.add(self.normalize_url(effective_url))
 
+            if raw.status_code == 404 or self._url_looks_like_not_found_landing(effective_url):
+                logger.debug(
+                    "Skipping content extraction and browser for not found URL: %s (status=%s)",
+                    effective_url,
+                    raw.status_code,
+                )
+                return CrawlResult(
+                    url=effective_url,
+                    title="",
+                    content="",
+                    markdown="",
+                    metadata={},
+                    status_code=raw.status_code,
+                    success=False,
+                    error_message="Not found (404)",
+                )
+
             page = await self._extract_page_content(raw, effective_url)
 
             if page is None:
@@ -2779,24 +2822,24 @@ class ClauseaCrawler:
     # Locale-like path segment pattern (e.g. "en", "fr-FR", "pt-br", "zh-Hans")
     _LOCALE_RE = re.compile(r"^[a-z]{2}(?:[-_][a-zA-Z]{2,4})?$")
 
-    def generate_potential_legal_urls(self, base_url: str) -> list[str]:
-        """Generate potential legal document URLs based on common patterns.
+    def generate_potential_policy_urls(self, base_url: str) -> list[str]:
+        """Generate potential policy document URLs based on common patterns.
 
         The generator is *path-prefix-aware*: if the base URL contains a
         non-trivial path (e.g. a locale prefix like ``/en`` or a sub-section
-        like ``/help``), legal paths are generated both at the domain root
+        like ``/help``), policy paths are generated both at the domain root
         **and** under that prefix so that sites structured as
         ``/en/articles/…`` or ``/help/legal/…`` are discovered.
 
         It also produces hub / listing page URLs (``/articles``,
         ``/collections``, …) that are common in knowledge-base platforms
         (Intercom, Zendesk, Freshdesk, …) and frequently link to individual
-        legal documents.
+        policy documents.
         """
         parsed = urlparse(base_url)
         domain = parsed.netloc
 
-        # Common legal document paths
+        # Common policy document paths
         legal_paths = [
             "/legal",
             "/legal/privacy",
@@ -2839,12 +2882,25 @@ class ClauseaCrawler:
             "/legal/policies/privacy",
             "/legal/policies/terms",
             "/legal/policies/cookies",
+            "/policy",
+            "/policy/privacy",
+            "/policy/terms",
+            "/policy/terms-of-service",
+            "/policy/terms-of-use",
+            "/policy/cookies",
+            "/policy/cookie",
+            "/policy/data",
+            "/policy/gdpr",
+            "/policy/ccpa",
+            "/policy/community",
+            "/policy/safety",
+            "/policy/copyright",
         ]
 
         # Hub / listing / index pages common on knowledge-base platforms
         # (Intercom, Zendesk, Freshdesk, HelpScout, …).  These intermediate
         # pages typically link to individual articles containing the actual
-        # legal text.
+        # policy text.
         hub_paths = [
             "/articles",
             "/collections",
@@ -2909,8 +2965,8 @@ class ClauseaCrawler:
         return potential_urls
 
     # Keywords whose presence in a page title / description indicates the
-    # page is a "legal hub" — i.e. a page whose outgoing links are more
-    # likely to point to legal documents.
+    # page is a "policy hub" — i.e. a page whose outgoing links are more
+    # likely to point to policy documents.
     _LEGAL_HUB_KEYWORDS = frozenset(
         [
             "terms",
@@ -2926,10 +2982,10 @@ class ClauseaCrawler:
     )
 
     def _compute_parent_page_boost(self, page_metadata: dict[str, Any] | None) -> float:
-        """Return a score boost for links discovered on a page with legal indicators.
+        """Return a score boost for links discovered on a page with policy indicators.
 
-        When the page title or meta description contains legal keywords the
-        page is likely a "legal hub" (e.g. a help centre section listing
+        When the page title or meta description contains policy keywords the
+        page is likely a "policy hub" (e.g. a help centre section listing
         policies).  Links FROM such pages deserve a priority boost in the
         ``best_first`` strategy so that opaque URLs (``/help/article/2908``)
         are not buried behind thousands of irrelevant sitemap entries.
@@ -2971,18 +3027,18 @@ class ClauseaCrawler:
                 )
                 return
 
-        # Compute a priority boost for links coming from a "legal hub" page.
+        # Compute a priority boost for links coming from a "policy hub" page.
         # Only relevant for best_first where score ordering matters.
         parent_boost = (
             self._compute_parent_page_boost(page_metadata) if self.strategy == "best_first" else 0.0
         )
         if parent_boost > 0:
             logger.debug(
-                f"Legal hub detected on parent page; boosting discovered link scores by {parent_boost:.1f}"
+                f"Policy hub detected on parent page; boosting discovered link scores by {parent_boost:.1f}"
             )
 
         # Track URLs explicitly skipped due to rel='nofollow' so generated potential
-        # legal URLs that match them are not redundantly added.
+        # policy URLs that match them are not redundantly added.
         skipped_urls: set[str] = set()
         for link in links:
             url = link["url"]
@@ -3019,13 +3075,13 @@ class ClauseaCrawler:
                 )
 
         # Fallback: if sitemaps didn't provide seeds, speculatively probe
-        # common legal paths from the starting page.  When sitemaps DID
+        # common policy paths from the starting page.  When sitemaps DID
         # provide seeds we skip this — the sitemap already tells us what
         # pages exist, so blind probing would only waste requests.
         if depth == 0 and not self._sitemap_seeded:
-            potential_legal_urls = self.generate_potential_legal_urls(base_url)
+            potential_legal_urls = self.generate_potential_policy_urls(base_url)
             logger.info(
-                f"🔍 No sitemap seeds — probing {len(potential_legal_urls)} potential legal URLs"
+                f"🔍 No sitemap seeds — probing {len(potential_legal_urls)} potential policy URLs"
             )
 
             for url in potential_legal_urls:
@@ -3075,7 +3131,7 @@ class ClauseaCrawler:
             return len(self.url_priority_queue)
         return 0
 
-    async def crawl(self, base_url: str) -> list[CrawlResult]:
+    async def crawl(self, base_url: str, *, cleanup: bool = True) -> list[CrawlResult]:
         """
         Crawl starting from base URL.
 
@@ -3220,8 +3276,11 @@ class ClauseaCrawler:
 
             return self.results
         finally:
-            # Shutdown log executor to ensure all pending writes complete
-            await self._shutdown_log_executor()
+            # Shutdown log executor to ensure all pending writes complete.
+            # When crawl() is used as part of crawl_multiple(), the caller
+            # keeps the logger alive until every seed URL has been processed.
+            if cleanup:
+                await self._shutdown_log_executor()
 
     def clear_rate_limiter_cache(self) -> None:
         """Clear the rate limiter cache (useful between crawl sessions)."""
@@ -3231,39 +3290,48 @@ class ClauseaCrawler:
         """Crawl multiple base URLs."""
         all_results = []
 
-        for i, url in enumerate(urls, 1):
-            logger.info(f"🔄 Processing URL {i}/{len(urls)}: {url}")
-            results = await self.crawl(url)
-            all_results.extend(results)
+        try:
+            for i, url in enumerate(urls, 1):
+                logger.info(f"🔄 Processing URL {i}/{len(urls)}: {url}")
+                results = await self.crawl(url, cleanup=False)
+                all_results.extend(results)
+                logger.info(
+                    f"✅ Finished URL {i}/{len(urls)}: {url} "
+                    f"(total={self.stats.total_urls}, success={self.stats.crawled_urls}, "
+                    f"failed={self.stats.failed_urls}, results={len(results)})"
+                )
 
-            # Reset state for next URL
-            self.visited_urls.clear()
-            self.failed_urls.clear()
-            self.queued_urls.clear()
-            self._sitemap_seeded = False
-            self.url_queue.clear()
-            self.url_stack.clear()
-            self.url_priority_queue.clear()
-            self.results.clear()
-            # Clear caches between different base URLs
-            if self.robots_checker:
-                self.robots_checker.clear_cache()
-            # Optionally clear rate limiter cache between different base URLs
-            # Uncomment if you want to reset rate limiting between different sites:
-            # self.clear_rate_limiter_cache()
+                # Reset state for next URL
+                self.visited_urls.clear()
+                self.failed_urls.clear()
+                self.queued_urls.clear()
+                self._sitemap_seeded = False
+                self.url_queue.clear()
+                self.url_stack.clear()
+                self.url_priority_queue.clear()
+                self.results.clear()
+                # Clear caches between different base URLs
+                if self.robots_checker:
+                    self.robots_checker.clear_cache()
+                # Optionally clear rate limiter cache between different base URLs
+                # Uncomment if you want to reset rate limiting between different sites:
+                # self.clear_rate_limiter_cache()
+        finally:
+            await self._shutdown_log_executor()
+            await self._cleanup_browser()
 
         return all_results
 
 
 # Convenience functions
-async def crawl_for_legal_documents(
+async def crawl_for_policy_documents(
     base_url: str,
     max_depth: int = 4,
     max_pages: int = 1000,
     strategy: str = "bfs",
 ) -> list[CrawlResult]:
     """
-    Simple interface to crawl for legal documents.
+    Simple interface to crawl for policy documents.
 
     Args:
         base_url: Starting URL
@@ -3341,7 +3409,7 @@ async def main() -> None:
 
     base_url = sys.argv[1]
 
-    results = await crawl_for_legal_documents(
+    results = await crawl_for_policy_documents(
         base_url=base_url, max_depth=4, max_pages=200, strategy="bfs"
     )
 

@@ -3,17 +3,23 @@ from datetime import datetime
 from typing import Any, Literal
 
 import shortuuid
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 TierRelevance = Literal["core", "extended"]
 
+# Document types considered "core" for tier relevance and query prioritisation.
+# Note: the document classifier always emits "terms_of_service" — it never produces
+# "terms_of_use" or "terms_and_conditions" as output types. Those aliases were here
+# previously but would silently mis-classify every ToS document as "extended" tier.
 CORE_DOC_TYPES = {
     "privacy_policy",
     "terms_of_service",
     "cookie_policy",
     "gdpr_policy",
-    "terms_of_use",
-    "terms_and_conditions",
+    "community_guidelines",
+    "copyright_policy",
+    "children_privacy_policy",
+    "data_processing_agreement",
 }
 
 
@@ -358,24 +364,13 @@ class CoverageItem(BaseModel):
 
 class DocumentAnalysis(BaseModel):
     """
-    Document analysis model.
+    Full document analysis — narrative, scoring, and clause-level breakdown.
 
-    - summary: A user-oriented explanation of what this document means in practice.
-    - scores: A dictionary with the following required keys (each value is a DocumentAnalysisScores object with score and justification):
-        - transparency: A number between 0 and 10 indicating the transparency of the document.
-        - data_collection_scope: A number between 0 and 10 indicating the scope of data collection.
-        - user_control: A number between 0 and 10 indicating how much control users have over their data.
-        - third_party_sharing: A number between 0 and 10 indicating third-party sharing practices.
-        - data_retention_score: A DocumentAnalysisScores object indicating data retention practices.
-        - security_score: A DocumentAnalysisScores object indicating security practices.
-    - risk_score: Overall risk score from 0-10 (calculated from component scores).
-    - verdict: Privacy friendliness level ("very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive").
-    - liability_risk: (Optional) Risk of liability exposure from contract terms (0-10, for business users).
-    - compliance_status: (Optional) Compliance scores per regulation (e.g., {"GDPR": 8, "CCPA": 7}).
-    - keypoints: A list of bullet points capturing the most relevant and impactful ideas.
-    - scope: (Optional) The scope of the document - whether it applies globally, to specific products, regions, or services.
+    All analysis is deep by default: every document gets narrative interpretation,
+    dimensional scores, risk verdict, and clause-level critical findings.
     """
 
+    # Narrative and scoring
     summary: str
     scores: dict[str, DocumentAnalysisScores]
     risk_score: int = Field(default=5, ge=0, le=10, description="Overall risk score from 0-10")
@@ -389,15 +384,30 @@ class DocumentAnalysis(BaseModel):
         default=None, description="Compliance scores per regulation (e.g., {'GDPR': 8, 'CCPA': 7})"
     )
     keypoints: list[str] | None = None
-    # Optional, evidence-backed keypoints (additive / backward compatible).
     keypoints_with_evidence: list[KeypointWithEvidence] | None = None
-    scope: str | None = Field(
+    applicability: str | None = Field(
         default=None,
-        description="Document scope - e.g., 'Global privacy policy', 'Terms for Product X', 'EU-specific policy'",
+        validation_alias=AliasChoices("applicability", "scope"),
+        description=(
+            "Who and where this policy applies (geography, product line, audience). "
+            "Not how much data is collected — that is scores.data_collection_scope. "
+            "Examples: 'Global', 'EU-specific', 'Terms for mobile app X only'."
+        ),
     )
     privacy_signals: PrivacySignals | None = None
     coverage: list[CoverageItem] | None = None
     contract_clauses: list[str] | None = None
+
+    # Deep analysis fields — always populated (deep is the default, no separate step).
+    # String annotations because CriticalClause / DocumentSection / DocumentRiskBreakdown
+    # are defined later in this module.
+    critical_clauses: "list[CriticalClause] | None" = None
+    document_risk_breakdown: "DocumentRiskBreakdown | None" = None
+    key_sections: "list[DocumentSection] | None" = None
+
+    # Analysis completeness metadata.
+    analysis_completeness: Literal["full", "partial"] = "full"
+    coverage_gaps: list[str] = Field(default_factory=list)
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -461,6 +471,15 @@ class ThirdPartyRecipient(BaseModel):
     risk_level: Literal["low", "medium", "high"] = "medium"
 
 
+class ProductContradiction(BaseModel):
+    """An inconsistency identified between two policy documents."""
+
+    document_a: str
+    document_b: str
+    description: str
+    impact: str
+
+
 class MetaSummary(BaseModel):
     summary: str
     scores: MetaSummaryScores
@@ -469,29 +488,19 @@ class MetaSummary(BaseModel):
         "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
     ]
     keypoints: list[str]
-    data_collected: list[str] | None = (
-        None  # 10-20 specific data types: ["Email address", "IP address", "Location data (GPS)", ...]
-    )
-    data_purposes: list[str] | None = (
-        None  # 8-15 purposes: ["Core service delivery", "Personalized advertising", ...]
-    )
-    # New structured fields for Overview redesign
-    data_collection_details: list[DataPurposeLink] | None = (
-        None  # Structured: each data type linked to its purposes
-    )
-    third_party_details: list[ThirdPartyRecipient] | None = (
-        None  # Structured: who gets data, what, and why
-    )
-    your_rights: list[str] | None = (
-        None  # 8-12 rights with explicit instructions: ["Access your data (email, profile) via account.organization.com/privacy", ...]
-    )
-    dangers: list[str] | None = None  # 5-7 specific concerns with details
-    benefits: list[str] | None = None  # 5-7 specific positive privacy protections
-    recommended_actions: list[str] | None = None  # 5-8 actionable steps with specific instructions
+    data_collected: list[str] | None = None
+    data_purposes: list[str] | None = None
+    data_collection_details: list[DataPurposeLink] | None = None
+    third_party_details: list[ThirdPartyRecipient] | None = None
+    your_rights: list[str] | None = None
+    dangers: list[str] | None = None
+    benefits: list[str] | None = None
+    recommended_actions: list[str] | None = None
     privacy_signals: PrivacySignals | None = None
-    compliance_status: dict[str, int] | None = None  # {"GDPR": 8, "CCPA": 7}
+    compliance_status: dict[str, int] | None = None
     coverage: list[CoverageItem] | None = None
     contract_clauses: list[str] | None = None
+    contradictions: list[ProductContradiction] | None = None
 
     @field_validator("compliance_status", mode="before")
     @classmethod
@@ -697,11 +706,14 @@ class CriticalClause(BaseModel):
         "dispute_resolution",
         "governing_law",
     ]
-    section_title: str | None = None  # "Section 3: Data Collection"
+    section_title: str | None = None
     quote: str  # Exact text from document
     risk_level: Literal["low", "medium", "high", "critical"]
-    analysis: str  # Explanation of what this means
-    compliance_impact: list[str] = Field(default_factory=list)  # Which regulations this affects
+    plain_english: str = ""  # What this means to a non-lawyer
+    why_notable: str = ""  # Why this clause is significant
+    # Legacy alias — kept for backward compatibility, maps to plain_english
+    analysis: str = ""
+    compliance_impact: list[str] = Field(default_factory=list)
 
 
 class DocumentSection(BaseModel):
@@ -726,9 +738,13 @@ class DocumentRiskBreakdown(BaseModel):
     top_concerns: list[str] = Field(default_factory=list)  # Specific concerns
     positive_protections: list[str] = Field(default_factory=list)  # Good practices
     missing_information: list[str] = Field(default_factory=list)  # What's not mentioned
-    scope: str | None = Field(
+    applicability: str | None = Field(
         default=None,
-        description="Document scope - e.g., 'Global privacy policy', 'Terms for Product X', 'EU-specific policy'. Used to contextualize risk assessment.",
+        validation_alias=AliasChoices("applicability", "scope"),
+        description=(
+            "Same one-line label as DocumentAnalysis.applicability: who/where this document applies. "
+            "Duplicates the top-level field for nested risk context."
+        ),
     )
 
 
@@ -898,3 +914,7 @@ class Document(BaseModel):
     effective_date: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     tier_relevance: TierRelevance = "extended"
+
+
+# Resolve forward references now that all classes are defined.
+DocumentAnalysis.model_rebuild()

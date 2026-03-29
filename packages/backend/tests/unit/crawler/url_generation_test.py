@@ -1,4 +1,4 @@
-"""Tests for generate_potential_legal_urls path-prefix awareness and hub patterns."""
+"""Tests for generate_potential_policy_urls path-prefix awareness and hub patterns."""
 
 from src.crawler import ClauseaCrawler
 
@@ -9,7 +9,7 @@ class TestGeneratePotentialLegalUrls:
     def test_root_url_generates_standard_legal_paths(self) -> None:
         """A plain domain seed should produce root-level legal paths."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://example.com")
+        urls = crawler.generate_potential_policy_urls("https://example.com")
 
         assert "https://example.com/privacy" in urls
         assert "https://example.com/legal" in urls
@@ -19,7 +19,7 @@ class TestGeneratePotentialLegalUrls:
     def test_root_url_generates_hub_paths(self) -> None:
         """A plain domain seed should produce hub / listing page URLs."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://example.com")
+        urls = crawler.generate_potential_policy_urls("https://example.com")
 
         assert "https://example.com/articles" in urls
         assert "https://example.com/collections" in urls
@@ -29,7 +29,7 @@ class TestGeneratePotentialLegalUrls:
     def test_locale_prefix_generates_prefixed_paths(self) -> None:
         """A locale-prefixed seed like /en should produce both root and prefixed URLs."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://privacy.claude.com/en")
+        urls = crawler.generate_potential_policy_urls("https://privacy.claude.com/en")
 
         # Root-level URLs should still be present
         assert "https://privacy.claude.com/privacy" in urls
@@ -49,7 +49,7 @@ class TestGeneratePotentialLegalUrls:
     def test_multi_segment_prefix_generates_sub_prefixes(self) -> None:
         """A multi-segment path like /hc/en-us should produce URLs under each sub-prefix."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://help.example.com/hc/en-us")
+        urls = crawler.generate_potential_policy_urls("https://help.example.com/hc/en-us")
 
         # Root-level
         assert "https://help.example.com/privacy" in urls
@@ -68,7 +68,7 @@ class TestGeneratePotentialLegalUrls:
     def test_trailing_slash_is_normalized(self) -> None:
         """Trailing slashes on the base URL should not produce double-slash paths."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://example.com/en/")
+        urls = crawler.generate_potential_policy_urls("https://example.com/en/")
 
         assert "https://example.com/en/privacy" in urls
         # No double-slash
@@ -77,14 +77,14 @@ class TestGeneratePotentialLegalUrls:
     def test_no_duplicate_urls(self) -> None:
         """The returned list should contain no duplicates."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://privacy.claude.com/en")
+        urls = crawler.generate_potential_policy_urls("https://privacy.claude.com/en")
 
         assert len(urls) == len(set(urls))
 
     def test_plain_domain_no_spurious_prefix(self) -> None:
         """A bare domain (no path) should only generate root-level URLs."""
         crawler = ClauseaCrawler()
-        urls = crawler.generate_potential_legal_urls("https://example.com")
+        urls = crawler.generate_potential_policy_urls("https://example.com")
         url_set = set(urls)
 
         # Every URL should start with the domain and a single slash (no double prefix)

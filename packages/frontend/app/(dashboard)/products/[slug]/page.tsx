@@ -399,9 +399,9 @@ export default function CompanyPage() {
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       This website restricts automated access via its robots.txt
-                      file. Our crawler was unable to fetch any policy documents.
-                      You may need to review their policies manually on their
-                      website.
+                      file. Our crawler was unable to fetch any policy
+                      documents. You may need to review their policies manually
+                      on their website.
                     </p>
                     <div className="space-y-2 pt-2">
                       {failedJob.crawl_errors.map((err) => (
@@ -573,7 +573,7 @@ export default function CompanyPage() {
             </h1>
             <div className="flex flex-wrap items-center gap-4 mt-3">
               <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground whitespace-nowrap">
-                Privacy Analysis
+                Policy overview
               </span>
               <div className="h-px w-8 bg-border hidden sm:block" />
               {formattedDate && (
@@ -583,6 +583,11 @@ export default function CompanyPage() {
                 </span>
               )}
             </div>
+            <p className="mt-4 max-w-2xl text-sm text-muted-foreground leading-relaxed">
+              Generated after we crawl and analyze this product&apos;s published policy
+              documents (privacy, terms, cookies, and related notices). For a quick read on
+              data use, risks, and what you may be agreeing to — not legal advice.
+            </p>
           </div>
         </div>
       </div>

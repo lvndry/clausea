@@ -1,6 +1,6 @@
 # Contributing to Clausea 🌊
 
-Thank you for your interest in contributing to Clausea! We're building the definitive legal document intelligence platform.
+Thank you for your interest in contributing to Clausea! We're building the definitive policy document intelligence platform.
 
 ## 🚀 Quick Start
 

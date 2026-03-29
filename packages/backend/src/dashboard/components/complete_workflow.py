@@ -1,4 +1,4 @@
-"""Complete A to Z workflow component: Crawling -> Summarization -> Overview."""
+"""Complete A to Z workflow component: Crawling -> Analysis -> Overview."""
 
 import asyncio
 import concurrent.futures
@@ -9,6 +9,7 @@ from threading import Event
 
 import streamlit as st
 
+from src.analyser import analyse_product_documents, generate_product_overview
 from src.dashboard.db_utils import (
     get_all_products_isolated,
     get_dashboard_db,
@@ -16,9 +17,8 @@ from src.dashboard.db_utils import (
 )
 from src.dashboard.utils import run_async, suppress_streamlit_warnings
 from src.models.product import Product
-from src.pipeline import LegalDocumentPipeline, ProcessingStats
+from src.pipeline import PolicyDocumentPipeline, ProcessingStats
 from src.services.service_factory import create_document_service, create_product_service
-from src.summarizer import generate_product_overview, summarize_all_product_documents
 
 
 def get_log_file_path(product: Product) -> Path:
@@ -54,7 +54,7 @@ def read_log_file_tail(
 
 
 def run_crawl_async(product: Product, stop_event: Event | None = None) -> ProcessingStats | None:
-    """Run crawling using LegalDocumentPipeline in a dedicated event loop."""
+    """Run crawling using PolicyDocumentPipeline in a dedicated event loop."""
 
     def run_in_thread():
         with suppress_streamlit_warnings():
@@ -62,15 +62,7 @@ def run_crawl_async(product: Product, stop_event: Event | None = None) -> Proces
             asyncio.set_event_loop(loop)
 
             async def runner():
-                from src.core.config import config
-
-                pipeline = LegalDocumentPipeline(
-                    max_depth=config.crawler.max_depth,
-                    max_pages=config.crawler.max_pages,
-                    crawler_strategy="bfs",
-                    concurrent_limit=5,
-                    delay_between_requests=1.0,
-                )
+                pipeline = PolicyDocumentPipeline()
 
                 monitor_task: asyncio.Task | None = None
                 if stop_event is not None:
@@ -102,22 +94,20 @@ def run_crawl_async(product: Product, stop_event: Event | None = None) -> Proces
     return run_in_thread()
 
 
-async def run_summarization_async_internal(product_slug: str) -> bool:
-    """Run document summarization in an isolated async context."""
+async def run_analysis_async_internal(product_slug: str) -> bool:
+    """Run document analysis in an isolated async context."""
     try:
         db = await get_dashboard_db()
         document_svc = create_document_service()
-        await summarize_all_product_documents(db.db, product_slug, document_svc)
+        await analyse_product_documents(db.db, product_slug, document_svc)
         return True
     except Exception as e:
-        st.error(f"Summarization error: {str(e)}")
+        st.error(f"Analysis error: {str(e)}")
         return False
 
 
-def run_summarization_async(
-    product_slug: str, loop: asyncio.AbstractEventLoop | None = None
-) -> bool:
-    """Run document summarization in an isolated async context."""
+def run_analysis_async(product_slug: str, loop: asyncio.AbstractEventLoop | None = None) -> bool:
+    """Run document analysis in an isolated async context."""
     try:
         should_close_loop = False
         if loop is None:
@@ -126,7 +116,7 @@ def run_summarization_async(
             should_close_loop = True
 
         try:
-            return loop.run_until_complete(run_summarization_async_internal(product_slug))
+            return loop.run_until_complete(run_analysis_async_internal(product_slug))
         finally:
             if should_close_loop:
                 pending_tasks = asyncio.all_tasks(loop)
@@ -136,7 +126,7 @@ def run_summarization_async(
                     loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
                 loop.close()
     except Exception as e:
-        st.error(f"Summarization error: {str(e)}")
+        st.error(f"Analysis error: {str(e)}")
         return False
 
 
@@ -188,7 +178,7 @@ def show_complete_workflow() -> None:
     # Title with refresh button
     col_title, col_refresh = st.columns([10, 1])
     with col_title:
-        st.title("🚀 Complete Workflow: Crawl → Summarize → Overview")
+        st.title("🚀 Complete Workflow: Crawl → Analyse → Overview")
     with col_refresh:
         if st.button("🔄", help="Refresh products list", key="refresh_products_workflow_btn"):
             st.session_state["refresh_products_workflow"] = True
@@ -196,11 +186,11 @@ def show_complete_workflow() -> None:
 
     st.info("""
     **This workflow will:**
-    1. **Crawl** - Discover and store legal documents for the product
-    2. **Summarize** - Analyze each document for privacy practices
+    1. **Crawl** - Discover and store policy documents for the product
+    2. **Analyse** - Analyze each document for privacy practices
     3. **Overview** - Generate a comprehensive product overview
 
-    This process may take 10-30 minutes depending on the number of documents.
+    Large sites may need up to about 2 hours (pipeline time limit); smaller products finish sooner.
     """)
 
     # Cache products in session state to avoid re-fetching on every rerun
@@ -387,7 +377,7 @@ def show_complete_workflow() -> None:
             workflow_state["current_step"] = "crawling"
             workflow_state["step_progress"] = {
                 "crawling": {"status": "running", "message": "Starting crawl..."},
-                "summarization": {
+                "analysis": {
                     "status": "pending",
                     "message": "Waiting for crawl to complete...",
                 },
@@ -476,7 +466,7 @@ def show_complete_workflow() -> None:
                             "current_step": "crawling",
                             "step_progress": {
                                 "crawling": {"status": "running", "message": "Starting crawl..."},
-                                "summarization": {"status": "pending"},
+                                "analysis": {"status": "pending"},
                                 "overview": {"status": "pending"},
                             },
                             "crawl_stats": None,
@@ -490,7 +480,7 @@ def show_complete_workflow() -> None:
                         if crawl_stats:
                             individual_state["step_progress"]["crawling"] = {
                                 "status": "complete",
-                                "message": f"Found {crawl_stats.legal_documents_stored} documents",
+                                "message": f"Found {crawl_stats.policy_documents_stored} documents",
                             }
                             individual_state["crawl_stats"] = crawl_stats
                         else:
@@ -503,24 +493,20 @@ def show_complete_workflow() -> None:
                     # Step 2: Summarize
                     if individual_state["step_progress"]["crawling"]["status"] == "complete":
                         batch_workflow_state["current_step"] = (
-                            f"Summarizing documents for {product.name}..."
+                            f"Analysing documents for {product.name}..."
                         )
-                        st.info(f"📝 Summarizing {product.name}...")
-                        individual_state["step_progress"]["summarization"] = {"status": "running"}
+                        st.info(f"📝 Analysing {product.name}...")
+                        individual_state["step_progress"]["analysis"] = {"status": "running"}
 
-                        success = run_summarization_async(product.slug)
+                        success = run_analysis_async(product.slug)
                         if success:
-                            individual_state["step_progress"]["summarization"] = {
-                                "status": "complete"
-                            }
+                            individual_state["step_progress"]["analysis"] = {"status": "complete"}
                         else:
-                            individual_state["step_progress"]["summarization"] = {
-                                "status": "failed"
-                            }
+                            individual_state["step_progress"]["analysis"] = {"status": "failed"}
                         st.rerun()
 
                     # Step 3: Overview
-                    if individual_state["step_progress"]["summarization"]["status"] == "complete":
+                    if individual_state["step_progress"]["analysis"]["status"] == "complete":
                         batch_workflow_state["current_step"] = (
                             f"Generating overview for {product.name}..."
                         )
@@ -584,7 +570,7 @@ def show_complete_workflow() -> None:
                         for step_name, step_info in result["steps"].items():
                             step_display = {
                                 "crawling": "Crawling",
-                                "summarization": "Summarization",
+                                "analysis": "Analysis",
                                 "overview": "Overview",
                             }.get(step_name, step_name)
                             status = "✅" if step_info.get("status") == "complete" else "❌"
@@ -647,7 +633,7 @@ def show_complete_workflow() -> None:
                     st.write("1️⃣ **Crawling** - ⏳ Pending")
 
                 # Step 2: Summarization
-                summ_status = workflow_state["step_progress"].get("summarization", {})
+                summ_status = workflow_state["step_progress"].get("analysis", {})
                 if summ_status.get("status") == "running":
                     st.write("2️⃣ **Summarization** - 🔄 In progress...")
                 elif summ_status.get("status") == "complete":
@@ -690,7 +676,7 @@ def show_complete_workflow() -> None:
                     if workflow_state["crawl_stats"]:
                         workflow_state["step_progress"]["crawling"] = {
                             "status": "complete",
-                            "message": f"Found {workflow_state['crawl_stats'].legal_documents_stored} documents",
+                            "message": f"Found {workflow_state['crawl_stats'].policy_documents_stored} documents",
                         }
                     else:
                         workflow_state["step_progress"]["crawling"] = {
@@ -713,10 +699,10 @@ def show_complete_workflow() -> None:
             # If crawl succeeded, proceed to summarization
             if (
                 workflow_state["step_progress"]["crawling"]["status"] == "complete"
-                and workflow_state["step_progress"]["summarization"]["status"] == "pending"
+                and workflow_state["step_progress"]["analysis"]["status"] == "pending"
             ):
-                workflow_state["current_step"] = "summarization"
-                workflow_state["step_progress"]["summarization"] = {
+                workflow_state["current_step"] = "analysis"
+                workflow_state["step_progress"]["analysis"] = {
                     "status": "running",
                     "message": "Starting document analysis...",
                 }
@@ -724,22 +710,22 @@ def show_complete_workflow() -> None:
                 st.rerun()
 
             # Run summarization if it's in running state
-            if workflow_state["step_progress"]["summarization"]["status"] == "running":
+            if workflow_state["step_progress"]["analysis"]["status"] == "running":
                 # Run summarization with spinner
                 with st.spinner("Analyzing documents... This may take several minutes."):
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:
-                        success = run_summarization_async(selected_product.slug, loop)
+                        success = run_analysis_async(selected_product.slug, loop)
                         if success:
-                            workflow_state["step_progress"]["summarization"] = {
+                            workflow_state["step_progress"]["analysis"] = {
                                 "status": "complete",
                                 "message": "All documents analyzed",
                             }
                         else:
-                            workflow_state["step_progress"]["summarization"] = {
+                            workflow_state["step_progress"]["analysis"] = {
                                 "status": "failed",
-                                "message": "Summarization failed",
+                                "message": "Analysis failed",
                             }
                     finally:
                         loop.close()
@@ -748,7 +734,7 @@ def show_complete_workflow() -> None:
 
             # If summarization succeeded, proceed to overview
             if (
-                workflow_state["step_progress"]["summarization"]["status"] == "complete"
+                workflow_state["step_progress"]["analysis"]["status"] == "complete"
                 and workflow_state["step_progress"]["overview"]["status"] == "pending"
             ):
                 workflow_state["current_step"] = "overview"
@@ -807,7 +793,7 @@ def show_complete_workflow() -> None:
                 for step_name, step_info in workflow_state["step_progress"].items():
                     step_display = {
                         "crawling": "1. Crawling",
-                        "summarization": "2. Summarization",
+                        "analysis": "2. Analysis",
                         "overview": "3. Overview",
                     }.get(step_name, step_name)
 
@@ -823,14 +809,14 @@ def show_complete_workflow() -> None:
                     st.write("---")
                     st.write("### Crawl Results")
                     st.write(
-                        f"**Documents found:** {workflow_state['crawl_stats'].legal_documents_stored}"
+                        f"**Documents found:** {workflow_state['crawl_stats'].policy_documents_stored}"
                     )
 
             if all_complete:
                 st.success("🎉 Complete workflow finished successfully!")
                 st.info("""
                 **What was accomplished:**
-                • Legal documents were discovered and stored
+                • Policy documents were discovered and stored
                 • All documents were analyzed for privacy practices
                 • A comprehensive product overview was generated
                 • You can now view the overview in the "Deep Analysis & Overview" page

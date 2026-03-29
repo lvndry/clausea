@@ -1,7 +1,7 @@
 """
 Date Extraction Analyzer
 
-Specialized analyzer for extracting effective dates from legal documents through
+Specialized analyzer for extracting effective dates from policy documents through
 static pattern matching and LLM fallback analysis.
 """
 
@@ -20,7 +20,7 @@ logger = get_logger(__name__, component="date extraction")
 
 class DateExtractor(LLMUsageTrackingMixin):
     """
-    AI-powered date extractor for legal document effective dates.
+    AI-powered date extractor for policy document effective dates.
 
     Uses a multi-layered approach prioritizing speed and accuracy:
     1. Metadata extraction (fastest)
@@ -31,7 +31,7 @@ class DateExtractor(LLMUsageTrackingMixin):
     def __init__(self):
         super().__init__()
 
-        # Comprehensive date patterns for legal documents
+        # Comprehensive date patterns for policy documents
         self.date_patterns = [
             # Explicit "Effective date:" or "Effective as of:"
             r"effective\s+(?:date|as\s+of):\s*([^.\n<]+)",
@@ -152,7 +152,7 @@ class DateExtractor(LLMUsageTrackingMixin):
 
     async def extract_effective_date(self, content: str, metadata: dict[str, Any]) -> str | None:
         """
-        Extract the effective date from a legal document.
+        Extract the effective date from a policy document.
 
         First attempts static extraction from metadata and common patterns,
         then falls back to LLM analysis if needed.
@@ -232,7 +232,7 @@ class DateExtractor(LLMUsageTrackingMixin):
         # Use first portion of content where dates are typically mentioned
         content_sample = content[:3000] if len(content) > 3000 else content
 
-        prompt = f"""Analyze this legal document to find the effective date.
+        prompt = f"""Analyze this policy document to find the effective date.
 
 Content: {content_sample}
 Metadata: {json.dumps(metadata, indent=2) if metadata else "None"}
@@ -253,7 +253,7 @@ Return JSON:
 
 IMPORTANT: Return null for effective_date if you cannot find a clear effective date. Do not guess or infer dates."""
 
-        system_prompt = """You are an expert at extracting effective dates from legal documents. Only return dates that are explicitly stated as effective dates, last updated dates, or similar. Do not guess or infer dates."""
+        system_prompt = """You are an expert at extracting effective dates from policy documents. Only return dates that are explicitly stated as effective dates, last updated dates, or similar. Do not guess or infer dates."""
 
         try:
             async with usage_tracking(self._create_usage_tracker("extract_effective_date")):

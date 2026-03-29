@@ -34,7 +34,7 @@ export default function SignUpPage() {
         <div className="flex flex-col gap-4 text-center">
           <h1 className="text-4xl font-bold">Join Clausea</h1>
           <p className="text-lg text-muted-foreground">
-            Create your account to start analyzing legal documents
+            Create your account to start analyzing legal agreements and policies
           </p>
         </div>
         <div className="w-full max-w-[400px]">
