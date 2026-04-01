@@ -1,11 +1,21 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "httpx",
+#   "beautifulsoup4",
+#   "markdownify",
+#   "rich",
+# ]
+# ///
 """
 Fetch a real web page and save it as a classification fixture.
 
 Usage:
-    python scripts/fetch_fixture.py --url URL --expected DOC_TYPE [--name NAME]
+    uv run scripts/fetch_fixture.py --url URL --expected DOC_TYPE [--name NAME]
 
 Example:
-    python scripts/fetch_fixture.py \
+    uv run scripts/fetch_fixture.py \
         --url https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement \
         --expected privacy_policy \
         --name github_privacy_policy
