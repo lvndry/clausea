@@ -1,0 +1,15 @@
+{
+  "name": "openai_cookie_policy",
+  "url": "https://openai.com/policies/cookie-policy",
+  "expected_doc_type": "cookie_policy",
+  "text": "Cookie Policy\n\nEffective date: January 1, 2024\n\nOpenAI uses cookies and similar tracking technologies to provide, improve, and protect our services. This Cookie Policy explains what cookies are, how we use them, your choices regarding cookies, and further information about cookies.\n\nWhat are cookies?\nA cookie is a small piece of data stored on your browser when you visit a website. Cookies help us remember your preferences, understand how you use our site, and improve your experience.\n\nHow we use cookies\nWe use strictly necessary cookies to provide our services, functional cookies to remember your preferences, analytics cookies to understand how our services are used, and advertising cookies to show relevant advertisements.\n\nCookie consent and opt-out\nYou can control cookie preferences through your browser settings or our cookie consent banner. Most browsers allow you to refuse cookies or alert you when cookies are sent.\n\nThird-party cookies\nSome cookies on our site are set by third parties. We have no control over these cookies and recommend you check the relevant third party website for more information about their cookies.\n\nContact us\nIf you have questions about this Cookie Policy, please contact us at privacy@openai.com.",
+  "markdown": "# Cookie Policy\n\n**Effective date:** January 1, 2024\n\nOpenAI uses cookies and similar tracking technologies to provide, improve, and protect our services. This Cookie Policy explains what cookies are, how we use them, your choices regarding cookies, and further information about cookies.\n\n## What are cookies?\n\nA cookie is a small piece of data stored on your browser when you visit a website.\n\n## How we use cookies\n\nWe use strictly necessary cookies, functional cookies, analytics cookies, and advertising cookies.\n\n## Cookie consent and opt-out\n\nYou can control cookie preferences through your browser settings or our cookie consent banner.\n\n## Third-party cookies\n\nSome cookies on our site are set by third parties.\n\n## Contact us\n\nIf you have questions about this Cookie Policy, please contact us at privacy@openai.com.",
+  "metadata": {
+    "title": "Cookie Policy | OpenAI",
+    "description": "Learn about how OpenAI uses cookies and similar tracking technologies.",
+    "og:description": "OpenAI Cookie Policy",
+    "og:title": "Cookie Policy | OpenAI"
+  },
+  "fetched_at": "2026-04-01T00:00:00Z",
+  "note": "Manually authored — openai.com returned 403 at fetch time."
+}

@@ -1,0 +1,34 @@
+{
+  "fixtures": [
+    {
+      "name": "github_privacy_policy",
+      "file": "docs/github_privacy_policy.json",
+      "expected_doc_type": "privacy_policy"
+    },
+    {
+      "name": "github_terms_of_service",
+      "file": "docs/github_terms_of_service.json",
+      "expected_doc_type": "terms_of_service"
+    },
+    {
+      "name": "notion_terms_of_service",
+      "file": "docs/notion_terms_of_service.json",
+      "expected_doc_type": "terms_of_service"
+    },
+    {
+      "name": "stripe_privacy_policy",
+      "file": "docs/stripe_privacy_policy.json",
+      "expected_doc_type": "privacy_policy"
+    },
+    {
+      "name": "figma_privacy_policy",
+      "file": "docs/figma_privacy_policy.json",
+      "expected_doc_type": "privacy_policy"
+    },
+    {
+      "name": "openai_cookie_policy",
+      "file": "docs/openai_cookie_policy.json",
+      "expected_doc_type": "cookie_policy"
+    }
+  ]
+}

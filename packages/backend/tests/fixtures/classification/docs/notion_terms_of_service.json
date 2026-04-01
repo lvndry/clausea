@@ -1,0 +1,14 @@
+{
+  "name": "notion_terms_of_service",
+  "url": "https://www.notion.so/terms",
+  "expected_doc_type": "terms_of_service",
+  "text": "Notion",
+  "markdown": "Notion",
+  "metadata": {
+    "title": "Notion",
+    "description": "A tool that connects everyday work into one space. It gives you and your teams AI tools—search, writing, note-taking—inside an all-in-one, flexible workspace.",
+    "og:description": "A tool that connects everyday work into one space. It gives you and your teams AI tools—search, writing, note-taking—inside an all-in-one, flexible workspace.",
+    "og:title": "Notion – The all-in-one workspace for your notes, tasks, wikis, and databases."
+  },
+  "fetched_at": "2026-04-01T17:08:28Z"
+}
