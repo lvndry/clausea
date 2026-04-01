@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
+from rich.text import Text
 
 from src.analyser import analyse_product_documents, generate_product_overview
 from src.core.database import db_dry_run, db_session
@@ -35,7 +38,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Clausea CLI")
     parser.add_argument(
         "--action",
-        choices=["crawl", "classify", "pipeline"],
+        choices=["crawl", "classify", "pipeline", "evaluate"],
         help="Action to run (overrides interactive prompt)",
     )
     parser.add_argument(
@@ -67,9 +70,10 @@ def _prompt_action() -> str:
     table.add_row("1", "Crawl + classify (discover, classify, store policy docs only)")
     table.add_row("2", "Classify only (re-run doc classification)")
     table.add_row("3", "Full pipeline (crawl → summarize → overview)")
+    table.add_row("4", "Evaluate classifier on local fixtures")
     console.print(table)
-    choice = Prompt.ask("Select", choices=["1", "2", "3"], default="3")
-    return {"1": "crawl", "2": "classify", "3": "pipeline"}[choice]
+    choice = Prompt.ask("Select", choices=["1", "2", "3", "4"], default="3")
+    return {"1": "crawl", "2": "classify", "3": "pipeline", "4": "evaluate"}[choice]
 
 
 def _prompt_product_selection(products: list) -> str:
@@ -231,11 +235,130 @@ async def _run_full_pipeline(products: list) -> None:
             )
 
 
+_FIXTURES_DIR = Path(__file__).parent.parent / "tests" / "fixtures" / "classification"
+
+
+async def _run_evaluate() -> None:
+    """Run the document classifier against saved local fixtures and print a results table."""
+    manifest_path = _FIXTURES_DIR / "manifest.json"
+    if not manifest_path.exists():
+        console.print(f"[red]Manifest not found:[/red] {manifest_path}")
+        console.print("[dim]Run scripts/fetch_fixture.py to create fixtures first.[/dim]")
+        return
+
+    manifest = json.loads(manifest_path.read_text())
+    fixtures_meta = manifest.get("fixtures", [])
+
+    if not fixtures_meta:
+        console.print("[yellow]No fixtures found in manifest.[/yellow]")
+        return
+
+    analyzer = DocumentAnalyzer()
+
+    results: list[dict] = []
+    llm_calls = 0
+
+    with console.status("[cyan]Running classifier on fixtures...[/cyan]", spinner="dots"):
+        for entry in fixtures_meta:
+            fixture_path = _FIXTURES_DIR / entry["file"]
+            if not fixture_path.exists():
+                console.print(f"[yellow]Skipping missing fixture:[/yellow] {fixture_path}")
+                continue
+
+            fixture = json.loads(fixture_path.read_text())
+            name = fixture.get("name", entry["name"])
+            url = fixture.get("url", "")
+            text = fixture.get("text", "")
+            metadata = fixture.get("metadata", {})
+            expected = entry["expected_doc_type"]
+
+            # Reset usage tracking so we can detect if LLM was called for this document
+            analyzer.reset_usage_stats()
+
+            classification_result = await analyzer.classify_document(url, text, metadata)
+
+            usage_summary, _ = analyzer.consume_usage_summary()
+            used_llm = bool(usage_summary)
+            if used_llm:
+                llm_calls += 1
+
+            actual = classification_result.get("classification", "other")
+            justification = (
+                classification_result.get("classification_justification")
+                or classification_result.get("is_policy_document_justification")
+                or ""
+            )
+            match = actual == expected
+            method = "llm" if used_llm else "static"
+
+            results.append(
+                {
+                    "name": name,
+                    "url": url,
+                    "expected": expected,
+                    "actual": actual,
+                    "match": match,
+                    "justification": justification,
+                    "method": method,
+                }
+            )
+
+    # Build results table
+    table = Table(
+        title="Classifier Evaluation Results",
+        box=box.ASCII,
+        header_style="bold cyan",
+        show_edge=True,
+    )
+    table.add_column("Name", style="white", no_wrap=True)
+    table.add_column("Expected", style="dim")
+    table.add_column("Got", style="white")
+    table.add_column("Match", justify="center")
+    table.add_column("Method", style="dim", justify="center")
+    table.add_column("Justification", style="dim", max_width=60)
+
+    passed = 0
+    for r in results:
+        match_cell = Text("✓", style="bold green") if r["match"] else Text("✗", style="bold red")
+        if r["match"]:
+            passed += 1
+        table.add_row(
+            r["name"],
+            r["expected"],
+            r["actual"],
+            match_cell,
+            r["method"],
+            r["justification"][:60],
+        )
+
+    console.print(table)
+
+    total = len(results)
+    pct = (passed / total * 100) if total else 0
+    summary_color = "green" if passed == total else ("yellow" if pct >= 50 else "red")
+    console.print(
+        Panel.fit(
+            f"[bold {summary_color}]Passed: {passed}/{total} ({pct:.0f}%)[/bold {summary_color}]"
+            f"  |  [dim]LLM calls: {llm_calls}[/dim]",
+            title="Summary",
+            border_style=summary_color,
+            box=box.ASCII,
+        )
+    )
+
+
 async def _main() -> None:
     setup_logging()
     args = _parse_args()
 
     _render_header()
+
+    # evaluate action needs no DB access — handle it immediately and return
+    action_early = args.action or None
+    if action_early == "evaluate":
+        await _run_evaluate()
+        return
+    # Also handle the case where user picks "4" interactively below (action determined after prompt)
 
     # Determine dry-run: CLI flag takes precedence, otherwise ask interactively
     is_dry_run = args.dry_run
@@ -257,6 +380,10 @@ async def _main() -> None:
             return
 
         action = args.action or _prompt_action()
+        if action == "evaluate":
+            # User picked evaluate interactively after DB load — still no DB writes needed
+            await _run_evaluate()
+            return
         if action not in {"crawl", "classify", "pipeline"}:
             console.print("[red]Invalid action.[/red]")
             return
