@@ -30,41 +30,46 @@ _CIRCUIT_BREAKER_THRESHOLD: int = 3
 class Model:
     model: str
     api_key: str
+    api_base: str | None
 
-    def __init__(self, model: str, api_key: str):
+    def __init__(self, model: str, api_key: str, api_base: str | None = None):
         self.model = model
         self.api_key = api_key
+        self.api_base = api_base
 
 
-SupportedModel = Literal[
-    # openai
-    "gpt-5.2",
-    "gpt-5.2-pro",
-    "gpt-5.1",
-    "gpt-5",
-    "gpt-5-pro",
-    "gpt-5-mini",
-    "gpt-5.4-mini",
-    "gpt-5-nano",
-    # gemini
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-    # anthropic
-    "claude-opus-4-5",
-    "claude-sonnet-4-5",
-    "claude-haiku-4-5",
-    # mistral
-    "mistral-small",
-    "mistral-medium",
-    "mistral-large",
-    # voyage
-    "voyage-law-2",
-    # xai
-    "grok-4-1-fast-reasoning",
-    "grok-4-1-fast-non-reasoning",
-    # openrouter
-    "kimi-k2-thinking",
-]
+SupportedModel = (
+    Literal[
+        # openai
+        "gpt-5.2",
+        "gpt-5.2-pro",
+        "gpt-5.1",
+        "gpt-5",
+        "gpt-5-pro",
+        "gpt-5-mini",
+        "gpt-5.4-mini",
+        "gpt-5-nano",
+        # gemini
+        "gemini-3-flash-preview",
+        "gemini-3-pro-preview",
+        # anthropic
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        # mistral
+        "mistral-small",
+        "mistral-medium",
+        "mistral-large",
+        # voyage
+        "voyage-law-2",
+        # xai
+        "grok-4-1-fast-reasoning",
+        "grok-4-1-fast-non-reasoning",
+        # openrouter
+        "kimi-k2-thinking",
+    ]
+    | str  # local models: "ollama/qwen2.5:14b", "vllm/model-name", etc.
+)
 
 DEFAULT_MODEL_PRIORITY: list[SupportedModel] = [
     "gpt-5.4-mini",
@@ -86,6 +91,12 @@ def _sanitize_model_kwargs(model_name: SupportedModel, kwargs: dict[str, Any]) -
                 model_name,
             )
             sanitized_kwargs.pop("temperature", None)
+
+    # Local models served via vLLM or Ollama may not support all OpenAI parameters.
+    # Drop tool_choice when no tools are passed to avoid provider errors.
+    if model_name.startswith(("ollama/", "vllm/")):
+        if not sanitized_kwargs.get("tools") and "tool_choice" in sanitized_kwargs:
+            sanitized_kwargs.pop("tool_choice", None)
 
     return sanitized_kwargs
 
@@ -190,6 +201,38 @@ def get_model(model_name: SupportedModel) -> Model:
             model=full_model,
             api_key=OPENROUTER_API_KEY,
         )
+    # Groq hosted models: "groq/gpt-oss-120b", "groq/llama-3.3-70b", etc.
+    elif model_name.startswith("groq/"):
+        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+        if not GROQ_API_KEY:
+            raise ValueError("GROQ_API_KEY is not set")
+        return Model(model=model_name, api_key=GROQ_API_KEY)
+    # Together AI hosted models: "together/gpt-oss-120b", etc.
+    elif model_name.startswith("together/"):
+        TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+        if not TOGETHER_API_KEY:
+            raise ValueError("TOGETHER_API_KEY is not set")
+        litellm_model = "together_ai/" + model_name.removeprefix("together/")
+        return Model(model=litellm_model, api_key=TOGETHER_API_KEY)
+    # Ollama local models: "ollama/qwen2.5:14b", "ollama/llama3.2", etc.
+    elif model_name.startswith("ollama/"):
+        api_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        return Model(
+            model=model_name,
+            api_key="",
+            api_base=api_base,
+        )
+    # vLLM / LM Studio / llama.cpp server — any OpenAI-compatible local endpoint.
+    # Format: "vllm/model-name". Set VLLM_BASE_URL to the server address.
+    elif model_name.startswith("vllm/"):
+        api_base = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+        # LiteLLM routes "openai/" prefix to any OpenAI-compatible endpoint via api_base
+        litellm_model = "openai/" + model_name.removeprefix("vllm/")
+        return Model(
+            model=litellm_model,
+            api_key=os.getenv("VLLM_API_KEY", "local"),
+            api_base=api_base,
+        )
     else:
         raise ValueError(f"Unsupported model: {model_name}")
 
@@ -231,6 +274,7 @@ async def _completion_with_fallback_impl(
                 model=model.model,
                 api_key=model.api_key,
                 messages=messages,
+                **({"api_base": model.api_base} if model.api_base else {}),
                 **call_kwargs,
             )
             duration = time.time() - start_time
