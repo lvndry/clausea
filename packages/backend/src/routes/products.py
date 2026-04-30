@@ -9,7 +9,6 @@ from starlette.status import HTTP_404_NOT_FOUND, HTTP_424_FAILED_DEPENDENCY, HTT
 
 from src.analyser import (
     generate_document_deep_analysis,
-    generate_product_deep_analysis,
     generate_product_overview,
 )
 from src.core.database import get_db
@@ -248,35 +247,19 @@ async def get_product_deep_analysis_route(
     slug: str,
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
-    services: tuple[ProductService, DocumentService] = Depends(get_product_and_document_services),
     _: None = Depends(require_pro),
 ) -> ProductDeepAnalysis:
     """Get professional-grade compliance audit for a product (Level 3). Requires Pro subscription."""
-    # First check if product exists
     product = await service.get_product_by_slug(db, slug)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Try to get existing deep analysis
+    # Return cached analysis only — JIT generation disabled until feature is shipped.
     deep_analysis = await service.get_product_deep_analysis(db, slug)
     if deep_analysis:
         return deep_analysis
 
-    # Deep analysis doesn't exist - generate it JIT
-    logger.info(f"Deep analysis not found for {slug}, generating on-the-fly...")
-    try:
-        product_svc, doc_svc = services
-        return await generate_product_deep_analysis(
-            db, slug, product_svc=product_svc, document_svc=doc_svc
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating deep analysis for {slug}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate product deep analysis. Please try again later.",
-        ) from e
+    raise HTTPException(status_code=501, detail="Deep analysis is not yet available.")
 
 
 @router.get(
