@@ -7,6 +7,14 @@ from bs4 import BeautifulSoup
 from src.crawler import ClauseaCrawler, PageContent
 
 
+class _FakeContent:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def read(self, n: int = -1) -> bytes:
+        return self._data if n < 0 else self._data[:n]
+
+
 def test_extract_links_various_sources():
     html = """
     <!doctype html>
@@ -299,6 +307,8 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
             self.headers = {"content-type": "text/html; charset=utf-8"}
             self._body = body
             self.url = url
+            self.charset = "utf-8"
+            self.content = _FakeContent(body.encode())
 
         async def text(self) -> str:
             return self._body

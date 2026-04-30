@@ -623,8 +623,6 @@ Set analysis_completeness to 'partial' in your response.
 Document content:
 {doc_text}""".strip()
 
-    # Select appropriate model based on document complexity
-
     last_exception: Exception | None = None
 
     # Set up usage tracking for this document summarization
@@ -835,19 +833,17 @@ async def generate_product_overview(
         token = cancellation_token
     if not product_svc or not document_svc:
         raise ValueError("product_svc and document_svc are required")
-    prod_svc = product_svc
-    doc_svc = document_svc
 
-    documents = await doc_svc.get_product_documents_by_slug(db, product_slug)
+    documents = await document_svc.get_product_documents_by_slug(db, product_slug)
     logger.info(f"Generating product overview for {product_slug} with {len(documents)} documents")
 
-    product = await prod_svc.get_product_by_slug(db, product_slug)
+    product = await product_svc.get_product_by_slug(db, product_slug)
     if not product:
         raise ValueError(f"Product not found for slug {product_slug}")
 
     # Check cache unless force_regenerate is True
     if not force_regenerate:
-        cached_overview_data = await prod_svc.get_product_overview_data(db, product_slug)
+        cached_overview_data = await product_svc.get_product_overview_data(db, product_slug)
         if cached_overview_data and cached_overview_data.get("overview"):
             cached = cached_overview_data["overview"]
             logger.info(f"Using cached product overview for {product_slug}")
@@ -1076,7 +1072,7 @@ Per-document analyses and extractions:
                 meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
 
         # Save to database (simple single-cache entry)
-        await prod_svc.save_product_overview(
+        await product_svc.save_product_overview(
             db,
             product_slug=product_slug,
             meta_summary=meta_summary,
@@ -1189,23 +1185,23 @@ async def generate_product_deep_analysis(
     """
     if not product_svc or not document_svc:
         raise ValueError("product_svc and document_svc are required")
-    prod_svc = product_svc
-    doc_svc = document_svc
+    product_svc = product_svc
+    document_svc = document_svc
 
     # First ensure we have Level 2 analysis
-    analysis = await prod_svc.get_product_analysis(db, product_slug)
+    analysis = await product_svc.get_product_analysis(db, product_slug)
     if not analysis:
         # Generate meta-summary first (which creates Level 2)
         logger.info(f"Level 2 analysis not found for {product_slug}, generating...")
         await generate_product_overview(
-            db, product_slug=product_slug, product_svc=prod_svc, document_svc=doc_svc
+            db, product_slug=product_slug, product_svc=product_svc, document_svc=document_svc
         )
-        analysis = await prod_svc.get_product_analysis(db, product_slug)
+        analysis = await product_svc.get_product_analysis(db, product_slug)
         if not analysis:
             raise ValueError(f"Failed to generate Level 2 analysis for {product_slug}")
 
     # Get all documents with full text
-    documents = await doc_svc.get_product_documents_by_slug(db, product_slug)
+    documents = await document_svc.get_product_documents_by_slug(db, product_slug)
     if not documents:
         raise ValueError(f"No documents found for {product_slug}")
 
@@ -1216,7 +1212,7 @@ async def generate_product_deep_analysis(
 
     # Check cache unless force_regenerate
     if not force_regenerate:
-        cached_deep_analysis = await prod_svc.get_deep_analysis(db, product_slug)
+        cached_deep_analysis = await product_svc.get_deep_analysis(db, product_slug)
         if cached_deep_analysis:
             cached_signature = cached_deep_analysis.get("document_signature")
             cached_data = cached_deep_analysis.get("deep_analysis")
@@ -1510,7 +1506,7 @@ Per-document analyses and extractions:
         )
 
         # Save the result to database
-        await prod_svc.save_deep_analysis(
+        await product_svc.save_deep_analysis(
             db,
             product_slug=product_slug,
             deep_analysis=deep_analysis,
@@ -1553,14 +1549,14 @@ async def main() -> None:
     from src.services.service_factory import create_services
 
     async with db_session() as db:
-        product_svc, doc_svc = create_services()
+        product_svc, document_svc = create_services()
 
-        await analyse_product_documents(db, "notion", doc_svc)
+        await analyse_product_documents(db, "notion", document_svc)
 
         print("Generating product overview:")
         print("=" * 50)
         overview = await generate_product_overview(
-            db, "notion", product_svc=product_svc, document_svc=doc_svc
+            db, "notion", product_svc=product_svc, document_svc=document_svc
         )
         logger.info(overview)
         print("\n" + "=" * 50)

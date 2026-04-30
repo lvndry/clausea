@@ -8,6 +8,17 @@ import pytest
 
 from src.crawler import ClauseaCrawler, PageContent, StaticFetchResult
 
+
+class _FakeContent:
+    """Minimal mock of aiohttp's StreamReader for tests."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def read(self, n: int = -1) -> bytes:
+        return self._data if n < 0 else self._data[:n]
+
+
 # ---------------------------------------------------------------------------
 # _content_is_sufficient
 # ---------------------------------------------------------------------------
@@ -180,6 +191,8 @@ class TestFetchPageInternalOrchestration:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = url
+                self.charset = "utf-8"
+                self.content = _FakeContent(html.encode())
 
             async def text(self):
                 return html
@@ -223,6 +236,8 @@ class TestFetchPageInternalOrchestration:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = url
+                self.charset = "utf-8"
+                self.content = _FakeContent(thin_html.encode())
 
             async def text(self):
                 return thin_html
@@ -272,6 +287,8 @@ class TestFetchPageInternalOrchestration:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = url
+                self.charset = "utf-8"
+                self.content = _FakeContent(thin_html.encode())
 
             async def text(self):
                 return thin_html
@@ -309,6 +326,8 @@ class TestFetchPageInternalOrchestration:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = url
+                self.charset = "utf-8"
+                self.content = _FakeContent(thin_html.encode())
 
             async def text(self):
                 return thin_html
@@ -340,6 +359,8 @@ class TestFetchPageInternalOrchestration:
                 self.status = 404
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = YarlURL("https://example.com/missing")
+                self.charset = "utf-8"
+                self.content = _FakeContent(b"<html><body>Not found</body></html>")
 
             async def text(self):
                 return "<html><body>Not found</body></html>"
@@ -386,6 +407,8 @@ class TestFetchPageInternalOrchestration:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = YarlURL(final_url)
+                self.charset = "utf-8"
+                self.content = _FakeContent(thin_html.encode())
 
             async def text(self):
                 return thin_html
@@ -467,6 +490,8 @@ class TestRedirectURLTracking:
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 # aiohttp exposes the final URL via response.url (a yarl.URL)
                 self.url = YarlURL(redirected_url)
+                self.charset = "utf-8"
+                self.content = _FakeContent(html.encode())
 
             async def text(self):
                 return html
@@ -511,6 +536,8 @@ class TestRedirectURLTracking:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = YarlURL(redirected_url)
+                self.charset = "utf-8"
+                self.content = _FakeContent(html.encode())
 
             async def text(self):
                 return html
@@ -558,6 +585,8 @@ class TestRedirectURLTracking:
                 self.status = 200
                 self.headers = {"content-type": "text/html; charset=utf-8"}
                 self.url = YarlURL(redirected_url)
+                self.charset = "utf-8"
+                self.content = _FakeContent(html.encode())
 
             async def text(self):
                 return html
