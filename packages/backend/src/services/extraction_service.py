@@ -467,7 +467,7 @@ def _build_cluster_specs() -> None:
             "international_transfers": [
                 {
                     "destination": "United States",
-                    "mechanism": "Standard Contractual Clauses | Adequacy decision | Consent | null",
+                    "mechanism": "SCC|adequacy_decision|consent|null",
                     "data_types": ["email", "usage data"],
                     "quote": "exact quote",
                 }
@@ -476,7 +476,7 @@ def _build_cluster_specs() -> None:
                 {
                     "authority_type": "Law enforcement",
                     "conditions": "Valid court order or subpoena",
-                    "data_scope": "Account information or null",
+                    "data_scope": "str|null",
                     "quote": "exact quote",
                 }
             ],
@@ -540,24 +540,24 @@ def _build_cluster_specs() -> None:
                 "quote": "exact quote or null",
             },
             "privacy_signals": {
-                "sells_data": "yes | no | unclear (null if not mentioned)",
-                "sells_data_quote": "exact quote or null",
-                "cross_site_tracking": "yes | no | unclear (null if not mentioned)",
-                "cross_site_tracking_quote": "exact quote or null",
-                "account_deletion": "self_service | request_required | not_specified (null if not mentioned)",
-                "account_deletion_quote": "exact quote or null",
-                "data_retention_summary": "e.g. '30 days' or 'indefinite' (null if not mentioned)",
-                "data_retention_quote": "exact quote or null",
-                "consent_model": "opt_in | opt_out | mixed | not_specified (null if not mentioned)",
-                "consent_model_quote": "exact quote or null",
-                "ai_training_on_user_data": "yes | no | unclear (null if not mentioned)",
-                "ai_training_quote": "exact quote or null",
-                "breach_notification": "yes | no | not_specified (null if not mentioned)",
-                "breach_notification_quote": "exact quote or null",
-                "data_minimization": "yes | no | unclear (null if not mentioned)",
-                "data_minimization_quote": "exact quote or null",
-                "children_data_collection": "yes | no | not_specified (null if not mentioned)",
-                "children_data_collection_quote": "exact quote or null",
+                "sells_data": "yes|no|unclear|null",
+                "sells_data_quote": "str|null",
+                "cross_site_tracking": "yes|no|unclear|null",
+                "cross_site_tracking_quote": "str|null",
+                "account_deletion": "self_service|request_required|not_specified|null",
+                "account_deletion_quote": "str|null",
+                "data_retention_summary": "str|null",
+                "data_retention_quote": "str|null",
+                "consent_model": "opt_in|opt_out|mixed|not_specified|null",
+                "consent_model_quote": "str|null",
+                "ai_training_on_user_data": "yes|no|unclear|null",
+                "ai_training_quote": "str|null",
+                "breach_notification": "yes|no|not_specified|null",
+                "breach_notification_quote": "str|null",
+                "data_minimization": "yes|no|unclear|null",
+                "data_minimization_quote": "str|null",
+                "children_data_collection": "yes|no|not_specified|null",
+                "children_data_collection_quote": "str|null",
             },
         },
         (
@@ -695,7 +695,7 @@ Text chunk:
 Return a JSON object with ONLY the keys listed below (all keys required).
 Evidence quotes must be EXACT substrings of the chunk above.
 """
-    return f"{header}\n{json.dumps(schema_hint, indent=2)}\n\nNotes:\n{notes}"
+    return f"{header}\n{json.dumps(schema_hint, separators=(',', ':'))}\n\nNotes:\n{notes}"
 
 
 # ---------------------------------------------------------------------------

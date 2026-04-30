@@ -154,11 +154,11 @@ Always produce a clause entry for any of the following if present in the extract
 Important: only include a score key when the extraction gives you real evidence to base it on. A missing key is an honest signal; a fabricated score misleads users.
 
 ### Calibration
-Base every score on the extraction, not generic expectations about the brand.
+Score from the extraction only — not brand reputation.
 
-- Minimal necessary collection (e.g. account identifier + delivery metadata only, no ads ecosystem, content not readable by the provider when the document states end-to-end encryption): `data_collection_scope` and `third_party_sharing` should usually be high (7-10); `security_score` high when the document describes strong technical measures (e.g. E2EE). Unless the extraction shows major exceptions (e.g. broad contact/address-book flows, extensive metadata use, or heavy third-party analytics), the overall picture should read as low user risk — score those exception dimensions down when evidenced.
-- Broad behavioural/ad profiling, many data categories, sale or “partners”/advertising ecosystem, cross-app or cross-site tracking, AI training on user content when evidenced: `data_collection_scope` and `third_party_sharing` should be low (0-4). When the extraction supports pervasive practices, the overall picture should read as high user risk.
-- Transparency rewards clear disclosure; a clearly described invasive program is still low on collection/sharing/control, not “safe” because it is readable.
+- Minimal collection, no ads ecosystem, E2EE stated → `data_collection_scope` / `third_party_sharing` high (7-10); lower only where extraction shows exceptions (address-book flows, analytics, metadata use).
+- Broad profiling, ad-tech ecosystem, cross-app tracking, AI training on user content → collection/sharing low (0-4).
+- Clear disclosure of invasive practices does not raise collection/sharing scores.
 
 ## Headline risk (platform-only)
 Do not output `risk_score` or `verdict`. The platform computes them from your six scores with fixed weights so the product always shows one consistent headline number. Your job is to make those six scores faithful to the extraction.
@@ -194,7 +194,7 @@ Not every document should carry regulatory scores.
 - risk_by_category: one entry per meaningful category found in the extraction (e.g. "data_sharing": 8, "retention": 5).
 - top_concerns: up to 5 substantive concerns with concrete detail. Do not treat normal requirements for the product category (e.g. contact info needed to run a communications service) as a "top concern" unless combined with unusual risk in the extraction.
 - positive_protections: up to 5 specific protective measures actually stated in the document.
-- missing_information: omit this key or use `[]` — the platform fills it from `coverage_gaps` so you do not repeat the same list twice.
+- missing_information: omit or `[]` — platform derives this from `coverage_gaps`.
 
 ## KEY SECTIONS
 3-7 most important sections with:
@@ -294,10 +294,7 @@ Explicitly surface, when the inputs support it: children's or teens' data, sale 
 1. Up to 5 sentences: who this company is, what data they collect overall, the most important privacy risk, and the most important protection (if any). Start directly with the company or service name.
 2. A markdown bullet list titled "Key Takeaways" -6-10 specific cross-document findings users must know.
 
-Rules:
-- Never start with "We analyzed", "Based on the documents", or "Across all documents".
-- Be concrete: exact data types, exact third parties, exact rights with how to exercise them.
-- Use "This means…" or "In practice…" to explain impact without adding facts not in the input.
+Rules: start with the company/service name; be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
 
 ## SCORES
 Synthesize from all document scores. Where documents conflict, use the most conservative (worst) interpretation for the underlying factss, then assign scores that spread across the 0-10 scale.

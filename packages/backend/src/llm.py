@@ -2,7 +2,7 @@ import asyncio
 import os
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Any
 
 import litellm
 from litellm import EmbeddingResponse, ModelResponse, acompletion
@@ -38,203 +38,142 @@ class Model:
         self.api_base = api_base
 
 
-SupportedModel = (
-    Literal[
-        # openai
-        "gpt-5.2",
-        "gpt-5.2-pro",
-        "gpt-5.1",
-        "gpt-5",
-        "gpt-5-pro",
-        "gpt-5-mini",
-        "gpt-5.4-mini",
-        "gpt-5-nano",
-        # gemini
-        "gemini-3-flash-preview",
-        "gemini-3-pro-preview",
-        # anthropic
-        "claude-opus-4-5",
-        "claude-sonnet-4-5",
-        "claude-haiku-4-5",
-        # mistral
-        "mistral-small",
-        "mistral-medium",
-        "mistral-large",
-        # voyage
-        "voyage-law-2",
-        # xai
-        "grok-4-1-fast-reasoning",
-        "grok-4-1-fast-non-reasoning",
-        # openrouter
-        "kimi-k2-thinking",
-    ]
-    | str  # local models: "ollama/qwen2.5:14b", "vllm/model-name", etc.
-)
+# Model identifier strings. Supported prefixes:
+#   gpt-*            → OpenAI          (OPENAI_API_KEY)
+#   gemini/*         → Google          (GEMINI_API_KEY)
+#   claude-*         → Anthropic       (ANTHROPIC_API_KEY)
+#   grok-*           → xAI             (XAI_API_KEY)
+#   mistral-*        → Mistral direct  (MISTRAL_API_KEY)
+#   voyage-*         → Voyage          (VOYAGE_API_KEY)
+#   openrouter/*     → OpenRouter      (OPENROUTER_API_KEY)
+#   groq/*           → Groq            (GROQ_API_KEY)
+#   together/*       → Together AI     (TOGETHER_API_KEY)
+#   ollama/*         → local Ollama    (OLLAMA_BASE_URL, default http://localhost:11434)
+#   vllm/*           → local vLLM/llama.cpp/LM Studio (VLLM_BASE_URL, default http://localhost:8000/v1)
+SupportedModel = str
 
 DEFAULT_MODEL_PRIORITY: list[SupportedModel] = [
-    "gpt-5.4-mini",
+    "gpt-5-nano",
+    "openrouter/mistral-small",
+    "openrouter/free",
 ]
+
+# Short aliases → full LiteLLM model identifiers for OpenRouter models.
+# "openrouter/free" resolves to a capable free-tier model; override via OPENROUTER_FREE_MODEL.
+_OPENROUTER_ALIASES: dict[str, str] = {
+    "openrouter/mistral-small": "openrouter/mistral/mistral-small",
+    "openrouter/free": os.getenv(
+        "OPENROUTER_FREE_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+    ),
+    # legacy
+    "openrouter/kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
+}
+
+_NO_TEMPERATURE_MODELS: frozenset[str] = frozenset(
+    {"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano", "gemini-3-flash-preview"}
+)
 
 
 def _sanitize_model_kwargs(model_name: SupportedModel, kwargs: dict[str, Any]) -> dict[str, Any]:
-    """
-    Remove or adjust parameters that are incompatible with a specific model.
-    """
-    sanitized_kwargs = dict(kwargs)
+    sanitized = dict(kwargs)
 
-    if model_name in {"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano", "gemini-3-flash-preview"}:
-        temperature = sanitized_kwargs.get("temperature")
-        if temperature is not None and temperature != 1:
-            logger.debug(
-                "Removing unsupported temperature override (%s) for model %s",
-                temperature,
-                model_name,
-            )
-            sanitized_kwargs.pop("temperature", None)
+    if model_name in _NO_TEMPERATURE_MODELS:
+        if sanitized.get("temperature") not in (None, 1):
+            logger.debug("Removing unsupported temperature for %s", model_name)
+            sanitized.pop("temperature", None)
 
-    # Local models served via vLLM or Ollama may not support all OpenAI parameters.
-    # Drop tool_choice when no tools are passed to avoid provider errors.
     if model_name.startswith(("ollama/", "vllm/")):
-        if not sanitized_kwargs.get("tools") and "tool_choice" in sanitized_kwargs:
-            sanitized_kwargs.pop("tool_choice", None)
+        if not sanitized.get("tools"):
+            sanitized.pop("tool_choice", None)
 
-    return sanitized_kwargs
+    return sanitized
 
 
 def get_model(model_name: SupportedModel) -> Model:
-    # OpenAI models (gpt-*)
     if model_name.startswith("gpt"):
-        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-        if not OPENAI_API_KEY:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
             raise ValueError("OPENAI_API_KEY is not set")
+        return Model(model=model_name, api_key=api_key)
 
-        return Model(
-            model=model_name,
-            api_key=OPENAI_API_KEY,
-        )
-    # Gemini models (gemini-*)
-    elif model_name.startswith("gemini"):
-        GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-        if not GEMINI_API_KEY:
+    if model_name.startswith("gemini"):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
             raise ValueError("GEMINI_API_KEY is not set")
-
-        # Use mapping for known models, fallback to gemini/{model_name} format
-        model_mapping = {
+        mapping = {
             "gemini-2.0-flash": "gemini/gemini-2.0-flash",
             "gemini-2.5-flash-lite": "gemini/gemini-2.5-flash-lite",
         }
+        return Model(model=mapping.get(model_name, f"gemini/{model_name}"), api_key=api_key)
 
-        full_model = model_mapping.get(model_name, f"gemini/{model_name}")
-        return Model(
-            model=full_model,
-            api_key=GEMINI_API_KEY,
-        )
-    # Anthropic models (claude-*)
-    elif model_name.startswith("claude"):
-        ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-        if not ANTHROPIC_API_KEY:
+    if model_name.startswith("claude"):
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
             raise ValueError("ANTHROPIC_API_KEY is not set")
-
-        # Use mapping for models that need specific version suffixes
-        model_mapping = {
+        mapping = {
             "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
             "claude-3-opus": "claude-3-opus-20240229",
             "claude-3-sonnet": "claude-3-sonnet-20240229",
             "claude-3-haiku": "claude-3-haiku-20240307",
         }
+        return Model(model=mapping.get(model_name, model_name), api_key=api_key)
 
-        full_model = model_mapping.get(model_name, model_name)
-        return Model(
-            model=full_model,
-            api_key=ANTHROPIC_API_KEY,
-        )
-    # XAI models (grok-*)
-    elif model_name.startswith("grok"):
-        XAI_API_KEY = os.getenv("XAI_API_KEY")
-        if not XAI_API_KEY:
+    if model_name.startswith("grok"):
+        api_key = os.getenv("XAI_API_KEY")
+        if not api_key:
             raise ValueError("XAI_API_KEY is not set")
+        return Model(model=f"xai/{model_name}", api_key=api_key)
 
-        return Model(
-            model=f"xai/{model_name}",
-            api_key=XAI_API_KEY,
-        )
-    # Mistral models (mistral-*)
-    elif model_name.startswith("mistral"):
-        MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-        if not MISTRAL_API_KEY:
+    if model_name.startswith("mistral"):
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if not api_key:
             raise ValueError("MISTRAL_API_KEY is not set")
-
-        # Use mapping for known models, fallback to mistral/{model_name} format
-        model_mapping = {
+        mapping = {
             "mistral-small": "mistral/mistral-small-latest",
             "mistral-medium": "mistral/mistral-medium-latest",
         }
+        return Model(model=mapping.get(model_name, f"mistral/{model_name}"), api_key=api_key)
 
-        full_model = model_mapping.get(model_name, f"mistral/{model_name}")
-        return Model(
-            model=full_model,
-            api_key=MISTRAL_API_KEY,
-        )
-    # Voyage models (voyage-*)
-    elif model_name.startswith("voyage"):
-        VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")
-        if not VOYAGE_API_KEY:
+    if model_name.startswith("voyage"):
+        api_key = os.getenv("VOYAGE_API_KEY")
+        if not api_key:
             raise ValueError("VOYAGE_API_KEY is not set")
+        return Model(model=f"voyage/{model_name}", api_key=api_key)
 
-        return Model(
-            model=f"voyage/{model_name}",
-            api_key=VOYAGE_API_KEY,
-        )
-    # OpenRouter models (kimi-*)
-    elif model_name.startswith("kimi"):
-        OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-        if not OPENROUTER_API_KEY:
+    if model_name.startswith("openrouter/"):
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
             raise ValueError("OPENROUTER_API_KEY is not set")
+        full_model = _OPENROUTER_ALIASES.get(model_name, model_name)
+        return Model(model=full_model, api_key=api_key)
 
-        # Map model names to OpenRouter format: openrouter/{provider}/{model}
-        model_mapping = {
-            "kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
-        }
-
-        full_model = model_mapping.get(model_name, f"openrouter/{model_name}")
-        return Model(
-            model=full_model,
-            api_key=OPENROUTER_API_KEY,
-        )
-    # Groq hosted models: "groq/gpt-oss-120b", "groq/llama-3.3-70b", etc.
-    elif model_name.startswith("groq/"):
-        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-        if not GROQ_API_KEY:
+    if model_name.startswith("groq/"):
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
             raise ValueError("GROQ_API_KEY is not set")
-        return Model(model=model_name, api_key=GROQ_API_KEY)
-    # Together AI hosted models: "together/gpt-oss-120b", etc.
-    elif model_name.startswith("together/"):
-        TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
-        if not TOGETHER_API_KEY:
+        return Model(model=model_name, api_key=api_key)
+
+    if model_name.startswith("together/"):
+        api_key = os.getenv("TOGETHER_API_KEY")
+        if not api_key:
             raise ValueError("TOGETHER_API_KEY is not set")
-        litellm_model = "together_ai/" + model_name.removeprefix("together/")
-        return Model(model=litellm_model, api_key=TOGETHER_API_KEY)
-    # Ollama local models: "ollama/qwen2.5:14b", "ollama/llama3.2", etc.
-    elif model_name.startswith("ollama/"):
-        api_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        return Model(model="together_ai/" + model_name.removeprefix("together/"), api_key=api_key)
+
+    if model_name.startswith("ollama/"):
         return Model(
             model=model_name,
             api_key="",
-            api_base=api_base,
+            api_base=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         )
-    # vLLM / LM Studio / llama.cpp server — any OpenAI-compatible local endpoint.
-    # Format: "vllm/model-name". Set VLLM_BASE_URL to the server address.
-    elif model_name.startswith("vllm/"):
-        api_base = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
-        # LiteLLM routes "openai/" prefix to any OpenAI-compatible endpoint via api_base
-        litellm_model = "openai/" + model_name.removeprefix("vllm/")
+
+    if model_name.startswith("vllm/"):
         return Model(
-            model=litellm_model,
+            model="openai/" + model_name.removeprefix("vllm/"),
             api_key=os.getenv("VLLM_API_KEY", "local"),
-            api_base=api_base,
+            api_base=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
         )
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
+
+    raise ValueError(f"Unsupported model: {model_name}")
 
 
 async def _completion_with_fallback_impl(
@@ -243,29 +182,12 @@ async def _completion_with_fallback_impl(
     model_priority: list[SupportedModel] | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
-    """
-    Internal implementation of completion with fallback logic.
-
-    Args:
-        messages: List of message dicts for the LLM
-        completion_fn: Async callable that performs the completion (acompletion or wrapped completion)
-        model_priority: Optional list of models to try in order. If None, uses DEFAULT_MODEL_PRIORITY.
-        **kwargs: Additional arguments to pass to completion function
-
-    Returns:
-        ModelResponse from the first model that succeeds
-
-    Raises:
-        AllModelsFailedError: If all models fail.
-    """
-    # Use provided priority or default
     models_to_try = model_priority.copy() if model_priority else DEFAULT_MODEL_PRIORITY.copy()
     last_exception: Exception | None = None
 
-    # Try each model in order until one succeeds
     for model_name in models_to_try:
         model = get_model(model_name)
-        logger.debug(f"Attempting completion with model: {model_name} ({model.model})")
+        logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
         try:
             call_kwargs = _sanitize_model_kwargs(model_name, kwargs)
@@ -278,23 +200,16 @@ async def _completion_with_fallback_impl(
                 **call_kwargs,
             )
             duration = time.time() - start_time
-
-            # Success - return immediately
-            logger.debug(f"Successfully completed with model: {model_name}")
-
-            # Track usage automatically via context
+            logger.debug("Successfully completed with model: %s", model_name)
             provider_model = getattr(response, "model", None) or model.model
             track_usage(response, model_name, provider_model, duration=duration)
-
             return response
 
         except Exception as e:
             last_exception = e
-            logger.warning(f"Model {model_name} failed: {e}. Trying next model...")
-            # Continue to next model
+            logger.warning("Model %s failed: %s. Trying next model...", model_name, e)
             continue
 
-    # All models failed
     error_msg = (
         f"All {len(models_to_try)} models failed. "
         f"Tried: {', '.join(models_to_try)}. "
@@ -309,28 +224,7 @@ async def acompletion_with_fallback(
     model_priority: list[SupportedModel] | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
-    """
-    Execute LLM completion with fallback to alternative models on failure.
-
-    Tries models in priority order until one succeeds. Each call is independent
-    and does not maintain state across calls (thread-safe for concurrent use).
-
-    Usage tracking is automatic via context variables. Set a tracker using:
-    - set_usage_tracker(callback) from src.utils.llm_usage for the current context
-    - usage_tracking(callback) from src.utils.llm_usage as an async context manager
-
-    Args:
-        messages: List of message dicts for the LLM
-        model_priority: Optional list of models to try in order. If None, uses DEFAULT_MODEL_PRIORITY.
-        **kwargs: Additional arguments to pass to acompletion (temperature, response_format, etc.)
-
-    Returns:
-        ModelResponse from the first model that succeeds
-
-    Raises:
-        AllModelsFailedError: If all models fail (below circuit breaker threshold).
-        CircuitBreakerError: If the circuit is open after repeated all-model failures.
-    """
+    """Execute LLM completion with fallback. Uses DEFAULT_MODEL_PRIORITY when model_priority is None."""
     global _consecutive_total_failures
 
     if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
@@ -360,28 +254,7 @@ def completion_with_fallback(
     model_priority: list[SupportedModel] | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
-    """
-    Synchronous version of acompletion_with_fallback for non-async contexts.
-
-    Execute LLM completion with fallback to alternative models on failure.
-
-    Tries models in priority order until one succeeds. Each call is independent
-    and does not maintain state across calls (thread-safe for concurrent use).
-
-    Usage tracking is automatic via context variables. Set a tracker using:
-    - set_usage_tracker(callback) from src.utils.llm_usage for the current context
-
-    Args:
-        messages: List of message dicts for the LLM
-        model_priority: Optional list of models to try in order. If None, uses DEFAULT_MODEL_PRIORITY.
-        **kwargs: Additional arguments to pass to completion (temperature, response_format, etc.)
-
-    Returns:
-        ModelResponse from the first model that succeeds
-
-    Raises:
-        AllModelsFailedError: If all models fail.
-    """
+    """Synchronous version of acompletion_with_fallback."""
     return asyncio.run(
         _completion_with_fallback_impl(
             messages=messages,
@@ -394,24 +267,10 @@ def completion_with_fallback(
 
 async def get_embeddings(
     input: str | list[str],
-    input_type: Literal["query", "document"] | None = None,
+    input_type: str | None = None,
     model_name: SupportedModel = "voyage-law-2",
 ) -> EmbeddingResponse:
-    """
-    Generate embeddings for text input using the specified model.
-
-    Args:
-        input: Single text string or list of text strings to embed
-        input_type: Optional type of input - "query" for search queries, "document" for documents.
-                   Some models (like voyage-law-2) use this to optimize embeddings.
-        model_name: The model to use for embeddings (default: "voyage-law-2")
-
-    Returns:
-        EmbeddingResponse containing the embeddings and metadata
-
-    Raises:
-        Exception: If embedding generation fails
-    """
+    """Generate embeddings using the specified model."""
     model = get_model(model_name)
     try:
         kwargs: dict[str, Any] = {
@@ -419,12 +278,10 @@ async def get_embeddings(
             "api_key": model.api_key,
             "input": input if isinstance(input, list) else [input],
         }
-
         if input_type:
             kwargs["input_type"] = input_type
-
         response: EmbeddingResponse = await litellm.aembedding(**kwargs)
         return response
     except Exception as e:
-        logger.error(f"Error getting embeddings with {model_name}: {str(e)}")
+        logger.error("Error getting embeddings with %s: %s", model_name, e)
         raise
