@@ -16,6 +16,184 @@ from src.utils.llm_usage_tracking_mixin import LLMUsageTrackingMixin
 
 logger = get_logger(__name__, component="document classification")
 
+# Shared between static content routing and LLM sanity checks (one vocabulary, no parallel heuristics).
+POLICY_KEYWORD_SAMPLE_CHARS = 2000
+MIN_POLICY_KEYWORD_HITS = 3
+# Same minimum body length as metadata-based classification in this module.
+MIN_CHARS_SUBSTANTIVE_POLICY_BODY = 300
+
+POLICY_DOC_KEYWORDS: dict[str, list[str]] = {
+    "privacy_policy": [
+        "personal information",
+        "personal data",
+        "data collection",
+        "data processing",
+        "data sharing",
+        "data retention",
+        "privacy rights",
+        "your rights",
+        "data protection",
+        "information we collect",
+        "we collect information",
+        "data subject rights",
+        "privacy choices",
+        "opt-out",
+        "data minimization",
+        "purpose limitation",
+        "données personnelles",
+        "datos personales",
+        "dati personali",
+        "personenbezogene daten",
+    ],
+    "terms_of_service": [
+        "terms of service",
+        "terms and conditions",
+        "user agreement",
+        "service agreement",
+        "acceptance of terms",
+        "by using our service",
+        "governing law",
+        "jurisdiction",
+        "applicable law",
+        "dispute resolution",
+        "arbitration",
+        "binding arbitration",
+        "limitation of liability",
+        "liabilities limited",
+        "no warranties",
+        "indemnification",
+        "indemnify",
+        "hold harmless",
+        "termination",
+        "account suspension",
+        "service discontinuation",
+        "conditions générales",
+        "términos y condiciones",
+        "condizioni generali",
+        "allgemeine geschäftsbedingungen",
+    ],
+    "cookie_policy": [
+        "cookie policy",
+        "cookies we use",
+        "cookie consent",
+        "tracking technologies",
+        "third-party cookies",
+        "first-party cookies",
+        "web beacons",
+        "pixel tags",
+        "tracking pixels",
+        "analytics cookies",
+        "functional cookies",
+        "advertising cookies",
+        "cookie preferences",
+        "cookie settings",
+        "manage cookies",
+        "politique de cookies",
+        "política de cookies",
+        "cookie-richtlinie",
+    ],
+    "copyright_policy": [
+        "copyright",
+        "copyright infringement",
+        "dmca",
+        "takedown notice",
+        "intellectual property",
+        "content ownership",
+        "user content license",
+        "fair use",
+        "copyright protection",
+        "copyright claims",
+    ],
+    "data_processing_agreement": [
+        "data processing agreement",
+        "dpa",
+        "data processor",
+        "data controller",
+        "sub-processor",
+        "data processing activities",
+        "processing purposes",
+        "data security measures",
+    ],
+    "gdpr_policy": [
+        "gdpr",
+        "general data protection regulation",
+        "data protection officer",
+        "dpo",
+        "data protection impact assessment",
+        "eu data protection",
+        "european data protection",
+        "article 17",
+        "right to erasure",
+    ],
+    "security_policy": [
+        "security practices",
+        "security policy",
+        "information security",
+        "trust center",
+        "security controls",
+        "technical and organizational measures",
+        "encryption in transit",
+        "encryption at rest",
+        "data encryption",
+        "vulnerability disclosure",
+        "responsible disclosure",
+        "bug bounty",
+        "penetration test",
+        "security audit",
+        "security assessment",
+        "soc 2",
+        "iso 27001",
+        "iso 27018",
+        "access logging",
+        "access management",
+        "intrusion detection",
+        "security incident",
+        "incident management",
+        "incident response",
+        "unauthorized access",
+        "unauthorized disclosure",
+        "security monitoring",
+        "vulnerability scan",
+        "two-factor authentication",
+        "multi-factor authentication",
+        "business continuity",
+        "disaster recovery",
+    ],
+    "community_guidelines": [
+        "safety policy",
+        "community guidelines",
+        "acceptable use policy",
+        "prohibited content",
+        "harassment",
+        "abuse",
+        "spam",
+        "content moderation",
+        "reporting abuse",
+        "platform rules",
+        "transparency center",
+        "transparency report",
+        "safety center",
+        "enforcement",
+        "appeals",
+    ],
+    "children_privacy_policy": [
+        "children's privacy",
+        "children privacy",
+        "child privacy",
+        "kids privacy",
+        "coppa",
+        "parental consent",
+        "under 13",
+        "under 16",
+        "minor",
+        "privacy for children",
+    ],
+}
+
+_ALL_POLICY_KEYWORDS: frozenset[str] = frozenset(
+    kw for keywords in POLICY_DOC_KEYWORDS.values() for kw in keywords
+)
+
 
 class DocumentClassifier(LLMUsageTrackingMixin):
     """
@@ -45,6 +223,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             "copyright_policy",
             "community_guidelines",
             "children_privacy_policy",
+            "security_policy",
             "other",
         ]
 
@@ -63,86 +242,18 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         self.nav_indicators = ["home", "about", "contact", "menu", "navigation", "search"]
 
     @staticmethod
-    def _is_policy_content(text: str) -> tuple[bool, float]:
-        """Determine if text is a policy document vs a help/instructional article.
+    def _content_supports_substantive_policy_claim(text: str) -> bool:
+        """True if the body matches the same keyword model used for non-LLM content routing.
 
-        Returns (is_policy, confidence) based on obligation language density.
-        NEVER uses URL path as a signal.
+        Used to guard LLM optimism when classification is a broad bucket (community_guidelines,
+        other): we only keep ``is_policy_document`` if the text shows enough cross-type policy
+        vocabulary in the same window as ``classify_document`` step 3.
         """
-        text_lower = text.lower()
-        word_count = max(len(text_lower.split()), 1)
-
-        obligation_phrases = [
-            "we collect",
-            "we may collect",
-            "you agree",
-            "your rights",
-            "we will",
-            "you must",
-            "we may",
-            "we use",
-            "we share",
-            "we process",
-            "we retain",
-            "we store",
-            "we disclose",
-            "you consent",
-            "by using",
-            "you acknowledge",
-            "shall not",
-            "shall be",
-            "is prohibited",
-            "we are committed",
-            "we reserve the right",
-            "personal data",
-            "personal information",
-            "data controller",
-            "data processor",
-            "community guidelines",
-            "community standards",
-            "safety policy",
-            "safety center",
-            "transparency report",
-            "transparency center",
-            "platform rules",
-            "acceptable use",
-            "content moderation",
-            "enforcement",
-            "appeals",
-            "policy center",
-        ]
-
-        instructional_phrases = [
-            "learn more",
-            "how to",
-            "here's how",
-            "tips for",
-            "step 1",
-            "step 2",
-            "click on",
-            "go to",
-            "navigate to",
-            "follow these steps",
-            "getting started",
-            "tutorial",
-            "frequently asked",
-            "faq",
-            "help center",
-            "troubleshoot",
-            "fix this",
-            "solve this",
-        ]
-
-        obligation_count = sum(1 for p in obligation_phrases if p in text_lower)
-        instructional_count = sum(1 for p in instructional_phrases if p in text_lower)
-
-        obligation_density = obligation_count / word_count * 1000
-        instructional_density = instructional_count / word_count * 1000
-
-        is_policy = obligation_density > instructional_density and obligation_count >= 3
-        confidence = min(1.0, obligation_density / max(instructional_density, 0.1))
-
-        return is_policy, confidence
+        if len(text) < MIN_CHARS_SUBSTANTIVE_POLICY_BODY:
+            return False
+        sample = text.lower()[:POLICY_KEYWORD_SAMPLE_CHARS]
+        hits = sum(1 for kw in _ALL_POLICY_KEYWORDS if kw in sample)
+        return hits >= MIN_POLICY_KEYWORD_HITS
 
     async def classify_document(
         self, url: str, text: str, metadata: dict[str, Any]
@@ -230,6 +341,16 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 r"/gdpr(?:/\w+)*",
                 r"/eu-privacy",
                 r"/european-privacy",
+            ],
+            "security_policy": [
+                r"/security(?:[-_]?(?:practices|policy|overview|whitepaper|statement))?(?:/\w+)*",
+                r"/trust(?:/\w+)*",
+                r"/legal/security(?:/\w+)*",
+                r"/policies/security(?:/\w+)*",
+                r"/security-center",
+                r"/safety-and-security",
+                r"/vulnerability(?:[-_]disclosure)?",
+                r"/responsible[-_]disclosure",
             ],
             "community_guidelines": [
                 r"/safety(?:[-_]?(?:policy|guidelines|standards))?(?:/\w+)*",
@@ -349,6 +470,15 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                     "european privacy",
                     "general data protection regulation",
                 ],
+                "security_policy": [
+                    "security practices",
+                    "security policy",
+                    "information security",
+                    "trust center",
+                    "security overview",
+                    "data security",
+                    "security and compliance",
+                ],
                 "community_guidelines": [
                     "safety policy",
                     "community guidelines",
@@ -386,149 +516,11 @@ class DocumentClassifier(LLMUsageTrackingMixin):
 
         # 3. Check content heuristics (keywords and structure)
         text_lower = text.lower()
-        text_sample = text_lower[:2000]  # Check first 2000 chars
-
-        # Policy document indicators with expanded keywords
-        legal_keywords = {
-            "privacy_policy": [
-                "personal information",
-                "personal data",
-                "data collection",
-                "data processing",
-                "data sharing",
-                "data retention",
-                "privacy rights",
-                "your rights",
-                "data protection",
-                "information we collect",
-                "we collect information",
-                "data subject rights",
-                "privacy choices",
-                "opt-out",
-                "data minimization",
-                "purpose limitation",
-                # International variations
-                "données personnelles",  # French
-                "datos personales",  # Spanish
-                "dati personali",  # Italian
-                "personenbezogene daten",  # German
-            ],
-            "terms_of_service": [
-                "terms of service",
-                "terms and conditions",
-                "user agreement",
-                "service agreement",
-                "acceptance of terms",
-                "by using our service",
-                "governing law",
-                "jurisdiction",
-                "applicable law",
-                "dispute resolution",
-                "arbitration",
-                "binding arbitration",
-                "limitation of liability",
-                "liabilities limited",
-                "no warranties",
-                "indemnification",
-                "indemnify",
-                "hold harmless",
-                "termination",
-                "account suspension",
-                "service discontinuation",
-                # International variations
-                "conditions générales",  # French
-                "términos y condiciones",  # Spanish
-                "condizioni generali",  # Italian
-                "allgemeine geschäftsbedingungen",  # German
-            ],
-            "cookie_policy": [
-                "cookie policy",
-                "cookies we use",
-                "cookie consent",
-                "tracking technologies",
-                "third-party cookies",
-                "first-party cookies",
-                "web beacons",
-                "pixel tags",
-                "tracking pixels",
-                "analytics cookies",
-                "functional cookies",
-                "advertising cookies",
-                "cookie preferences",
-                "cookie settings",
-                "manage cookies",
-                # International variations
-                "politique de cookies",  # French
-                "política de cookies",  # Spanish
-                "cookie-richtlinie",  # German
-            ],
-            "copyright_policy": [
-                "copyright",
-                "copyright infringement",
-                "dmca",
-                "takedown notice",
-                "intellectual property",
-                "content ownership",
-                "user content license",
-                "fair use",
-                "copyright protection",
-                "copyright claims",
-            ],
-            "data_processing_agreement": [
-                "data processing agreement",
-                "dpa",
-                "data processor",
-                "data controller",
-                "sub-processor",
-                "data processing activities",
-                "processing purposes",
-                "data security measures",
-            ],
-            "gdpr_policy": [
-                "gdpr",
-                "general data protection regulation",
-                "data protection officer",
-                "dpo",
-                "data protection impact assessment",
-                "eu data protection",
-                "european data protection",
-                "article 17",
-                "right to erasure",
-            ],
-            "community_guidelines": [
-                "safety policy",
-                "community guidelines",
-                "acceptable use policy",
-                "prohibited content",
-                "harassment",
-                "abuse",
-                "spam",
-                "content moderation",
-                "reporting abuse",
-                "platform rules",
-                "transparency center",
-                "transparency report",
-                "safety center",
-                "enforcement",
-                "appeals",
-            ],
-            "children_privacy_policy": [
-                "children's privacy",
-                "children privacy",
-                "child privacy",
-                "kids privacy",
-                "coppa",
-                "parental consent",
-                "under 13",
-                "under 16",
-                "minor",
-                "privacy for children",
-            ],
-        }
+        text_sample = text_lower[:POLICY_KEYWORD_SAMPLE_CHARS]
 
         # Count matches for each document type
         doc_type_scores: dict[str, int] = {}
-        for doc_type, keywords in legal_keywords.items():
+        for doc_type, keywords in POLICY_DOC_KEYWORDS.items():
             score = sum(1 for keyword in keywords if keyword in text_sample)
             if score > 0:
                 doc_type_scores[doc_type] = score
@@ -537,10 +529,16 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         if doc_type_scores:
             best_type = max(doc_type_scores.items(), key=lambda x: x[1])
             if best_type[1] >= 3:  # At least 3 keyword matches
-                # Verify it's not just a navigation/link page
-                if len(text) > 500 and (
-                    "effective" in text_sample or "last updated" in text_sample
-                ):
+                # Verify it's not just a navigation/link page (trust/security pages often use
+                # "publish date" / "last revised" instead of "effective date").
+                has_doc_structure = (
+                    "effective" in text_sample
+                    or "last updated" in text_sample
+                    or "publish date" in text_sample
+                    or "published:" in text_sample
+                    or "last revised" in text_sample
+                )
+                if len(text) > 500 and has_doc_structure:
                     logger.debug(
                         f"matched content heuristics (score: {best_type[1]}): classified as {best_type[0]}"
                     )
@@ -602,9 +600,10 @@ Example output:
   "is_policy_document_justification": "The content is a privacy policy for a website."
 }}
 
-Note: Cookie banners, navigation elements, or links to policy documents don't count as policy documents themselves."""
+Note: Cookie banners, navigation elements, or links to policy documents don't count as policy documents themselves.
+Security practices / trust pages (encryption, audits, incident response, certifications) are policy documents — use security_policy."""
 
-        system_prompt = """You are a policy document classifier. Identify substantive policy content (privacy policies, terms of service, cookie policies, safety policies, community guidelines, etc.) and categorize accurately."""
+        system_prompt = """You are a policy document classifier. Identify substantive policy content (privacy, terms, cookies, security/trust practices, safety policies, community guidelines, etc.) and categorize accurately."""
 
         try:
             async with usage_tracking(self._create_usage_tracker("classify_document")):
@@ -631,18 +630,26 @@ Note: Cookie banners, navigation elements, or links to policy documents don't co
                 f"LLM classification result: {result['classification']} (is_policy: {result['is_policy_document']})"
             )
 
+            allowed = frozenset(self.categories)
             classification = result.get("classification", "other")
-            if result.get("is_policy_document") and classification in (
-                "community_guidelines",
-                "other",
-            ):
-                is_policy, _conf = self._is_policy_content(text)
-                if not is_policy:
+            if classification not in allowed:
+                classification = "other"
+                result["classification"] = "other"
+                prev_c = (result.get("classification_justification") or "").strip()
+                result["classification_justification"] = (
+                    f"{prev_c} (normalized unknown label to other)".strip()
+                    if prev_c
+                    else "Unknown label normalized to other"
+                )
+            # Downgrade only community_guidelines: broad bucket + LLM optimism. Do not apply
+            # the vocabulary bar to "other" — substantive but unclassifiable policies must stay ingestible.
+            if result.get("is_policy_document") and classification == "community_guidelines":
+                if not self._content_supports_substantive_policy_claim(text):
                     result["is_policy_document"] = False
                     prev = (result.get("is_policy_document_justification") or "").strip()
                     suffix = (
-                        "Obligation-density check suggests help or instructional content, "
-                        "not a substantive policy document."
+                        "Content does not meet the same keyword-and-length bar used for "
+                        "non-LLM policy detection (insufficient policy vocabulary or body length)."
                     )
                     result["is_policy_document_justification"] = (
                         f"{prev} {suffix}".strip() if prev else suffix

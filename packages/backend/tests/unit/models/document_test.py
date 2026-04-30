@@ -26,6 +26,7 @@ from src.models.document import (
     MetaSummaryScores,
     PrivacySignals,
     ProductOverview,
+    coerce_doc_type_from_classifier,
 )
 
 # ── DocumentAnalysis validators ─────────────────────────────────────
@@ -499,3 +500,23 @@ class TestProductOverviewComplianceStatus:
             compliance_status={"GDPR": "8", "bad": "no"},  # type: ignore[dict-item]
         )
         assert overview.compliance_status == {"GDPR": 8}
+
+
+# ── coerce_doc_type_from_classifier ─────────────────────────────────
+
+
+class TestCoerceDocTypeFromClassifier:
+    def test_known_classifier_labels_preserved(self) -> None:
+        assert coerce_doc_type_from_classifier("security_policy") == "security_policy"
+        assert coerce_doc_type_from_classifier("privacy_policy") == "privacy_policy"
+
+    def test_unknown_label_becomes_other(self) -> None:
+        assert coerce_doc_type_from_classifier("hipaa_policy") == "other"
+        assert coerce_doc_type_from_classifier("not_a_real_type") == "other"
+
+    def test_empty_or_none_defaults_to_other(self) -> None:
+        assert coerce_doc_type_from_classifier(None) == "other"
+        assert coerce_doc_type_from_classifier("") == "other"
+
+    def test_whitespace_stripped(self) -> None:
+        assert coerce_doc_type_from_classifier("  privacy_policy  ") == "privacy_policy"

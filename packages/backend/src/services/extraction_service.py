@@ -664,9 +664,13 @@ def _build_cluster_specs() -> None:
             "   - physical_world: digital terms affecting physical-world rights (medical, biometric, property).\n"
             "5. INDEMNIFICATION: what the user is personally liable for.\n"
             "6. TERMINATION CONSEQUENCES: what happens to data, content, and access on termination.\n"
-            "7. DANGERS: specific risks, red flags, and concerns from this chunk.\n"
-            "8. BENEFITS: positive protections and user-friendly practices.\n"
-            "9. RECOMMENDED ACTIONS: actionable steps with specific URLs or instructions."
+            "7. DANGERS: material risks, one-sided legal terms, or meaningful trade-offs **stated in the chunk**.\n"
+            "   Skip routine signup or category-norm requirements (e.g. phone for messaging, email for accounts)\n"
+            "   unless the text ties them to unusual extra processing, sharing, or retention worth flagging.\n"
+            "   Goal: help users prioritize — not list every basic requirement as a red flag.\n"
+            "8. BENEFITS: protections and user-friendly practices the document actually claims.\n"
+            "9. RECOMMENDED ACTIONS: practical steps a user can take (settings, reading linked policies, opt-outs)\n"
+            "   with specific URLs or instructions when present — helpful tone, not alarmist."
         ),
     )
 

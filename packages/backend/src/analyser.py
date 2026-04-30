@@ -24,18 +24,26 @@ from src.llm import acompletion_with_fallback
 from src.models.document import (
     BusinessImpact,
     BusinessImpactAssessment,
+    ContractClauseReview,
     CrossDocumentAnalysis,
+    DataProcessingProfile,
+    DocType,
     Document,
     DocumentAnalysis,
     DocumentAnalysisScores,
     DocumentDeepAnalysis,
     DocumentRiskBreakdown,
-    EnhancedComplianceBreakdown,
+    DPIATriggerAssessment,
     IndividualImpact,
     MetaSummary,
+    ProcurementDecision,
     ProductContradiction,
     ProductDeepAnalysis,
-    RiskPrioritization,
+    RegulationArticleBreakdown,
+    RemediationItem,
+    RiskRegisterItem,
+    SecurityPosture,
+    WorkforceDataAssessment,
 )
 from src.models.finding import Aggregation
 from src.prompts.analysis_prompts import (
@@ -78,7 +86,15 @@ async def analyse_product_documents(
     concurrent documents balances throughput against LLM rate limits.
     """
     token = cancellation_token or CancellationToken()
-    documents: list[Document] = await document_svc.get_product_documents_by_slug(db, product_slug)
+    all_documents: list[Document] = await document_svc.get_product_documents_by_slug(
+        db, product_slug
+    )
+    # Only analyse classified policy documents — "other" means the classifier could not
+    # assign a policy type, so deep analysis would produce noise rather than signal.
+    documents = [d for d in all_documents if d.doc_type != "other"]
+    skipped = len(all_documents) - len(documents)
+    if skipped:
+        logger.info(f"Skipping {skipped} unclassified ('other') documents for {product_slug}")
     total_docs: int = len(documents)
     logger.info(f"Analysing {total_docs} documents for {product_slug} (up to 3 concurrently)")
 
@@ -94,7 +110,7 @@ async def analyse_product_documents(
                 analysis = await analyse_document(doc, cancellation_token=token)
                 if analysis:
                     doc.analysis = analysis
-                    await document_svc.update_document(db, doc)
+                    await document_svc.update_document(db, doc, invalidate_product_overview=False)
                     logger.info(f"✓ Stored analysis for document {doc.id}")
                 else:
                     logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
@@ -146,14 +162,21 @@ def _compute_document_signature(documents: list[Document]) -> str:
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
     """
     Calculate overall risk score from component scores.
-    Uses weighted average: transparency (20%), data_collection_scope (25%), user_control (25%), third_party_sharing (30%)
-    Lower component scores = higher risk, so risk_score = 10 - weighted_average
+
+    Higher component scores = better for the user. Risk is the inverse of that
+    weighted blend so minimal-data / low-sharing / strong-security policies
+    score clearly lower than ad-heavy, broadly shared data practices.
+
+    Weights (sum 1.0): data_collection_scope and third_party_sharing dominate;
+    transparency, user_control, retention, and security add nuance (e.g. E2EE).
     """
     weights = {
-        "transparency": 0.20,
-        "data_collection_scope": 0.25,
-        "user_control": 0.25,
-        "third_party_sharing": 0.30,
+        "transparency": 0.14,
+        "data_collection_scope": 0.26,
+        "user_control": 0.18,
+        "third_party_sharing": 0.24,
+        "data_retention_score": 0.10,
+        "security_score": 0.08,
     }
 
     weighted_sum = 0.0
@@ -197,63 +220,55 @@ def _calculate_verdict(
         return "very_pervasive"
 
 
+# Weights for product-level risk: privacy/cookie/GDPR documents drive the headline
+# score more than terms-of-service legal boilerplate, so one liability-heavy ToS
+# does not mask a permissive privacy policy (or vice versa for privacy-first apps).
+_PRODUCT_OVERVIEW_DOC_RISK_WEIGHTS: dict[DocType, float] = {
+    "privacy_policy": 3.0,
+    "cookie_policy": 1.5,
+    "gdpr_policy": 1.5,
+    "security_policy": 1.5,
+    "data_processing_agreement": 1.0,
+    "children_privacy_policy": 1.0,
+    "terms_of_service": 1.0,
+    "terms_of_use": 1.0,
+    "terms_and_conditions": 1.0,
+}
+
+
+def _weighted_product_risk_score(docs: list[Document]) -> int | None:
+    """Mean of per-document risk scores, weighted toward privacy-centric documents."""
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for doc in docs:
+        if not doc.analysis or doc.analysis.risk_score is None:
+            continue
+        w = _PRODUCT_OVERVIEW_DOC_RISK_WEIGHTS.get(doc.doc_type, 1.0)
+        weighted_sum += doc.analysis.risk_score * w
+        weight_total += w
+    if weight_total <= 0:
+        return None
+    return max(0, min(10, round(weighted_sum / weight_total)))
+
+
 def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     """
-    Ensure all required scores are present and calculate risk_score/verdict if missing.
+    Validate scores returned by the LLM and recalculate the headline risk.
+
+    Missing score keys are left absent — the LLM is instructed to omit scores it
+    cannot assess from the extraction. Invalid values (out-of-range or wrong type)
+    are dropped so they don't distort the weighted risk formula.
     """
-    # Ensure all required core scores are present
-    required_scores = [
-        "transparency",
-        "data_collection_scope",
-        "user_control",
-        "third_party_sharing",
-    ]
-    for score_name in required_scores:
-        if score_name not in parsed.scores:
-            parsed.scores[score_name] = DocumentAnalysisScores(
-                score=5, justification="Not assessed"
-            )
+    cleaned: dict[str, DocumentAnalysisScores] = {}
+    for score_name, score_obj in parsed.scores.items():
+        score_value = getattr(score_obj, "score", None)
+        if score_value is not None and isinstance(score_value, int) and 0 <= score_value <= 10:
+            cleaned[score_name] = score_obj
 
-    # Ensure optional scores (data_retention_score, security_score) are always present
-    # These are required in the schema but may be missing or have null values
-    optional_scores = ["data_retention_score", "security_score"]
-    for score_name in optional_scores:
-        if score_name not in parsed.scores:
-            # Add missing score with default value
-            parsed.scores[score_name] = DocumentAnalysisScores(
-                score=5, justification="Not specified in document"
-            )
-        else:
-            score_obj = parsed.scores[score_name]
-            # Only replace if score is None or invalid (not an integer or out of range)
-            score_value = getattr(score_obj, "score", None)
-            if (
-                score_value is None
-                or not isinstance(score_value, int)
-                or not (0 <= score_value <= 10)
-            ):
-                # Invalid score - replace with default
-                parsed.scores[score_name] = DocumentAnalysisScores(
-                    score=5,  # Default middle score if not specified
-                    justification=(
-                        score_obj.justification
-                        if score_obj
-                        and hasattr(score_obj, "justification")
-                        and score_obj.justification
-                        else "Not specified in document"
-                    ),
-                )
-            # Otherwise, keep the valid LLM-provided score (only update justification if missing)
-            elif not score_obj.justification:
-                # Keep the score but ensure justification is present
-                parsed.scores[score_name] = DocumentAnalysisScores(
-                    score=score_value, justification="Not specified in document"
-                )
+    parsed.scores = cleaned
 
-    # Always recalculate risk_score and verdict deterministically from component scores.
-    # This ignores the LLM-provided values, which are approximate, in favour of a
-    # consistent weighted formula. The formula matches what the prompt asks the LLM to compute,
-    # so the results should agree; this just guarantees they always do.
+    # Recalculate risk_score and verdict deterministically from whatever scores the LLM
+    # returned. _calculate_risk_score handles partial score sets by normalising weights.
     parsed.risk_score = _calculate_risk_score(parsed.scores)
     parsed.verdict = _calculate_verdict(parsed.risk_score)
 
@@ -471,6 +486,16 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
     if isinstance(raw_gaps, list):
         analysis.coverage_gaps = [str(g) for g in raw_gaps if g]
 
+    if analysis.document_risk_breakdown is not None:
+        br = analysis.document_risk_breakdown
+        nested_updates: dict[str, Any] = {}
+        if not (br.applicability and str(br.applicability).strip()) and analysis.applicability:
+            nested_updates["applicability"] = analysis.applicability
+        if not br.missing_information and analysis.coverage_gaps:
+            nested_updates["missing_information"] = list(analysis.coverage_gaps)
+        if nested_updates:
+            analysis.document_risk_breakdown = br.model_copy(update=nested_updates)
+
 
 async def analyse_document(
     document: Document,
@@ -488,7 +513,7 @@ async def analyse_document(
         cancellation_token: Optional cancellation token for interrupting the operation
 
     Returns:
-        DocumentAnalysis or None if summarization fails
+        DocumentAnalysis or None if summarization fails or the document has no text
 
     Raises:
         asyncio.CancelledError: If cancellation is requested
@@ -499,6 +524,11 @@ async def analyse_document(
         token = CancellationToken()
     else:
         token = cancellation_token
+
+    if not (document.text or "").strip():
+        logger.info(f"Skipping analysis for document {document.id}: no text content")
+        return None
+
     # Check cache if enabled and document already has analysis
     if use_cache and document.analysis:
         # Compute current document hash
@@ -532,7 +562,6 @@ async def analyse_document(
     # Fallback: raw text if extraction fails unexpectedly.
     extracted_prompt: str | None = None
     extraction_for_evidence: dict[str, Any] | None = None
-    extraction_is_partial = False
 
     try:
         await token.check_cancellation()
@@ -543,26 +572,14 @@ async def analyse_document(
         )
         extraction_for_evidence = extraction.model_dump()
 
-        # Determine whether the extraction covered the full document.
-        # The extraction service chunks the full text, so extraction is always full
-        # unless the document text itself was absent or very short.
-        doc_chars = len(document.text or "")
-        extraction_is_partial = doc_chars == 0
-
-        completeness_note = (
-            "Extraction completeness: PARTIAL — document text was unavailable or very short. "
-            "Set analysis_completeness to 'partial' and list known gaps in coverage_gaps."
-            if extraction_is_partial
-            else "Extraction completeness: FULL — the entire document was processed."
-        )
-
+        # Extraction chunks the full document; analyse_document does not run without text.
         extracted_prompt = f"""Document Title: {document.title or "Not specified"}
 Document Type: {document.doc_type}
 Document URL: {document.url}
 Document Regions: {document.regions}
 Document Locale: {document.locale or "Not specified"}
 
-{completeness_note}
+Extraction completeness: FULL — the entire document was processed.
 
 Rules:
 - Use ONLY the extracted facts below. Do NOT add data types, purposes, rights, third parties, or claims not present in the extraction.
@@ -576,13 +593,12 @@ Extracted facts (evidence-backed JSON):
         logger.warning(
             f"Extraction failed for document {document.id}: {e}. Falling back to raw text."
         )
-        extraction_is_partial = True
 
     if extracted_prompt is not None:
         prompt = extracted_prompt
     else:
         # Fallback: raw text path (extraction unavailable)
-        doc_text = document.text
+        doc_text = document.text or ""
         max_chars = 200000
 
         if len(doc_text) > max_chars:
@@ -610,7 +626,6 @@ Document content:
     # Select appropriate model based on document complexity
 
     last_exception: Exception | None = None
-    last_raw_content: str | None = None  # preserved across retries for the parse-error fallback
 
     # Set up usage tracking for this document summarization
     usage_tracker = UsageTracker()
@@ -635,6 +650,7 @@ Document content:
                             {"role": "user", "content": prompt},
                         ],
                         response_format={"type": "json_object"},
+                        temperature=0,
                     )
                 )
 
@@ -674,7 +690,6 @@ Document content:
             content = message.content  # type: ignore[attr-defined]
             if not content:
                 raise ValueError("Empty response from LLM")
-            last_raw_content = content
 
             # Parse and validate response
             try:
@@ -758,41 +773,9 @@ Document content:
                     raise
             continue
 
-    # All retries exhausted.
-    # If we have raw content from the last attempt, try to salvage a summary from it
-    # rather than returning None (which causes the document to show as "not analysed").
-    fallback_summary = "Analysis unavailable"
-    if last_raw_content:
-        try:
-            raw_dict = json.loads(last_raw_content)
-            if isinstance(raw_dict, dict) and "summary" in raw_dict:
-                extracted = str(raw_dict["summary"]).strip()
-                fallback_summary = extracted if extracted else "Analysis unavailable"
-            else:
-                fallback_summary = last_raw_content[:500]
-        except (json.JSONDecodeError, TypeError):
-            fallback_summary = last_raw_content[:500]
-
-    fallback_scores = {
-        "transparency": DocumentAnalysisScores(score=5, justification="Analysis parsing failed"),
-        "data_collection_scope": DocumentAnalysisScores(
-            score=5, justification="Analysis parsing failed"
-        ),
-        "user_control": DocumentAnalysisScores(score=5, justification="Analysis parsing failed"),
-        "third_party_sharing": DocumentAnalysisScores(
-            score=5, justification="Analysis parsing failed"
-        ),
-    }
-    parsed_fallback = DocumentAnalysis(
-        summary=fallback_summary,
-        scores=fallback_scores,
-        risk_score=5,
-        verdict="moderate",
-        keypoints=[],
-        analysis_completeness="partial",
-        coverage_gaps=["Analysis failed after all retry attempts"],
-    )
-
+    # All retries exhausted — return None so the document is marked as unanalysed.
+    # Callers log the failure and skip storage; the UI shows an explicit error state
+    # rather than fabricated neutral scores.
     summary, records = usage_tracker.consume_summary()
     log_usage_summary(
         summary,
@@ -808,7 +791,7 @@ Document content:
     logger.error(
         f"Failed to analyse document {document.id} after {max_retries} attempts: {last_exception}"
     )
-    return parsed_fallback
+    return None
 
 
 async def generate_product_overview(
@@ -1084,16 +1067,12 @@ Per-document analyses and extractions:
             except Exception as e:
                 logger.warning(f"Failed to parse contradictions: {e}")
 
-        # Product risk_score: deterministic mean of core document analyses.
-        # The LLM's risk_score value is discarded in favour of this deterministic calculation.
+        # Product risk_score: deterministic blend of core document analyses (privacy
+        # policy weighted highest). LLM overview risk_score is discarded.
         if meta_summary and core_docs:
-            doc_scores = [
-                doc.analysis.risk_score
-                for doc in core_docs
-                if doc.analysis and doc.analysis.risk_score is not None
-            ]
-            if doc_scores:
-                meta_summary.risk_score = round(sum(doc_scores) / len(doc_scores))
+            blended = _weighted_product_risk_score(core_docs)
+            if blended is not None:
+                meta_summary.risk_score = blended
                 meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
 
         # Save to database (simple single-cache entry)
@@ -1186,7 +1165,7 @@ async def generate_document_deep_analysis(
         analysis = await analyse_document(document)
         if analysis:
             document.analysis = analysis
-            await document_svc.update_document(db, document)
+            await document_svc.update_document(db, document, invalidate_product_overview=True)
 
     result = _document_to_deep_analysis(document)
     if not result:
@@ -1287,65 +1266,92 @@ async def generate_product_deep_analysis(
     # Phase 2: Aggregate Analysis
     logger.info("Generating aggregate deep analysis...")
 
-    # Prepare rich input for aggregation — include actual evidence and risk breakdowns
-    doc_summaries = []
-    for da in document_analyses:
-        applicability = getattr(da.document_risk_breakdown, "applicability", None)
-        risk_breakdown = da.document_risk_breakdown
+    # Build rich per-document input identical to the overview pipeline.
+    # This gives the model concrete, structured evidence rather than a lossy text digest.
+    doc_inputs: list[dict[str, Any]] = []
+    for doc in documents:
+        if not doc.analysis:
+            continue
+        entry: dict[str, Any] = {
+            "document_type": doc.doc_type,
+            "title": doc.title or doc.doc_type,
+            "url": doc.url,
+            "locale": doc.locale,
+            "regions": [r.value if hasattr(r, "value") else r for r in (doc.regions or [])],
+            "effective_date": doc.effective_date.isoformat() if doc.effective_date else None,
+            "analysis": {
+                "summary": doc.analysis.summary,
+                "scores": {
+                    k: {"score": v.score, "justification": v.justification}
+                    for k, v in doc.analysis.scores.items()
+                },
+                "risk_score": doc.analysis.risk_score,
+                "verdict": doc.analysis.verdict,
+                "keypoints": doc.analysis.keypoints or [],
+                "applicability": doc.analysis.applicability,
+                "coverage_gaps": doc.analysis.coverage_gaps or [],
+                "critical_clauses": [
+                    {
+                        "clause_type": c.clause_type,
+                        "section_title": c.section_title,
+                        "quote": c.quote,
+                        "risk_level": c.risk_level,
+                        "plain_english": c.plain_english or c.analysis,
+                        "why_notable": c.why_notable,
+                        "compliance_impact": c.compliance_impact,
+                    }
+                    for c in (doc.analysis.critical_clauses or [])[:10]
+                ],
+            },
+        }
+        if doc.extraction:
+            entry["extraction"] = {
+                "data_collected": [
+                    {"data_type": d.data_type, "sensitivity": d.sensitivity}
+                    for d in doc.extraction.data_collected[:20]
+                ],
+                "data_purposes": [
+                    {"data_type": p.data_type, "purposes": p.purposes}
+                    for p in doc.extraction.data_purposes[:20]
+                ],
+                "third_party_details": [
+                    {
+                        "recipient": t.recipient,
+                        "data_shared": t.data_shared,
+                        "purpose": t.purpose,
+                        "risk_level": t.risk_level,
+                    }
+                    for t in doc.extraction.third_party_details[:15]
+                ],
+                "user_rights": [
+                    {"right_type": r.right_type, "mechanism": r.mechanism}
+                    for r in doc.extraction.user_rights
+                ],
+                "ai_usage": [
+                    {
+                        "usage_type": a.usage_type,
+                        "description": a.description,
+                        "opt_out_available": a.opt_out_available,
+                    }
+                    for a in doc.extraction.ai_usage
+                ],
+                "privacy_signals": doc.extraction.privacy_signals.model_dump()
+                if doc.extraction.privacy_signals
+                else None,
+                "dangers": [d.value for d in doc.extraction.dangers],
+                "benefits": [b.value for b in doc.extraction.benefits],
+            }
+        doc_inputs.append(entry)
 
-        risk_cats = ""
-        if hasattr(risk_breakdown, "risk_by_category") and risk_breakdown.risk_by_category:
-            cats = risk_breakdown.risk_by_category
-            if isinstance(cats, dict):
-                risk_cats = ", ".join(f"{k}: {v}" for k, v in cats.items())
+    aggregate_prompt = f"""Product: {product_slug}
+Core documents: {len(doc_inputs)} analyzed
 
-        # Include up to 10 critical clauses with their actual text
-        clause_details = []
-        for clause in da.critical_clauses[:10]:
-            clause_text = (
-                f"  - [{clause.clause_type}] ({clause.risk_level}): {clause.analysis[:200]}"
-            )
-            if clause.quote:
-                clause_text += f'\n    Quote: "{clause.quote[:200]}"'
-            clause_details.append(clause_text)
-        clauses_str = "\n".join(clause_details) if clause_details else "  None found"
+**Document scope note:**
+- Global/product-wide documents affect all users → prioritize risks higher
+- Product-specific documents affect only specific product users → still important but lower scope
 
-        positive = (
-            ", ".join(risk_breakdown.positive_protections[:5])
-            if risk_breakdown.positive_protections
-            else "None noted"
-        )
-        missing = (
-            ", ".join(risk_breakdown.missing_information[:5])
-            if risk_breakdown.missing_information
-            else "None noted"
-        )
-
-        doc_summaries.append(f"""
-Document: {da.title or da.document_type} ({da.document_type})
-Applies to: {applicability or "Not specified"}
-Overall Risk Score: {risk_breakdown.overall_risk}/10
-Risk by Category: {risk_cats or "N/A"}
-Top Concerns: {", ".join(da.document_risk_breakdown.top_concerns[:5])}
-Positive Protections: {positive}
-Missing Information: {missing}
-Critical Clauses ({len(da.critical_clauses)} total):
-{clauses_str}
-""")
-
-    aggregate_prompt = f"""
-Product: {product_slug}
-Documents Analyzed: {len(document_analyses)}
-
-Document Summaries:
-{"".join(doc_summaries)}
-
-**CRITICAL: When prioritizing risks, consider document scope:**
-- Global/product-wide documents: Risks affect all users → prioritize higher
-- Product-specific documents: Risks affect only specific product users → prioritize lower (but still important)
-- When the same risk appears in multiple documents, prioritize based on scope (global > product-specific)
-
-Perform cross-document analysis, compliance assessment, and business impact analysis based on these findings.
+Per-document analyses and extractions:
+{json.dumps(doc_inputs, indent=2)}
 """
 
     tracker_callback = usage_tracker.create_tracker("aggregate_deep_analysis")
@@ -1375,27 +1381,89 @@ Perform cross-document analysis, compliance assessment, and business impact anal
 
         agg_data = json.loads(content)
 
-        # Construct final object
+        # ── Cross-document analysis ──────────────────────────────────────────
+        cda_raw = agg_data.get("cross_document_analysis", {})
         cross_document_analysis = CrossDocumentAnalysis(
-            contradictions=agg_data.get("cross_document_analysis", {}).get("contradictions", []),
-            information_gaps=agg_data.get("cross_document_analysis", {}).get(
-                "information_gaps", []
-            ),
-            document_relationships=agg_data.get("cross_document_analysis", {}).get(
-                "document_relationships", []
-            ),
+            contradictions=cda_raw.get("contradictions", []),
+            information_gaps=cda_raw.get("information_gaps", []),
+            document_relationships=cda_raw.get("document_relationships", []),
         )
 
-        enhanced_compliance = {}
-        for reg, comp_data in agg_data.get("enhanced_compliance", {}).items():
+        # ── Procurement decision ─────────────────────────────────────────────
+        procurement_decision: ProcurementDecision | None = None
+        if pd_raw := agg_data.get("procurement_decision"):
             try:
-                if not isinstance(comp_data, dict):
-                    logger.warning(f"Invalid compliance data for {reg}, skipping")
-                    continue
-                enhanced_compliance[reg] = EnhancedComplianceBreakdown.model_validate(comp_data)
+                procurement_decision = ProcurementDecision.model_validate(pd_raw)
             except Exception as e:
-                logger.warning(f"Failed to parse compliance data for {reg}: {e}. Skipping.")
+                logger.warning(f"Failed to parse procurement_decision: {e}")
 
+        # ── Data processing profile ──────────────────────────────────────────
+        data_processing_profile: DataProcessingProfile | None = None
+        if dpp_raw := agg_data.get("data_processing_profile"):
+            try:
+                data_processing_profile = DataProcessingProfile.model_validate(dpp_raw)
+            except Exception as e:
+                logger.warning(f"Failed to parse data_processing_profile: {e}")
+
+        # ── Article-level compliance ─────────────────────────────────────────
+        article_compliance: dict[str, RegulationArticleBreakdown] = {}
+        for reg, reg_data in agg_data.get("article_compliance", {}).items():
+            try:
+                if not isinstance(reg_data, dict):
+                    continue
+                article_compliance[reg] = RegulationArticleBreakdown.model_validate(reg_data)
+            except Exception as e:
+                logger.warning(f"Failed to parse article_compliance[{reg}]: {e}. Skipping.")
+
+        # ── Risk register ────────────────────────────────────────────────────
+        risk_register: list[RiskRegisterItem] = []
+        for item in agg_data.get("risk_register", []):
+            try:
+                risk_register.append(RiskRegisterItem.model_validate(item))
+            except Exception as e:
+                logger.warning(f"Failed to parse risk_register item: {e}. Skipping.")
+
+        # ── Contract clause review ───────────────────────────────────────────
+        contract_clause_review: list[ContractClauseReview] = []
+        for item in agg_data.get("contract_clause_review", []):
+            try:
+                contract_clause_review.append(ContractClauseReview.model_validate(item))
+            except Exception as e:
+                logger.warning(f"Failed to parse contract_clause_review item: {e}. Skipping.")
+
+        # ── Workforce data assessment ────────────────────────────────────────
+        workforce_data_assessment: WorkforceDataAssessment | None = None
+        if wda_raw := agg_data.get("workforce_data_assessment"):
+            try:
+                workforce_data_assessment = WorkforceDataAssessment.model_validate(wda_raw)
+            except Exception as e:
+                logger.warning(f"Failed to parse workforce_data_assessment: {e}")
+
+        # ── DPIA trigger ─────────────────────────────────────────────────────
+        dpia_trigger: DPIATriggerAssessment | None = None
+        if dpia_raw := agg_data.get("dpia_trigger"):
+            try:
+                dpia_trigger = DPIATriggerAssessment.model_validate(dpia_raw)
+            except Exception as e:
+                logger.warning(f"Failed to parse dpia_trigger: {e}")
+
+        # ── Security posture ─────────────────────────────────────────────────
+        security_posture: SecurityPosture | None = None
+        if sp_raw := agg_data.get("security_posture"):
+            try:
+                security_posture = SecurityPosture.model_validate(sp_raw)
+            except Exception as e:
+                logger.warning(f"Failed to parse security_posture: {e}")
+
+        # ── Remediation roadmap ──────────────────────────────────────────────
+        remediation_roadmap: list[RemediationItem] = []
+        for item in agg_data.get("remediation_roadmap", []):
+            try:
+                remediation_roadmap.append(RemediationItem.model_validate(item))
+            except Exception as e:
+                logger.warning(f"Failed to parse remediation_roadmap item: {e}. Skipping.")
+
+        # ── Business impact ──────────────────────────────────────────────────
         biz_impact_data = agg_data.get("business_impact", {})
         try:
             business_impact = BusinessImpactAssessment(
@@ -1425,21 +1493,20 @@ Perform cross-document analysis, compliance assessment, and business impact anal
                 ),
             )
 
-        risk_prior_data = agg_data.get("risk_prioritization", {})
-        risk_prioritization = RiskPrioritization(
-            critical=risk_prior_data.get("critical", []),
-            high=risk_prior_data.get("high", []),
-            medium=risk_prior_data.get("medium", []),
-            low=risk_prior_data.get("low", []),
-        )
-
         deep_analysis = ProductDeepAnalysis(
             analysis=analysis,
             document_analyses=document_analyses,
             cross_document_analysis=cross_document_analysis,
-            enhanced_compliance=enhanced_compliance,
+            procurement_decision=procurement_decision,
+            data_processing_profile=data_processing_profile,
+            article_compliance=article_compliance,
+            risk_register=risk_register,
+            contract_clause_review=contract_clause_review,
+            workforce_data_assessment=workforce_data_assessment,
+            dpia_trigger=dpia_trigger,
+            security_posture=security_posture,
+            remediation_roadmap=remediation_roadmap,
             business_impact=business_impact,
-            risk_prioritization=risk_prioritization,
         )
 
         # Save the result to database

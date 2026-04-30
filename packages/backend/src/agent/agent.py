@@ -218,9 +218,6 @@ class Agent:
             yield "I encountered an error while generating the response."
 
 
-# ─── Module-level entry points (replaces the deleted rag.py) ──────────────────
-
-
 async def get_answer_stream(
     question: str, product_slug: str, *, namespace: str | None = None
 ) -> AsyncGenerator[str, None]:

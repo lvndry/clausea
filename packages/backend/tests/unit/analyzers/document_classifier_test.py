@@ -139,6 +139,38 @@ class TestURLPatternClassification:
         )
         assert result["classification"] == "privacy_policy"
 
+    @pytest.mark.asyncio
+    async def test_security_practices_url(self, classifier: DocumentClassifier) -> None:
+        chunk = (
+            "Publish date: 2025-06-17. "
+            "Security practices and security controls. Encryption in transit and encryption at rest. "
+            "Vulnerability disclosure and incident response. SOC 2 and ISO 27001 certifications. "
+            "Unauthorized access and security monitoring. "
+        )
+        text = chunk * 12
+        result = await classifier.classify_document(
+            url="https://example.com/security-practices",
+            text=text,
+            metadata={},
+        )
+        assert result["classification"] == "security_policy"
+        assert result["is_policy_document"] is True
+
+    @pytest.mark.asyncio
+    async def test_security_metadata_title(self, classifier: DocumentClassifier) -> None:
+        body = (
+            ("Encryption at rest and encryption in transit. " * 25)
+            + "Publish date: 2025-01-01. "
+            + ("Security controls and incident response. " * 20)
+        )
+        result = await classifier.classify_document(
+            url="https://example.com/legal/trust-overview",
+            text=body,
+            metadata={"title": "Security Practices | Example Corp"},
+        )
+        assert result["classification"] == "security_policy"
+        assert result["is_policy_document"] is True
+
 
 # ── URL pattern with insufficient content ───────────────────────────
 
@@ -271,6 +303,42 @@ class TestQuickRejection:
         assert result["is_policy_document"] is False
 
 
+# ── Substantive policy signal (LLM guard) ────────────────────────────
+
+
+class TestSubstantivePolicyClaimSignal:
+    """Contract for _content_supports_substantive_policy_claim (shared keyword model)."""
+
+    def test_short_text_rejected_even_with_keywords(self) -> None:
+        text = "personal data. privacy rights. gdpr."
+        assert len(text) < 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is False
+
+    def test_long_text_without_policy_vocabulary_rejected(self) -> None:
+        text = ("The quick brown fox jumps over the lazy dog. " * 20).strip()
+        assert len(text) >= 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is False
+
+    def test_long_text_with_enough_keyword_hits_accepted(self) -> None:
+        chunk = (
+            "We describe personal data and data protection practices. "
+            "Privacy rights and data retention. Data processing and data sharing. "
+        )
+        text = chunk * 8
+        assert len(text) >= 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is True
+
+    def test_long_text_security_vocabulary_accepted(self) -> None:
+        chunk = (
+            "Publish date: 2025. Security practices and encryption at rest. "
+            "Encryption in transit. Vulnerability disclosure. Incident response. "
+            "SOC 2 and ISO 27001. Unauthorized access monitoring. "
+        )
+        text = chunk * 10
+        assert len(text) >= 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is True
+
+
 # ── Category list completeness ──────────────────────────────────────
 
 
@@ -288,6 +356,7 @@ class TestCategoryCompleteness:
             "copyright_policy",
             "community_guidelines",
             "children_privacy_policy",
+            "security_policy",
             "other",
         }
         assert set(classifier.categories) == expected

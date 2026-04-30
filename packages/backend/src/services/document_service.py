@@ -190,14 +190,27 @@ class DocumentService:
             logger.error(f"Error storing document {document.id}: {e}")
             raise e
 
-    async def update_document(self, db: AgnosticDatabase, document: Document) -> bool:
+    async def update_document(
+        self,
+        db: AgnosticDatabase,
+        document: Document,
+        *,
+        invalidate_product_overview: bool = False,
+    ) -> bool:
         """Update a document in the database.
 
-        Includes business logic: invalidates product meta-summary cache.
+        When ``invalidate_product_overview`` is True (default), deletes the cached
+        product overview for this product so readers do not see a stale meta-summary.
+
+        Batch analysers (e.g. ``analyse_product_documents``) should pass ``False`` so each
+        document save does not wipe the overview row; the pipeline then replaces it in
+        ``generate_product_overview``. Otherwise a later partial re-run can leave
+        ``product_overviews`` empty forever if overview generation does not run again.
 
         Args:
             db: Database instance
             document: Document to update
+            invalidate_product_overview: If True, delete stored product overview for this product
 
         Returns:
             True if document was updated, False otherwise
@@ -209,7 +222,7 @@ class DocumentService:
             self._assign_tier_relevance(document)
             success = await self._document_repo.update(db, document)
 
-            if success:
+            if success and invalidate_product_overview:
                 # Business logic: Invalidate product overview cache for this product
                 try:
                     product = await self._product_repo.find_by_id(db, document.product_id)

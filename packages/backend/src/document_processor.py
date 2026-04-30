@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from src.analyser import analyse_document
 from src.core.logging import get_logger
 from src.llm import SupportedModel, acompletion_with_fallback
-from src.models.document import Document, DocumentAnalysis
+from src.models.document import Document, DocumentAnalysis, coerce_doc_type_from_classifier
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -69,6 +69,7 @@ class DocumentProcessor:
             "copyright_policy",
             "community_guidelines",
             "children_privacy_policy",
+            "security_policy",
             "other",
         ]
 
@@ -113,7 +114,7 @@ class DocumentProcessor:
                 url=f"uploaded://{filename}",
                 title=filename,
                 product_id=product_id,
-                doc_type=classification.get("classification", "other"),
+                doc_type=coerce_doc_type_from_classifier(classification.get("classification")),
                 markdown=text_content,
                 text=text_content,
                 metadata={
@@ -289,7 +290,7 @@ Please return a JSON object with the following fields:
 
 - classification: the most appropriate category from this list: {self.categories}
 - classification_justification: a brief explanation of why this category was selected
-- is_policy_document: a boolean. This should be True only if the document contains substantive policy content (e.g., privacy policies, terms of service, cookie policies, safety policies, community guidelines, data protection policies, etc.)
+- is_policy_document: a boolean. This should be True only if the document contains substantive policy content (e.g., privacy policies, terms of service, cookie policies, security/trust practices, safety policies, community guidelines, data protection policies, etc.)
 - is_policy_document_justification: a short rationale for your policy document classification decision
 
 Example output:
@@ -302,7 +303,7 @@ Example output:
 
 Use caution: If the content appears incomplete, vague, or primarily promotional, treat it with skepticism and prefer "other" unless clear evidence suggests a more specific classification."""
 
-        system_prompt = """You are a policy document classifier. Identify substantive policy content (privacy policies, terms of service, cookie policies, safety policies, community guidelines, etc.) and categorize accurately."""
+        system_prompt = """You are a policy document classifier. Identify substantive policy content (privacy, terms, cookies, security/trust practices, safety policies, community guidelines, etc.) and categorize accurately."""
 
         try:
             response = await acompletion_with_fallback(

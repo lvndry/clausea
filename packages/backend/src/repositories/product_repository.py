@@ -162,12 +162,18 @@ class ProductRepository(BaseRepository):
         summary_data["product_slug"] = product_slug
         summary_data["updated_at"] = datetime.now()
 
-        await db.product_overviews.update_one(
+        result = await db.product_overviews.update_one(
             {"product_slug": product_slug},
             {"$set": summary_data},
             upsert=True,
         )
-        logger.debug(f"Saved product overview for {product_slug}")
+        logger.info(
+            "Saved product overview for %s (matched=%s modified=%s upserted_id=%s)",
+            product_slug,
+            result.matched_count,
+            result.modified_count,
+            getattr(result, "upserted_id", None),
+        )
 
     async def delete_product_overview(self, db: AgnosticDatabase, product_slug: str) -> None:
         """Delete the stored product overview for a product.

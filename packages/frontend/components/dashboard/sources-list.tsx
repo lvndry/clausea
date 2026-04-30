@@ -1,12 +1,16 @@
 "use client";
 
 import {
+  AlertTriangle,
+  CheckCircle,
   ChevronDown,
   ChevronRight,
   ExternalLink,
   FileText,
   FolderOpen,
   Link as LinkIcon,
+  Loader2,
+  ShieldAlert,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import posthog from "posthog-js";
@@ -67,6 +71,49 @@ interface DocumentExtraction {
   }>;
 }
 
+interface CriticalClause {
+  clause_type: string;
+  section_title?: string | null;
+  quote: string;
+  risk_level: "low" | "medium" | "high" | "critical";
+  plain_english: string;
+  why_notable: string;
+  analysis: string;
+  compliance_impact: string[];
+}
+
+interface DocumentAnalysisScores {
+  score: number;
+  justification: string;
+}
+
+interface DocumentRiskBreakdown {
+  overall_risk: number;
+  risk_by_category: Record<string, number>;
+  top_concerns: string[];
+  positive_protections: string[];
+  missing_information: string[];
+}
+
+interface DocumentDeepAnalysis {
+  document_id: string;
+  document_type: string;
+  title: string | null;
+  url: string;
+  analysis: {
+    summary: string;
+    scores: Record<string, DocumentAnalysisScores>;
+    risk_score: number;
+    verdict: string;
+    keypoints: string[] | null;
+    keypoints_with_evidence: KeypointWithEvidence[] | null;
+    critical_clauses: CriticalClause[] | null;
+    document_risk_breakdown: DocumentRiskBreakdown | null;
+  };
+  critical_clauses: CriticalClause[];
+  document_risk_breakdown: DocumentRiskBreakdown;
+}
+
 interface DocumentSummary {
   id: string;
   title: string | null;
@@ -121,7 +168,6 @@ function deriveEvidenceForKeypoint(
     }
   }
 
-  // Secondary pass: match third parties / data_collection_details keys
   for (const tp of extraction.third_party_details || []) {
     const recipient = normalizeForMatch(tp.recipient);
     if (recipient && kp.includes(recipient) && tp.evidence?.length) {
@@ -140,6 +186,53 @@ function deriveEvidenceForKeypoint(
   return found.slice(0, 3);
 }
 
+const RISK_LEVEL_CONFIG = {
+  critical: {
+    label: "Critical",
+    className: "bg-red-100 dark:bg-red-950/40 border-red-200 dark:border-red-900",
+    badgeVariant: "danger" as const,
+    icon: ShieldAlert,
+    iconClass: "text-red-500",
+  },
+  high: {
+    label: "High",
+    className: "bg-orange-50 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900",
+    badgeVariant: "warning" as const,
+    icon: AlertTriangle,
+    iconClass: "text-orange-500",
+  },
+  medium: {
+    label: "Medium",
+    className: "bg-yellow-50 dark:bg-yellow-950/20 border-yellow-200 dark:border-yellow-900",
+    badgeVariant: "warning" as const,
+    icon: AlertTriangle,
+    iconClass: "text-yellow-600",
+  },
+  low: {
+    label: "Low",
+    className: "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900",
+    badgeVariant: "success" as const,
+    icon: CheckCircle,
+    iconClass: "text-emerald-500",
+  },
+};
+
+function formatScoreName(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function scoreColorClasses(score: number): { text: string; bar: string } {
+  if (score >= 7) return { text: "text-red-500", bar: "bg-red-500" };
+  if (score >= 4)
+    return {
+      text: "text-yellow-600 dark:text-yellow-400",
+      bar: "bg-yellow-500",
+    };
+  return { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" };
+}
+
 export function SourcesList({ productSlug, documents }: SourcesListProps) {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [expandedKeypoints, setExpandedKeypoints] = useState<
@@ -150,6 +243,15 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
   >({});
   const [extractionLoading, setExtractionLoading] = useState<
     Record<string, boolean>
+  >({});
+  const [deepAnalyses, setDeepAnalyses] = useState<
+    Record<string, DocumentDeepAnalysis>
+  >({});
+  const [deepAnalysisLoading, setDeepAnalysisLoading] = useState<
+    Record<string, boolean>
+  >({});
+  const [deepAnalysisErrors, setDeepAnalysisErrors] = useState<
+    Record<string, string>
   >({});
 
   function toggleExpanded(docId: string, docTitle?: string | null) {
@@ -162,7 +264,6 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
     }
     setExpandedDocs(newExpanded);
 
-    // Track document source clicked when expanding
     if (isExpanding) {
       posthog.capture("document_source_clicked", {
         document_id: docId,
@@ -197,6 +298,52 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
       // ignore
     } finally {
       setExtractionLoading((s) => ({ ...s, [docId]: false }));
+    }
+  }
+
+  async function ensureDeepAnalysisLoaded(docId: string) {
+    if (deepAnalyses[docId] || deepAnalysisLoading[docId]) return;
+    setDeepAnalysisLoading((s) => ({ ...s, [docId]: true }));
+    setDeepAnalysisErrors((s) => {
+      const next = { ...s };
+      delete next[docId];
+      return next;
+    });
+
+    try {
+      const res = await fetch(
+        `/api/products/${productSlug}/documents/${docId}/deep-analysis`,
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        const msg =
+          res.status === 503
+            ? (body.error ?? "Analysis failed for this document")
+            : "Could not load analysis";
+        setDeepAnalysisErrors((s) => ({ ...s, [docId]: msg }));
+        return;
+      }
+      const json = (await res.json()) as DocumentDeepAnalysis;
+      setDeepAnalyses((s) => ({ ...s, [docId]: json }));
+    } catch {
+      setDeepAnalysisErrors((s) => ({
+        ...s,
+        [docId]: "Failed to load analysis",
+      }));
+    } finally {
+      setDeepAnalysisLoading((s) => ({ ...s, [docId]: false }));
+    }
+  }
+
+  async function handleToggleExpanded(doc: DocumentSummary) {
+    const isExpanding = !expandedDocs.has(doc.id);
+    toggleExpanded(doc.id, doc.title);
+
+    if (isExpanding) {
+      // Document list (`DocumentSummary`) only includes summary, keypoints, verdict, and
+      // risk_score. Dimensional scores, risk breakdown, and critical clauses live on the
+      // deep-analysis payload — always fetch when expanding so the panel is complete.
+      await ensureDeepAnalysisLoaded(doc.id);
     }
   }
 
@@ -244,14 +391,33 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
           const verdictConfig = doc.verdict
             ? getVerdictConfig(doc.verdict)
             : null;
-          const hasSummary =
-            doc.summary || (doc.keypoints && doc.keypoints.length > 0);
+          const deepAnalysis = deepAnalyses[doc.id];
+          const isLoadingDeep = deepAnalysisLoading[doc.id];
+          const deepAnalysisError = deepAnalysisErrors[doc.id];
+
+          // Merge local summary with deep analysis data
+          const effectiveSummary =
+            doc.summary || deepAnalysis?.analysis?.summary;
+          const effectiveKeypoints =
+            doc.keypoints ||
+            deepAnalysis?.analysis?.keypoints ||
+            [];
+          const effectiveKeypointsWithEvidence =
+            doc.keypoints_with_evidence ||
+            deepAnalysis?.analysis?.keypoints_with_evidence;
+          const criticalClauses =
+            deepAnalysis?.critical_clauses ||
+            deepAnalysis?.analysis?.critical_clauses ||
+            [];
+          const scores = deepAnalysis?.analysis?.scores;
+          const riskBreakdown =
+            deepAnalysis?.document_risk_breakdown ||
+            deepAnalysis?.analysis?.document_risk_breakdown;
+
           const evidenceByKeypoint = new Map<string, EvidenceSpan[]>();
-          if (
-            doc.keypoints_with_evidence &&
-            Array.isArray(doc.keypoints_with_evidence)
-          ) {
-            for (const entry of doc.keypoints_with_evidence) {
+          const kpwe = effectiveKeypointsWithEvidence;
+          if (kpwe && Array.isArray(kpwe)) {
+            for (const entry of kpwe) {
               if (entry?.keypoint && entry.evidence?.length) {
                 evidenceByKeypoint.set(
                   normalizeForMatch(entry.keypoint),
@@ -273,8 +439,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
             >
               {/* Document Header */}
               <div
-                className={cn("p-4", hasSummary && "cursor-pointer")}
-                onClick={() => hasSummary && toggleExpanded(doc.id, doc.title)}
+                className="p-4 cursor-pointer"
+                onClick={() => handleToggleExpanded(doc)}
               >
                 <div className="flex items-start gap-3">
                   {/* Icon */}
@@ -361,32 +527,32 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                       </div>
 
                       {/* Expand button */}
-                      {hasSummary && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleExpanded(doc.id, doc.title);
-                          }}
-                          className={cn(
-                            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all shrink-0",
-                            isExpanded
-                              ? "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
-                              : "text-muted-foreground hover:bg-muted",
-                          )}
-                        >
-                          {isExpanded ? (
-                            <>
-                              <ChevronDown className="h-3.5 w-3.5" />
-                              Close
-                            </>
-                          ) : (
-                            <>
-                              <ChevronRight className="h-3.5 w-3.5" />
-                              Details
-                            </>
-                          )}
-                        </button>
-                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleExpanded(doc);
+                        }}
+                        className={cn(
+                          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all shrink-0",
+                          isExpanded
+                            ? "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                            : "text-muted-foreground hover:bg-muted",
+                        )}
+                      >
+                        {isLoadingDeep && !isExpanded ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : isExpanded ? (
+                          <>
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            Close
+                          </>
+                        ) : (
+                          <>
+                            <ChevronRight className="h-3.5 w-3.5" />
+                            Details
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -394,7 +560,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
 
               {/* Expanded Content */}
               <AnimatePresence>
-                {isExpanded && hasSummary && (
+                {isExpanded && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: "auto", opacity: 1 }}
@@ -403,159 +569,405 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                     className="overflow-hidden"
                   >
                     <div className="px-4 pb-4 pt-2 border-t border-violet-200 dark:border-violet-800">
-                      <div className="space-y-3">
-                        {/* Summary */}
-                        {doc.summary && (
-                          <div className="text-sm text-foreground/90 leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-2">
-                            <MarkdownRenderer>{doc.summary}</MarkdownRenderer>
-                          </div>
-                        )}
+                      {/* Loading deep analysis (always requested on expand for scores / clauses) */}
+                      {isLoadingDeep && !deepAnalysis && (
+                        <div className="flex items-center gap-2 py-3 justify-center text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                          <span>
+                            {effectiveSummary
+                              ? "Loading scores and clause detail…"
+                              : "Loading analysis…"}
+                          </span>
+                        </div>
+                      )}
 
-                        {/* Keypoints */}
-                        {doc.keypoints && doc.keypoints.length > 0 && (
-                          <div className="pt-1">
-                            <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
-                              <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
-                              Key Insights
-                            </h5>
-                            <div className="space-y-1.5">
-                              {doc.keypoints.map(
-                                (point: string, idx: number) => {
-                                  const isKpExpanded =
-                                    expandedKeypoints[doc.id]?.has(idx) ||
-                                    false;
-                                  const directEvidence =
-                                    evidenceByKeypoint.get(
-                                      normalizeForMatch(point),
-                                    ) || [];
-                                  const extraction = extractions[doc.id];
-                                  const derivedEvidence =
-                                    !directEvidence.length && extraction
-                                      ? deriveEvidenceForKeypoint(
-                                          point,
-                                          extraction,
-                                        )
-                                      : [];
-                                  const evidence =
-                                    directEvidence.length > 0
-                                      ? directEvidence
-                                      : derivedEvidence;
-
-                                  const canShowSources =
-                                    directEvidence.length > 0 ||
-                                    !!extraction ||
-                                    !!doc.url; // allow fetch
-
-                                  return (
-                                    <div
-                                      key={idx}
-                                      className="rounded-md bg-card/50 border border-border/50 overflow-hidden"
-                                    >
-                                      <div className="flex items-start gap-2.5 p-2">
-                                        <div className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-start justify-between gap-3">
-                                            <span className="text-sm text-foreground/80 leading-snug">
-                                              {point}
-                                            </span>
-                                            {canShowSources && (
-                                              <button
-                                                type="button"
-                                                onClick={async () => {
-                                                  if (!extractions[doc.id]) {
-                                                    await ensureExtractionLoaded(
-                                                      doc.id,
-                                                    );
-                                                  }
-                                                  toggleKeypoint(doc.id, idx);
-                                                }}
-                                                className={cn(
-                                                  "shrink-0 text-[11px] font-semibold px-2 py-1 rounded-md border transition-colors",
-                                                  isKpExpanded
-                                                    ? "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800"
-                                                    : "text-muted-foreground hover:text-foreground hover:bg-muted border-border",
-                                                )}
-                                              >
-                                                {isKpExpanded
-                                                  ? "Hide sources"
-                                                  : "Sources"}
-                                              </button>
-                                            )}
-                                          </div>
-
-                                          <AnimatePresence>
-                                            {isKpExpanded && (
-                                              <motion.div
-                                                initial={{
-                                                  height: 0,
-                                                  opacity: 0,
-                                                }}
-                                                animate={{
-                                                  height: "auto",
-                                                  opacity: 1,
-                                                }}
-                                                exit={{ height: 0, opacity: 0 }}
-                                                transition={{ duration: 0.15 }}
-                                                className="overflow-hidden"
-                                              >
-                                                <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
-                                                  {extractionLoading[doc.id] &&
-                                                  !extractions[doc.id] ? (
-                                                    <div className="text-xs text-muted-foreground">
-                                                      Loading sources…
-                                                    </div>
-                                                  ) : evidence.length > 0 ? (
-                                                    evidence
-                                                      .slice(0, 3)
-                                                      .map((ev, j) => (
-                                                        <div
-                                                          key={j}
-                                                          className="rounded-md bg-muted/40 border border-border/50 p-2"
-                                                        >
-                                                          <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                                                            <span className="truncate">
-                                                              Source:{" "}
-                                                              {doc.title ||
-                                                                "Document"}
-                                                            </span>
-                                                            <a
-                                                              href={
-                                                                ev.url ||
-                                                                doc.url
-                                                              }
-                                                              target="_blank"
-                                                              rel="noopener noreferrer"
-                                                              className="inline-flex items-center gap-1 text-xs font-medium hover:text-foreground"
-                                                            >
-                                                              Open
-                                                              <ExternalLink className="h-3 w-3 opacity-60" />
-                                                            </a>
-                                                          </div>
-                                                          <blockquote className="text-xs leading-relaxed text-foreground/85 border-l-2 border-violet-300 dark:border-violet-700 pl-2">
-                                                            {ev.quote}
-                                                          </blockquote>
-                                                        </div>
-                                                      ))
-                                                  ) : (
-                                                    <div className="text-xs text-muted-foreground">
-                                                      No exact quote found for
-                                                      this keypoint yet.
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              </motion.div>
-                                            )}
-                                          </AnimatePresence>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                },
+                      {/* Analysis error (show even when list API returned a short summary) */}
+                      {deepAnalysisError && (() => {
+                        const isWarning = !!effectiveSummary;
+                        return (
+                          <div
+                            className={cn(
+                              "rounded-md border p-3 flex items-start gap-2",
+                              isWarning
+                                ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900"
+                                : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900",
+                            )}
+                          >
+                            <AlertTriangle
+                              className={cn(
+                                "h-4 w-4 shrink-0 mt-0.5",
+                                isWarning ? "text-amber-600" : "text-red-500",
                               )}
+                            />
+                            <div>
+                              <p
+                                className={cn(
+                                  "text-sm font-medium",
+                                  isWarning
+                                    ? "text-amber-800 dark:text-amber-200"
+                                    : "text-red-700 dark:text-red-400",
+                                )}
+                              >
+                                {isWarning
+                                  ? "Could not load full document detail"
+                                  : "Analysis failed"}
+                              </p>
+                              <p
+                                className={cn(
+                                  "text-xs mt-0.5",
+                                  isWarning
+                                    ? "text-amber-700/90 dark:text-amber-300/80"
+                                    : "text-red-600/80 dark:text-red-400/70",
+                                )}
+                              >
+                                {deepAnalysisError}
+                              </p>
                             </div>
                           </div>
+                        );
+                      })()}
+
+                      {/* No analysis available */}
+                      {!isLoadingDeep &&
+                        !deepAnalysisError &&
+                        !effectiveSummary &&
+                        !deepAnalysis && (
+                          <p className="py-4 text-sm text-muted-foreground text-center">
+                            No analysis available for this document yet.
+                          </p>
                         )}
-                      </div>
+
+                      {(effectiveSummary ||
+                        effectiveKeypoints.length > 0 ||
+                        criticalClauses.length > 0 ||
+                        scores) && (
+                        <div className="space-y-4">
+                          {/* Summary */}
+                          {effectiveSummary && (
+                            <div className="text-sm text-foreground/90 leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-2">
+                              <MarkdownRenderer>
+                                {effectiveSummary}
+                              </MarkdownRenderer>
+                            </div>
+                          )}
+
+                          {/* Scores breakdown */}
+                          {scores &&
+                            Object.keys(scores).length > 0 && (
+                              <div>
+                                <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                  <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                                  Dimension Scores
+                                </h5>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {Object.entries(scores).map(
+                                    ([key, val]) => (
+                                      <div
+                                        key={key}
+                                        className="rounded-md bg-card/60 border border-border/60 p-2.5"
+                                      >
+                                        <div className="flex items-center justify-between mb-1">
+                                          <span className="text-xs font-medium text-foreground/80">
+                                            {formatScoreName(key)}
+                                          </span>
+                                          <span
+                                            className={cn(
+                                              "text-xs font-bold tabular-nums",
+                                              scoreColorClasses(val.score).text,
+                                            )}
+                                          >
+                                            {val.score}/10
+                                          </span>
+                                        </div>
+                                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                                          <div
+                                            className={cn(
+                                              "h-full rounded-full transition-all",
+                                              scoreColorClasses(val.score).bar,
+                                            )}
+                                            style={{
+                                              width: `${val.score * 10}%`,
+                                            }}
+                                          />
+                                        </div>
+                                        {val.justification && (
+                                          <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                                            {val.justification}
+                                          </p>
+                                        )}
+                                      </div>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                          {/* Risk breakdown */}
+                          {riskBreakdown &&
+                            (riskBreakdown.top_concerns?.length > 0 ||
+                              riskBreakdown.positive_protections?.length >
+                                0) && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {riskBreakdown.top_concerns?.length > 0 && (
+                                  <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 p-3">
+                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-red-700 dark:text-red-400 mb-2">
+                                      Top Concerns
+                                    </h6>
+                                    <ul className="space-y-1">
+                                      {riskBreakdown.top_concerns
+                                        .slice(0, 4)
+                                        .map((c, i) => (
+                                          <li
+                                            key={i}
+                                            className="text-xs text-foreground/80 flex items-start gap-1.5"
+                                          >
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />
+                                            {c}
+                                          </li>
+                                        ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {riskBreakdown.positive_protections?.length >
+                                  0 && (
+                                  <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 p-3">
+                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-400 mb-2">
+                                      Protections
+                                    </h6>
+                                    <ul className="space-y-1">
+                                      {riskBreakdown.positive_protections
+                                        .slice(0, 4)
+                                        .map((p, i) => (
+                                          <li
+                                            key={i}
+                                            className="text-xs text-foreground/80 flex items-start gap-1.5"
+                                          >
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                            {p}
+                                          </li>
+                                        ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                          {/* Critical clauses */}
+                          {criticalClauses.length > 0 && (
+                            <div>
+                              <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                                Critical Clauses
+                              </h5>
+                              <div className="space-y-2">
+                                {criticalClauses
+                                  .slice(0, 5)
+                                  .map((clause, i) => {
+                                    const cfg =
+                                      RISK_LEVEL_CONFIG[clause.risk_level] ||
+                                      RISK_LEVEL_CONFIG.medium;
+                                    const Icon = cfg.icon;
+                                    return (
+                                      <div
+                                        key={i}
+                                        className={cn(
+                                          "rounded-md border p-3",
+                                          cfg.className,
+                                        )}
+                                      >
+                                        <div className="flex items-start gap-2 mb-1.5">
+                                          <Icon
+                                            className={cn(
+                                              "h-3.5 w-3.5 mt-0.5 shrink-0",
+                                              cfg.iconClass,
+                                            )}
+                                          />
+                                          <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                                            <span className="text-xs font-semibold text-foreground/90">
+                                              {clause.section_title ||
+                                                clause.clause_type.replace(
+                                                  /_/g,
+                                                  " ",
+                                                )}
+                                            </span>
+                                            <Badge
+                                              variant={cfg.badgeVariant}
+                                              size="sm"
+                                            >
+                                              {cfg.label}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        {(clause.plain_english ||
+                                          clause.analysis) && (
+                                          <p className="text-xs text-foreground/80 leading-snug mb-2 ml-5">
+                                            {clause.plain_english ||
+                                              clause.analysis}
+                                          </p>
+                                        )}
+                                        {clause.quote && (
+                                          <blockquote className="text-xs leading-relaxed text-foreground/70 border-l-2 border-current/30 pl-2 ml-5 italic">
+                                            &ldquo;{clause.quote}&rdquo;
+                                          </blockquote>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Keypoints */}
+                          {effectiveKeypoints.length > 0 && (
+                            <div className="pt-1">
+                              <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                                Key Insights
+                              </h5>
+                              <div className="space-y-1.5">
+                                {effectiveKeypoints.map(
+                                  (point: string, idx: number) => {
+                                    const isKpExpanded =
+                                      expandedKeypoints[doc.id]?.has(idx) ||
+                                      false;
+                                    const directEvidence =
+                                      evidenceByKeypoint.get(
+                                        normalizeForMatch(point),
+                                      ) || [];
+                                    const extraction = extractions[doc.id];
+                                    const derivedEvidence =
+                                      !directEvidence.length && extraction
+                                        ? deriveEvidenceForKeypoint(
+                                            point,
+                                            extraction,
+                                          )
+                                        : [];
+                                    const evidence =
+                                      directEvidence.length > 0
+                                        ? directEvidence
+                                        : derivedEvidence;
+
+                                    const canShowSources =
+                                      directEvidence.length > 0 ||
+                                      !!extraction ||
+                                      !!doc.url;
+
+                                    return (
+                                      <div
+                                        key={idx}
+                                        className="rounded-md bg-card/50 border border-border/50 overflow-hidden"
+                                      >
+                                        <div className="flex items-start gap-2.5 p-2">
+                                          <div className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-start justify-between gap-3">
+                                              <span className="text-sm text-foreground/80 leading-snug">
+                                                {point}
+                                              </span>
+                                              {canShowSources && (
+                                                <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                    if (!extractions[doc.id]) {
+                                                      await ensureExtractionLoaded(
+                                                        doc.id,
+                                                      );
+                                                    }
+                                                    toggleKeypoint(doc.id, idx);
+                                                  }}
+                                                  className={cn(
+                                                    "shrink-0 text-[11px] font-semibold px-2 py-1 rounded-md border transition-colors",
+                                                    isKpExpanded
+                                                      ? "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800"
+                                                      : "text-muted-foreground hover:text-foreground hover:bg-muted border-border",
+                                                  )}
+                                                >
+                                                  {isKpExpanded
+                                                    ? "Hide sources"
+                                                    : "Sources"}
+                                                </button>
+                                              )}
+                                            </div>
+
+                                            <AnimatePresence>
+                                              {isKpExpanded && (
+                                                <motion.div
+                                                  initial={{
+                                                    height: 0,
+                                                    opacity: 0,
+                                                  }}
+                                                  animate={{
+                                                    height: "auto",
+                                                    opacity: 1,
+                                                  }}
+                                                  exit={{
+                                                    height: 0,
+                                                    opacity: 0,
+                                                  }}
+                                                  transition={{ duration: 0.15 }}
+                                                  className="overflow-hidden"
+                                                >
+                                                  <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
+                                                    {extractionLoading[
+                                                      doc.id
+                                                    ] &&
+                                                    !extractions[doc.id] ? (
+                                                      <div className="text-xs text-muted-foreground">
+                                                        Loading sources…
+                                                      </div>
+                                                    ) : evidence.length > 0 ? (
+                                                      evidence
+                                                        .slice(0, 3)
+                                                        .map((ev, j) => (
+                                                          <div
+                                                            key={j}
+                                                            className="rounded-md bg-muted/40 border border-border/50 p-2"
+                                                          >
+                                                            <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-2">
+                                                              <span className="truncate">
+                                                                Source:{" "}
+                                                                {doc.title ||
+                                                                  "Document"}
+                                                              </span>
+                                                              <a
+                                                                href={
+                                                                  ev.url ||
+                                                                  doc.url
+                                                                }
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 text-xs font-medium hover:text-foreground"
+                                                              >
+                                                                Open
+                                                                <ExternalLink className="h-3 w-3 opacity-60" />
+                                                              </a>
+                                                            </div>
+                                                            <blockquote className="text-xs leading-relaxed text-foreground/85 border-l-2 border-violet-300 dark:border-violet-700 pl-2">
+                                                              {ev.quote}
+                                                            </blockquote>
+                                                          </div>
+                                                        ))
+                                                    ) : (
+                                                      <div className="text-xs text-muted-foreground">
+                                                        No exact quote found for
+                                                        this keypoint yet.
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </motion.div>
+                                              )}
+                                            </AnimatePresence>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  },
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

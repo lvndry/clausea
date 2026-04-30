@@ -47,6 +47,20 @@ ACCEPT_HEADER = (
     "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
 )
 
+# Minimum extracted body text length to treat static fetch as sufficient (low URL score) and
+# to skip SPA hydration waits in the browser fetch path.
+MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
+
+# Browser fetch: short polling attempts when initial DOM text is below MIN_CONTENT_LENGTH_FOR_SPA_CHECK.
+SPA_HYDRATION_RETRIES = 3
+
+# ContentAnalyzer reports legal relevance on a 0–10 scale; CrawlResult.legal_score is normalized to 0.0–1.0.
+MAX_LEGAL_SCORE_SCALE = 10.0
+
+# Hard cap on response body size. Policy documents are rarely > 1 MB; anything larger is
+# likely a data dump, sitemap, or binary asset that slipped through content-type checks.
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB
+
 
 @dataclass
 class StaticFetchResult:
@@ -1426,6 +1440,11 @@ class ClauseaCrawler:
 
         High URL legal-relevance scores use a higher minimum length so thin
         static HTML (common for SPAs) still triggers a browser retry.
+
+        We check both the raw page text (for the length gate) AND the extracted
+        markdown body. For JS-rendered SPAs the raw HTML can be large (nav links,
+        inline JSON) while the extracted main-content area is empty; checking
+        the markdown catches that case and forces a browser retry.
         """
         text = page.text or ""
         if self._is_garbled_content(text):
@@ -1433,8 +1452,16 @@ class ClauseaCrawler:
         if self._has_js_required_markers(text):
             return False
         url_score = self.url_scorer.score_url(url)
-        min_len = 1000 if url_score >= 5.0 else 500
-        return len(text) >= min_len
+        min_len = 1000 if url_score >= 5.0 else MIN_CONTENT_LENGTH_FOR_SPA_CHECK
+        if len(text) < min_len:
+            return False
+        # Secondary check: if the extracted markdown body is effectively empty the
+        # page is almost certainly a JS SPA shell — the raw text came from nav/JSON
+        # but the policy content isn't there. Trigger a browser retry.
+        markdown = page.markdown or ""
+        if len(markdown.strip()) < 200:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Static fetch (pure HTTP, no content processing)
@@ -1446,8 +1473,6 @@ class ClauseaCrawler:
         Returns a :class:`StaticFetchResult` with the raw body/bytes.  No
         content parsing or legal analysis happens here.
         """
-        await self.rate_limit(url)
-
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
         if domain.startswith("www."):
@@ -1469,6 +1494,8 @@ class ClauseaCrawler:
                     blocked_by_robots_txt=True,
                     error_message=f"Blocked by robots.txt: {reason}",
                 )
+
+        await self.rate_limit(url)
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         headers = {
@@ -1519,8 +1546,28 @@ class ClauseaCrawler:
                 )
             )
 
+            # Reject responses that are too large before buffering the body.
+            declared_length = response.headers.get("Content-Length")
+            if declared_length and int(declared_length) > MAX_RESPONSE_BYTES:
+                logger.warning(
+                    f"Skipping oversized response ({declared_length} bytes declared): {url}"
+                )
+                return StaticFetchResult(
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body="",
+                    headers=resp_headers,
+                    resolved_url=final_url,
+                    error_message=f"Response too large ({declared_length} bytes)",
+                )
+
             if is_text:
-                body = await response.text()
+                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    logger.warning(f"Truncating response body at {MAX_RESPONSE_BYTES} bytes: {url}")
+                    raw = raw[:MAX_RESPONSE_BYTES]
+                body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,
                     status_code=response.status,
@@ -1530,7 +1577,12 @@ class ClauseaCrawler:
                     resolved_url=final_url,
                 )
             else:
-                raw_bytes = await response.read()
+                raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw_bytes) > MAX_RESPONSE_BYTES:
+                    logger.warning(
+                        f"Truncating binary response at {MAX_RESPONSE_BYTES} bytes: {url}"
+                    )
+                    raw_bytes = raw_bytes[:MAX_RESPONSE_BYTES]
                 return StaticFetchResult(
                     url=url,
                     status_code=response.status,
@@ -1809,15 +1861,15 @@ class ClauseaCrawler:
 
             # Wait for SPA hydration if initial content is too thin
             body_text_len = len(text_content) if text_content else 0
-            if body_text_len < 500:
-                for _ in range(3):
+            if body_text_len < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
+                for _ in range(SPA_HYDRATION_RETRIES):
                     await asyncio.sleep(1)
                     new_content = await page.content()
                     _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
                         self._parse_html_string, new_content, final_url
                     )
                     new_len = len(new_text) if new_text else 0
-                    if new_len >= 500 or new_len == body_text_len:
+                    if new_len >= MIN_CONTENT_LENGTH_FOR_SPA_CHECK or new_len == body_text_len:
                         if new_len > body_text_len:
                             text_content = new_text
                             markdown_content = new_md
@@ -1895,7 +1947,9 @@ class ClauseaCrawler:
                 text, title=result.title, metadata=result.metadata
             )
             # Normalize analyzer's 0–10 scale to 0.0–1.0 for pipeline thresholds
-            result = result.model_copy(update={"legal_score": min(1.0, raw_score / 10.0)})
+            result = result.model_copy(
+                update={"legal_score": min(1.0, raw_score / MAX_LEGAL_SCORE_SCALE)}
+            )
         return result
 
     def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:

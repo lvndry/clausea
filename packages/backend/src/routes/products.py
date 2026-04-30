@@ -14,7 +14,7 @@ from src.analyser import (
 )
 from src.core.database import get_db
 from src.core.logging import get_logger
-from src.core.tier_deps import check_usage_limit, get_user_tier, increment_usage
+from src.core.tier_deps import check_usage_limit, get_user_tier, increment_usage, require_pro
 from src.models.document import (
     CORE_DOC_TYPES,
     DocumentDeepAnalysis,
@@ -249,10 +249,9 @@ async def get_product_deep_analysis_route(
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
     services: tuple[ProductService, DocumentService] = Depends(get_product_and_document_services),
+    _: None = Depends(require_pro),
 ) -> ProductDeepAnalysis:
-    """Get deep analysis for a product (Level 3).
-    Generates the deep analysis on-the-fly if it doesn't exist yet.
-    """
+    """Get professional-grade compliance audit for a product (Level 3). Requires Pro subscription."""
     # First check if product exists
     product = await service.get_product_by_slug(db, slug)
     if not product:

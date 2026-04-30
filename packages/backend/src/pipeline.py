@@ -65,7 +65,7 @@ from src.core.logging import get_logger
 from src.crawler import ClauseaCrawler, CrawlResult
 from src.llm import SupportedModel, acompletion_with_fallback
 from src.models.crawl import CrawlSession
-from src.models.document import Document
+from src.models.document import Document, coerce_doc_type_from_classifier
 from src.models.pipeline_job import classify_crawl_error
 from src.models.product import Product
 from src.repositories.crawl_repository import CrawlRepository
@@ -81,6 +81,9 @@ logger = get_logger(__name__)
 logger_discovery = get_logger(__name__, component="pipeline:discovery")
 logger_analysis = get_logger(__name__, component="pipeline:analysis")
 logger_storage = get_logger(__name__, component="pipeline:storage")
+
+# Minimum normalized legal_score (0.0–1.0) to accept a crawled page into analysis.
+MIN_LEGAL_SCORE_THRESHOLD = 0.2
 
 
 def _content_fingerprint(text: str) -> str:
@@ -310,6 +313,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
             "copyright_policy": "Copyright Policy",
             "community_guidelines": "Community Guidelines",
             "children_privacy_policy": "Children's Privacy Policy",
+            "security_policy": "Security Practices",
         }
 
         title = f"{type_titles.get(doc_type, 'Policy Document')} - {domain}"
@@ -863,6 +867,20 @@ class PolicyDocumentPipeline:
                         ).hexdigest()
 
                         if current_hash != existing_hash:
+                            # Never overwrite a document that has content with an empty-content
+                            # version. This can happen when a JS-rendered page is fetched by
+                            # the static crawler on a subsequent run: the shell HTML passes the
+                            # raw-text sufficiency check but yields no extracted body, so the
+                            # pipeline creates a Document with text="" that would silently erase
+                            # previously stored policy text.
+                            if not document.text.strip() and existing_doc.text.strip():
+                                logger_storage.warning(
+                                    f"refusing to overwrite non-empty document with empty content: {document.url}"
+                                )
+                                self.stats.duplicates_skipped += 1
+                                duplicate_count += 1
+                                continue
+
                             # Update existing document with new content/metadata
                             logger_storage.info(
                                 f"updating existing document with changes: {document.url}"
@@ -927,7 +945,7 @@ class PolicyDocumentPipeline:
                 )
                 return None
 
-            if result.legal_score is not None and result.legal_score < 0.2:
+            if result.legal_score is not None and result.legal_score < MIN_LEGAL_SCORE_THRESHOLD:
                 logger.debug(
                     f"Skipping low legal-score page ({result.legal_score:.2f}): {result.url}"
                 )
@@ -992,11 +1010,12 @@ class PolicyDocumentPipeline:
                     logger.warning(f"Failed to parse effective date '{effective_date_str}': {e}")
 
             # Extract title
+            doc_type = coerce_doc_type_from_classifier(classification.get("classification"))
             title_result = await self.analyzer.extract_title(
                 result.markdown,
                 result.metadata,
                 result.url,
-                classification.get("classification", "other"),
+                doc_type,
             )
 
             # Create document
@@ -1007,7 +1026,7 @@ class PolicyDocumentPipeline:
                 markdown=result.markdown,
                 text=text_content,
                 metadata=result.metadata,
-                doc_type=classification.get("classification", "other"),
+                doc_type=doc_type,
                 locale=detected_locale,
                 regions=region_detection.get("regions", ["global"]),
                 effective_date=effective_date,

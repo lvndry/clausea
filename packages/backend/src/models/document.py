@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import shortuuid
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -20,6 +20,7 @@ CORE_DOC_TYPES = {
     "copyright_policy",
     "children_privacy_policy",
     "data_processing_agreement",
+    "security_policy",
 }
 
 
@@ -487,7 +488,7 @@ class MetaSummary(BaseModel):
     verdict: Literal[
         "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
     ]
-    keypoints: list[str]
+    keypoints: list[str] = Field(default_factory=list)
     data_collected: list[str] | None = None
     data_purposes: list[str] | None = None
     data_collection_details: list[DataPurposeLink] | None = None
@@ -501,6 +502,15 @@ class MetaSummary(BaseModel):
     coverage: list[CoverageItem] | None = None
     contract_clauses: list[str] | None = None
     contradictions: list[ProductContradiction] | None = None
+
+    @field_validator("keypoints", mode="before")
+    @classmethod
+    def keypoints_omit_or_null(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            return []
+        return [str(x) for x in v if x is not None]
 
     @field_validator("compliance_status", mode="before")
     @classmethod
@@ -528,9 +538,27 @@ DocType = Literal[
     "children_privacy_policy",
     "gdpr_policy",
     "copyright_policy",
+    "security_policy",
     "other",
     "unclassified",
 ]
+
+
+_VALID_DOC_TYPE_VALUES: frozenset[str] = frozenset(get_args(DocType))
+
+
+def coerce_doc_type_from_classifier(raw: str | None) -> DocType:
+    """Normalize classifier output to a valid stored ``doc_type``.
+
+    Unknown labels (for example LLM drift) are stored as ``other`` so substantive
+    policy pages stay ingestible. Callers must only invoke this when
+    ``is_policy_document`` is true — non-policy pages should not be persisted.
+    """
+    key = (raw or "other").strip()
+    if key in _VALID_DOC_TYPE_VALUES:
+        return key  # type: ignore[return-value]
+    return "other"
+
 
 Region = Literal[
     "global",
@@ -742,8 +770,8 @@ class DocumentRiskBreakdown(BaseModel):
         default=None,
         validation_alias=AliasChoices("applicability", "scope"),
         description=(
-            "Same one-line label as DocumentAnalysis.applicability: who/where this document applies. "
-            "Duplicates the top-level field for nested risk context."
+            "Who/where this document applies. Copied from top-level DocumentAnalysis.applicability "
+            "when the model omits it inside the breakdown."
         ),
     )
 
@@ -796,12 +824,35 @@ class DocumentRelationship(BaseModel):
     evidence: str  # Quote or reference supporting the relationship
 
 
+class InformationGap(BaseModel):
+    """A structured information gap — a policy area users expect but no document addresses."""
+
+    topic: str
+    severity: Literal["critical", "high", "medium", "low"] = "medium"
+    regulatory_consequence: str | None = None
+    recommendation: str | None = None
+
+
 class CrossDocumentAnalysis(BaseModel):
     """Analysis across all documents."""
 
     contradictions: list[DocumentContradiction] = Field(default_factory=list)
-    information_gaps: list[str] = Field(default_factory=list)
+    information_gaps: list[InformationGap] = Field(default_factory=list)
     document_relationships: list[DocumentRelationship] = Field(default_factory=list)
+
+    @field_validator("information_gaps", mode="before")
+    @classmethod
+    def coerce_information_gaps(cls, v: object) -> list[object]:
+        """Accept both legacy list[str] and new list[dict] from cached data."""
+        if not v:
+            return []
+        result = []
+        for item in v:  # type: ignore[union-attr]
+            if isinstance(item, str):
+                result.append({"topic": item, "severity": "medium"})
+            else:
+                result.append(item)
+        return result
 
 
 class ComplianceViolation(BaseModel):
@@ -872,13 +923,172 @@ class RiskPrioritization(BaseModel):
     low: list[str] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Professional-grade deep analysis models
+# ---------------------------------------------------------------------------
+
+
+class ProcurementDecision(BaseModel):
+    """Go/no-go recommendation for vendor procurement."""
+
+    decision: Literal["approved", "conditionally_approved", "escalate_to_legal", "do_not_use"]
+    overall_risk_rating: Literal["low", "medium", "high", "critical"]
+    conditions: list[str] = Field(default_factory=list)
+    executive_brief: str
+    blocking_issues: list[str] = Field(default_factory=list)
+
+
+class SubprocessorEntry(BaseModel):
+    """A named subprocessor with geographic and transfer details."""
+
+    name: str
+    country: str
+    data_categories: list[str] = Field(default_factory=list)
+    transfer_mechanism: (
+        Literal["adequacy_decision", "scc", "bcr", "unknown", "not_applicable"] | None
+    ) = None
+    risk_note: str | None = None
+
+
+class LegalBasisEntry(BaseModel):
+    """Legal basis claimed for a specific data category."""
+
+    data_category: str
+    legal_basis: str
+    adequacy: Literal["adequate", "questionable", "missing"] = "adequate"
+    note: str | None = None
+
+
+class DataProcessingProfile(BaseModel):
+    """Controller/processor classification, legal basis mapping, and subprocessor chain."""
+
+    controller_processor_classification: Literal[
+        "controller", "processor", "joint_controller", "unclear"
+    ]
+    classification_rationale: str
+    legal_basis_mapping: list[LegalBasisEntry] = Field(default_factory=list)
+    subprocessors: list[SubprocessorEntry] = Field(default_factory=list)
+    data_residency: list[str] = Field(default_factory=list)
+    cross_border_transfers: bool = False
+    transfer_mechanisms_noted: list[str] = Field(default_factory=list)
+
+
+class ArticleComplianceCheck(BaseModel):
+    """Per-article compliance status for a regulation."""
+
+    article: str
+    requirement: str
+    status: Literal["met", "partial", "missing", "not_applicable", "unclear"]
+    evidence: str | None = None
+    gap: str | None = None
+
+
+class RegulationArticleBreakdown(BaseModel):
+    """Article-level compliance breakdown for a single regulation."""
+
+    regulation: str
+    score: int = Field(ge=0, le=10)
+    status: Literal["Compliant", "Partially Compliant", "Non-Compliant", "Unknown"]
+    article_checks: list[ArticleComplianceCheck] = Field(default_factory=list)
+    critical_gaps: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    detailed_analysis: str
+
+
+class RiskRegisterItem(BaseModel):
+    """A structured risk item with source, severity, and remediation guidance."""
+
+    id: str
+    title: str
+    description: str
+    source_document: str
+    clause_reference: str | None = None
+    verbatim_quote: str | None = None
+    severity: Literal["critical", "high", "medium", "low"]
+    likelihood: Literal["high", "medium", "low"]
+    regulatory_exposure: list[str] = Field(default_factory=list)
+    blocking: bool = False
+    remediation_type: Literal[
+        "contractual_negotiation",
+        "technical_controls",
+        "user_restriction",
+        "dpa_required",
+        "accept_risk",
+        "reject_vendor",
+        "policy_update",
+    ]
+    recommended_action: str
+    suggested_owner: Literal["Legal", "DPO", "IT/Security", "Procurement", "HR", "CISO"]
+
+
+class ContractClauseReview(BaseModel):
+    """Compliance-oriented review of a specific contract clause."""
+
+    clause_type: str
+    section_reference: str | None = None
+    verbatim_quote: str
+    plain_english: str
+    standard_assessment: Literal[
+        "standard_industry", "unusual", "one_sided", "potentially_unlawful"
+    ]
+    risk_if_accepted: str
+    negotiation_lever: str | None = None
+    recommended_redline: str | None = None
+
+
+class WorkforceDataAssessment(BaseModel):
+    """Assessment of risks specific to employee / workforce personal data."""
+
+    applicable: bool
+    risk_level: Literal["low", "medium", "high", "critical"] | None = None
+    employee_data_categories_mentioned: list[str] = Field(default_factory=list)
+    monitoring_risks: list[str] = Field(default_factory=list)
+    hr_specific_concerns: list[str] = Field(default_factory=list)
+    labor_law_considerations: list[str] = Field(default_factory=list)
+    recommendation: str | None = None
+
+
+class DPIATriggerAssessment(BaseModel):
+    """Assessment of whether a Data Protection Impact Assessment is required."""
+
+    dpia_required: Literal["yes", "no", "likely", "unclear"]
+    triggering_factors: list[str] = Field(default_factory=list)
+    recommended_scope: str | None = None
+    note: str | None = None
+
+
+class SecurityPosture(BaseModel):
+    """Security practices and incident response commitments described in the documents."""
+
+    certifications_claimed: list[str] = Field(default_factory=list)
+    encryption_at_rest: Literal["confirmed", "partial", "not_mentioned"] = "not_mentioned"
+    encryption_in_transit: Literal["confirmed", "partial", "not_mentioned"] = "not_mentioned"
+    breach_notification_commitment: str | None = None
+    breach_notification_timeline: str | None = None
+    audit_rights: bool = False
+    data_deletion_on_termination: Literal["confirmed", "unclear", "not_mentioned"] = "not_mentioned"
+    overall_security_assessment: str
+
+
+class RemediationItem(BaseModel):
+    """A single prioritized action in the remediation roadmap."""
+
+    priority: Literal["critical", "high", "medium", "low"]
+    action: str
+    rationale: str
+    suggested_owner: str
+    timeline: str | None = None
+    blocking: bool = False
+    related_risk_ids: list[str] = Field(default_factory=list)
+
+
 class ProductDeepAnalysis(BaseModel):
     """
-    Level 3: Deep analysis for legal/compliance review.
-    For users who need comprehensive, detailed analysis (10-20 minutes).
+    Level 3: Professional-grade compliance audit.
+    Designed for compliance officers, DPOs, and legal teams performing vendor due diligence.
     """
 
-    # Include Level 2
+    # Level 2 (context)
     analysis: ProductAnalysis
 
     # Document-by-document deep breakdown
@@ -887,14 +1097,41 @@ class ProductDeepAnalysis(BaseModel):
     # Cross-document analysis
     cross_document_analysis: CrossDocumentAnalysis
 
-    # Enhanced compliance
-    enhanced_compliance: dict[str, EnhancedComplianceBreakdown] = Field(
-        default_factory=dict
-    )  # By regulation
+    # === Professional-grade sections ===
 
-    # Business context
+    # Go/no-go procurement recommendation
+    procurement_decision: ProcurementDecision | None = None
+
+    # Controller/processor classification, legal basis, subprocessor chain
+    data_processing_profile: DataProcessingProfile | None = None
+
+    # Article-level compliance breakdown per regulation
+    article_compliance: dict[str, RegulationArticleBreakdown] = Field(default_factory=dict)
+
+    # Structured risk register (source, quote, owner, blocking status)
+    risk_register: list[RiskRegisterItem] = Field(default_factory=list)
+
+    # Contract clause review with standard/unusual flag and negotiation levers
+    contract_clause_review: list[ContractClauseReview] = Field(default_factory=list)
+
+    # Employee / workforce data specific risks
+    workforce_data_assessment: WorkforceDataAssessment | None = None
+
+    # DPIA trigger assessment
+    dpia_trigger: DPIATriggerAssessment | None = None
+
+    # Security certifications, encryption, breach notification
+    security_posture: SecurityPosture | None = None
+
+    # Prioritized remediation roadmap with owners and timelines
+    remediation_roadmap: list[RemediationItem] = Field(default_factory=list)
+
+    # Business impact
     business_impact: BusinessImpactAssessment
-    risk_prioritization: RiskPrioritization
+
+    # Kept for backward compatibility
+    enhanced_compliance: dict[str, EnhancedComplianceBreakdown] = Field(default_factory=dict)
+    risk_prioritization: RiskPrioritization = Field(default_factory=RiskPrioritization)
 
 
 class Document(BaseModel):

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+import { ProductStructuredData } from "@/components/seo/structured-data";
+
 const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
 ).replace(/\/$/, "");
@@ -207,9 +209,84 @@ export async function generateMetadata({
 
 export default async function ProductLayout({
   children,
+  params,
 }: {
   children: React.ReactNode;
   params: Promise<{ slug: string }>;
 }) {
-  return <>{children}</>;
+  const { slug } = await params;
+  const result = await fetchProductForMetadata(slug);
+
+  const product = result.kind === "ok" ? result.product : null;
+  const productName =
+    product?.name || product?.company_name || null;
+  const description = product?.one_line_summary || undefined;
+
+  return (
+    <>
+      {product && productName && (
+        <>
+          <ProductStructuredData
+            siteUrl={siteUrl}
+            productName={productName}
+            productSlug={product.slug}
+            description={description}
+            companyName={product.company_name || undefined}
+          />
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                "@context": "https://schema.org",
+                "@type": "WebPage",
+                name: `${productName} Privacy Policy Analysis`,
+                description:
+                  description ||
+                  `Privacy policy and terms of service analysis for ${productName}`,
+                url: `${siteUrl}/products/${product.slug}`,
+                isPartOf: { "@id": siteUrl },
+                about: {
+                  "@type": "SoftwareApplication",
+                  name: productName,
+                  ...(product.company_name
+                    ? { brand: { "@type": "Brand", name: product.company_name } }
+                    : {}),
+                },
+                ...(typeof product.risk_score === "number"
+                  ? {
+                      review: {
+                        "@type": "Review",
+                        reviewAspect: "Privacy & Data Practices",
+                        reviewRating: {
+                          "@type": "Rating",
+                          ratingValue: String(product.risk_score),
+                          bestRating: "10",
+                          worstRating: "0",
+                          description:
+                            product.verdict === "very_user_friendly"
+                              ? "Very user-friendly"
+                              : product.verdict === "user_friendly"
+                                ? "User-friendly"
+                                : product.verdict === "moderate"
+                                  ? "Moderate concerns"
+                                  : product.verdict === "pervasive"
+                                    ? "Pervasive data collection"
+                                    : "Very pervasive data collection",
+                        },
+                        author: {
+                          "@type": "Organization",
+                          name: "Clausea AI",
+                          url: siteUrl,
+                        },
+                      },
+                    }
+                  : {}),
+              }),
+            }}
+          />
+        </>
+      )}
+      {children}
+    </>
+  );
 }

@@ -12,7 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -246,6 +246,7 @@ export function PipelineProgress({
   onDismiss,
 }: PipelineProgressProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [job, setJob] = useState<PipelineJobData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -483,7 +484,19 @@ export function PipelineProgress({
               <Button
                 size="sm"
                 className="w-full rounded-lg cursor-pointer"
-                onClick={() => router.push(`/products/${job.product_slug}`)}
+                onClick={() => {
+                  const href = `/products/${job.product_slug}`;
+                  const here =
+                    (pathname ?? "").replace(/\/$/, "") ||
+                    "/";
+                  const there = href.replace(/\/$/, "") || "/";
+                  // Same route: client router.push is a no-op; hard-navigate to refetch UI state.
+                  if (here === there) {
+                    window.location.assign(href);
+                  } else {
+                    router.push(href);
+                  }
+                }}
               >
                 View Analysis
                 <ExternalLink className="ml-2 h-3.5 w-3.5" />
