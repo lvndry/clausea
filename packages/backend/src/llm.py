@@ -65,6 +65,9 @@ _OPENROUTER_ALIASES: dict[str, str] = {
     "openrouter/free": os.getenv(
         "OPENROUTER_FREE_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct:free"
     ),
+    "openrouter/gpt-oss-120b-nitro": "openrouter/openai/gpt-oss-120b:nitro",
+    "openrouter/deepseek-v4-flash": "openrouter/deepseek/deepseek-v4-flash",
+    "openrouter/grok-4.1-fast": "openrouter/x-ai/grok-4.1-fast",
     # legacy
     "openrouter/kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
 }

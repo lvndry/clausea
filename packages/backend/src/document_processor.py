@@ -19,7 +19,10 @@ from src.models.document import Document, DocumentAnalysis, coerce_doc_type_from
 load_dotenv()
 logger = get_logger(__name__)
 
-_CLASSIFICATION_PRIORITY: list[SupportedModel] = ["gpt-5.4-nano", "gemini-2.5-flash-lite"]
+_CLASSIFICATION_PRIORITY: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro",
+    "openrouter/deepseek-v4-flash",
+]
 
 
 class DocumentProcessingResult(BaseModel):

@@ -69,10 +69,13 @@ from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 load_dotenv()
 logger = get_logger(__name__)
 
-_ANALYSIS_RESILIENCE: list[SupportedModel] = ["gemini-3.1-flash-lite"]
-_ANALYSIS_PRIMARY: list[SupportedModel] = ["gpt-5-mini"] + _ANALYSIS_RESILIENCE
-_ANALYSIS_ESCALATION: list[SupportedModel] = ["gpt-5.4-mini"] + _ANALYSIS_RESILIENCE
-_OVERVIEW_PRIORITY: list[SupportedModel] = ["gpt-5.4-nano", "gemini-2.5-flash-lite"]
+_ANALYSIS_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+_ANALYSIS_PRIMARY: list[SupportedModel] = ["openrouter/gpt-oss-120b-nitro"] + _ANALYSIS_RESILIENCE
+_ANALYSIS_ESCALATION: list[SupportedModel] = ["openrouter/grok-4.1-fast"] + _ANALYSIS_RESILIENCE
+_OVERVIEW_PRIORITY: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro",
+    "openrouter/deepseek-v4-flash",
+]
 
 
 def _analysis_validator(content: str) -> bool:

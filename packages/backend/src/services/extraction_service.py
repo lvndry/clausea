@@ -62,9 +62,11 @@ from src.utils.cancellation import CancellationToken
 
 logger = get_logger(__name__)
 
-_EXTRACTION_RESILIENCE: list[SupportedModel] = ["gemini-2.5-flash"]
-_EXTRACTION_PRIMARY: list[SupportedModel] = ["gpt-5-mini"] + _EXTRACTION_RESILIENCE
-_EXTRACTION_ESCALATION: list[SupportedModel] = ["gpt-5.4-mini"] + _EXTRACTION_RESILIENCE
+_EXTRACTION_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+_EXTRACTION_PRIMARY: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro"
+] + _EXTRACTION_RESILIENCE
+_EXTRACTION_ESCALATION: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
 
 _COMPLEX_DOC_LENGTH_THRESHOLD: int = 50_000
 _COMPLEX_DOC_TYPES: frozenset[str] = frozenset(
