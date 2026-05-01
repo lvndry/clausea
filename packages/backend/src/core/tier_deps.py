@@ -26,8 +26,10 @@ async def require_pro(
 ) -> None:
     """Dependency that blocks non-PRO users with HTTP 402."""
     user_id = _get_user_id(request)
-    if user_id in _BYPASS_USER_IDS or user_id is None:
+    if user_id in _BYPASS_USER_IDS:
         return
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
     user_service = create_user_service()
     user = await user_service.get_user_by_id(db, user_id)
     if not user or user.tier != UserTier.PRO:
@@ -43,8 +45,10 @@ async def check_usage_limit(
 ) -> None:
     """Dependency that enforces monthly usage limits per tier."""
     user_id = _get_user_id(request)
-    if user_id in _BYPASS_USER_IDS or user_id is None:
+    if user_id in _BYPASS_USER_IDS:
         return
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
 
     allowed, _ = await UsageService.check_usage_limit(db, user_id)
     if not allowed:

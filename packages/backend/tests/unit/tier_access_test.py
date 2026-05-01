@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from src.core.tier_deps import check_usage_limit, require_pro
 from src.models.document import CORE_DOC_TYPES, Document
 from src.models.user import UserTier
 from src.routes.products import _can_access_document
@@ -103,3 +104,30 @@ async def test_product_deep_analysis_allowed_for_pro_user() -> None:
         result = await require_pro(request=mock_request, db=mock_db)
 
     assert result is None  # no exception = access granted
+
+
+def _mock_request(user_id: str | None) -> MagicMock:
+    request = MagicMock()
+    if user_id is None:
+        request.state.user = None
+    else:
+        request.state.user = {"user_id": user_id}
+    return request
+
+
+@pytest.mark.asyncio
+async def test_require_pro_rejects_unauthenticated() -> None:
+    request = _mock_request(None)
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc_info:
+        await require_pro(request=request, db=db)
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_rejects_unauthenticated() -> None:
+    request = _mock_request(None)
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc_info:
+        await check_usage_limit(request=request, db=db)
+    assert exc_info.value.status_code == 401
