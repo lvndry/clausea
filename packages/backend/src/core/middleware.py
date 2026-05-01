@@ -23,6 +23,11 @@ WHITELISTED_ROUTES = {
     "/users/tier-limits",
     "/webhooks/paddle",
     "/contact",
+    # Extension routes handle their own auth
+    "/extension/check",
+    "/extension/analyze",
+    "/extension/subscribe",
+    "/extension/domains",
 }
 
 # Localhost addresses that are considered safe for development
@@ -62,7 +67,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _is_whitelisted(self, request: Request) -> bool:
         """Check if the request path is whitelisted"""
-        return request.url.path in WHITELISTED_ROUTES or request.method == "OPTIONS"
+        path = request.url.path
+        return (
+            path in WHITELISTED_ROUTES
+            or path.startswith("/extension/status/")
+            or request.method == "OPTIONS"
+        )
 
     async def _authenticate(self, request: Request) -> dict[str, Any] | None:
         """Try to authenticate the request using available methods"""

@@ -160,7 +160,7 @@ async def check_url(
             if active_job is not None
             else "failed"
             if failed_job is not None
-            else "analyzing"
+            else "unknown"
         )
         return ExtensionCheckResponse(
             found=False,
