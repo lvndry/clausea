@@ -220,6 +220,13 @@ def _calculate_verdict(
         return "very_pervasive"
 
 
+# Doc types that must never influence the product risk score or deep analysis LLM prompt.
+# "other" means the classifier could not assign a policy type; community_guidelines and
+# copyright_policy address editorial/IP rules rather than data/privacy risk.
+_PRODUCT_OVERVIEW_EXCLUDED_DOC_TYPES: frozenset[str] = frozenset(
+    {"other", "community_guidelines", "copyright_policy"}
+)
+
 # Weights for product-level risk: privacy/cookie/GDPR documents drive the headline
 # score more than terms-of-service legal boilerplate, so one liability-heavy ToS
 # does not mask a permissive privacy policy (or vice versa for privacy-first apps).
@@ -241,6 +248,8 @@ def _weighted_product_risk_score(docs: list[Document]) -> int | None:
     weighted_sum = 0.0
     weight_total = 0.0
     for doc in docs:
+        if doc.doc_type in _PRODUCT_OVERVIEW_EXCLUDED_DOC_TYPES:
+            continue
         if not doc.analysis or doc.analysis.risk_score is None:
             continue
         w = _PRODUCT_OVERVIEW_DOC_RISK_WEIGHTS.get(doc.doc_type, 1.0)
@@ -1204,6 +1213,9 @@ async def generate_product_deep_analysis(
     documents = await document_svc.get_product_documents_by_slug(db, product_slug)
     if not documents:
         raise ValueError(f"No documents found for {product_slug}")
+
+    # Skip excluded doc types — same set as _weighted_product_risk_score.
+    documents = [d for d in documents if d.doc_type not in _PRODUCT_OVERVIEW_EXCLUDED_DOC_TYPES]
 
     logger.info(f"Generating deep analysis for {product_slug} with {len(documents)} documents")
 
