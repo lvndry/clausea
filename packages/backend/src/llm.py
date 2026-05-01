@@ -31,11 +31,19 @@ class Model:
     model: str
     api_key: str
     api_base: str | None
+    extra_headers: dict[str, str] | None
 
-    def __init__(self, model: str, api_key: str, api_base: str | None = None):
+    def __init__(
+        self,
+        model: str,
+        api_key: str,
+        api_base: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ):
         self.model = model
         self.api_key = api_key
         self.api_base = api_base
+        self.extra_headers = extra_headers
 
 
 # Model identifier strings. Supported prefixes:
@@ -65,9 +73,14 @@ _OPENROUTER_ALIASES: dict[str, str] = {
     "openrouter/free": os.getenv(
         "OPENROUTER_FREE_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct:free"
     ),
+    "openrouter/gpt-oss-120b-nitro": "openrouter/openai/gpt-oss-120b:nitro",
+    "openrouter/deepseek-v4-flash": "openrouter/deepseek/deepseek-v4-flash",
+    "openrouter/grok-4.1-fast": "openrouter/x-ai/grok-4.1-fast",
     # legacy
     "openrouter/kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
 }
+
+EscalationValidator = Callable[[str], bool]
 
 _NO_TEMPERATURE_MODELS: frozenset[str] = frozenset(
     {"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano", "gemini-3-flash-preview"}
@@ -145,7 +158,14 @@ def get_model(model_name: SupportedModel) -> Model:
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY is not set")
         full_model = _OPENROUTER_ALIASES.get(model_name, model_name)
-        return Model(model=full_model, api_key=api_key)
+        return Model(
+            model=full_model,
+            api_key=api_key,
+            extra_headers={
+                "HTTP-Referer": os.getenv("APP_URL", "https://clausea.co"),
+                "X-Title": os.getenv("APP_NAME", "Clausea"),
+            },
+        )
 
     if model_name.startswith("groq/"):
         api_key = os.getenv("GROQ_API_KEY")
@@ -197,6 +217,7 @@ async def _completion_with_fallback_impl(
                 api_key=model.api_key,
                 messages=messages,
                 **({"api_base": model.api_base} if model.api_base else {}),
+                **({"extra_headers": model.extra_headers} if model.extra_headers else {}),
                 **call_kwargs,
             )
             duration = time.time() - start_time
@@ -285,3 +306,64 @@ async def get_embeddings(
     except Exception as e:
         logger.error("Error getting embeddings with %s: %s", model_name, e)
         raise
+
+
+def _extract_json_from_response(response: ModelResponse) -> str:
+    choice = response.choices[0]
+    if not hasattr(choice, "message"):
+        raise ValueError("Response missing message attribute")
+    message = choice.message  # type: ignore[attr-defined]
+    if not message:
+        raise ValueError("Response message is None")
+    content = message.content  # type: ignore[attr-defined]
+    if not content:
+        raise ValueError("Response content is empty")
+    return content
+
+
+async def acompletion_with_escalation(
+    messages: list[dict[str, str]],
+    primary: list[SupportedModel],
+    escalation: list[SupportedModel],
+    validator: EscalationValidator,
+    **kwargs: Any,
+) -> ModelResponse:
+    """Call primary model, validate response quality, escalate to better model on failure.
+
+    If the escalated response also fails validation, returns it anyway with a warning —
+    partial data is better than blocking the pipeline.
+    """
+    response = await acompletion_with_fallback(messages, model_priority=primary, **kwargs)
+
+    try:
+        content = _extract_json_from_response(response)
+        primary_valid = validator(content)
+    except ValueError:
+        primary_valid = False
+
+    if primary_valid:
+        return response
+
+    logger.warning(
+        "Primary model %s failed validation, escalating to %s",
+        response.model,
+        escalation[0] if escalation else "unknown",
+    )
+
+    escalated = await acompletion_with_fallback(messages, model_priority=escalation, **kwargs)
+    logger.info("Escalated completion used model %s", escalated.model)
+
+    try:
+        escalated_content = _extract_json_from_response(escalated)
+        if not validator(escalated_content):
+            logger.warning(
+                "Escalated model %s also failed validation — returning response anyway",
+                escalated.model,
+            )
+    except ValueError:
+        logger.warning(
+            "Escalated model %s returned malformed content — returning response anyway",
+            escalated.model,
+        )
+
+    return escalated

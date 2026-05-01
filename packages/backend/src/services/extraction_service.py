@@ -30,7 +30,12 @@ from typing import Any, cast
 from pydantic import BaseModel, Field
 
 from src.core.logging import get_logger
-from src.llm import SupportedModel, acompletion_with_fallback
+from src.llm import (
+    EscalationValidator,
+    SupportedModel,
+    acompletion_with_escalation,
+    acompletion_with_fallback,
+)
 from src.models.document import (
     Document,
     DocumentExtraction,
@@ -56,6 +61,49 @@ from src.models.document import (
 from src.utils.cancellation import CancellationToken
 
 logger = get_logger(__name__)
+
+_EXTRACTION_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+_EXTRACTION_PRIMARY: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro"
+] + _EXTRACTION_RESILIENCE
+_EXTRACTION_ESCALATION: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+
+_COMPLEX_DOC_LENGTH_THRESHOLD: int = 50_000
+_COMPLEX_DOC_TYPES: frozenset[str] = frozenset(
+    {"terms_of_service", "data_processing_agreement", "terms_and_conditions"}
+)
+
+_CLUSTER_REQUIRED_KEYS: dict[str, list[str]] = {
+    "data_practices": [
+        "data_collected",
+        "data_purposes",
+        "retention_policies",
+        "security_measures",
+    ],
+    "sharing_transfers": ["third_party_details", "international_transfers", "government_access"],
+    "rights_ai": ["user_rights", "consent_mechanisms", "account_lifecycle", "ai_usage"],
+    "legal_scope": ["liability", "dispute_resolution", "content_ownership", "scope_expansion"],
+}
+
+
+def _extraction_validator(cluster_name: str) -> EscalationValidator:
+    required = _CLUSTER_REQUIRED_KEYS.get(cluster_name, [])
+
+    def validate(content: str) -> bool:
+        try:
+            data = json.loads(content)
+            if not isinstance(data, dict):
+                return False
+            if required and not all(k in data for k in required):
+                return False
+            return any(
+                isinstance(data.get(k), list) and len(data[k]) > 0
+                for k in (required if required else data)
+            )
+        except (json.JSONDecodeError, AttributeError):
+            return False
+
+    return validate
 
 
 # ---------------------------------------------------------------------------
@@ -1372,7 +1420,6 @@ async def extract_document_facts(
     document: Document,
     *,
     use_cache: bool = True,
-    model_priority: list[SupportedModel] | None = None,
     cancellation_token: CancellationToken | None = None,
 ) -> DocumentExtraction:
     """Extract evidence-backed facts from a document.
@@ -1384,10 +1431,7 @@ async def extract_document_facts(
       4. legal_scope: liability, disputes, content ownership, scope, indemnification, termination
     """
     token = cancellation_token or CancellationToken()
-    logger.debug(
-        f"Starting v4 extraction for document {document.id} "
-        f"(use_cache={use_cache}, model_priority={model_priority})"
-    )
+    logger.debug(f"Starting v4 extraction for document {document.id} (use_cache={use_cache})")
 
     content_hash = (
         document.metadata.get("content_hash") if document.metadata else None
@@ -1445,20 +1489,45 @@ async def extract_document_facts(
 
     accumulated_signals = PrivacySignals()
 
+    _is_complex = (
+        len(document.text or "") > _COMPLEX_DOC_LENGTH_THRESHOLD
+        or document.doc_type in _COMPLEX_DOC_TYPES
+    )
+
     async def _run_cluster(cluster_name: str, chunk_text: str, chunk_idx: int) -> dict[str, Any]:
         logger.debug(
             f"Running cluster '{cluster_name}' for {document.id} chunk {chunk_idx}/{len(chunks)}"
         )
-        response = await acompletion_with_fallback(
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": _get_extraction_prompt(document, chunk_text, cluster_name),
-                },
-            ],
-            model_priority=model_priority,
-            response_format={"type": "json_object"},
+        is_complex = _is_complex
+        messages = [
+            {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": _get_extraction_prompt(document, chunk_text, cluster_name),
+            },
+        ]
+        if is_complex:
+            # Complex docs go straight to the escalation model. No validation step:
+            # there is no higher-tier model to escalate to, so we accept the response.
+            response = await acompletion_with_fallback(
+                messages,
+                model_priority=_EXTRACTION_ESCALATION,
+                response_format={"type": "json_object"},
+            )
+        else:
+            response = await acompletion_with_escalation(
+                messages=messages,
+                primary=_EXTRACTION_PRIMARY,
+                escalation=_EXTRACTION_ESCALATION,
+                validator=_extraction_validator(cluster_name),
+                response_format={"type": "json_object"},
+            )
+        logger.info(
+            "Cluster '%s' for %s chunk %d completed with model %s",
+            cluster_name,
+            document.id,
+            chunk_idx,
+            response.model,
         )
         choice = response.choices[0]
         if not hasattr(choice, "message"):

@@ -31,7 +31,6 @@ wheels/
 # streamlit
 secrets.toml
 
-
 ### Frontend
 
 # dependencies
@@ -60,4 +59,7 @@ bun-debug.log*
 
 ### misc
 data/
+
+# AI tools
+superpowers/
 .planning

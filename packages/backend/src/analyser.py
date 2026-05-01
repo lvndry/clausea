@@ -20,7 +20,11 @@ from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.llm import acompletion_with_fallback
+from src.llm import (
+    SupportedModel,
+    acompletion_with_escalation,
+    acompletion_with_fallback,
+)
 from src.models.document import (
     BusinessImpact,
     BusinessImpactAssessment,
@@ -64,6 +68,35 @@ from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
 load_dotenv()
 logger = get_logger(__name__)
+
+_ANALYSIS_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+_ANALYSIS_PRIMARY: list[SupportedModel] = ["openrouter/gpt-oss-120b-nitro"] + _ANALYSIS_RESILIENCE
+_ANALYSIS_ESCALATION: list[SupportedModel] = ["openrouter/grok-4.1-fast"] + _ANALYSIS_RESILIENCE
+_OVERVIEW_PRIORITY: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro",
+    "openrouter/deepseek-v4-flash",
+]
+
+
+def _analysis_validator(content: str) -> bool:
+    try:
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            return False
+        if not isinstance(data.get("summary"), str) or not data["summary"].strip():
+            return False
+        scores = data.get("scores")
+        if not isinstance(scores, dict) or len(scores) == 0:
+            return False
+        # At least one score entry must be a dict with a numeric score field
+        if not any(
+            isinstance(v, dict) and isinstance(v.get("score"), int) for v in scores.values()
+        ):
+            return False
+        return True
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
 
 ProgressCallback = Callable[[int, int, Document], Awaitable[None] | None]
 
@@ -472,6 +505,11 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
         except Exception as e:
             logger.warning(f"Failed to parse critical_clauses: {e}")
 
+    analysis.analysis_completeness = data.get("analysis_completeness", "full")
+    raw_gaps = data.get("coverage_gaps", [])
+    if isinstance(raw_gaps, list):
+        analysis.coverage_gaps = [str(g) for g in raw_gaps if g]
+
     raw_sections = data.get("key_sections", [])
     if isinstance(raw_sections, list):
         try:
@@ -480,11 +518,6 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
             ]
         except Exception as e:
             logger.warning(f"Failed to parse key_sections: {e}")
-
-    analysis.analysis_completeness = data.get("analysis_completeness", "full")
-    raw_gaps = data.get("coverage_gaps", [])
-    if isinstance(raw_gaps, list):
-        analysis.coverage_gaps = [str(g) for g in raw_gaps if g]
 
     if analysis.document_risk_breakdown is not None:
         br = analysis.document_risk_breakdown
@@ -638,19 +671,35 @@ Document content:
 
             async with usage_tracking(tracker_callback):
                 # Wrap the LLM call in a cancellable task
-                llm_task = asyncio.create_task(
-                    acompletion_with_fallback(
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": DOCUMENT_ANALYSIS_PROMPT,
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        response_format={"type": "json_object"},
-                        temperature=0,
+                is_complex = should_use_reasoning_model(document)
+
+                if is_complex:
+                    # Complex docs go straight to the escalation model — no cheaper tier to try first.
+                    llm_task = asyncio.create_task(
+                        acompletion_with_fallback(
+                            messages=[
+                                {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
+                                {"role": "user", "content": prompt},
+                            ],
+                            model_priority=_ANALYSIS_ESCALATION,
+                            response_format={"type": "json_object"},
+                            temperature=0,
+                        )
                     )
-                )
+                else:
+                    llm_task = asyncio.create_task(
+                        acompletion_with_escalation(
+                            messages=[
+                                {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
+                                {"role": "user", "content": prompt},
+                            ],
+                            primary=_ANALYSIS_PRIMARY,
+                            escalation=_ANALYSIS_ESCALATION,
+                            validator=_analysis_validator,
+                            response_format={"type": "json_object"},
+                            temperature=0,
+                        )
+                    )
 
                 # Wait for either completion or cancellation
                 cancellation_task = asyncio.create_task(token.cancelled.wait())
@@ -678,6 +727,7 @@ Document content:
 
                 # Get the response
                 response = await llm_task
+                logger.info("analyse_document %s used model %s", document.id, response.model)
 
             choice = response.choices[0]
             if not hasattr(choice, "message"):
@@ -696,11 +746,10 @@ Document content:
                 parsed: DocumentAnalysis = DocumentAnalysis.model_validate(
                     parsed_dict, strict=False
                 )
-
                 # Ensure all required scores are present, normalize names, and calculate risk_score/verdict
                 parsed = _ensure_required_scores(parsed)
 
-                # Parse deep analysis fields (critical_clauses, risk_breakdown, key_sections,
+                # Parse deep analysis fields (critical_clauses, risk_breakdown,
                 # analysis_completeness, coverage_gaps) from the same response — deep is default.
                 _attach_deep_fields(parsed, parsed_dict)
 
@@ -999,6 +1048,7 @@ Per-document analyses and extractions:
                         },
                         {"role": "user", "content": prompt},
                     ],
+                    model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                 )
             )
@@ -1365,6 +1415,7 @@ Per-document analyses and extractions:
                     },
                     {"role": "user", "content": aggregate_prompt},
                 ],
+                model_priority=_OVERVIEW_PRIORITY,
                 response_format={"type": "json_object"},
             )
 
