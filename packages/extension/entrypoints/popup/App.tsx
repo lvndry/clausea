@@ -191,26 +191,25 @@ export default function App() {
   }, []);
 
   // ── Trigger pipeline analysis ────────────────────────────────────────────
-  const getExtensionHeaders = (): Promise<Record<string, string>> =>
-    new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage({ type: "GET_EXTENSION_HEADERS" }, (response) => {
-          if (chrome.runtime.lastError || !response?.success) {
-            resolve({});
-            return;
-          }
-          resolve((response.headers as Record<string, string>) ?? {});
-        });
-      } catch {
-        resolve({});
-      }
-    });
-
   const handleAnalyze = async () => {
     if (!currentUrl) return;
     setNotFoundPhase("triggering");
     setPhaseError("");
     try {
+      const getExtensionHeaders = (): Promise<Record<string, string>> =>
+        new Promise((resolve) => {
+          try {
+            chrome.runtime.sendMessage({ type: "GET_EXTENSION_HEADERS" }, (response) => {
+              if (chrome.runtime.lastError || !response?.success) {
+                resolve({});
+                return;
+              }
+              resolve((response.headers as Record<string, string>) ?? {});
+            });
+          } catch {
+            resolve({});
+          }
+        });
       const headers = await getExtensionHeaders();
       const result = await analyzeUrl(currentUrl, headers);
       setAnalyzeResult(result);
@@ -230,6 +229,7 @@ export default function App() {
     } catch (err) {
       if (isRateLimitError(err)) {
         setLoginUrl(err.loginUrl);
+        setNotFoundPhase("initial");
         setView("login-required");
         return;
       }
@@ -537,12 +537,14 @@ export default function App() {
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => chrome.tabs.create({ url: loginUrl })}
                 className="w-full rounded-sm bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 transition-opacity"
               >
                 Sign in to Clausea
               </button>
               <button
+                type="button"
                 onClick={() => setView("not-found")}
                 className="text-xs text-muted-foreground underline underline-offset-2"
               >

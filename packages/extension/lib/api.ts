@@ -54,8 +54,8 @@ export interface ExtensionAnalyzeResponse {
 }
 
 export interface RateLimitError extends Error {
-  requiresAuth: true;
-  loginUrl: string;
+  readonly requiresAuth: true;
+  readonly loginUrl: string;
 }
 
 export function isRateLimitError(e: unknown): e is RateLimitError {
@@ -123,18 +123,14 @@ export async function analyzeUrl(
     body: JSON.stringify({ url }),
   });
 
-  if (response.status === 429) {
-    const body = await response.json().catch(() => ({}));
-    if (body?.requires_auth) {
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    if (response.status === 429 && body?.requires_auth) {
       const err = new Error("Login required to analyze more sites") as RateLimitError;
       err.requiresAuth = true;
       err.loginUrl = body.login_url ?? "https://clausea.co/sign-in";
       throw err;
     }
-  }
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
     throw new Error(body?.detail ?? `Analysis failed with status ${response.status}`);
   }
 
