@@ -31,11 +31,19 @@ class Model:
     model: str
     api_key: str
     api_base: str | None
+    extra_headers: dict[str, str] | None
 
-    def __init__(self, model: str, api_key: str, api_base: str | None = None):
+    def __init__(
+        self,
+        model: str,
+        api_key: str,
+        api_base: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ):
         self.model = model
         self.api_key = api_key
         self.api_base = api_base
+        self.extra_headers = extra_headers
 
 
 # Model identifier strings. Supported prefixes:
@@ -150,7 +158,14 @@ def get_model(model_name: SupportedModel) -> Model:
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY is not set")
         full_model = _OPENROUTER_ALIASES.get(model_name, model_name)
-        return Model(model=full_model, api_key=api_key)
+        return Model(
+            model=full_model,
+            api_key=api_key,
+            extra_headers={
+                "HTTP-Referer": os.getenv("APP_URL", "https://clausea.co"),
+                "X-Title": os.getenv("APP_NAME", "Clausea"),
+            },
+        )
 
     if model_name.startswith("groq/"):
         api_key = os.getenv("GROQ_API_KEY")
@@ -202,6 +217,7 @@ async def _completion_with_fallback_impl(
                 api_key=model.api_key,
                 messages=messages,
                 **({"api_base": model.api_base} if model.api_base else {}),
+                **({"extra_headers": model.extra_headers} if model.extra_headers else {}),
                 **call_kwargs,
             )
             duration = time.time() - start_time
