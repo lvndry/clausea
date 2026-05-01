@@ -1,12 +1,12 @@
-# Clausea - Legal Document Intelligence API
+# Clausea - Policy Document Intelligence API
 
-> The definitive platform for legal document analysis, privacy policy intelligence, and compliance monitoring.
+> The definitive platform for policy document analysis, privacy policy intelligence, and compliance monitoring.
 
-Clausea transforms complex legal documents into actionable insights using advanced AI and LLM orchestration. Our API provides legal-grade accuracy with sub-10-second response times, helping individuals and businesses understand what they're agreeing to.
+Clausea transforms complex policy documents into actionable insights using advanced AI and LLM orchestration. Our API provides legal-grade accuracy with sub-10-second response times, helping individuals and businesses understand what they're agreeing to.
 
 ## 🚀 Features
 
-- **Legal Document Analysis**: Privacy policies, terms of service, and contracts
+- **Policy Document Analysis**: Privacy policies, terms of service, cookie policies, and other agreements
 - **AI-Powered Risk Assessment**: Quantified risk scoring with confidence levels
 - **Compliance Monitoring**: GDPR, CCPA, and regulatory compliance checking
 - **Real-time Processing**: Sub-10-second analysis with async processing
@@ -145,10 +145,10 @@ Once the server is running, visit:
 ### 1. Document Crawling & Ingestion
 
 ```python
-# Automated web crawling for legal documents
+# Automated web crawling for policy documents
 1. Fetch product base URLs
 2. Crawl and extract content
-3. Detect legal document types
+3. Detect policy document types
 4. Language detection and filtering
 5. Store in MongoDB with metadata
 ```

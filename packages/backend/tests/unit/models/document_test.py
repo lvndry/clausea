@@ -16,15 +16,17 @@ from src.models.document import (
     DocumentAnalysis,
     DocumentAnalysisScores,
     DocumentExtraction,
+    DocumentRiskBreakdown,
     DocumentSummary,
     EvidenceSpan,
-    ExtractedTextItem,
+    ExtractedDataItem,
     ExtractedThirdPartyRecipient,
     MetaSummary,
     MetaSummaryScore,
     MetaSummaryScores,
     PrivacySignals,
     ProductOverview,
+    coerce_doc_type_from_classifier,
 )
 
 # ── DocumentAnalysis validators ─────────────────────────────────────
@@ -118,6 +120,39 @@ class TestDocumentAnalysisCleanComplianceStatus:
             compliance_status={"GDPR": "8", "CCPA": 7, "bad": "not_a_number", "none_val": None},  # type: ignore[dict-item]
         )
         assert analysis.compliance_status == {"GDPR": 8, "CCPA": 7}
+
+
+class TestDocumentAnalysisApplicabilityAlias:
+    """Legacy JSON used `scope`; LLM output and new code use `applicability`."""
+
+    def test_legacy_scope_key_in_model_validate(self) -> None:
+        analysis = DocumentAnalysis.model_validate(
+            {
+                "summary": "S",
+                "scores": {"transparency": {"score": 5, "justification": "x"}},
+                "scope": "EU-specific",
+            }
+        )
+        assert analysis.applicability == "EU-specific"
+
+    def test_applicability_key(self) -> None:
+        analysis = DocumentAnalysis.model_validate(
+            {
+                "summary": "S",
+                "scores": {"transparency": {"score": 5, "justification": "x"}},
+                "applicability": "Global",
+            }
+        )
+        assert analysis.applicability == "Global"
+
+    def test_document_risk_breakdown_scope_alias(self) -> None:
+        br = DocumentRiskBreakdown.model_validate(
+            {
+                "overall_risk": 5,
+                "scope": "US-only",
+            }
+        )
+        assert br.applicability == "US-only"
 
 
 # ── DocumentAnalysis risk_score bounds ──────────────────────────────
@@ -289,14 +324,14 @@ class TestCoverageItem:
 class TestDocumentExtraction:
     def test_defaults(self) -> None:
         extraction = DocumentExtraction(source_content_hash="hash123")
-        assert extraction.version == "v3"
+        assert extraction.version == "v4"
         assert extraction.data_collected == []
         assert extraction.privacy_signals is None
 
     def test_with_data(self) -> None:
         extraction = DocumentExtraction(
             source_content_hash="hash123",
-            data_collected=[ExtractedTextItem(value="Email address")],
+            data_collected=[ExtractedDataItem(data_type="Email address")],
             privacy_signals=PrivacySignals(sells_data="no"),
         )
         assert len(extraction.data_collected) == 1
@@ -348,6 +383,16 @@ class TestDocument:
                 doc_type="invalid_type",  # type: ignore[arg-type]
                 markdown="md",
                 text="text",
+            )
+
+    def test_unclassified_is_not_a_valid_doc_type(self) -> None:
+        with pytest.raises(ValidationError):
+            Document(
+                url="https://example.com",
+                product_id="p1",
+                doc_type="unclassified",  # type: ignore[arg-type]
+                markdown="",
+                text="",
             )
 
     def test_valid_regions(self) -> None:
@@ -465,3 +510,23 @@ class TestProductOverviewComplianceStatus:
             compliance_status={"GDPR": "8", "bad": "no"},  # type: ignore[dict-item]
         )
         assert overview.compliance_status == {"GDPR": 8}
+
+
+# ── coerce_doc_type_from_classifier ─────────────────────────────────
+
+
+class TestCoerceDocTypeFromClassifier:
+    def test_known_classifier_labels_preserved(self) -> None:
+        assert coerce_doc_type_from_classifier("security_policy") == "security_policy"
+        assert coerce_doc_type_from_classifier("privacy_policy") == "privacy_policy"
+
+    def test_unknown_label_becomes_other(self) -> None:
+        assert coerce_doc_type_from_classifier("hipaa_policy") == "other"
+        assert coerce_doc_type_from_classifier("not_a_real_type") == "other"
+
+    def test_empty_or_none_defaults_to_other(self) -> None:
+        assert coerce_doc_type_from_classifier(None) == "other"
+        assert coerce_doc_type_from_classifier("") == "other"
+
+    def test_whitespace_stripped(self) -> None:
+        assert coerce_doc_type_from_classifier("  privacy_policy  ") == "privacy_policy"

@@ -24,10 +24,17 @@ export interface ExtensionCrawlError {
   error_message: string | null;
 }
 
+export type ExtensionProductStatus =
+  | "unknown"
+  | "analyzing"
+  | "failed"
+  | "ready";
+
 export interface ExtensionCheckResponse {
   found: boolean;
   slug: string | null;
   product_name: string | null;
+  product_status: ExtensionProductStatus;
   pipeline_active: boolean;
   pipeline_failed: boolean;
   pipeline_error: string | null;

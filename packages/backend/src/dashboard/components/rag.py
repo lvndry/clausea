@@ -1,8 +1,8 @@
 import streamlit as st
 
+from src.agent.agent import get_answer
 from src.dashboard.db_utils import get_all_products_isolated
 from src.dashboard.utils import run_async
-from src.rag import get_answer
 
 
 def show_rag() -> None:

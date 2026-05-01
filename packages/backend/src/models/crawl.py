@@ -36,6 +36,7 @@ class CrawlTarget(BaseModel):
     score: float | None = None
     status: CrawlTargetStatus = "candidate"
     discovered_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now)
     fetched_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

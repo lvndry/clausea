@@ -10,7 +10,7 @@ from __future__ import annotations
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.models.document import Document, DocumentAnalysis
+from src.models.document import CORE_DOC_TYPES, Document, DocumentAnalysis
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 
@@ -38,6 +38,11 @@ class DocumentService:
         """
         self._document_repo = document_repo
         self._product_repo = product_repo
+
+    @staticmethod
+    def _assign_tier_relevance(document: Document) -> None:
+        """Classify document relevance for free/pro source access."""
+        document.tier_relevance = "core" if document.doc_type in CORE_DOC_TYPES else "extended"
 
     # ============================================================================
     # Document Query Operations
@@ -89,7 +94,9 @@ class DocumentService:
         Returns:
             List of documents for the product
         """
-        documents: list[Document] = await self._document_repo.find_by_product_id(db, product_id)
+        documents: list[Document] = await self._document_repo.find_by_product_id_full(
+            db, product_id
+        )
         return documents
 
     async def get_product_documents_by_slug(
@@ -110,7 +117,9 @@ class DocumentService:
         product = await self._product_repo.find_by_slug(db, product_slug)
         if not product:
             raise ValueError(f"Product with slug {product_slug} not found")
-        documents: list[Document] = await self._document_repo.find_by_product_id(db, product.id)
+        documents: list[Document] = await self._document_repo.find_by_product_id_full(
+            db, product.id
+        )
         return documents
 
     async def get_documents_by_type(self, db: AgnosticDatabase, doc_type: str) -> list[Document]:
@@ -127,18 +136,18 @@ class DocumentService:
         return documents
 
     async def get_documents_with_analysis(
-        self, db: AgnosticDatabase, product_slug: str | None = None
+        self, db: AgnosticDatabase, product_id: str | None = None
     ) -> list[Document]:
         """Get documents that have analysis data.
 
         Args:
             db: Database instance
-            product_slug: Optional product slug to filter by
+            product_id: Optional product ID to filter by
 
         Returns:
             List of documents with analysis
         """
-        documents: list[Document] = await self._document_repo.find_with_analysis(db, product_slug)
+        documents: list[Document] = await self._document_repo.find_with_analysis(db, product_id)
         return documents
 
     # ============================================================================
@@ -161,6 +170,7 @@ class DocumentService:
             Exception: If storage fails
         """
         try:
+            self._assign_tier_relevance(document)
             result = await self._document_repo.save(db, document)
 
             # Business logic: Invalidate product overview cache for this product
@@ -180,14 +190,27 @@ class DocumentService:
             logger.error(f"Error storing document {document.id}: {e}")
             raise e
 
-    async def update_document(self, db: AgnosticDatabase, document: Document) -> bool:
+    async def update_document(
+        self,
+        db: AgnosticDatabase,
+        document: Document,
+        *,
+        invalidate_product_overview: bool = False,
+    ) -> bool:
         """Update a document in the database.
 
-        Includes business logic: invalidates product meta-summary cache.
+        When ``invalidate_product_overview`` is True (default), deletes the cached
+        product overview for this product so readers do not see a stale meta-summary.
+
+        Batch analysers (e.g. ``analyse_product_documents``) should pass ``False`` so each
+        document save does not wipe the overview row; the pipeline then replaces it in
+        ``generate_product_overview``. Otherwise a later partial re-run can leave
+        ``product_overviews`` empty forever if overview generation does not run again.
 
         Args:
             db: Database instance
             document: Document to update
+            invalidate_product_overview: If True, delete stored product overview for this product
 
         Returns:
             True if document was updated, False otherwise
@@ -196,9 +219,10 @@ class DocumentService:
             Exception: If update fails
         """
         try:
+            self._assign_tier_relevance(document)
             success = await self._document_repo.update(db, document)
 
-            if success:
+            if success and invalidate_product_overview:
                 # Business logic: Invalidate product overview cache for this product
                 try:
                     product = await self._product_repo.find_by_id(db, document.product_id)

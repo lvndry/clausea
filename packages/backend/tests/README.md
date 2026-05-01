@@ -1,6 +1,6 @@
 # Clausea Backend Tests
 
-This directory contains the test suite for the Clausea backend, focusing on legal document intelligence and analysis accuracy.
+This directory contains the test suite for the Clausea backend, focusing on policy document intelligence and analysis accuracy.
 
 ## Test Structure
 
@@ -117,7 +117,7 @@ class TestMyService:
 
 ## Legal Testing Considerations
 
-When writing tests for legal document analysis:
+When writing tests for policy document analysis:
 
 1. **Accuracy Requirements**: Tests should validate >95% accuracy on known legal patterns
 2. **Confidence Scoring**: Verify AI confidence levels are realistic

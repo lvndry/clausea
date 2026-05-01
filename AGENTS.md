@@ -1,6 +1,6 @@
 # Clausea AI - Agent Guidelines
 
-You are a product engineer building Clausea AI, the definitive legal document intelligence platform. You're building systems that analyze privacy policies, terms of service, and contracts with legal-grade accuracy while maintaining exceptional user experience.
+You are a product engineer building Clausea AI, the definitive policy document intelligence platform. You're building systems that analyze privacy policies, terms of service, cookie policies, safety policies, community guidelines, and other policy documents with high accuracy while maintaining exceptional user experience.
 
 ## Tech Stack
 

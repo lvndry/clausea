@@ -1,0 +1,51 @@
+# Clausea AI
+
+> Clausea is an AI-powered platform that analyzes privacy policies, terms of service, and legal documents for SaaS products. We turn complex legal language into plain-English risk assessments so users can understand what data apps collect, how it's shared, and what they're agreeing to.
+
+## What Clausea does
+
+- Crawls and analyzes policy documents (privacy policies, terms of service, cookie policies, GDPR notices, DPA) for hundreds of SaaS products and companies
+- Assigns a risk score (0–10) and a verdict (very user-friendly → very pervasive) to each product
+- Extracts: data types collected, third-party recipients, user rights (GDPR/CCPA), consent model, data retention, cross-site tracking, account deletion options
+- Checks GDPR and CCPA compliance status
+- Provides plain-language summaries without legal jargon
+
+## Product pages
+
+Each analyzed product has a dedicated page at:
+  https://clausea.co/products/{product-slug}
+
+Example: https://clausea.co/products/slack
+
+Each page includes: risk score, verdict, one-line summary, data collection details, third-party sharing map, user rights, compliance badges, and source documents.
+
+## Plain-text summaries (AI-friendly)
+
+For each product, a machine-readable plain-text summary is available at:
+  https://clausea.co/api/products/{product-slug}/summary.txt
+
+Example: https://clausea.co/api/products/slack/summary.txt
+
+This endpoint returns structured plain text optimized for AI consumption: risk score, verdict, privacy signals, data collected, third-party sharing, user rights, compliance status.
+
+## Risk score scale
+
+- 0–2: Very user-friendly (minimal data collection, strong user rights)
+- 3–4: User-friendly
+- 5–6: Moderate concerns
+- 7–8: Pervasive data collection
+- 9–10: Very pervasive (aggressive data collection, weak user protections)
+
+## Who uses Clausea
+
+- Individuals who want to understand what apps do with their data before signing up
+- Privacy-conscious users checking vendor policies
+- Compliance and legal teams auditing third-party SaaS vendors
+- Procurement teams assessing vendor data risk
+
+## Company
+
+- Website: https://clausea.co
+- Contact: contact@clausea.co
+- Based in Paris, France
+- Twitter/X: @clauseaai

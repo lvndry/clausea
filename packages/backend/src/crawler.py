@@ -1,5 +1,5 @@
 """
-Legal document crawler for extracting privacy policies, terms of service, and other legal content.
+Policy document crawler for extracting privacy policies, terms of service, cookie policies, safety policies, and other policy content.
 """
 
 import asyncio
@@ -47,10 +47,28 @@ ACCEPT_HEADER = (
     "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
 )
 
+# Minimum extracted body text length to treat static fetch as sufficient (low URL score) and
+# to skip SPA hydration waits in the browser fetch path.
+MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
+
+# Browser fetch: short polling attempts when initial DOM text is below MIN_CONTENT_LENGTH_FOR_SPA_CHECK.
+SPA_HYDRATION_RETRIES = 3
+
+# ContentAnalyzer reports legal relevance on a 0–10 scale; CrawlResult.legal_score is normalized to 0.0–1.0.
+MAX_LEGAL_SCORE_SCALE = 10.0
+
+# Hard cap on response body size. Policy documents are rarely > 1 MB; anything larger is
+# likely a data dump, sitemap, or binary asset that slipped through content-type checks.
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB
+
 
 @dataclass
 class StaticFetchResult:
-    """Raw result from an HTTP GET before any content extraction."""
+    """Raw result from an HTTP GET before any content extraction.
+
+    When ``blocked_by_robots_txt`` is True, the crawler did not perform the GET
+    because robots.txt disallows the URL.
+    """
 
     url: str
     status_code: int
@@ -58,7 +76,7 @@ class StaticFetchResult:
     body: str
     raw_bytes: bytes | None = None
     headers: dict[str, str] = dataclass_field(default_factory=dict)
-    is_error: bool = False
+    blocked_by_robots_txt: bool = False
     error_message: str | None = None
     cached: bool = False
     # The final URL after following HTTP redirects (301/302).  When the
@@ -111,8 +129,9 @@ class CrawlResult(BaseModel):
     error_message: str | None = Field(
         default=None, description="Detailed error message if crawl failed"
     )
-    legal_score: float = Field(
-        default=0.0, description="Calculated relevance score for legal content"
+    legal_score: float | None = Field(
+        default=None,
+        description="Content-based legal relevance score (0.0–1.0); None if not analyzed",
     )
     discovered_links: list[dict[str, str]] = Field(
         default_factory=list, description="List of links with both URL and original anchor text"
@@ -137,7 +156,7 @@ class CrawlStats(BaseModel):
 
 
 class URLScorer:
-    """Scores URLs based on legal document relevance."""
+    """Scores URLs based on policy document relevance."""
 
     def __init__(self) -> None:
         # Compile regex patterns once for efficiency
@@ -208,6 +227,18 @@ class URLScorer:
                 r"/legal/policies/privacy/?": 5.0,
                 r"/legal/policies/terms/?": 5.0,
                 r"/legal/policies/cookies/?": 4.5,
+                r"/policy/privacy/?": 5.0,
+                r"/policy/terms/?": 5.0,
+                r"/policy/cookies/?": 4.5,
+                r"/policy/cookie/?": 4.5,
+                r"/policy/terms-of-service/?": 5.0,
+                r"/policy/terms-of-use/?": 5.0,
+                r"/policy/data/?": 4.0,
+                r"/policy/gdpr/?": 4.5,
+                r"/policy/ccpa/?": 4.5,
+                r"/policy/community/?": 4.0,
+                r"/policy/safety/?": 4.0,
+                r"/policy/copyright/?": 4.0,
             }.items()
         }
 
@@ -268,8 +299,8 @@ class URLScorer:
             "company": 1.0,
             # Negative keywords (reduce score)
             # NOTE: Only penalise paths that are genuinely unlikely to host
-            # legal content.  Paths like /help, /support, /about and /blog
-            # are neutral — many companies publish legal documents under these
+            # policy content.  Paths like /help, /support, /about and /blog
+            # are neutral — many companies publish policy documents under these
             # sections (e.g. Airbnb ToS at /help/article/2908).
             "contact": -1.0,
             "news": -1.0,
@@ -278,7 +309,7 @@ class URLScorer:
     @lru_cache(maxsize=10000)  # noqa: B019 - Cache is bounded and per-instance
     def score_url(self, url: str, anchor_text: str | None = None) -> float:
         """
-        Score a URL based on legal document relevance.
+        Score a URL based on policy document relevance.
 
         Uses LRU cache to avoid recomputing scores for the same URLs.
         Lowercases URL once and reuses for all pattern matching.
@@ -334,8 +365,8 @@ class URLScorer:
                 score += self.legal_keywords[word]
                 scored_keywords.add(word.lower())
 
-        # Check for legal keywords as substrings in path and words
-        # This catches cases where legal keywords are embedded in compound words
+        # Check for policy keywords as substrings in path and words
+        # This catches cases where policy keywords are embedded in compound words
         path_lower = path.lower()
         for keyword, weight in self.legal_keywords.items():
             # Only check positive-weight keywords (skip negative ones like "blog")
@@ -361,7 +392,7 @@ class URLScorer:
 
 
 class ContentAnalyzer:
-    """Analyzes page content for legal document characteristics."""
+    """Analyzes page content for policy document characteristics."""
 
     def __init__(self) -> None:
         self.compiled_legal_phrases = [
@@ -395,7 +426,7 @@ class ContentAnalyzer:
         ]
 
         # Quick check pattern for early exit (compiled once)
-        # This pattern matches common legal keywords for fast filtering
+        # This pattern matches common policy keywords for fast filtering
         self.quick_check_pattern = re.compile(
             r"\b(?:privacy|terms|policy|agreement|legal|gdpr|ccpa|cookie|data protection|"
             r"liability|disclaimer|jurisdiction|compliance|consent|rights)\b",
@@ -481,10 +512,10 @@ class ContentAnalyzer:
         self, content: str, title: str = "", metadata: dict[str, Any] | None = None
     ) -> tuple[bool, float, list[str]]:
         """
-        Analyze content to determine if it's a legal document.
+        Analyze content to determine if it's a policy document.
 
         Returns:
-            Tuple of (is_legal, confidence_score, matched_indicators)
+            Tuple of (is_policy, confidence_score, matched_indicators)
         """
         if not content:
             return False, 0.0, []
@@ -497,11 +528,11 @@ class ContentAnalyzer:
         if word_count < 50 or char_count < 300:
             return False, 0.0, ["content_too_short"]
 
-        # Early exit: Quick check for obvious non-legal content
-        # This avoids expensive full analysis for clearly non-legal documents
+        # Early exit: Quick check for obvious non-policy content
+        # This avoids expensive full analysis for clearly non-policy documents
         if not self.quick_check_pattern.search(content):
-            # No legal keywords found at all - very unlikely to be legal
-            return False, 0.0, ["no_legal_keywords"]
+            # No policy keywords found at all - very unlikely to be a policy document
+            return False, 0.0, ["no_policy_keywords"]
 
         # Now do full analysis (only if quick check passed)
         content_lower = content.lower()
@@ -513,7 +544,7 @@ class ContentAnalyzer:
         # Track matched content for density calculation
         matched_content_chars = 0
 
-        # Check for legal indicators in content
+        # Check for policy indicators in content
         for indicator in self.legal_indicators:
             if indicator in content_lower:
                 matched_indicators.append(indicator)
@@ -521,7 +552,7 @@ class ContentAnalyzer:
                 # Add to matched content length (count occurrences)
                 matched_content_chars += len(indicator) * content_lower.count(indicator)
 
-        # Check for legal phrases using compiled regex patterns
+        # Check for policy phrases using compiled regex patterns
         for compiled_pattern in self.compiled_legal_phrases:
             matches = compiled_pattern.finditer(content_lower)
             for match in matches:
@@ -530,10 +561,10 @@ class ContentAnalyzer:
                 raw_score += 2.0
                 matched_content_chars += len(match.group())
 
-        # Calculate legal content density
+        # Calculate policy content density
         legal_density = matched_content_chars / char_count
 
-        # Bonus for legal terms in title (more important)
+        # Bonus for policy terms in title (more important)
         title_bonus = 0.0
         for keyword in self.title_keywords:
             if keyword in title_lower:
@@ -559,14 +590,14 @@ class ContentAnalyzer:
         normalized_score = min(10.0, final_score)
 
         # More sophisticated thresholds
-        min_density_threshold = 0.05  # At least 5% of content should be legal-related
+        min_density_threshold = 0.05  # At least 5% of content should be policy-related
         min_score_threshold = 2.0
 
-        # Document is legal if:
-        # 1. Has sufficient legal density (5%+)
+        # Document is a policy document if:
+        # 1. Has sufficient policy density (5%+)
         # 2. Meets minimum score threshold
-        # 3. OR has strong title indicators (overrides density for short legal docs)
-        is_legal = (
+        # 3. OR has strong title indicators (overrides density for short policy docs)
+        is_policy = (
             (legal_density >= min_density_threshold and normalized_score >= min_score_threshold)
             or title_bonus >= 6.0  # Strong title indicators
         )
@@ -575,7 +606,7 @@ class ContentAnalyzer:
         matched_indicators.append(f"density:{legal_density:.3f}")
         matched_indicators.append(f"word_count:{word_count}")
 
-        return is_legal, normalized_score, matched_indicators
+        return is_policy, normalized_score, matched_indicators
 
 
 class DomainRateLimiter:
@@ -728,12 +759,9 @@ class RobotsTxtChecker:
                 )
                 return True, "No robots.txt rules found"
 
-            # If sitemaps exist in parsed rules, expose them to the caller
-            return (
-                self._check_url_allowed(url, robots_rules)
-                if not robots_rules.get("sitemaps")
-                else (True, "Sitemap directives present")
-            )
+            # Sitemap directives are stored on robots_rules for callers; they must not
+            # bypass Allow/Disallow — always apply URL rules.
+            return self._check_url_allowed(url, robots_rules)
 
         except Exception as e:
             logger_robots.warning(f"error checking robots.txt for {url}: {e}")
@@ -1048,7 +1076,7 @@ class AsyncFileLogHandler(logging.Handler):
 
 
 class ClauseaCrawler:
-    """Powerful legal document crawler."""
+    """Powerful policy document crawler."""
 
     def __init__(
         self,
@@ -1140,6 +1168,7 @@ class ClauseaCrawler:
 
         # Components
         self.url_scorer = URLScorer()
+        self.content_analyzer = ContentAnalyzer()
         self.robots_checker = RobotsTxtChecker(max_cache_size=1000) if respect_robots_txt else None
         self.http_cache = HTTPCache(
             max_cache_size=10000
@@ -1389,20 +1418,48 @@ class ClauseaCrawler:
         text_lower = text.lower()
         return any(m in text_lower for m in ClauseaCrawler._JS_REQUIRED_MARKERS)
 
+    @staticmethod
+    def _url_looks_like_not_found_landing(url: str) -> bool:
+        """True when the path is a dedicated Not Found document (e.g. ``/404``).
+
+        Many sites respond **200** with a thin shell and redirect the browser to a
+        path whose last segment is ``404`` (e.g. ``/404?fromUrl=...``).
+        Treating these like 404 avoids pointless browser retries and SPA waits.
+        """
+        path = (urlparse(url).path or "/").rstrip("/") or "/"
+        if path == "/404":
+            return True
+        segments = [seg for seg in path.split("/") if seg]
+        return bool(segments) and segments[-1].casefold() == "404"
+
     def _content_is_sufficient(self, page: PageContent, url: str) -> bool:
         """Decide whether the statically-fetched content is good enough to keep.
 
         If this returns False and ``use_browser`` is enabled the caller should
         retry with the headless browser.
+
+        High URL legal-relevance scores use a higher minimum length so thin
+        static HTML (common for SPAs) still triggers a browser retry.
+
+        We check both the raw page text (for the length gate) AND the extracted
+        markdown body. For JS-rendered SPAs the raw HTML can be large (nav links,
+        inline JSON) while the extracted main-content area is empty; checking
+        the markdown catches that case and forces a browser retry.
         """
-        if not page.text or len(page.text) < 500:
+        text = page.text or ""
+        if self._is_garbled_content(text):
             return False
-        if self._is_garbled_content(page.text):
-            return False
-        if self._has_js_required_markers(page.text):
+        if self._has_js_required_markers(text):
             return False
         url_score = self.url_scorer.score_url(url)
-        if url_score >= 5.0 and len(page.text) < 1000:
+        min_len = 1000 if url_score >= 5.0 else MIN_CONTENT_LENGTH_FOR_SPA_CHECK
+        if len(text) < min_len:
+            return False
+        # Secondary check: if the extracted markdown body is effectively empty the
+        # page is almost certainly a JS SPA shell — the raw text came from nav/JSON
+        # but the policy content isn't there. Trigger a browser retry.
+        markdown = page.markdown or ""
+        if len(markdown.strip()) < 200:
             return False
         return True
 
@@ -1416,8 +1473,6 @@ class ClauseaCrawler:
         Returns a :class:`StaticFetchResult` with the raw body/bytes.  No
         content parsing or legal analysis happens here.
         """
-        await self.rate_limit(url)
-
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
         if domain.startswith("www."):
@@ -1436,9 +1491,11 @@ class ClauseaCrawler:
                     status_code=403,
                     content_type="",
                     body="",
-                    is_error=True,
+                    blocked_by_robots_txt=True,
                     error_message=f"Blocked by robots.txt: {reason}",
                 )
+
+        await self.rate_limit(url)
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         headers = {
@@ -1489,8 +1546,28 @@ class ClauseaCrawler:
                 )
             )
 
+            # Reject responses that are too large before buffering the body.
+            declared_length = response.headers.get("Content-Length")
+            if declared_length and int(declared_length) > MAX_RESPONSE_BYTES:
+                logger.warning(
+                    f"Skipping oversized response ({declared_length} bytes declared): {url}"
+                )
+                return StaticFetchResult(
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body="",
+                    headers=resp_headers,
+                    resolved_url=final_url,
+                    error_message=f"Response too large ({declared_length} bytes)",
+                )
+
             if is_text:
-                body = await response.text()
+                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    logger.warning(f"Truncating response body at {MAX_RESPONSE_BYTES} bytes: {url}")
+                    raw = raw[:MAX_RESPONSE_BYTES]
+                body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,
                     status_code=response.status,
@@ -1500,7 +1577,12 @@ class ClauseaCrawler:
                     resolved_url=final_url,
                 )
             else:
-                raw_bytes = await response.read()
+                raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw_bytes) > MAX_RESPONSE_BYTES:
+                    logger.warning(
+                        f"Truncating binary response at {MAX_RESPONSE_BYTES} bytes: {url}"
+                    )
+                    raw_bytes = raw_bytes[:MAX_RESPONSE_BYTES]
                 return StaticFetchResult(
                     url=url,
                     status_code=response.status,
@@ -1730,10 +1812,10 @@ class ClauseaCrawler:
 
             total_timeout_ms = self.timeout * 1000
 
-            # Initiate navigation once. 'commit' ensures the response started.
-            # This is much faster and more resilient than restarting for each state.
+            # Initiate navigation once; domcontentloaded balances speed vs. DOM readiness.
+            # Progressive load-state waits below refine readiness further.
             logger.debug(f"🌐 Initiating browser fetch for {url}")
-            response = await page.goto(url, wait_until="commit", timeout=total_timeout_ms)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=total_timeout_ms)
 
             if not response:
                 logger.warning(f"❌ Browser fetch failed to initiate for {url}")
@@ -1777,6 +1859,29 @@ class ClauseaCrawler:
                 self._parse_html_string, content, final_url
             )
 
+            # Wait for SPA hydration if initial content is too thin
+            body_text_len = len(text_content) if text_content else 0
+            if body_text_len < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
+                for _ in range(SPA_HYDRATION_RETRIES):
+                    await asyncio.sleep(1)
+                    new_content = await page.content()
+                    _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
+                        self._parse_html_string, new_content, final_url
+                    )
+                    new_len = len(new_text) if new_text else 0
+                    if new_len >= MIN_CONTENT_LENGTH_FOR_SPA_CHECK or new_len == body_text_len:
+                        if new_len > body_text_len:
+                            text_content = new_text
+                            markdown_content = new_md
+                            metadata = new_meta
+                            discovered_links = new_links
+                        break
+                    body_text_len = new_len
+                    text_content = new_text
+                    markdown_content = new_md
+                    metadata = new_meta
+                    discovered_links = new_links
+
             # Store the resolved URL so the caller can update dedup / result URL.
             metadata["_browser_resolved_url"] = final_url
 
@@ -1811,13 +1916,14 @@ class ClauseaCrawler:
                 pass
 
     # ------------------------------------------------------------------
-    # Result building (no legal scoring – just assembles CrawlResult)
+    # Result building (content legal score + CrawlResult assembly)
     # ------------------------------------------------------------------
 
     def _build_crawl_result(self, url: str, page: PageContent) -> CrawlResult:
         """Assemble a :class:`CrawlResult` from extracted :class:`PageContent`.
 
-        Resolves canonical URLs.  Does **not** perform legal scoring.
+        Resolves canonical URLs and populates ``legal_score`` from
+        :class:`ContentAnalyzer` when configured.
         """
         resolved_url = self._choose_effective_url(url, page.metadata)
         if resolved_url != url:
@@ -1825,7 +1931,7 @@ class ClauseaCrawler:
             logger.debug(f"Using canonical URL for result: {resolved_url} (original: {url})")
             url = resolved_url
 
-        return CrawlResult(
+        result = CrawlResult(
             url=url,
             title=page.title,
             content=page.text,
@@ -1835,6 +1941,16 @@ class ClauseaCrawler:
             success=True,
             discovered_links=page.discovered_links,
         )
+        if self.content_analyzer:
+            text = result.content or result.markdown
+            _, raw_score, _ = self.content_analyzer.analyze_content(
+                text, title=result.title, metadata=result.metadata
+            )
+            # Normalize analyzer's 0–10 scale to 0.0–1.0 for pipeline thresholds
+            result = result.model_copy(
+                update={"legal_score": min(1.0, raw_score / MAX_LEGAL_SCORE_SCALE)}
+            )
+        return result
 
     def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
         """Extract likely primary content region and remove common boilerplate."""
@@ -2355,7 +2471,7 @@ class ClauseaCrawler:
 
         # <link> tags (canonical, alternate, etc.)
         # For alternate/canonical links, propagate the page title as anchor text
-        # so the URL scorer can see legal keywords.
+        # so the URL scorer can see policy keywords.
         # Prioritize meta titles over standard <title> tag.
         page_title = ""
         meta_title = (
@@ -2572,12 +2688,12 @@ class ClauseaCrawler:
           1. Static HTTP fetch
           2. Content extraction (route by content-type)
           3. Quality gate — if content is insufficient and browser is enabled, retry with Camoufox
-          4. Build CrawlResult (no legal scoring)
+          4. Build CrawlResult (includes content ``legal_score`` when analyzer is set)
         """
         try:
             raw = await self._static_fetch(session, url)
 
-            if raw.is_error:
+            if raw.blocked_by_robots_txt:
                 return raw.to_failed_crawl_result()
 
             # Use the resolved URL (after redirects) for all downstream work
@@ -2588,6 +2704,23 @@ class ClauseaCrawler:
                 # Mark the redirect target as visited so we don't re-crawl it
                 # when it appears as a discovered link from another page.
                 self.visited_urls.add(self.normalize_url(effective_url))
+
+            if raw.status_code == 404 or self._url_looks_like_not_found_landing(effective_url):
+                logger.debug(
+                    "Skipping content extraction and browser for not found URL: %s (status=%s)",
+                    effective_url,
+                    raw.status_code,
+                )
+                return CrawlResult(
+                    url=effective_url,
+                    title="",
+                    content="",
+                    markdown="",
+                    metadata={},
+                    status_code=raw.status_code,
+                    success=False,
+                    error_message="Not found (404)",
+                )
 
             page = await self._extract_page_content(raw, effective_url)
 
@@ -2607,6 +2740,18 @@ class ClauseaCrawler:
                 logger.info(f"🔄 Static content insufficient, trying browser: {effective_url}")
                 browser_page = await self._browser_fetch(effective_url)
                 if browser_page is not None:
+                    if not self._content_is_sufficient(browser_page, effective_url):
+                        logger.warning(f"⚠️ Browser content still insufficient: {effective_url}")
+                        return CrawlResult(
+                            url=effective_url,
+                            title=browser_page.title,
+                            content="",
+                            markdown="",
+                            metadata=browser_page.metadata,
+                            status_code=browser_page.status_code,
+                            success=False,
+                            error_message="Browser rendered content is still insufficient",
+                        )
                     # The browser may have followed additional redirects / JS
                     # navigations; prefer its resolved URL if available.
                     browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
@@ -2615,7 +2760,17 @@ class ClauseaCrawler:
                         self.visited_urls.add(self.normalize_url(effective_url))
                     page = browser_page
                 else:
-                    logger.info(f"⚠️ Browser fetch failed, using static content: {effective_url}")
+                    logger.warning(f"⚠️ Browser and static fetch both failed for: {effective_url}")
+                    return CrawlResult(
+                        url=effective_url,
+                        title=page.title if page else "",
+                        content="",
+                        markdown="",
+                        metadata=page.metadata if page else {},
+                        status_code=page.status_code if page else 0,
+                        success=False,
+                        error_message="Static content insufficient and browser rendering failed",
+                    )
 
             return self._build_crawl_result(effective_url, page)
 
@@ -2721,24 +2876,24 @@ class ClauseaCrawler:
     # Locale-like path segment pattern (e.g. "en", "fr-FR", "pt-br", "zh-Hans")
     _LOCALE_RE = re.compile(r"^[a-z]{2}(?:[-_][a-zA-Z]{2,4})?$")
 
-    def generate_potential_legal_urls(self, base_url: str) -> list[str]:
-        """Generate potential legal document URLs based on common patterns.
+    def generate_potential_policy_urls(self, base_url: str) -> list[str]:
+        """Generate potential policy document URLs based on common patterns.
 
         The generator is *path-prefix-aware*: if the base URL contains a
         non-trivial path (e.g. a locale prefix like ``/en`` or a sub-section
-        like ``/help``), legal paths are generated both at the domain root
+        like ``/help``), policy paths are generated both at the domain root
         **and** under that prefix so that sites structured as
         ``/en/articles/…`` or ``/help/legal/…`` are discovered.
 
         It also produces hub / listing page URLs (``/articles``,
         ``/collections``, …) that are common in knowledge-base platforms
         (Intercom, Zendesk, Freshdesk, …) and frequently link to individual
-        legal documents.
+        policy documents.
         """
         parsed = urlparse(base_url)
         domain = parsed.netloc
 
-        # Common legal document paths
+        # Common policy document paths
         legal_paths = [
             "/legal",
             "/legal/privacy",
@@ -2781,12 +2936,25 @@ class ClauseaCrawler:
             "/legal/policies/privacy",
             "/legal/policies/terms",
             "/legal/policies/cookies",
+            "/policy",
+            "/policy/privacy",
+            "/policy/terms",
+            "/policy/terms-of-service",
+            "/policy/terms-of-use",
+            "/policy/cookies",
+            "/policy/cookie",
+            "/policy/data",
+            "/policy/gdpr",
+            "/policy/ccpa",
+            "/policy/community",
+            "/policy/safety",
+            "/policy/copyright",
         ]
 
         # Hub / listing / index pages common on knowledge-base platforms
         # (Intercom, Zendesk, Freshdesk, HelpScout, …).  These intermediate
         # pages typically link to individual articles containing the actual
-        # legal text.
+        # policy text.
         hub_paths = [
             "/articles",
             "/collections",
@@ -2851,8 +3019,8 @@ class ClauseaCrawler:
         return potential_urls
 
     # Keywords whose presence in a page title / description indicates the
-    # page is a "legal hub" — i.e. a page whose outgoing links are more
-    # likely to point to legal documents.
+    # page is a "policy hub" — i.e. a page whose outgoing links are more
+    # likely to point to policy documents.
     _LEGAL_HUB_KEYWORDS = frozenset(
         [
             "terms",
@@ -2868,10 +3036,10 @@ class ClauseaCrawler:
     )
 
     def _compute_parent_page_boost(self, page_metadata: dict[str, Any] | None) -> float:
-        """Return a score boost for links discovered on a page with legal indicators.
+        """Return a score boost for links discovered on a page with policy indicators.
 
-        When the page title or meta description contains legal keywords the
-        page is likely a "legal hub" (e.g. a help centre section listing
+        When the page title or meta description contains policy keywords the
+        page is likely a "policy hub" (e.g. a help centre section listing
         policies).  Links FROM such pages deserve a priority boost in the
         ``best_first`` strategy so that opaque URLs (``/help/article/2908``)
         are not buried behind thousands of irrelevant sitemap entries.
@@ -2913,18 +3081,18 @@ class ClauseaCrawler:
                 )
                 return
 
-        # Compute a priority boost for links coming from a "legal hub" page.
+        # Compute a priority boost for links coming from a "policy hub" page.
         # Only relevant for best_first where score ordering matters.
         parent_boost = (
             self._compute_parent_page_boost(page_metadata) if self.strategy == "best_first" else 0.0
         )
         if parent_boost > 0:
             logger.debug(
-                f"Legal hub detected on parent page; boosting discovered link scores by {parent_boost:.1f}"
+                f"Policy hub detected on parent page; boosting discovered link scores by {parent_boost:.1f}"
             )
 
         # Track URLs explicitly skipped due to rel='nofollow' so generated potential
-        # legal URLs that match them are not redundantly added.
+        # policy URLs that match them are not redundantly added.
         skipped_urls: set[str] = set()
         for link in links:
             url = link["url"]
@@ -2961,13 +3129,13 @@ class ClauseaCrawler:
                 )
 
         # Fallback: if sitemaps didn't provide seeds, speculatively probe
-        # common legal paths from the starting page.  When sitemaps DID
+        # common policy paths from the starting page.  When sitemaps DID
         # provide seeds we skip this — the sitemap already tells us what
         # pages exist, so blind probing would only waste requests.
         if depth == 0 and not self._sitemap_seeded:
-            potential_legal_urls = self.generate_potential_legal_urls(base_url)
+            potential_legal_urls = self.generate_potential_policy_urls(base_url)
             logger.info(
-                f"🔍 No sitemap seeds — probing {len(potential_legal_urls)} potential legal URLs"
+                f"🔍 No sitemap seeds — probing {len(potential_legal_urls)} potential policy URLs"
             )
 
             for url in potential_legal_urls:
@@ -3017,7 +3185,7 @@ class ClauseaCrawler:
             return len(self.url_priority_queue)
         return 0
 
-    async def crawl(self, base_url: str) -> list[CrawlResult]:
+    async def crawl(self, base_url: str, *, cleanup: bool = True) -> list[CrawlResult]:
         """
         Crawl starting from base URL.
 
@@ -3162,8 +3330,11 @@ class ClauseaCrawler:
 
             return self.results
         finally:
-            # Shutdown log executor to ensure all pending writes complete
-            await self._shutdown_log_executor()
+            # Shutdown log executor to ensure all pending writes complete.
+            # When crawl() is used as part of crawl_multiple(), the caller
+            # keeps the logger alive until every seed URL has been processed.
+            if cleanup:
+                await self._shutdown_log_executor()
 
     def clear_rate_limiter_cache(self) -> None:
         """Clear the rate limiter cache (useful between crawl sessions)."""
@@ -3173,39 +3344,48 @@ class ClauseaCrawler:
         """Crawl multiple base URLs."""
         all_results = []
 
-        for i, url in enumerate(urls, 1):
-            logger.info(f"🔄 Processing URL {i}/{len(urls)}: {url}")
-            results = await self.crawl(url)
-            all_results.extend(results)
+        try:
+            for i, url in enumerate(urls, 1):
+                logger.info(f"🔄 Processing URL {i}/{len(urls)}: {url}")
+                results = await self.crawl(url, cleanup=False)
+                all_results.extend(results)
+                logger.info(
+                    f"✅ Finished URL {i}/{len(urls)}: {url} "
+                    f"(total={self.stats.total_urls}, success={self.stats.crawled_urls}, "
+                    f"failed={self.stats.failed_urls}, results={len(results)})"
+                )
 
-            # Reset state for next URL
-            self.visited_urls.clear()
-            self.failed_urls.clear()
-            self.queued_urls.clear()
-            self._sitemap_seeded = False
-            self.url_queue.clear()
-            self.url_stack.clear()
-            self.url_priority_queue.clear()
-            self.results.clear()
-            # Clear caches between different base URLs
-            if self.robots_checker:
-                self.robots_checker.clear_cache()
-            # Optionally clear rate limiter cache between different base URLs
-            # Uncomment if you want to reset rate limiting between different sites:
-            # self.clear_rate_limiter_cache()
+                # Reset state for next URL
+                self.visited_urls.clear()
+                self.failed_urls.clear()
+                self.queued_urls.clear()
+                self._sitemap_seeded = False
+                self.url_queue.clear()
+                self.url_stack.clear()
+                self.url_priority_queue.clear()
+                self.results.clear()
+                # Clear caches between different base URLs
+                if self.robots_checker:
+                    self.robots_checker.clear_cache()
+                # Optionally clear rate limiter cache between different base URLs
+                # Uncomment if you want to reset rate limiting between different sites:
+                # self.clear_rate_limiter_cache()
+        finally:
+            await self._shutdown_log_executor()
+            await self._cleanup_browser()
 
         return all_results
 
 
 # Convenience functions
-async def crawl_for_legal_documents(
+async def crawl_for_policy_documents(
     base_url: str,
     max_depth: int = 4,
     max_pages: int = 1000,
     strategy: str = "bfs",
 ) -> list[CrawlResult]:
     """
-    Simple interface to crawl for legal documents.
+    Simple interface to crawl for policy documents.
 
     Args:
         base_url: Starting URL
@@ -3283,7 +3463,7 @@ async def main() -> None:
 
     base_url = sys.argv[1]
 
-    results = await crawl_for_legal_documents(
+    results = await crawl_for_policy_documents(
         base_url=base_url, max_depth=4, max_pages=200, strategy="bfs"
     )
 
@@ -3296,5 +3476,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
     asyncio.run(main())

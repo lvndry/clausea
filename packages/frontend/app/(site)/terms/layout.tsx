@@ -7,7 +7,7 @@ const siteUrl = (
 export const metadata: Metadata = {
   title: "Terms of Service - Legal Agreement | Clausea AI",
   description:
-    "Read Clausea AI's Terms of Service to understand the legal agreement governing your use of our legal document analysis platform.",
+    "Read Clausea AI's Terms of Service to understand the legal agreement governing your use of our policy document analysis platform.",
   robots: {
     index: true,
     follow: true,

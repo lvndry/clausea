@@ -2,11 +2,11 @@
 "use client";
 
 import posthog from "posthog-js";
-import { useAuth } from "@clerk/nextjs";
 
 import { useState } from "react";
 
 import { subscriptionApi } from "@/lib/api/subscriptions";
+import { useAuth } from "@clerk/nextjs";
 
 export function useBillingPortal() {
   const { getToken } = useAuth();

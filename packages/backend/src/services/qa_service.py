@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.rag import get_answer
+from src.agent.agent import get_answer
 
 
 async def ask(query: str, product_slug: str, namespace: str | None = None) -> str:

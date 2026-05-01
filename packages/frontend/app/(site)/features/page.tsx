@@ -90,7 +90,9 @@ export default function FeaturesPage() {
               <div className="w-12 h-12 rounded-2xl bg-secondary text-primary flex items-center justify-center">
                 <Zap className="w-6 h-6" />
               </div>
-              <h4 className="text-xl font-bold font-display">Sub-Second Retrieval</h4>
+              <h4 className="text-xl font-bold font-display">
+                Sub-Second Retrieval
+              </h4>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Our search index is optimized for dense legal text, providing
                 sub-second answers across 100k+ pages.

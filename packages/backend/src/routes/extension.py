@@ -3,9 +3,7 @@
 Provides lightweight endpoints optimized for the browser extension popup.
 """
 
-import asyncio
 from typing import Literal
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from motor.core import AgnosticDatabase
@@ -14,11 +12,13 @@ from pydantic import BaseModel, EmailStr
 from src.core.database import get_db
 from src.core.logging import get_logger
 from src.repositories.pipeline_repository import PipelineRepository
+from src.services.pipeline_scheduler import schedule_pipeline_run
 from src.services.service_factory import (
     create_indexation_notification_service,
     create_pipeline_service,
     create_product_service,
 )
+from src.utils.domain import extract_domain
 
 logger = get_logger(__name__)
 
@@ -44,6 +44,7 @@ class ExtensionCheckResponse(BaseModel):
     found: bool
     slug: str | None = None
     product_name: str | None = None
+    product_status: Literal["unknown", "analyzing", "failed", "ready"] = "unknown"
     pipeline_active: bool = False
     pipeline_failed: bool = False
     pipeline_error: str | None = None
@@ -84,69 +85,11 @@ class ExtensionSubscribeResponse(BaseModel):
     status: Literal["ok"] = "ok"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def extract_domain(url: str) -> str:
-    """Extract the root domain from a URL.
-
-    Examples:
-        https://www.netflix.com/signup -> netflix.com
-        https://app.slack.com/client -> slack.com
-        https://zoom.us/join -> zoom.us
-    """
-    parsed = urlparse(url)
-    hostname = parsed.netloc or parsed.path
-
-    # Remove www. prefix
-    if hostname.startswith("www."):
-        hostname = hostname[4:]
-
-    # Handle subdomains - keep only last two parts for most TLDs
-    # But handle special cases like .co.uk, .com.au
-    parts = hostname.split(".")
-
-    # Common two-part TLDs
-    two_part_tlds = {"co.uk", "com.au", "co.nz", "co.jp", "com.br", "co.in"}
-
-    if len(parts) >= 3:
-        potential_tld = ".".join(parts[-2:])
-        if potential_tld in two_part_tlds:
-            return ".".join(parts[-3:])
-        return ".".join(parts[-2:])
-
-    return hostname
-
-
-# ---------------------------------------------------------------------------
-# Pipeline scheduling (mirrors pipeline.py pattern)
-# ---------------------------------------------------------------------------
-
-_RUNNING_JOB_IDS: set[str] = set()
-_RUNNING_JOB_LOCK = asyncio.Lock()
-
-
-async def _schedule_pipeline_run(job_id: str, background_tasks: BackgroundTasks) -> bool:
-    """Best-effort background scheduler, idempotent per-process."""
-    async with _RUNNING_JOB_LOCK:
-        if job_id in _RUNNING_JOB_IDS:
-            return False
-        _RUNNING_JOB_IDS.add(job_id)
-
-    async def _runner() -> None:
-        try:
-            pipeline_svc = create_pipeline_service()
-            await pipeline_svc.run_pipeline(job_id)
-        except Exception as exc:
-            logger.error(f"Background pipeline failed for job {job_id}: {exc}", exc_info=True)
-        finally:
-            async with _RUNNING_JOB_LOCK:
-                _RUNNING_JOB_IDS.discard(job_id)
-
-    background_tasks.add_task(_runner)
-    return True
+class ExtensionJobStatus(BaseModel):
+    status: str
+    progress_percent: float | None = None
+    error: str | None = None
+    retry_after_seconds: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +125,7 @@ async def check_url(
     product = await product_svc.find_by_domain_variant(db, domain)
 
     if not product:
-        return ExtensionCheckResponse(found=False)
+        return ExtensionCheckResponse(found=False, product_status="unknown")
 
     # Check for active pipeline job
     active_job = await pipeline_svc.get_active_job_for_product(db, product.slug)
@@ -212,10 +155,18 @@ async def check_url(
                 for e in failed_job.crawl_errors[:5]  # limit payload size
             ]
 
+        product_status: Literal["unknown", "analyzing", "failed", "ready"] = (
+            "analyzing"
+            if active_job is not None
+            else "failed"
+            if failed_job is not None
+            else "analyzing"
+        )
         return ExtensionCheckResponse(
             found=False,
             slug=product.slug,
             product_name=product.name,
+            product_status=product_status,
             pipeline_active=active_job is not None,
             pipeline_failed=failed_job is not None,
             pipeline_error=failed_job.error if failed_job else None,
@@ -235,16 +186,58 @@ async def check_url(
         ]
         top_concerns = concerning[:3] if concerning else overview.keypoints[:3]
 
+    product_status: Literal["unknown", "analyzing", "failed", "ready"] = (
+        "analyzing" if active_job is not None else "ready"
+    )
     return ExtensionCheckResponse(
         found=True,
         slug=product.slug,
         product_name=overview.product_name,
+        product_status=product_status,
         pipeline_active=active_job is not None,
         verdict=overview.verdict,
         risk_score=overview.risk_score,
         one_line_summary=overview.one_line_summary,
         top_concerns=top_concerns,
         analysis_url=f"https://clausea.co/products/{product.slug}",
+    )
+
+
+@router.get("/status/{job_id}", response_model=ExtensionJobStatus)
+async def get_job_status_lightweight(
+    job_id: str,
+    db: AgnosticDatabase = Depends(get_db),
+) -> ExtensionJobStatus:
+    """Lightweight job status for extension polling."""
+    repo = PipelineRepository()
+    job = await repo.find_by_id(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    progress_percent: float | None = None
+    if job.steps:
+        completed_steps = sum(1 for s in job.steps if s.status == "completed")
+        total_steps = len(job.steps)
+        if total_steps > 0:
+            progress_percent = round(completed_steps / total_steps * 100, 1)
+            for step in job.steps:
+                if step.progress_percent is not None and step.status == "running":
+                    step_base = completed_steps / total_steps * 100
+                    step_contrib = step.progress_percent / total_steps
+                    progress_percent = round(step_base + step_contrib, 1)
+                    break
+
+    retry_after = 3
+    if job.status == "crawling":
+        retry_after = 5
+    elif job.status in ("completed", "failed"):
+        retry_after = 0
+
+    return ExtensionJobStatus(
+        status=job.status,
+        progress_percent=progress_percent,
+        error=job.error,
+        retry_after_seconds=retry_after,
     )
 
 
@@ -258,15 +251,21 @@ async def get_supported_domains(
     1. Pre-cache which domains to watch for
     2. Show "X domains protected" in the popup
     """
-    service = create_product_service()
-    products = await service.get_products_with_documents(db)
-
-    domains = []
-    for product in products:
-        if product.domains:
-            domains.extend(product.domains)
-
-    return list(set(domains))
+    pipeline = [
+        {
+            "$lookup": {
+                "from": "documents",
+                "localField": "id",
+                "foreignField": "product_id",
+                "as": "docs",
+            }
+        },
+        {"$match": {"docs": {"$ne": []}, "domains": {"$exists": True, "$ne": []}}},
+        {"$unwind": "$domains"},
+        {"$group": {"_id": "$domains"}},
+    ]
+    results = await db.products.aggregate(pipeline).to_list(length=None)
+    return [r["_id"] for r in results if r.get("_id")]
 
 
 @router.post("/analyze", response_model=ExtensionAnalyzeResponse, status_code=202)
@@ -303,7 +302,7 @@ async def analyze_url(
         )
 
     job = result["job"]
-    scheduled = await _schedule_pipeline_run(job.id, background_tasks)
+    scheduled = await schedule_pipeline_run(job.id, background_tasks)
 
     return ExtensionAnalyzeResponse(
         status="started" if scheduled else "already_running",

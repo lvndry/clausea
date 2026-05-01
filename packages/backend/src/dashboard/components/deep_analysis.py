@@ -2,13 +2,13 @@
 
 import streamlit as st
 
+from src.analyser import generate_product_deep_analysis
 from src.core.database import db_session
 from src.core.logging import get_logger
 from src.dashboard.db_utils import get_all_products_isolated
 from src.dashboard.utils import run_async
 from src.models.document import ProductDeepAnalysis
 from src.services.service_factory import create_services
-from src.summarizer import generate_product_deep_analysis
 
 logger = get_logger(__name__)
 

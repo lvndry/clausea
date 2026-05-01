@@ -28,7 +28,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "privacy_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_privacy_url_short_path(self, classifier: DocumentClassifier) -> None:
@@ -38,7 +38,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "privacy_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_terms_of_service_url(self, classifier: DocumentClassifier) -> None:
@@ -48,7 +48,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "terms_of_service"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_tos_url(self, classifier: DocumentClassifier) -> None:
@@ -58,7 +58,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "terms_of_service"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_cookie_policy_url(self, classifier: DocumentClassifier) -> None:
@@ -68,7 +68,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "cookie_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_copyright_url(self, classifier: DocumentClassifier) -> None:
@@ -78,7 +78,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "copyright_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_dmca_url(self, classifier: DocumentClassifier) -> None:
@@ -88,7 +88,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "copyright_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_dpa_url(self, classifier: DocumentClassifier) -> None:
@@ -99,7 +99,7 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "data_processing_agreement"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_gdpr_url(self, classifier: DocumentClassifier) -> None:
@@ -109,17 +109,17 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "gdpr_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
-    async def test_safety_policy_url(self, classifier: DocumentClassifier) -> None:
+    async def test_community_guidelines_url(self, classifier: DocumentClassifier) -> None:
         result = await classifier.classify_document(
             url="https://example.com/community-guidelines",
             text="Our community guidelines protect users. Governing law and liability apply. " * 15,
             metadata={},
         )
-        assert result["classification"] == "safety_policy"
-        assert result["is_legal_document"] is True
+        assert result["classification"] == "community_guidelines"
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_international_privacy_url_german(self, classifier: DocumentClassifier) -> None:
@@ -138,6 +138,38 @@ class TestURLPatternClassification:
             metadata={},
         )
         assert result["classification"] == "privacy_policy"
+
+    @pytest.mark.asyncio
+    async def test_security_practices_url(self, classifier: DocumentClassifier) -> None:
+        chunk = (
+            "Publish date: 2025-06-17. "
+            "Security practices and security controls. Encryption in transit and encryption at rest. "
+            "Vulnerability disclosure and incident response. SOC 2 and ISO 27001 certifications. "
+            "Unauthorized access and security monitoring. "
+        )
+        text = chunk * 12
+        result = await classifier.classify_document(
+            url="https://example.com/security-practices",
+            text=text,
+            metadata={},
+        )
+        assert result["classification"] == "security_policy"
+        assert result["is_policy_document"] is True
+
+    @pytest.mark.asyncio
+    async def test_security_metadata_title(self, classifier: DocumentClassifier) -> None:
+        body = (
+            ("Encryption at rest and encryption in transit. " * 25)
+            + "Publish date: 2025-01-01. "
+            + ("Security controls and incident response. " * 20)
+        )
+        result = await classifier.classify_document(
+            url="https://example.com/legal/trust-overview",
+            text=body,
+            metadata={"title": "Security Practices | Example Corp"},
+        )
+        assert result["classification"] == "security_policy"
+        assert result["is_policy_document"] is True
 
 
 # ── URL pattern with insufficient content ───────────────────────────
@@ -174,7 +206,7 @@ class TestMetadataClassification:
             metadata={"title": "Privacy Policy - Example Corp"},
         )
         assert result["classification"] == "privacy_policy"
-        assert result["is_legal_document"] is True
+        assert result["is_policy_document"] is True
 
     @pytest.mark.asyncio
     async def test_metadata_terms_title(self, classifier: DocumentClassifier) -> None:
@@ -248,7 +280,7 @@ class TestContentHeuristics:
 
 
 class TestQuickRejection:
-    """Tests for non-legal document rejection."""
+    """Tests for non-policy document rejection."""
 
     @pytest.mark.asyncio
     async def test_very_short_content_rejected(self, classifier: DocumentClassifier) -> None:
@@ -258,7 +290,7 @@ class TestQuickRejection:
             metadata={},
         )
         assert result["classification"] == "other"
-        assert result["is_legal_document"] is False
+        assert result["is_policy_document"] is False
 
     @pytest.mark.asyncio
     async def test_navigation_page_rejected(self, classifier: DocumentClassifier) -> None:
@@ -268,7 +300,43 @@ class TestQuickRejection:
             metadata={},
         )
         assert result["classification"] == "other"
-        assert result["is_legal_document"] is False
+        assert result["is_policy_document"] is False
+
+
+# ── Substantive policy signal (LLM guard) ────────────────────────────
+
+
+class TestSubstantivePolicyClaimSignal:
+    """Contract for _content_supports_substantive_policy_claim (shared keyword model)."""
+
+    def test_short_text_rejected_even_with_keywords(self) -> None:
+        text = "personal data. privacy rights. gdpr."
+        assert len(text) < 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is False
+
+    def test_long_text_without_policy_vocabulary_rejected(self) -> None:
+        text = ("The quick brown fox jumps over the lazy dog. " * 20).strip()
+        assert len(text) >= 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is False
+
+    def test_long_text_with_enough_keyword_hits_accepted(self) -> None:
+        chunk = (
+            "We describe personal data and data protection practices. "
+            "Privacy rights and data retention. Data processing and data sharing. "
+        )
+        text = chunk * 8
+        assert len(text) >= 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is True
+
+    def test_long_text_security_vocabulary_accepted(self) -> None:
+        chunk = (
+            "Publish date: 2025. Security practices and encryption at rest. "
+            "Encryption in transit. Vulnerability disclosure. Incident response. "
+            "SOC 2 and ISO 27001. Unauthorized access monitoring. "
+        )
+        text = chunk * 10
+        assert len(text) >= 300
+        assert DocumentClassifier._content_supports_substantive_policy_claim(text) is True
 
 
 # ── Category list completeness ──────────────────────────────────────
@@ -283,11 +351,12 @@ class TestCategoryCompleteness:
             "privacy_policy",
             "terms_of_service",
             "cookie_policy",
-            "terms_and_conditions",
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",
-            "safety_policy",
+            "community_guidelines",
+            "children_privacy_policy",
+            "security_policy",
             "other",
         }
         assert set(classifier.categories) == expected

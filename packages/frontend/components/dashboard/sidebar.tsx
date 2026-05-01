@@ -75,7 +75,7 @@ export function Sidebar({ className }: SidebarProps) {
               AI-Powered Analysis
             </p>
             <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
-              Legal docs simplified
+              Policy docs simplified
             </p>
           </div>
         </div>

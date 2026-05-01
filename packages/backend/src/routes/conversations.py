@@ -205,10 +205,10 @@ async def upload_document(
                 product_description=product_description,
             )
             if not result.success:
-                if not result.is_legal_document:
+                if not result.is_policy_document:
                     raise HTTPException(
                         status_code=400,
-                        detail="Document is not classified as a legal document. Please upload a legal document such as a privacy policy, terms of service, or similar legal document.",
+                        detail="Document is not classified as a policy document. Please upload a policy document such as a privacy policy, terms of service, cookie policy, safety policy, or similar.",
                     )
                 else:
                     raise HTTPException(

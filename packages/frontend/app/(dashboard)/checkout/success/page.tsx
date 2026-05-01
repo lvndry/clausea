@@ -3,12 +3,12 @@
 import { CheckCircle } from "lucide-react";
 import Link from "next/link";
 import posthog from "posthog-js";
-import { useAuth } from "@clerk/nextjs";
 
 import { useEffect, useRef, useState } from "react";
 
 import type { SubscriptionResponse } from "@/lib/api/subscriptions";
 import { subscriptionApi } from "@/lib/api/subscriptions";
+import { useAuth } from "@clerk/nextjs";
 
 export default function CheckoutSuccessPage() {
   const { getToken } = useAuth();

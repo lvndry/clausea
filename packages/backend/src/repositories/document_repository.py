@@ -9,7 +9,7 @@ from typing import Any
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.models.document import Document, DocumentAnalysis
+from src.models.document import CORE_DOC_TYPES, Document, DocumentAnalysis
 from src.repositories.base_repository import BaseRepository
 
 logger = get_logger(__name__)
@@ -61,6 +61,13 @@ def _normalize_document_record(document: dict[str, Any]) -> dict[str, Any]:
                 pass
 
         document["analysis"] = analysis
+
+    # Backfill tier relevance for legacy records that predate this field.
+    doc_type = document.get("doc_type")
+    if doc_type in CORE_DOC_TYPES:
+        document["tier_relevance"] = "core"
+    else:
+        document["tier_relevance"] = "extended"
 
     return document
 
@@ -119,7 +126,10 @@ class DocumentRepository(BaseRepository):
         return Document(**_normalize_document_record(document))
 
     async def find_by_product_id(self, db: AgnosticDatabase, product_id: str) -> list[Document]:
-        """Get all documents for a specific product.
+        """Get all documents for a specific product (listing / light reads).
+
+        Excludes heavy fields (text, markdown, analysis, extraction) from MongoDB.
+        Missing ``text`` / ``markdown`` are filled with empty strings for model validation.
 
         Args:
             db: Database instance
@@ -128,6 +138,19 @@ class DocumentRepository(BaseRepository):
         Returns:
             List of documents for the product
         """
+        projection = {"text": 0, "markdown": 0, "analysis": 0, "extraction": 0}
+        documents: list[dict[str, Any]] = await db.documents.find(
+            {"product_id": product_id}, projection
+        ).to_list(length=None)
+        for document in documents:
+            document.setdefault("text", "")
+            document.setdefault("markdown", "")
+        return [Document(**_normalize_document_record(document)) for document in documents]
+
+    async def find_by_product_id_full(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> list[Document]:
+        """Get all documents for a product including full body and analysis (pipelines, summaries)."""
         documents: list[dict[str, Any]] = await db.documents.find(
             {"product_id": product_id}
         ).to_list(length=None)
@@ -149,20 +172,20 @@ class DocumentRepository(BaseRepository):
         return [Document(**_normalize_document_record(document)) for document in documents]
 
     async def find_with_analysis(
-        self, db: AgnosticDatabase, product_slug: str | None = None
+        self, db: AgnosticDatabase, product_id: str | None = None
     ) -> list[Document]:
         """Get documents that have analysis data.
 
         Args:
             db: Database instance
-            product_slug: Optional product slug to filter by
+            product_id: Optional product ID to filter by
 
         Returns:
             List of documents with analysis
         """
         query: dict[str, Any] = {"analysis": {"$exists": True, "$ne": None}}
-        if product_slug:
-            query["product_slug"] = product_slug
+        if product_id:
+            query["product_id"] = product_id
 
         documents: list[dict[str, Any]] = await db.documents.find(query).to_list(length=None)
         return [Document(**_normalize_document_record(document)) for document in documents]
