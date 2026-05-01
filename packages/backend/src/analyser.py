@@ -159,6 +159,9 @@ def _compute_document_signature(documents: list[Document]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
+_OPTIONAL_SCORE_KEYS: frozenset[str] = frozenset({"data_retention_score", "security_score"})
+
+
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
     """
     Calculate overall risk score from component scores.
@@ -179,25 +182,23 @@ def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
         "security_score": 0.08,
     }
 
+    # Fill absent optional scores with neutral (5) to keep the weight sum at 1.0.
+    effective = dict(scores)
+    for key in weights:
+        if key not in effective:
+            effective[key] = DocumentAnalysisScores(score=5, justification="not assessed")
+
     weighted_sum = 0.0
     total_weight = 0.0
-
     for score_name, weight in weights.items():
-        if score_name in scores:
-            score_value = scores[score_name].score
-            weighted_sum += score_value * weight
+        if score_name in effective:
+            weighted_sum += effective[score_name].score * weight
             total_weight += weight
 
     if total_weight == 0:
-        return 5  # Default middle score if no scores available
+        return 5
 
-    # Calculate weighted average
-    weighted_avg = weighted_sum / total_weight
-
-    # Risk score: lower component scores = higher risk
-    # So risk_score = 10 - weighted_average (inverted)
-    risk_score = round(10 - weighted_avg)
-    return max(0, min(10, risk_score))  # Clamp to 0-10
+    return max(0, min(10, round(10 - weighted_sum / total_weight)))
 
 
 def _calculate_verdict(

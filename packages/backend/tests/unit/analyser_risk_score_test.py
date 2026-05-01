@@ -91,3 +91,40 @@ def test_other_docs_excluded_from_weighted_score() -> None:
     other = _doc(doc_type="other", risk=0)  # artificially low — should be ignored
     score = _weighted_product_risk_score([privacy, other])
     assert score == 8  # only privacy_policy contributes
+
+
+def test_missing_optional_scores_filled_with_neutral() -> None:
+    """Absent optional scores must not distort the weighted average."""
+    # Only security_score present — should not produce an extreme result.
+    scores_sparse = {"security_score": DocumentAnalysisScores(score=2, justification="")}
+    scores_full = {
+        "transparency": DocumentAnalysisScores(score=5, justification=""),
+        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
+        "user_control": DocumentAnalysisScores(score=5, justification=""),
+        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
+        "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
+        "security_score": DocumentAnalysisScores(score=2, justification=""),
+    }
+    sparse_risk = _calculate_risk_score(scores_sparse)
+    full_risk = _calculate_risk_score(scores_full)
+    # With neutral fill the sparse result must equal the full result.
+    assert sparse_risk == full_risk
+
+
+def test_all_optional_absent_uses_neutral() -> None:
+    """When both optional scores are absent, result equals same scores at neutral."""
+    core_scores = {
+        "transparency": DocumentAnalysisScores(score=5, justification=""),
+        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
+        "user_control": DocumentAnalysisScores(score=5, justification=""),
+        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
+    }
+    full_neutral = {
+        "transparency": DocumentAnalysisScores(score=5, justification=""),
+        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
+        "user_control": DocumentAnalysisScores(score=5, justification=""),
+        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
+        "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
+        "security_score": DocumentAnalysisScores(score=5, justification=""),
+    }
+    assert _calculate_risk_score(core_scores) == _calculate_risk_score(full_neutral)
