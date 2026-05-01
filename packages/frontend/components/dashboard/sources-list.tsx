@@ -37,37 +37,23 @@ interface KeypointWithEvidence {
   evidence: EvidenceSpan[];
 }
 
+interface ExtractedItem {
+  value: string;
+  evidence: EvidenceSpan[];
+}
+
 interface DocumentExtraction {
-  version: string;
-  generated_at: string;
-  source_content_hash: string;
-  data_collected: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  data_purposes: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  data_collection_details: Array<{
-    data_type: string;
-    purposes: string[];
-    evidence: EvidenceSpan[];
-  }>;
-  third_party_details: Array<{
-    recipient: string;
-    data_shared: string[];
-    purpose?: string | null;
-    risk_level: "low" | "medium" | "high";
-    evidence: EvidenceSpan[];
-  }>;
-  your_rights: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  dangers: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  benefits: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  recommended_actions: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  retention_policy: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  security_measures: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  advertising_practices: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  profiling_ai: Array<{ value: string; evidence: EvidenceSpan[] }>;
-  contract_clauses: Array<{
-    clause_type: string;
-    value: string;
-    evidence: EvidenceSpan[];
-  }>;
+  data_collected: ExtractedItem[];
+  data_purposes: ExtractedItem[];
+  retention_policies: ExtractedItem[];
+  third_party_details: ExtractedItem[];
+  user_rights: ExtractedItem[];
+  ai_usage: ExtractedItem[];
+  international_transfers: ExtractedItem[];
+  government_access: ExtractedItem[];
+  consent_mechanisms: ExtractedItem[];
+  dangers: ExtractedItem[];
+  benefits: ExtractedItem[];
 }
 
 interface CriticalClause {
@@ -120,43 +106,27 @@ function deriveEvidenceForKeypoint(
   const kp = normalizeForMatch(keypoint);
   if (!kp) return [];
 
-  const pools: Array<Array<{ value: string; evidence: EvidenceSpan[] }>> = [
-    extraction.data_collected,
-    extraction.data_purposes,
-    extraction.your_rights,
-    extraction.dangers,
-    extraction.benefits,
-    extraction.recommended_actions,
-    extraction.retention_policy,
-    extraction.security_measures,
-    extraction.advertising_practices,
-    extraction.profiling_ai,
-    extraction.contract_clauses,
-  ];
-
   const found: EvidenceSpan[] = [];
-  for (const pool of pools) {
-    for (const item of pool) {
+
+  for (const key of [
+    "data_collected",
+    "data_purposes",
+    "retention_policies",
+    "user_rights",
+    "third_party_details",
+    "ai_usage",
+    "international_transfers",
+    "government_access",
+    "consent_mechanisms",
+    "dangers",
+    "benefits",
+  ] as const) {
+    for (const item of extraction[key] || []) {
       const value = normalizeForMatch(item.value);
       if (value && kp.includes(value) && item.evidence?.length) {
         found.push(...item.evidence);
         if (found.length >= 3) return found.slice(0, 3);
       }
-    }
-  }
-
-  for (const tp of extraction.third_party_details || []) {
-    const recipient = normalizeForMatch(tp.recipient);
-    if (recipient && kp.includes(recipient) && tp.evidence?.length) {
-      found.push(...tp.evidence);
-      if (found.length >= 3) return found.slice(0, 3);
-    }
-  }
-  for (const dcd of extraction.data_collection_details || []) {
-    const dt = normalizeForMatch(dcd.data_type);
-    if (dt && kp.includes(dt) && dcd.evidence?.length) {
-      found.push(...dcd.evidence);
-      if (found.length >= 3) return found.slice(0, 3);
     }
   }
 
