@@ -315,9 +315,14 @@ async def acompletion_with_escalation(
     partial data is better than blocking the pipeline.
     """
     response = await acompletion_with_fallback(messages, model_priority=primary, **kwargs)
-    content = _extract_json_from_response(response)
 
-    if validator(content):
+    try:
+        content = _extract_json_from_response(response)
+        primary_valid = validator(content)
+    except ValueError:
+        primary_valid = False
+
+    if primary_valid:
         return response
 
     logger.warning(
@@ -329,10 +334,16 @@ async def acompletion_with_escalation(
     escalated = await acompletion_with_fallback(messages, model_priority=escalation, **kwargs)
     logger.info("Escalated completion used model %s", escalated.model)
 
-    escalated_content = _extract_json_from_response(escalated)
-    if not validator(escalated_content):
+    try:
+        escalated_content = _extract_json_from_response(escalated)
+        if not validator(escalated_content):
+            logger.warning(
+                "Escalated model %s also failed validation — returning response anyway",
+                escalated.model,
+            )
+    except ValueError:
         logger.warning(
-            "Escalated model %s also failed validation — returning response anyway",
+            "Escalated model %s returned malformed content — returning response anyway",
             escalated.model,
         )
 

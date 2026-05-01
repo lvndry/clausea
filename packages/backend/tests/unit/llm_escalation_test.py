@@ -38,6 +38,39 @@ def test_extract_json_from_response_raises_on_none_content() -> None:
         _extract_json_from_response(resp)
 
 
+def test_extract_json_from_response_raises_on_none_message() -> None:
+    resp = MagicMock(spec=ModelResponse)
+    choice = MagicMock()
+    choice.message = None
+    resp.choices = [choice]
+    with pytest.raises(ValueError, match="None"):
+        _extract_json_from_response(resp)
+
+
+@pytest.mark.asyncio
+async def test_escalation_escalates_when_primary_returns_empty_content() -> None:
+    primary_response = _make_response("", model="gpt-5-mini")
+    escalation_response = _make_response('{"data": [1]}', model="gpt-5.4-mini")
+
+    call_count = 0
+
+    async def mock_fallback(messages, model_priority, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return primary_response if call_count == 1 else escalation_response
+
+    with patch("src.llm.acompletion_with_fallback", side_effect=mock_fallback):
+        result = await acompletion_with_escalation(
+            messages=[{"role": "user", "content": "test"}],
+            primary=["gpt-5-mini"],
+            escalation=["gpt-5.4-mini"],
+            validator=lambda c: True,
+        )
+
+    assert result is escalation_response
+    assert call_count == 2
+
+
 @pytest.mark.asyncio
 async def test_escalation_returns_primary_when_valid() -> None:
     primary_response = _make_response('{"ok": true}', model="gpt-5-mini")
