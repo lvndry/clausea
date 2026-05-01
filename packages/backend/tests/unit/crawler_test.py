@@ -127,7 +127,7 @@ class TestClauseaCrawler:
         crawler = ClauseaCrawler()
         base_url = "https://example.com"
 
-        # Feed URLs should be allowed - they can contain links to legal documents
+        # Feed URLs should be allowed - they can contain links to policy documents
         feed_urls = [
             "https://example.com/rss",
             "https://example.com/feed",
@@ -138,12 +138,12 @@ class TestClauseaCrawler:
         for url in feed_urls:
             assert crawler.should_crawl_url(url, base_url, 1) is True
 
-    def test_should_allow_legal_document_urls(self) -> None:
-        """Test that legal document URLs are NOT filtered out."""
+    def test_should_allow_policy_document_urls(self) -> None:
+        """Test that policy document URLs are NOT filtered out."""
         crawler = ClauseaCrawler()
         base_url = "https://example.com"
 
-        # Test legal document URLs that should be allowed
+        # Test policy document URLs that should be allowed
         legal_urls = [
             "https://example.com/privacy-policy",
             "https://example.com/terms-of-service",

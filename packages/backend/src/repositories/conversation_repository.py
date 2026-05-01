@@ -64,9 +64,11 @@ class ConversationRepository(BaseRepository):
             List of conversations
         """
         try:
-            conversations: list[dict[str, Any]] = await db.conversations.find(
-                {"user_id": user_id}
-            ).to_list(length=None)
+            conversations: list[dict[str, Any]] = (
+                await db.conversations.find({"user_id": user_id})
+                .sort("updated_at", -1)
+                .to_list(length=None)
+            )
             return [Conversation(**conv) for conv in conversations]
         except Exception as e:
             logger.error(f"Error getting conversations for user {user_id}: {e}")
@@ -197,7 +199,7 @@ class ConversationRepository(BaseRepository):
             result = await db.conversations.update_one(
                 {"id": conversation_id},
                 {
-                    "$addToSet": {"document_ids": document_id},
+                    "$addToSet": {"documents": document_id},
                     "$set": {"updated_at": datetime.now()},
                 },
             )

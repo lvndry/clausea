@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { Header } from "@/components/clausea/Header";
 import { Footer, Pricing } from "@/components/clausea/PricingAndFooter";
+import { cn } from "@/lib/utils";
 
 const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
@@ -73,13 +74,17 @@ export default function PricingPage() {
             <tbody className="text-sm">
               {[
                 ["Analyses per month", "3", "Unlimited"],
-                ["AI Summaries", "Yes", "Yes"],
+                [
+                  "Document coverage",
+                  "Core docs (Privacy Policy, ToS, GDPR)",
+                  "All policy docs",
+                ],
+                ["AI Analysis", "Yes", "Yes"],
                 ["Risk Scoring", "Yes", "Yes"],
                 ["Chat with Documents", "Yes", "Yes"],
-                ["Deep Analysis (Level 3)", "-", "Yes"],
-                ["Semantic Search", "Basic", "Advanced"],
+                ["Semantic Search", "Yes", "Yes"],
                 ["Priority Support", "-", "Yes"],
-                ["Export Reports", "-", "Yes"],
+                ["Export Reports", "-", "Coming soon"],
               ].map(([feature, free, pro]) => (
                 <tr
                   key={feature}
@@ -89,7 +94,15 @@ export default function PricingPage() {
                     {feature}
                   </td>
                   <td className="py-6 text-primary/60">{free}</td>
-                  <td className="py-6 text-primary font-bold">{pro}</td>
+                  <td
+                    className={cn(
+                      "py-6 text-primary font-bold",
+                      feature === "Export Reports" &&
+                        "text-muted-foreground font-medium",
+                    )}
+                  >
+                    {pro}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Clausea AI - Legal Document Intelligence Platform",
     short_name: "Clausea AI",
     description:
-      "Navigate legal complexities with AI precision. Summarize, analyze and ask questions to dense legal documents instantly.",
+      "Navigate legal complexities with AI precision. Understand privacy policies, terms of service, cookie policies, and other legal agreements instantly.",
     start_url: "/",
     display: "standalone",
     background_color: "#faf8f4",

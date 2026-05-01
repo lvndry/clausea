@@ -2,7 +2,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from src.dashboard.components.summarization import run_summarization_async
+from src.dashboard.components.summarization import run_analysis_async
 from src.dashboard.db_utils import get_all_products_isolated, get_product_documents_by_id_isolated
 from src.dashboard.utils import run_async_with_retry
 from src.models.product import Product
@@ -102,7 +102,7 @@ def show_documents_view() -> None:
 
     with col2:
         if st.button(
-            "🚀 Summarize Documents", type="primary", key="summarize_documents_from_docs_page"
+            "🚀 Analyse Documents", type="primary", key="summarize_documents_from_docs_page"
         ):
             if not documents:
                 st.warning("No documents to analyze.")
@@ -115,7 +115,7 @@ def show_documents_view() -> None:
                     progress_placeholder.info("🔍 Processing documents...")
 
                     # Run the summarization process
-                    success = run_summarization_async(selected_product.slug)
+                    success = run_analysis_async(selected_product.slug)
 
                     progress_placeholder.empty()
 

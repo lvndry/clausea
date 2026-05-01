@@ -8,6 +8,14 @@ from src.crawler import ClauseaCrawler
 from src.document_processor import DocumentProcessor
 
 
+class _FakeContent:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def read(self, n: int = -1) -> bytes:
+        return self._data if n < 0 else self._data[:n]
+
+
 @pytest.mark.asyncio
 async def test_document_processor_pdf_fallbacks_are_invoked():
     # Ensure _extract_text delegates to pdfminer/tika fallbacks when configured
@@ -47,6 +55,8 @@ async def test_crawler_respects_enable_binary_crawling_flag(monkeypatch):
             self.headers = headers
             self._content = content_bytes
             self.url = url
+            self.charset = None
+            self.content = _FakeContent(content_bytes)
 
         async def read(self):
             return self._content

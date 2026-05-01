@@ -27,8 +27,8 @@ export default function TermsOfServicePage() {
               <p className="text-muted-foreground leading-relaxed">
                 By accessing or using Clausea AI (&ldquo;Service&rdquo;), you
                 agree to be bound by these Terms of Service
-                (&ldquo;Terms&rdquo;). If you disagree with
-                any part of these Terms, you may not access or use the Service.
+                (&ldquo;Terms&rdquo;). If you disagree with any part of these
+                Terms, you may not access or use the Service.
               </p>
               <p className="text-muted-foreground leading-relaxed">
                 These Terms apply to all users of the Service, including
@@ -44,10 +44,10 @@ export default function TermsOfServicePage() {
                 2. Description of Service
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                Clausea AI provides an AI-powered legal document analysis
-                platform that helps users understand, analyze, and compare legal
-                documents such as privacy policies, terms of service, and
-                contracts. Our Service includes:
+                Clausea AI provides an AI-powered platform that helps users
+                understand, analyze, and compare legal agreements and policies
+                such as privacy policies, terms of service, cookie policies,
+                safety policies, and community guidelines. Our Service includes:
               </p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>Document upload and processing</li>
@@ -312,9 +312,8 @@ export default function TermsOfServicePage() {
                 We reserve the right to modify these Terms at any time. We will
                 notify you of material changes by posting the updated Terms on
                 this page and updating the &ldquo;Last updated&rdquo; date. Your
-                continued
-                use of the Service after such modifications constitutes
-                acceptance of the updated Terms.
+                continued use of the Service after such modifications
+                constitutes acceptance of the updated Terms.
               </p>
               <p className="text-muted-foreground leading-relaxed mt-4">
                 If you do not agree to the modified Terms, you must stop using

@@ -117,7 +117,7 @@ function ProductCard({
               </span>
             )}
           </div>
-          <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
             View Analysis
           </div>
         </div>

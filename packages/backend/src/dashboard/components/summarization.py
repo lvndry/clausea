@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 
 import streamlit as st
 
+from src.analyser import analyse_product_documents, generate_product_overview
 from src.dashboard.db_utils import (
     get_all_products_isolated,
     get_dashboard_db,
@@ -10,30 +11,27 @@ from src.dashboard.db_utils import (
 )
 from src.dashboard.utils import run_async
 from src.services.service_factory import create_document_service, create_product_service
-from src.summarizer import generate_product_overview, summarize_all_product_documents
 
 
-async def run_summarization_async_internal(
+async def run_analysis_async_internal(
     product_slug: str,
 ) -> bool:
-    """Run document summarization in an isolated async context"""
+    """Run document analysis in an isolated async context"""
     try:
         db = await get_dashboard_db()
         try:
             document_svc = create_document_service()
-            await summarize_all_product_documents(db.db, product_slug, document_svc)
+            await analyse_product_documents(db.db, product_slug, document_svc)
             return True
         finally:
             await db.disconnect()
     except Exception as e:
-        st.error(f"Summarization error: {str(e)}")
+        st.error(f"Analysis error: {str(e)}")
         return False
 
 
-def run_summarization_async(
-    product_slug: str, loop: asyncio.AbstractEventLoop | None = None
-) -> bool:
-    """Run document summarization in an isolated async context"""
+def run_analysis_async(product_slug: str, loop: asyncio.AbstractEventLoop | None = None) -> bool:
+    """Run document analysis in an isolated async context"""
     try:
         should_close_loop = False
         if loop is None:
@@ -42,7 +40,7 @@ def run_summarization_async(
             should_close_loop = True
 
         try:
-            loop.run_until_complete(run_summarization_async_internal(product_slug))
+            loop.run_until_complete(run_analysis_async_internal(product_slug))
             return True
         finally:
             if should_close_loop:
@@ -58,7 +56,7 @@ def run_summarization_async(
 
                 loop.close()
     except Exception as e:
-        st.error(f"Summarization error: {str(e)}")
+        st.error(f"Analysis error: {str(e)}")
         return False
 
 
@@ -74,8 +72,8 @@ async def generate_overview_async(product_slug: str) -> AsyncGenerator[str, None
     yield summary_content
 
 
-def show_summarization() -> None:
-    st.title("📋 Document Summarization")
+def show_analysis() -> None:
+    st.title("📋 Document Analysis")
 
     # Get all products
     products = run_async(get_all_products_isolated())
@@ -90,7 +88,7 @@ def show_summarization() -> None:
 
     # Add Summarize All section
     st.write("---")
-    st.subheader("🌐 Summarize All Products")
+    st.subheader("🌐 Analyse All Products")
 
     st.info("""
     **This will:**
@@ -100,7 +98,7 @@ def show_summarization() -> None:
     • This process may take several minutes depending on the number of products and documents
     """)
 
-    if st.button("🚀 Summarize All Products", type="primary", key="summarize_all_btn"):
+    if st.button("🚀 Analyse All Products", type="primary", key="summarize_all_btn"):
         with st.spinner("Analyzing documents for all products... This may take several minutes."):
             progress_placeholder = st.empty()
             progress_placeholder.info("🔍 Processing documents...")
@@ -112,7 +110,7 @@ def show_summarization() -> None:
                 all_success = True
                 for product in products:
                     progress_placeholder.info(f"Processing {product.name}...")
-                    success = run_summarization_async(product.slug, loop)
+                    success = run_analysis_async(product.slug, loop)
                     if not success:
                         all_success = False
                         st.error(f"Failed to process documents for {product.name}")
@@ -147,7 +145,7 @@ def show_summarization() -> None:
     product_options = {f"{product.name} ({product.slug})": product for product in products}
 
     # Check if a product was preselected (from session state)
-    preselected_product = st.session_state.get("selected_product_for_summarization", None)
+    preselected_product = st.session_state.get("selected_product_for_analysis", None)
     default_index = 0
 
     if preselected_product:
@@ -158,10 +156,10 @@ def show_summarization() -> None:
                 break
 
     selected_product_key = st.selectbox(
-        "Select Product for Summarization",
+        "Select Product for Analysis",
         options=list(product_options.keys()),
         index=default_index,
-        help="Choose which product's documents you want to summarize",
+        help="Choose which product's documents you want to analyse",
     )
 
     selected_product = product_options[selected_product_key]
@@ -236,10 +234,10 @@ def show_summarization() -> None:
     col1, col2, col3 = st.columns([2, 1, 2])
 
     with col2:
-        if st.button("🚀 Summarize Documents", type="primary", key="summarize_documents_btn"):
+        if st.button("🚀 Analyse Documents", type="primary", key="summarize_documents_btn"):
             # Clear any previous session state
-            if "selected_product_for_summarization" in st.session_state:
-                del st.session_state["selected_product_for_summarization"]
+            if "selected_product_for_analysis" in st.session_state:
+                del st.session_state["selected_product_for_analysis"]
 
             # Start document analysis
             with st.spinner(
@@ -248,8 +246,8 @@ def show_summarization() -> None:
                 progress_placeholder = st.empty()
                 progress_placeholder.info("🔍 Processing documents...")
 
-                # Run the summarization process
-                success = run_summarization_async(selected_product.slug)
+                # Run the analysis process
+                success = run_analysis_async(selected_product.slug)
 
                 progress_placeholder.empty()
 
@@ -324,7 +322,7 @@ def show_summarization() -> None:
     st.write("---")
     if st.button("← Back to Products", key="back_to_products_from_summarization"):
         # Clear summarization session state and navigate back
-        if "selected_product_for_summarization" in st.session_state:
-            del st.session_state["selected_product_for_summarization"]
+        if "selected_product_for_analysis" in st.session_state:
+            del st.session_state["selected_product_for_analysis"]
         st.session_state["current_page"] = "view_products"
         st.rerun()

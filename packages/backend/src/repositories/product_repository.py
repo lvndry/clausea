@@ -160,14 +160,20 @@ class ProductRepository(BaseRepository):
         """
         summary_data = meta_summary.model_dump()
         summary_data["product_slug"] = product_slug
-        summary_data["updated_at"] = datetime.now().isoformat()
+        summary_data["updated_at"] = datetime.now()
 
-        await db.product_overviews.update_one(
+        result = await db.product_overviews.update_one(
             {"product_slug": product_slug},
             {"$set": summary_data},
             upsert=True,
         )
-        logger.debug(f"Saved product overview for {product_slug}")
+        logger.info(
+            "Saved product overview for %s (matched=%s modified=%s upserted_id=%s)",
+            product_slug,
+            result.matched_count,
+            result.modified_count,
+            getattr(result, "upserted_id", None),
+        )
 
     async def delete_product_overview(self, db: AgnosticDatabase, product_slug: str) -> None:
         """Delete the stored product overview for a product.
@@ -222,7 +228,7 @@ class ProductRepository(BaseRepository):
         analysis_data = deep_analysis.model_dump()
         analysis_data["product_slug"] = product_slug
         analysis_data["document_signature"] = document_signature
-        analysis_data["updated_at"] = datetime.now().isoformat()
+        analysis_data["updated_at"] = datetime.now()
 
         await db.deep_analyses.update_one(
             {"product_slug": product_slug},

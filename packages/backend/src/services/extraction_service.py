@@ -1,16 +1,21 @@
-"""Evidence-first extraction for legal documents.
+"""Evidence-first extraction for policy documents (v4).
 
-This service extracts structured facts from a document WITH evidence (exact quotes),
+Extracts structured facts from a document WITH evidence (exact quotes),
 so downstream summaries can be generated from extracted facts only.
 
 Clusters (per chunk, all run in parallel):
-  Cluster 1 - Data & Storage:    data_collected, data_purposes, data_collection_details,
-                                  retention_policy, security_measures
-  Cluster 2 - Sharing & Rights:  third_party_details, your_rights, contract_clauses
-  Cluster 3 - Risk & Signals:    dangers, benefits, recommended_actions, privacy_signals,
-                                  advertising_practices, profiling_ai
+  Cluster 1 — Data Practices:      data_collected, data_purposes, retention_policies,
+                                    security_measures, cookies_and_trackers
+  Cluster 2 — Sharing & Transfers: third_party_details, international_transfers,
+                                    government_access, corporate_family_sharing
+  Cluster 3 — Rights & AI:         user_rights, consent_mechanisms, account_lifecycle,
+                                    ai_usage, children_policy
+  Cluster 4 — Legal Terms & Scope: liability, dispute_resolution, content_ownership,
+                                    scope_expansion, indemnification,
+                                    termination_consequences, dangers, benefits,
+                                    recommended_actions
 
-3 parallel calls per chunk — total latency ≈ one serial call.
+4 parallel calls per chunk — total latency ≈ one serial call.
 """
 
 from __future__ import annotations
@@ -27,14 +32,25 @@ from pydantic import BaseModel, Field
 from src.core.logging import get_logger
 from src.llm import SupportedModel, acompletion_with_fallback
 from src.models.document import (
-    ContractClauseType,
     Document,
     DocumentExtraction,
     EvidenceSpan,
-    ExtractedContractClause,
+    ExtractedAIUsage,
+    ExtractedChildrenPolicy,
+    ExtractedContentOwnership,
+    ExtractedCookieTracker,
+    ExtractedCorporateFamilySharing,
+    ExtractedDataItem,
     ExtractedDataPurposeLink,
+    ExtractedDisputeResolution,
+    ExtractedGovernmentAccess,
+    ExtractedInternationalTransfer,
+    ExtractedLiability,
+    ExtractedRetentionRule,
+    ExtractedScopeExpansion,
     ExtractedTextItem,
     ExtractedThirdPartyRecipient,
+    ExtractedUserRight,
     PrivacySignals,
 )
 from src.utils.cancellation import CancellationToken
@@ -42,51 +58,63 @@ from src.utils.cancellation import CancellationToken
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
 def _compute_content_hash(document: Document) -> str:
-    """Keep hashing consistent with summarizer caching (text + doc_type)."""
     content = f"{document.text}{document.doc_type}"
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _split_on_sentence_boundary(text: str, max_len: int) -> int:
+    window = text[:max_len]
+    for sep in (". ", ".\n", "? ", "! ", ";\n", "\n\n", "\n", " "):
+        idx = window.rfind(sep)
+        if idx > max_len // 3:
+            return idx + len(sep)
+    return max_len
+
+
 def _chunk_text(text: str, *, chunk_size: int = 8000, overlap: int = 800) -> list[str]:
-    """Split *text* into chunks, respecting Markdown section boundaries.
-
-    Strategy:
-    1. Split on Markdown headers (``#`` … ``######``).
-    2. Accumulate sections into chunks that stay under *chunk_size*.
-    3. If a single section is too long, fall back to character-level splitting
-       with *overlap* so context is preserved across boundaries.
-
-    This preserves legal clause context far better than blind character splits.
-    """
     if not text:
         return []
     if chunk_size <= 0:
         return [text]
     overlap = max(0, min(overlap, chunk_size - 1))
 
-    # Split on header lines while keeping the header as the start of each part.
     parts = re.split(r"(?m)^(#{1,6}\s+.*)", text)
+    has_headers = len(parts) > 1
 
-    # Reconstruct (header + body) sections
-    sections: list[str] = []
-    # The first element is content before any header
-    current = parts[0]
-    for i in range(1, len(parts), 2):
-        header = parts[i]
-        body = parts[i + 1] if i + 1 < len(parts) else ""
-        section = header + body
-
-        if current and len(current) + len(section) > chunk_size:
+    if has_headers:
+        sections: list[str] = []
+        current = parts[0]
+        for i in range(1, len(parts), 2):
+            header = parts[i]
+            body = parts[i + 1] if i + 1 < len(parts) else ""
+            section = header + body
+            if current and len(current) + len(section) > chunk_size:
+                sections.append(current)
+                current = section
+            else:
+                current += section
+        if current:
             sections.append(current)
-            current = section
-        else:
-            current += section
+    else:
+        paragraphs = re.split(r"\n{2,}", text)
+        sections = []
+        current = ""
+        for para in paragraphs:
+            candidate = (current + "\n\n" + para) if current else para
+            if len(candidate) > chunk_size and current:
+                sections.append(current)
+                current = para
+            else:
+                current = candidate
+        if current:
+            sections.append(current)
 
-    if current:
-        sections.append(current)
-
-    # For sections that exceed chunk_size, do character-level splitting with overlap.
     final_chunks: list[str] = []
     for section in sections:
         if len(section) <= chunk_size:
@@ -95,41 +123,64 @@ def _chunk_text(text: str, *, chunk_size: int = 8000, overlap: int = 800) -> lis
         start = 0
         n = len(section)
         while start < n:
-            end = min(n, start + chunk_size)
-            final_chunks.append(section[start:end])
-            if end >= n:
+            remaining = n - start
+            if remaining <= chunk_size:
+                final_chunks.append(section[start:])
                 break
-            start = max(0, end - overlap)
+            split_at = _split_on_sentence_boundary(section[start:], chunk_size)
+            final_chunks.append(section[start : start + split_at])
+            start = max(start + 1, start + split_at - overlap)
 
     return final_chunks
 
 
-def _resolve_quote_offsets(haystack: str, quote: str) -> tuple[int | None, int | None]:
-    """Best-effort locate quote in the original text.
+def _collapse_ws(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
 
-    We prefer exact substring match. If that fails, we attempt a whitespace-collapsed match
-    (offsets will be unavailable in that case because mapping indices is non-trivial).
-    """
+
+def _normalize_quotes(s: str) -> str:
+    return (
+        s.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+    )
+
+
+def _resolve_quote_offsets(haystack: str, quote: str) -> tuple[int | None, int | None, bool]:
     if not haystack or not quote:
-        return None, None
+        return None, None, False
+
     idx = haystack.find(quote)
     if idx != -1:
-        return idx, idx + len(quote)
-
-    # Fallback: try a looser match to validate presence; do not return offsets.
-    def _collapse_ws(s: str) -> str:
-        return re.sub(r"\s+", " ", s).strip()
+        return idx, idx + len(quote), True
 
     collapsed_h = _collapse_ws(haystack)
     collapsed_q = _collapse_ws(quote)
     if collapsed_q and collapsed_q in collapsed_h:
-        return None, None
+        return None, None, True
 
-    return None, None
+    norm_h = _normalize_quotes(collapsed_h)
+    norm_q = _normalize_quotes(collapsed_q)
+    if norm_q and norm_q in norm_h:
+        return None, None, True
+
+    if len(quote) >= 40:
+        target = _collapse_ws(quote)
+        window = len(target) * 3 // 4
+        if window >= 30:
+            for i in range(len(target) - window + 1):
+                fragment = target[i : i + window]
+                if fragment in collapsed_h:
+                    return None, None, True
+
+    return None, None, False
 
 
 def _make_evidence(document: Document, content_hash: str, quote: str) -> EvidenceSpan:
-    start_char, end_char = _resolve_quote_offsets(document.text, quote)
+    start_char, end_char, verified = _resolve_quote_offsets(document.text, quote)
     return EvidenceSpan(
         document_id=document.id,
         url=document.url,
@@ -138,26 +189,51 @@ def _make_evidence(document: Document, content_hash: str, quote: str) -> Evidenc
         start_char=start_char,
         end_char=end_char,
         section_title=None,
+        verified=verified,
     )
 
 
 # ---------------------------------------------------------------------------
-# Pydantic models for each specialized extraction pipeline
+# Internal Pydantic models — LLM response shapes per cluster
 # ---------------------------------------------------------------------------
 
 
-class _ExtractionItem(BaseModel):
+class _Item(BaseModel):
     value: str
     quote: str
 
 
-class _ExtractionDataPurposeLink(BaseModel):
+class _DataItem(BaseModel):
     data_type: str
-    purposes: list[str] = Field(default_factory=list)
+    sensitivity: str = "medium"
+    required: str = "unclear"
     quote: str
 
 
-class _ExtractionThirdParty(BaseModel):
+class _PurposeLink(BaseModel):
+    data_type: str
+    purposes: list[str] = Field(default_factory=list)
+    legal_basis: str | None = None
+    quote: str
+
+
+class _RetentionRule(BaseModel):
+    data_scope: str
+    duration: str
+    conditions: str | None = None
+    quote: str
+
+
+class _CookieTracker(BaseModel):
+    name_or_type: str
+    category: str = "other"
+    duration: str | None = None
+    third_party: bool = False
+    opt_out_mechanism: str | None = None
+    quote: str
+
+
+class _ThirdParty(BaseModel):
     recipient: str
     data_shared: list[str] = Field(default_factory=list)
     purpose: str | None = None
@@ -165,51 +241,145 @@ class _ExtractionThirdParty(BaseModel):
     quote: str
 
 
-class _ExtractionPrivacySignals(BaseModel):
-    """Privacy signals extracted from a single chunk."""
-
-    sells_data: str | None = None  # "yes", "no", "unclear"
-    cross_site_tracking: str | None = None  # "yes", "no", "unclear"
-    account_deletion: str | None = None  # "self_service", "request_required", "not_specified"
-    data_retention_summary: str | None = None  # e.g. "30 days", "indefinite"
-    consent_model: str | None = None  # "opt_in", "opt_out", "mixed", "not_specified"
-
-
-# Contract clause item (used by sharing_rights cluster)
-class _ExtractionContractClause(BaseModel):
-    clause_type: str
-    value: str
+class _InternationalTransfer(BaseModel):
+    destination: str
+    mechanism: str | None = None
+    data_types: list[str] = Field(default_factory=list)
     quote: str
 
 
-# Cluster 1: Data & Storage (story + retention + security)
-class _ClusterDataStorageResult(BaseModel):
-    data_collected: list[_ExtractionItem] = Field(default_factory=list)
-    data_purposes: list[_ExtractionItem] = Field(default_factory=list)
-    data_collection_details: list[_ExtractionDataPurposeLink] = Field(default_factory=list)
-    retention_policy: list[_ExtractionItem] = Field(default_factory=list)
-    security_measures: list[_ExtractionItem] = Field(default_factory=list)
+class _GovernmentAccess(BaseModel):
+    authority_type: str
+    conditions: str
+    data_scope: str | None = None
+    quote: str
 
 
-# Cluster 2: Sharing & Rights (sharing + rights + contract)
-class _ClusterSharingRightsResult(BaseModel):
-    third_party_details: list[_ExtractionThirdParty] = Field(default_factory=list)
-    your_rights: list[_ExtractionItem] = Field(default_factory=list)
-    contract_clauses: list[_ExtractionContractClause] = Field(default_factory=list)
+class _CorporateFamily(BaseModel):
+    entities: list[str] = Field(default_factory=list)
+    data_shared: list[str] = Field(default_factory=list)
+    purpose: str | None = None
+    quote: str
 
 
-# Cluster 3: Risk & Signals (risk + signals + advertising + profiling)
-class _ClusterRiskSignalsResult(BaseModel):
-    dangers: list[_ExtractionItem] = Field(default_factory=list)
-    benefits: list[_ExtractionItem] = Field(default_factory=list)
-    recommended_actions: list[_ExtractionItem] = Field(default_factory=list)
-    privacy_signals: _ExtractionPrivacySignals | None = None
-    advertising_practices: list[_ExtractionItem] = Field(default_factory=list)
-    profiling_ai: list[_ExtractionItem] = Field(default_factory=list)
+class _UserRight(BaseModel):
+    right_type: str
+    description: str
+    mechanism: str | None = None
+    quote: str
+
+
+class _AIUsage(BaseModel):
+    usage_type: str
+    description: str
+    data_involved: list[str] = Field(default_factory=list)
+    opt_out_available: str = "unclear"
+    opt_out_mechanism: str | None = None
+    consequences: str | None = None
+    quote: str
+
+
+class _ChildrenPolicy(BaseModel):
+    minimum_age: int | None = None
+    parental_consent_required: bool = False
+    special_protections: str | None = None
+    quote: str | None = None
+
+
+class _Liability(BaseModel):
+    scope: str
+    limitation_type: str
+    description: str
+    extends_beyond_product: bool = False
+    quote: str
+
+
+class _DisputeResolution(BaseModel):
+    mechanism: str
+    class_action_waiver: bool = False
+    jury_trial_waiver: bool = False
+    venue: str | None = None
+    governing_law: str | None = None
+    description: str | None = None
+    quote: str
+
+
+class _ContentOwnership(BaseModel):
+    ownership_type: str
+    scope: str
+    description: str
+    quote: str
+
+
+class _ScopeExpansion(BaseModel):
+    scope_type: str
+    description: str
+    entities_affected: list[str] = Field(default_factory=list)
+    quote: str
+
+
+class _PrivacySignals(BaseModel):
+    sells_data: str | None = None
+    sells_data_quote: str | None = None
+    cross_site_tracking: str | None = None
+    cross_site_tracking_quote: str | None = None
+    account_deletion: str | None = None
+    account_deletion_quote: str | None = None
+    data_retention_summary: str | None = None
+    data_retention_quote: str | None = None
+    consent_model: str | None = None
+    consent_model_quote: str | None = None
+    ai_training_on_user_data: str | None = None
+    ai_training_quote: str | None = None
+    breach_notification: str | None = None
+    breach_notification_quote: str | None = None
+    data_minimization: str | None = None
+    data_minimization_quote: str | None = None
+    children_data_collection: str | None = None
+    children_data_collection_quote: str | None = None
+
+
+# --- Cluster result shapes ---
+
+
+class _ClusterDataPractices(BaseModel):
+    data_collected: list[_DataItem] = Field(default_factory=list)
+    data_purposes: list[_PurposeLink] = Field(default_factory=list)
+    retention_policies: list[_RetentionRule] = Field(default_factory=list)
+    security_measures: list[_Item] = Field(default_factory=list)
+    cookies_and_trackers: list[_CookieTracker] = Field(default_factory=list)
+
+
+class _ClusterSharingTransfers(BaseModel):
+    third_party_details: list[_ThirdParty] = Field(default_factory=list)
+    international_transfers: list[_InternationalTransfer] = Field(default_factory=list)
+    government_access: list[_GovernmentAccess] = Field(default_factory=list)
+    corporate_family_sharing: list[_CorporateFamily] = Field(default_factory=list)
+
+
+class _ClusterRightsAI(BaseModel):
+    user_rights: list[_UserRight] = Field(default_factory=list)
+    consent_mechanisms: list[_Item] = Field(default_factory=list)
+    account_lifecycle: list[_Item] = Field(default_factory=list)
+    ai_usage: list[_AIUsage] = Field(default_factory=list)
+    children_policy: _ChildrenPolicy | None = None
+    privacy_signals: _PrivacySignals | None = None
+
+
+class _ClusterLegalScope(BaseModel):
+    liability: list[_Liability] = Field(default_factory=list)
+    dispute_resolution: list[_DisputeResolution] = Field(default_factory=list)
+    content_ownership: list[_ContentOwnership] = Field(default_factory=list)
+    scope_expansion: list[_ScopeExpansion] = Field(default_factory=list)
+    indemnification: list[_Item] = Field(default_factory=list)
+    termination_consequences: list[_Item] = Field(default_factory=list)
+    dangers: list[_Item] = Field(default_factory=list)
+    benefits: list[_Item] = Field(default_factory=list)
+    recommended_actions: list[_Item] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# Prompt builders
+# Prompts
 # ---------------------------------------------------------------------------
 
 EXTRACTION_SYSTEM_PROMPT = """You are an expert legal-document information extractor.
@@ -223,12 +393,298 @@ Critical rules:
 - Do not paraphrase evidence quotes; copy exact text.
 """
 
+_CLUSTER_SPECS: dict[str, tuple[dict[str, Any], str]] = {}
+
+
+def _build_cluster_specs() -> None:
+    """Build schema hints and instruction notes for each cluster."""
+
+    # --- Cluster 1: Data Practices ---
+    _CLUSTER_SPECS["data_practices"] = (
+        {
+            "data_collected": [
+                {
+                    "data_type": "Email address",
+                    "sensitivity": "low | medium | high | sensitive",
+                    "required": "required | optional | unclear",
+                    "quote": "exact quote",
+                }
+            ],
+            "data_purposes": [
+                {
+                    "data_type": "Email address",
+                    "purposes": ["Account creation", "Marketing"],
+                    "legal_basis": "consent | legitimate_interest | contract | null",
+                    "quote": "exact quote",
+                }
+            ],
+            "retention_policies": [
+                {
+                    "data_scope": "Account data",
+                    "duration": "30 days after deletion",
+                    "conditions": "After account closure or null",
+                    "quote": "exact quote",
+                }
+            ],
+            "security_measures": [
+                {"value": "Encryption in transit and at rest", "quote": "exact quote"}
+            ],
+            "cookies_and_trackers": [
+                {
+                    "name_or_type": "Google Analytics",
+                    "category": "essential | analytics | advertising | social | other",
+                    "duration": "2 years or null",
+                    "third_party": True,
+                    "opt_out_mechanism": "Browser settings or null",
+                    "quote": "exact quote",
+                }
+            ],
+        },
+        (
+            "Extract ALL of the following from this chunk:\n"
+            "1. DATA COLLECTED: every data type mentioned (email, IP, location, biometric, health, financial, etc.).\n"
+            "   Classify sensitivity: low (public info), medium (PII), high (financial/precise location), sensitive (biometric/health/genetic/racial/religious).\n"
+            "   Note whether required or optional for the service.\n"
+            "2. DATA PURPOSES: link each data type to its purposes. Include legal basis if stated (consent, legitimate interest, contract).\n"
+            "3. RETENTION: specific durations, conditions, deletion timelines per data scope.\n"
+            "4. SECURITY: encryption, access controls, audits, certifications, breach response.\n"
+            "5. COOKIES & TRACKERS: specific cookies, pixels, SDKs, fingerprinting. Include category, duration, whether third-party, and opt-out mechanism if stated."
+        ),
+    )
+
+    # --- Cluster 2: Sharing & Transfers ---
+    _CLUSTER_SPECS["sharing_transfers"] = (
+        {
+            "third_party_details": [
+                {
+                    "recipient": "Advertisers",
+                    "data_shared": ["email", "location data"],
+                    "purpose": "Targeted advertising",
+                    "risk_level": "low | medium | high",
+                    "quote": "exact quote",
+                }
+            ],
+            "international_transfers": [
+                {
+                    "destination": "United States",
+                    "mechanism": "SCC|adequacy_decision|consent|null",
+                    "data_types": ["email", "usage data"],
+                    "quote": "exact quote",
+                }
+            ],
+            "government_access": [
+                {
+                    "authority_type": "Law enforcement",
+                    "conditions": "Valid court order or subpoena",
+                    "data_scope": "str|null",
+                    "quote": "exact quote",
+                }
+            ],
+            "corporate_family_sharing": [
+                {
+                    "entities": ["Meta Platforms", "Instagram", "WhatsApp"],
+                    "data_shared": ["account info", "usage data"],
+                    "purpose": "Cross-platform analytics",
+                    "quote": "exact quote",
+                }
+            ],
+        },
+        (
+            "Extract ALL of the following from this chunk:\n"
+            "1. THIRD-PARTY SHARING: who receives data, what data, why, risk level (low/medium/high).\n"
+            "   Include service providers, advertisers, analytics partners, business partners.\n"
+            "2. INTERNATIONAL TRANSFERS: where data flows geographically. Include the legal transfer mechanism if stated\n"
+            "   (Standard Contractual Clauses, adequacy decisions, binding corporate rules, user consent).\n"
+            "3. GOVERNMENT / LAW ENFORCEMENT ACCESS: under what conditions data is shared with authorities.\n"
+            "   Include the legal standard required (court order, subpoena, national security letter, voluntary).\n"
+            "4. CORPORATE FAMILY SHARING: data shared with parent companies, subsidiaries, affiliates.\n"
+            "   Name specific entities when mentioned. Note if agreeing to one service shares data with the whole corporate group."
+        ),
+    )
+
+    # --- Cluster 3: Rights & AI ---
+    _CLUSTER_SPECS["rights_ai"] = (
+        {
+            "user_rights": [
+                {
+                    "right_type": "Deletion",
+                    "description": "Delete your account and associated data",
+                    "mechanism": "Settings > Privacy > Delete Account, or email privacy@example.com",
+                    "quote": "exact quote",
+                }
+            ],
+            "consent_mechanisms": [
+                {
+                    "value": "Opt-out of marketing emails via unsubscribe link",
+                    "quote": "exact quote",
+                }
+            ],
+            "account_lifecycle": [
+                {"value": "Data deleted 30 days after account closure", "quote": "exact quote"}
+            ],
+            "ai_usage": [
+                {
+                    "usage_type": "training_on_user_data | automated_decisions | profiling | content_generation | recommendation | moderation | other",
+                    "description": "User content used to train language models",
+                    "data_involved": ["text messages", "uploaded files"],
+                    "opt_out_available": "yes | no | unclear",
+                    "opt_out_mechanism": "Settings > Privacy > AI Training or null",
+                    "consequences": "AI features may be less personalized or null",
+                    "quote": "exact quote",
+                }
+            ],
+            "children_policy": {
+                "minimum_age": 13,
+                "parental_consent_required": True,
+                "special_protections": "Limited data collection for under-16s or null",
+                "quote": "exact quote or null",
+            },
+            "privacy_signals": {
+                "sells_data": "yes|no|unclear|null",
+                "sells_data_quote": "str|null",
+                "cross_site_tracking": "yes|no|unclear|null",
+                "cross_site_tracking_quote": "str|null",
+                "account_deletion": "self_service|request_required|not_specified|null",
+                "account_deletion_quote": "str|null",
+                "data_retention_summary": "str|null",
+                "data_retention_quote": "str|null",
+                "consent_model": "opt_in|opt_out|mixed|not_specified|null",
+                "consent_model_quote": "str|null",
+                "ai_training_on_user_data": "yes|no|unclear|null",
+                "ai_training_quote": "str|null",
+                "breach_notification": "yes|no|not_specified|null",
+                "breach_notification_quote": "str|null",
+                "data_minimization": "yes|no|unclear|null",
+                "data_minimization_quote": "str|null",
+                "children_data_collection": "yes|no|not_specified|null",
+                "children_data_collection_quote": "str|null",
+            },
+        },
+        (
+            "Extract ALL of the following from this chunk:\n"
+            "1. USER RIGHTS: access, correction, deletion, portability, objection, restriction, withdrawal of consent.\n"
+            "   Include the MECHANISM (URL, settings path, email address) to exercise each right.\n"
+            "2. CONSENT MECHANISMS: how consent is obtained, withdrawn, managed. Granularity of choices.\n"
+            "3. ACCOUNT LIFECYCLE: what happens to data on account closure/deletion/inactivity.\n"
+            "   Include data portability/export options, deletion timelines, what survives deletion.\n"
+            "4. AI / PROFILING / AUTOMATED DECISIONS:\n"
+            "   - Is user data/content used to TRAIN AI models? Can users opt out?\n"
+            "   - Are automated decisions made about users (content moderation, pricing, eligibility)?\n"
+            "   - Is profiling performed? What profiles are built and for what purpose?\n"
+            "   - Are AI-generated outputs based on user data (voice cloning, style mimicking)?\n"
+            "5. CHILDREN & AGE: minimum age, COPPA/children's privacy, parental consent, special protections for minors.\n"
+            "6. PRIVACY SIGNALS: only set a field if the chunk EXPLICITLY mentions it, null otherwise."
+        ),
+    )
+
+    # --- Cluster 4: Legal Terms & Scope ---
+    _CLUSTER_SPECS["legal_scope"] = (
+        {
+            "liability": [
+                {
+                    "scope": "Service use and all affiliated properties",
+                    "limitation_type": "cap | waiver | exclusion | indemnification",
+                    "description": "Liability limited to fees paid in last 12 months",
+                    "extends_beyond_product": False,
+                    "quote": "exact quote",
+                }
+            ],
+            "dispute_resolution": [
+                {
+                    "mechanism": "arbitration | litigation | mediation | other",
+                    "class_action_waiver": True,
+                    "jury_trial_waiver": True,
+                    "venue": "Delaware or null",
+                    "governing_law": "State of California or null",
+                    "description": "Binding arbitration with opt-out window or null",
+                    "quote": "exact quote",
+                }
+            ],
+            "content_ownership": [
+                {
+                    "ownership_type": "license_to_company | user_retains | company_owns | ai_training_rights | likeness_rights | other",
+                    "scope": "Perpetual, irrevocable, worldwide, sublicensable license",
+                    "description": "Company may use uploaded content to train AI models and create derivative works",
+                    "quote": "exact quote",
+                }
+            ],
+            "scope_expansion": [
+                {
+                    "scope_type": "cross_entity | survival_clause | unilateral_modification | binding_heirs | physical_world | other",
+                    "description": "Terms apply to all subsidiaries including theme parks and retail stores",
+                    "entities_affected": ["Disney+", "Disneyland", "ESPN"],
+                    "quote": "exact quote",
+                }
+            ],
+            "indemnification": [
+                {
+                    "value": "User indemnifies company against all claims from user content",
+                    "quote": "exact quote",
+                }
+            ],
+            "termination_consequences": [
+                {
+                    "value": "Company may delete all content 30 days after termination",
+                    "quote": "exact quote",
+                }
+            ],
+            "dangers": [
+                {
+                    "value": "No cap on liability for user-generated content claims",
+                    "quote": "exact quote",
+                }
+            ],
+            "benefits": [
+                {"value": "30-day opt-out window for arbitration clause", "quote": "exact quote"}
+            ],
+            "recommended_actions": [
+                {
+                    "value": "Send opt-out notice to arbitration@example.com within 30 days",
+                    "quote": "exact quote",
+                }
+            ],
+        },
+        (
+            "Extract ALL of the following from this chunk:\n"
+            "1. LIABILITY: limitations, caps, waivers, exclusions.\n"
+            "   CRITICAL: flag if liability waivers EXTEND BEYOND the digital product — e.g. waiving\n"
+            "   liability for physical injury at venues, medical claims, or unrelated subsidiary services.\n"
+            "   Set extends_beyond_product=true for these.\n"
+            "2. DISPUTE RESOLUTION: arbitration clauses, class action waivers, jury trial waivers,\n"
+            "   venue/forum requirements, mass arbitration rules, opt-out windows.\n"
+            "   Include governing law/jurisdiction.\n"
+            "3. CONTENT OWNERSHIP / IP: what rights the company claims over user content.\n"
+            "   Flag perpetual/irrevocable/sublicensable licenses, AI training rights over user content,\n"
+            "   rights to user's likeness/voice/image, and derivative work rights.\n"
+            "4. SCOPE EXPANSION: clauses extending reach beyond what users expect.\n"
+            "   - cross_entity: agreeing to one service binds you to terms of subsidiaries/affiliates.\n"
+            "   - survival_clause: obligations surviving termination.\n"
+            "   - unilateral_modification: company can change terms without explicit consent.\n"
+            "   - binding_heirs: terms binding user's estate or heirs.\n"
+            "   - physical_world: digital terms affecting physical-world rights (medical, biometric, property).\n"
+            "5. INDEMNIFICATION: what the user is personally liable for.\n"
+            "6. TERMINATION CONSEQUENCES: what happens to data, content, and access on termination.\n"
+            "7. DANGERS: material risks, one-sided legal terms, or meaningful trade-offs **stated in the chunk**.\n"
+            "   Skip routine signup or category-norm requirements (e.g. phone for messaging, email for accounts)\n"
+            "   unless the text ties them to unusual extra processing, sharing, or retention worth flagging.\n"
+            "   Goal: help users prioritize — not list every basic requirement as a red flag.\n"
+            "8. BENEFITS: protections and user-friendly practices the document actually claims.\n"
+            "9. RECOMMENDED ACTIONS: practical steps a user can take (settings, reading linked policies, opt-outs)\n"
+            "   with specific URLs or instructions when present — helpful tone, not alarmist."
+        ),
+    )
+
+
+_build_cluster_specs()
+
+CLUSTER_NAMES = ["data_practices", "sharing_transfers", "rights_ai", "legal_scope"]
+
 
 def _get_extraction_prompt(document: Document, chunk: str, cluster: str) -> str:
-    """Return a focused user prompt for one of the three extraction clusters."""
+    schema_hint, notes = _CLUSTER_SPECS[cluster]
 
     header = f"""\
-Extract evidence-backed facts from this legal document chunk.
+Extract evidence-backed facts from this policy document chunk.
 
 Document URL: {document.url}
 Document Type: {document.doc_type}
@@ -239,110 +695,45 @@ Text chunk:
 Return a JSON object with ONLY the keys listed below (all keys required).
 Evidence quotes must be EXACT substrings of the chunk above.
 """
+    return f"{header}\n{json.dumps(schema_hint, separators=(',', ':'))}\n\nNotes:\n{notes}"
 
-    if cluster == "data_storage":
-        schema_hint = {
-            "data_collected": [{"value": "Email address", "quote": "exact quote"}],
-            "data_purposes": [{"value": "Personalized advertising", "quote": "exact quote"}],
-            "data_collection_details": [
-                {
-                    "data_type": "Email address",
-                    "purposes": ["Account creation", "Security"],
-                    "quote": "exact quote",
-                }
-            ],
-            "retention_policy": [
-                {"value": "Account data retained 30 days after deletion", "quote": "exact quote"}
-            ],
-            "security_measures": [
-                {"value": "Encryption in transit and at rest", "quote": "exact quote"}
-            ],
-        }
-        notes = (
-            "Extract ALL of the following from this chunk:\n"
-            "1. WHAT data is collected and WHY (data_collected, data_purposes, data_collection_details).\n"
-            "   Keep `value` short and normalized (deduplicate 'e-mail' vs 'email').\n"
-            "2. Data RETENTION periods, deletion timelines, storage duration (retention_policy).\n"
-            "3. SECURITY safeguards: encryption, access controls, audits, breach response (security_measures)."
-        )
 
-    elif cluster == "sharing_rights":
-        schema_hint = {
-            "third_party_details": [
-                {
-                    "recipient": "Advertisers",
-                    "data_shared": ["email", "location data"],
-                    "purpose": "Targeted advertising",
-                    "risk_level": "high",
-                    "quote": "exact quote",
-                }
-            ],
-            "your_rights": [
-                {"value": "Delete your account via Settings > Privacy", "quote": "exact quote"}
-            ],
-            "contract_clauses": [
-                {
-                    "clause_type": "arbitration | liability | governing_law | jurisdiction",
-                    "value": "Disputes resolved by binding arbitration in California",
-                    "quote": "exact quote",
-                }
-            ],
-        }
-        notes = (
-            "Extract ALL of the following from this chunk:\n"
-            "1. Third-party SHARING: who receives data, what data, why, risk level (low/medium/high).\n"
-            "2. User RIGHTS: access, correction, deletion, portability. Include specific URLs or instructions.\n"
-            "3. CONTRACT clauses: arbitration, governing law, jurisdiction, liability limitations.\n"
-            "   Capture class action waivers, jury-trial waivers, mass arbitration rules, and venue/forum requirements\n"
-            "   under arbitration. Capture liability waivers or caps under liability. Use clause_type values from the hint."
-        )
+# ---------------------------------------------------------------------------
+# Synonym normalisation
+# ---------------------------------------------------------------------------
 
-    elif cluster == "risk_signals":
-        schema_hint = {
-            "dangers": [{"value": "No retention period specified", "quote": "exact quote"}],
-            "benefits": [{"value": "Encryption in transit and at rest", "quote": "exact quote"}],
-            "recommended_actions": [
-                {"value": "Opt out of ads at example.com/privacy/ads", "quote": "exact quote"}
-            ],
-            "privacy_signals": {
-                "sells_data": "yes | no | unclear  (null if not mentioned)",
-                "cross_site_tracking": "yes | no | unclear  (null if not mentioned)",
-                "account_deletion": "self_service | request_required | not_specified  (null if not mentioned)",
-                "data_retention_summary": "e.g. '30 days' or 'indefinite'  (null if not mentioned)",
-                "consent_model": "opt_in | opt_out | mixed | not_specified  (null if not mentioned)",
-            },
-            "advertising_practices": [
-                {"value": "Targeted advertising with third-party partners", "quote": "exact quote"}
-            ],
-            "profiling_ai": [
-                {
-                    "value": "Automated profiling to personalize recommendations",
-                    "quote": "exact quote",
-                }
-            ],
-        }
-        notes = (
-            "Extract ALL of the following from this chunk:\n"
-            "1. RISKS/dangers and positive BENEFITS/protections.\n"
-            "   Flag explicit high-risk items like AI training/model improvement using user content or likeness,\n"
-            "   broad content licenses (perpetual/irrevocable/sublicensable), biometric/health data use,\n"
-            "   precise location tracking, cross-service/affiliate scope, unilateral changes, account termination,\n"
-            "   and liability waivers for injury.\n"
-            "2. RECOMMENDED ACTIONS: actionable steps with specific URLs or instructions.\n"
-            "3. PRIVACY SIGNALS: only set a field if the chunk EXPLICITLY mentions it, null otherwise.\n"
-            "   sells_data: selling/not selling personal data.\n"
-            "   cross_site_tracking: cross-site/cross-device tracking, third-party ad cookies.\n"
-            "   account_deletion: self-service (button/settings) vs contact-required.\n"
-            "   data_retention_summary: specific periods ('30 days', '2 years', 'indefinite').\n"
-            "   consent_model: opt-in (explicit agreement) vs opt-out (pre-selected).\n"
-            "4. ADVERTISING practices, marketing, ad personalization. Include opt-out links if present.\n"
-            "5. PROFILING/AI: automated decision-making, profiling, AI model training, or use of data to train AI."
-        )
+_SYNONYM_MAP: dict[str, str] = {
+    "e-mail": "email",
+    "e-mail address": "email address",
+    "ip-address": "ip address",
+    "phone number": "phone number",
+    "telephone number": "phone number",
+    "mobile number": "phone number",
+    "date of birth": "date of birth",
+    "birth date": "date of birth",
+    "geolocation": "location",
+    "geo-location": "location",
+    "gps location": "location",
+    "precise location": "location",
+    "full name": "name",
+    "first name": "name",
+    "last name": "name",
+    "user name": "username",
+    "biometric data": "biometrics",
+    "biometric information": "biometrics",
+    "facial recognition data": "biometrics",
+    "health data": "health information",
+    "medical information": "health information",
+    "genetic data": "genetic information",
+    "financial information": "financial data",
+    "payment information": "payment data",
+    "credit card": "payment data",
+}
 
-    else:
-        raise ValueError(f"Unknown cluster: {cluster!r}")
 
-    return f"{header}\n{json.dumps(schema_hint, indent=2)}\n\nNotes:\n{notes}"
+def _dedupe_key(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", (value or "")).strip().lower()
+    return _SYNONYM_MAP.get(normalized, normalized)
 
 
 # ---------------------------------------------------------------------------
@@ -350,33 +741,9 @@ Evidence quotes must be EXACT substrings of the chunk above.
 # ---------------------------------------------------------------------------
 
 
-def _dedupe_key(value: str) -> str:
-    return re.sub(r"\s+", " ", (value or "")).strip().lower()
-
-
-def _clean_sharing_rights_raw(raw: dict[str, Any]) -> dict[str, Any]:
-    """Clean raw LLM response for sharing rights cluster to handle validation issues."""
-    if not isinstance(raw, dict):
-        return raw
-
-    # Clean third_party_details
-    if "third_party_details" in raw and isinstance(raw["third_party_details"], list):
-        for item in raw["third_party_details"]:
-            if isinstance(item, dict) and "risk_level" in item:
-                risk_level = item["risk_level"]
-                # Convert empty list to None
-                if risk_level == []:
-                    item["risk_level"] = None
-                # Ensure it's a string if it's not None
-                elif risk_level is not None and not isinstance(risk_level, str):
-                    item["risk_level"] = str(risk_level)
-
-    return raw
-
-
 def _merge_text_items(
     existing: dict[str, ExtractedTextItem],
-    items: list[_ExtractionItem],
+    items: list[_Item],
     *,
     document: Document,
     content_hash: str,
@@ -391,9 +758,45 @@ def _merge_text_items(
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 
 
-def _merge_data_purpose_links(
+def _merge_data_items(
+    existing: dict[str, ExtractedDataItem],
+    items: list[_DataItem],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    sensitivity_order = {"low": 0, "medium": 1, "high": 2, "sensitive": 3}
+    for item in items:
+        key = _dedupe_key(item.data_type)
+        if not key:
+            continue
+        sens = item.sensitivity.strip().lower() if item.sensitivity else "medium"
+        if sens not in sensitivity_order:
+            sens = "medium"
+        req = item.required.strip().lower() if item.required else "unclear"
+        if req not in {"required", "optional", "unclear"}:
+            req = "unclear"
+        if key not in existing:
+            existing[key] = ExtractedDataItem(
+                data_type=item.data_type.strip(),
+                sensitivity=cast(Any, sens),
+                required=cast(Any, req),
+                evidence=[],
+            )
+        else:
+            cur_sens = sensitivity_order.get(existing[key].sensitivity, 1)
+            new_sens = sensitivity_order.get(sens, 1)
+            if new_sens > cur_sens:
+                existing[key].sensitivity = cast(Any, sens)
+            if req == "required":
+                existing[key].required = "required"
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_purpose_links(
     existing: dict[str, ExtractedDataPurposeLink],
-    items: list[_ExtractionDataPurposeLink],
+    items: list[_PurposeLink],
     *,
     document: Document,
     content_hash: str,
@@ -404,11 +807,8 @@ def _merge_data_purpose_links(
             continue
         if key not in existing:
             existing[key] = ExtractedDataPurposeLink(
-                data_type=item.data_type.strip(),
-                purposes=[],
-                evidence=[],
+                data_type=item.data_type.strip(), purposes=[], evidence=[]
             )
-        # Merge purposes (dedupe)
         for p in item.purposes or []:
             p_norm = re.sub(r"\s+", " ", p).strip()
             if p_norm and p_norm not in existing[key].purposes:
@@ -417,9 +817,69 @@ def _merge_data_purpose_links(
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 
 
+def _merge_retention_rules(
+    existing: dict[str, ExtractedRetentionRule],
+    items: list[_RetentionRule],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    for item in items:
+        key = _dedupe_key(item.data_scope)
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedRetentionRule(
+                data_scope=item.data_scope.strip(),
+                duration=item.duration.strip() if item.duration else "Not specified",
+                conditions=item.conditions.strip() if item.conditions else None,
+                evidence=[],
+            )
+        else:
+            if item.duration and len(item.duration) > len(existing[key].duration):
+                existing[key].duration = item.duration.strip()
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_cookie_trackers(
+    existing: dict[str, ExtractedCookieTracker],
+    items: list[_CookieTracker],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    valid_categories = {"essential", "analytics", "advertising", "social", "other"}
+    for item in items:
+        key = _dedupe_key(item.name_or_type)
+        if not key:
+            continue
+        cat = item.category.strip().lower() if item.category else "other"
+        if cat not in valid_categories:
+            cat = "other"
+        if key not in existing:
+            existing[key] = ExtractedCookieTracker(
+                name_or_type=item.name_or_type.strip(),
+                category=cast(Any, cat),
+                duration=item.duration.strip() if item.duration else None,
+                third_party=item.third_party,
+                opt_out_mechanism=item.opt_out_mechanism.strip()
+                if item.opt_out_mechanism
+                else None,
+                evidence=[],
+            )
+        else:
+            if item.third_party:
+                existing[key].third_party = True
+            if item.opt_out_mechanism and not existing[key].opt_out_mechanism:
+                existing[key].opt_out_mechanism = item.opt_out_mechanism.strip()
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
 def _merge_third_parties(
     existing: dict[str, ExtractedThirdPartyRecipient],
-    items: list[_ExtractionThirdParty],
+    items: list[_ThirdParty],
     *,
     document: Document,
     content_hash: str,
@@ -436,101 +896,471 @@ def _merge_third_parties(
                 risk_level="medium",
                 evidence=[],
             )
-        # Merge data_shared (dedupe)
         for d in item.data_shared or []:
             d_norm = re.sub(r"\s+", " ", d).strip()
             if d_norm and d_norm not in existing[key].data_shared:
                 existing[key].data_shared.append(d_norm)
-        # Merge purpose if missing
-        if not existing[key].purpose and item.purpose:
-            existing[key].purpose = item.purpose.strip()
-        # Normalize risk_level if present
+        if item.purpose:
+            new_purpose = item.purpose.strip()
+            cur_purpose = existing[key].purpose
+            if not cur_purpose or len(new_purpose) > len(cur_purpose):
+                existing[key].purpose = new_purpose
         if item.risk_level:
             rl = item.risk_level.strip().lower()
             if rl in {"low", "medium", "high"}:
-                existing[key].risk_level = rl  # type: ignore[assignment]
+                existing[key].risk_level = cast(Any, rl)
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_international_transfers(
+    existing: dict[str, ExtractedInternationalTransfer],
+    items: list[_InternationalTransfer],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    for item in items:
+        key = _dedupe_key(item.destination)
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedInternationalTransfer(
+                destination=item.destination.strip(),
+                mechanism=item.mechanism.strip() if item.mechanism else None,
+                data_types=[],
+                evidence=[],
+            )
+        for dt in item.data_types or []:
+            dt_norm = re.sub(r"\s+", " ", dt).strip()
+            if dt_norm and dt_norm not in existing[key].data_types:
+                existing[key].data_types.append(dt_norm)
+        if item.mechanism and not existing[key].mechanism:
+            existing[key].mechanism = item.mechanism.strip()
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_government_access(
+    existing: dict[str, ExtractedGovernmentAccess],
+    items: list[_GovernmentAccess],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    for item in items:
+        key = _dedupe_key(f"{item.authority_type}:{item.conditions}")
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedGovernmentAccess(
+                authority_type=item.authority_type.strip(),
+                conditions=item.conditions.strip(),
+                data_scope=item.data_scope.strip() if item.data_scope else None,
+                evidence=[],
+            )
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_corporate_family(
+    existing: dict[str, ExtractedCorporateFamilySharing],
+    items: list[_CorporateFamily],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    for item in items:
+        ent_key = _dedupe_key(
+            ",".join(sorted(item.entities)) if item.entities else item.purpose or "unnamed"
+        )
+        if not ent_key:
+            continue
+        if ent_key not in existing:
+            existing[ent_key] = ExtractedCorporateFamilySharing(
+                entities=[e.strip() for e in item.entities],
+                data_shared=[],
+                purpose=item.purpose.strip() if item.purpose else None,
+                evidence=[],
+            )
+        for d in item.data_shared or []:
+            d_norm = re.sub(r"\s+", " ", d).strip()
+            if d_norm and d_norm not in existing[ent_key].data_shared:
+                existing[ent_key].data_shared.append(d_norm)
+        if item.quote:
+            existing[ent_key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_user_rights(
+    existing: dict[str, ExtractedUserRight],
+    items: list[_UserRight],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    for item in items:
+        key = _dedupe_key(item.right_type)
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedUserRight(
+                right_type=item.right_type.strip(),
+                description=item.description.strip(),
+                mechanism=item.mechanism.strip() if item.mechanism else None,
+                evidence=[],
+            )
+        else:
+            if item.mechanism and not existing[key].mechanism:
+                existing[key].mechanism = item.mechanism.strip()
+            if item.description and len(item.description) > len(existing[key].description):
+                existing[key].description = item.description.strip()
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_ai_usage(
+    existing: dict[str, ExtractedAIUsage],
+    items: list[_AIUsage],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    valid_types = {
+        "training_on_user_data",
+        "automated_decisions",
+        "profiling",
+        "content_generation",
+        "recommendation",
+        "moderation",
+        "other",
+    }
+    for item in items:
+        ut = item.usage_type.strip().lower() if item.usage_type else "other"
+        if ut not in valid_types:
+            ut = "other"
+        key = f"{ut}:{_dedupe_key(item.description)}"
+        if not key:
+            continue
+        opt = item.opt_out_available.strip().lower() if item.opt_out_available else "unclear"
+        if opt not in {"yes", "no", "unclear"}:
+            opt = "unclear"
+        if key not in existing:
+            existing[key] = ExtractedAIUsage(
+                usage_type=cast(Any, ut),
+                description=item.description.strip(),
+                data_involved=[],
+                opt_out_available=cast(Any, opt),
+                opt_out_mechanism=item.opt_out_mechanism.strip()
+                if item.opt_out_mechanism
+                else None,
+                consequences=item.consequences.strip() if item.consequences else None,
+                evidence=[],
+            )
+        else:
+            if opt == "yes":
+                existing[key].opt_out_available = "yes"
+            if item.opt_out_mechanism and not existing[key].opt_out_mechanism:
+                existing[key].opt_out_mechanism = item.opt_out_mechanism.strip()
+        for di in item.data_involved or []:
+            di_norm = re.sub(r"\s+", " ", di).strip()
+            if di_norm and di_norm not in existing[key].data_involved:
+                existing[key].data_involved.append(di_norm)
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_children_policy(
+    accumulated: ExtractedChildrenPolicy | None,
+    chunk_policy: _ChildrenPolicy | None,
+    *,
+    document: Document,
+    content_hash: str,
+) -> ExtractedChildrenPolicy | None:
+    if not chunk_policy or (not chunk_policy.quote and chunk_policy.minimum_age is None):
+        return accumulated
+    if accumulated is None:
+        accumulated = ExtractedChildrenPolicy(evidence=[])
+    if chunk_policy.minimum_age is not None:
+        if accumulated.minimum_age is None or chunk_policy.minimum_age > accumulated.minimum_age:
+            accumulated.minimum_age = chunk_policy.minimum_age
+    if chunk_policy.parental_consent_required:
+        accumulated.parental_consent_required = True
+    if chunk_policy.special_protections:
+        sp = chunk_policy.special_protections.strip()
+        if not accumulated.special_protections or len(sp) > len(accumulated.special_protections):
+            accumulated.special_protections = sp
+    if chunk_policy.quote:
+        accumulated.evidence.append(_make_evidence(document, content_hash, chunk_policy.quote))
+    return accumulated
+
+
+def _merge_liability(
+    existing: dict[str, ExtractedLiability],
+    items: list[_Liability],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    valid_types = {"cap", "waiver", "exclusion", "indemnification"}
+    for item in items:
+        lt = item.limitation_type.strip().lower() if item.limitation_type else "waiver"
+        if lt not in valid_types:
+            lt = "waiver"
+        key = f"{lt}:{_dedupe_key(item.scope)}"
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedLiability(
+                scope=item.scope.strip(),
+                limitation_type=cast(Any, lt),
+                description=item.description.strip(),
+                extends_beyond_product=item.extends_beyond_product,
+                evidence=[],
+            )
+        else:
+            if item.extends_beyond_product:
+                existing[key].extends_beyond_product = True
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_dispute_resolution(
+    existing: dict[str, ExtractedDisputeResolution],
+    items: list[_DisputeResolution],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    valid_mechanisms = {"arbitration", "litigation", "mediation", "other"}
+    for item in items:
+        mech = item.mechanism.strip().lower() if item.mechanism else "other"
+        if mech not in valid_mechanisms:
+            mech = "other"
+        key = f"{mech}:{_dedupe_key(item.venue or '')}:{_dedupe_key(item.governing_law or '')}"
+        if key not in existing:
+            existing[key] = ExtractedDisputeResolution(
+                mechanism=cast(Any, mech),
+                class_action_waiver=item.class_action_waiver,
+                jury_trial_waiver=item.jury_trial_waiver,
+                venue=item.venue.strip() if item.venue else None,
+                governing_law=item.governing_law.strip() if item.governing_law else None,
+                description=item.description.strip() if item.description else None,
+                evidence=[],
+            )
+        else:
+            if item.class_action_waiver:
+                existing[key].class_action_waiver = True
+            if item.jury_trial_waiver:
+                existing[key].jury_trial_waiver = True
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_content_ownership(
+    existing: dict[str, ExtractedContentOwnership],
+    items: list[_ContentOwnership],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    valid_types = {
+        "license_to_company",
+        "user_retains",
+        "company_owns",
+        "ai_training_rights",
+        "likeness_rights",
+        "other",
+    }
+    for item in items:
+        ot = item.ownership_type.strip().lower() if item.ownership_type else "other"
+        if ot not in valid_types:
+            ot = "other"
+        key = f"{ot}:{_dedupe_key(item.scope)}"
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedContentOwnership(
+                ownership_type=cast(Any, ot),
+                scope=item.scope.strip(),
+                description=item.description.strip(),
+                evidence=[],
+            )
+        if item.quote:
+            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+
+
+def _merge_scope_expansion(
+    existing: dict[str, ExtractedScopeExpansion],
+    items: list[_ScopeExpansion],
+    *,
+    document: Document,
+    content_hash: str,
+) -> None:
+    valid_types = {
+        "cross_entity",
+        "survival_clause",
+        "unilateral_modification",
+        "binding_heirs",
+        "physical_world",
+        "other",
+    }
+    for item in items:
+        st = item.scope_type.strip().lower() if item.scope_type else "other"
+        if st not in valid_types:
+            st = "other"
+        key = f"{st}:{_dedupe_key(item.description)}"
+        if not key:
+            continue
+        if key not in existing:
+            existing[key] = ExtractedScopeExpansion(
+                scope_type=cast(Any, st),
+                description=item.description.strip(),
+                entities_affected=[e.strip() for e in item.entities_affected],
+                evidence=[],
+            )
+        else:
+            for e in item.entities_affected:
+                e_norm = e.strip()
+                if e_norm and e_norm not in existing[key].entities_affected:
+                    existing[key].entities_affected.append(e_norm)
         if item.quote:
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 
 
 def _merge_privacy_signals(
     accumulated: PrivacySignals,
-    chunk_signals: _ExtractionPrivacySignals | None,
+    chunk_signals: _PrivacySignals | None,
+    *,
+    document: Document | None = None,
+    content_hash: str = "",
 ) -> None:
-    """Merge privacy signals from a chunk into the accumulated result.
-
-    Priority: explicit values ("yes"/"no") override "unclear"/"not_specified".
-    "yes" takes precedence over "no" for sells_data and cross_site_tracking
-    (if any chunk says data is sold, we flag it).
-    """
     if not chunk_signals:
         return
 
-    # sells_data: "yes" > "no" > "unclear"
-    if chunk_signals.sells_data:
-        val = chunk_signals.sells_data.strip().lower()
-        if val == "yes":
-            accumulated.sells_data = "yes"
-        elif val == "no" and accumulated.sells_data == "unclear":
-            accumulated.sells_data = "no"
+    def _add_evidence(quote: str | None) -> None:
+        if quote and document:
+            accumulated.evidence.append(_make_evidence(document, content_hash, quote))
 
-    # cross_site_tracking: "yes" > "no" > "unclear"
-    if chunk_signals.cross_site_tracking:
-        val = chunk_signals.cross_site_tracking.strip().lower()
+    def _merge_yes_no(current: str, new_val: str | None, quote_field: str | None) -> str:
+        """For yes/no/unclear signals: yes > no > unclear."""
+        if not new_val:
+            return current
+        val = new_val.strip().lower()
         if val == "yes":
-            accumulated.cross_site_tracking = "yes"
-        elif val == "no" and accumulated.cross_site_tracking == "unclear":
-            accumulated.cross_site_tracking = "no"
+            _add_evidence(quote_field)
+            return "yes"
+        elif val == "no" and current == "unclear":
+            _add_evidence(quote_field)
+            return "no"
+        return current
 
-    # account_deletion: "self_service" > "request_required" > "not_specified"
+    accumulated.sells_data = cast(
+        Any,
+        _merge_yes_no(
+            accumulated.sells_data, chunk_signals.sells_data, chunk_signals.sells_data_quote
+        ),
+    )
+    accumulated.cross_site_tracking = cast(
+        Any,
+        _merge_yes_no(
+            accumulated.cross_site_tracking,
+            chunk_signals.cross_site_tracking,
+            chunk_signals.cross_site_tracking_quote,
+        ),
+    )
+    accumulated.ai_training_on_user_data = cast(
+        Any,
+        _merge_yes_no(
+            accumulated.ai_training_on_user_data,
+            chunk_signals.ai_training_on_user_data,
+            chunk_signals.ai_training_quote,
+        ),
+    )
+    accumulated.data_minimization = cast(
+        Any,
+        _merge_yes_no(
+            accumulated.data_minimization,
+            chunk_signals.data_minimization,
+            chunk_signals.data_minimization_quote,
+        ),
+    )
+
+    # account_deletion: self_service > request_required > not_specified
     if chunk_signals.account_deletion:
         val = chunk_signals.account_deletion.strip().lower()
         if val == "self_service":
             accumulated.account_deletion = "self_service"
+            _add_evidence(chunk_signals.account_deletion_quote)
         elif val == "request_required" and accumulated.account_deletion == "not_specified":
             accumulated.account_deletion = "request_required"
+            _add_evidence(chunk_signals.account_deletion_quote)
 
-    # data_retention_summary: first non-null value wins, then longer/more specific overrides
-    if chunk_signals.data_retention_summary and not accumulated.data_retention_summary:
-        accumulated.data_retention_summary = chunk_signals.data_retention_summary.strip()
+    # data_retention_summary: keep longer/more informative value
+    if chunk_signals.data_retention_summary:
+        new_val = chunk_signals.data_retention_summary.strip()
+        if not accumulated.data_retention_summary or len(new_val) > len(
+            accumulated.data_retention_summary
+        ):
+            accumulated.data_retention_summary = new_val
+            _add_evidence(chunk_signals.data_retention_quote)
 
-    # consent_model: "opt_in"/"opt_out" > "mixed" > "not_specified"
+    # consent_model: opt_in/opt_out > mixed > not_specified
     if chunk_signals.consent_model:
         val = chunk_signals.consent_model.strip().lower()
         if val in ("opt_in", "opt_out"):
             if accumulated.consent_model == "not_specified":
-                accumulated.consent_model = val  # type: ignore[assignment]
+                accumulated.consent_model = cast(Any, val)
+                _add_evidence(chunk_signals.consent_model_quote)
             elif (
                 accumulated.consent_model in ("opt_in", "opt_out")
                 and accumulated.consent_model != val
             ):
                 accumulated.consent_model = "mixed"
+                _add_evidence(chunk_signals.consent_model_quote)
         elif val == "mixed":
             accumulated.consent_model = "mixed"
+            _add_evidence(chunk_signals.consent_model_quote)
+
+    # breach_notification: yes > no > not_specified
+    if chunk_signals.breach_notification:
+        val = chunk_signals.breach_notification.strip().lower()
+        if val == "yes":
+            accumulated.breach_notification = "yes"
+            _add_evidence(chunk_signals.breach_notification_quote)
+        elif val == "no" and accumulated.breach_notification == "not_specified":
+            accumulated.breach_notification = "no"
+            _add_evidence(chunk_signals.breach_notification_quote)
+
+    # children_data_collection: yes > no > not_specified
+    if chunk_signals.children_data_collection:
+        val = chunk_signals.children_data_collection.strip().lower()
+        if val == "yes":
+            accumulated.children_data_collection = "yes"
+            _add_evidence(chunk_signals.children_data_collection_quote)
+        elif val == "no" and accumulated.children_data_collection == "not_specified":
+            accumulated.children_data_collection = "no"
+            _add_evidence(chunk_signals.children_data_collection_quote)
 
 
-def _merge_contract_clauses(
-    existing: dict[str, ExtractedContractClause],
-    items: list[_ExtractionContractClause],
-    *,
-    document: Document,
-    content_hash: str,
-) -> None:
-    for item in items:
-        clause_type = (item.clause_type or "").strip().lower()
-        if clause_type not in {"liability", "arbitration", "governing_law", "jurisdiction"}:
-            continue
-        value = item.value.strip() if item.value else ""
-        if not value:
-            continue
-        key = f"{clause_type}:{_dedupe_key(value)}"
-        clause_type_literal = cast(ContractClauseType, clause_type)
-        if key not in existing:
-            existing[key] = ExtractedContractClause(
-                clause_type=clause_type_literal, value=value, evidence=[]
-            )
-        if item.quote:
-            existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
+# ---------------------------------------------------------------------------
+# Raw response cleaning
+# ---------------------------------------------------------------------------
+
+
+def _clean_raw(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise common LLM response quirks before Pydantic validation."""
+    if not isinstance(raw, dict):
+        return raw
+    for _key, val in raw.items():
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    for k, v in item.items():
+                        if v is not None and not isinstance(
+                            v, str | bool | int | float | list | dict
+                        ):
+                            item[k] = str(v)
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -547,17 +1377,15 @@ async def extract_document_facts(
 ) -> DocumentExtraction:
     """Extract evidence-backed facts from a document.
 
-    For each semantic chunk we launch **three clustered LLM calls in parallel**:
-      1. data_storage: data collected, purposes, retention, security
-      2. sharing_rights: third-party sharing, user rights, contract clauses
-      3. risk_signals: risks, benefits, actions, privacy signals, ads, profiling
-
-    Safe to call inside request handlers (supports cancellation), but may be slow
-    depending on document length.
+    For each semantic chunk we launch **four clustered LLM calls in parallel**:
+      1. data_practices: data collected, purposes, retention, security, cookies
+      2. sharing_transfers: third-party sharing, international, government, corporate family
+      3. rights_ai: user rights, consent, account lifecycle, AI/profiling, children
+      4. legal_scope: liability, disputes, content ownership, scope, indemnification, termination
     """
     token = cancellation_token or CancellationToken()
     logger.debug(
-        f"Starting extraction for document {document.id} "
+        f"Starting v4 extraction for document {document.id} "
         f"(use_cache={use_cache}, model_priority={model_priority})"
     )
 
@@ -569,57 +1397,64 @@ async def extract_document_facts(
         use_cache
         and document.extraction
         and document.extraction.source_content_hash == content_hash
+        and document.extraction.version == "v4"
     ):
-        logger.debug(
-            f"Using cached extraction for document {document.id} (content_hash={content_hash})"
-        )
+        logger.debug(f"Using cached v4 extraction for document {document.id}")
         return document.extraction
 
     text = document.text or ""
     chunks = _chunk_text(text, chunk_size=8000, overlap=800)
-    logger.debug(
-        f"Chunked document {document.id} into {len(chunks)} chunk(s) (text_len={len(text)})"
-    )
+    logger.debug(f"Chunked document {document.id} into {len(chunks)} chunk(s)")
+
     if not chunks:
-        logger.debug(f"No chunks found for document {document.id}; returning empty extraction")
         extraction = DocumentExtraction(
-            version="v3",
+            version="v4",
             generated_at=datetime.now(),
             source_content_hash=content_hash,
         )
         document.extraction = extraction
         return extraction
 
-    # Accumulation maps (deduplicated by normalised key)
-    data_collected: dict[str, ExtractedTextItem] = {}
-    data_purposes: dict[str, ExtractedTextItem] = {}
-    your_rights: dict[str, ExtractedTextItem] = {}
+    # Accumulation maps
+    data_collected: dict[str, ExtractedDataItem] = {}
+    data_purposes: dict[str, ExtractedDataPurposeLink] = {}
+    retention_policies: dict[str, ExtractedRetentionRule] = {}
+    security_measures: dict[str, ExtractedTextItem] = {}
+    cookies_and_trackers: dict[str, ExtractedCookieTracker] = {}
+
+    third_party_details: dict[str, ExtractedThirdPartyRecipient] = {}
+    international_transfers: dict[str, ExtractedInternationalTransfer] = {}
+    government_access: dict[str, ExtractedGovernmentAccess] = {}
+    corporate_family_sharing: dict[str, ExtractedCorporateFamilySharing] = {}
+
+    user_rights: dict[str, ExtractedUserRight] = {}
+    consent_mechanisms: dict[str, ExtractedTextItem] = {}
+    account_lifecycle: dict[str, ExtractedTextItem] = {}
+    ai_usage: dict[str, ExtractedAIUsage] = {}
+    children_policy: ExtractedChildrenPolicy | None = None
+
+    liability: dict[str, ExtractedLiability] = {}
+    dispute_resolution: dict[str, ExtractedDisputeResolution] = {}
+    content_ownership: dict[str, ExtractedContentOwnership] = {}
+    scope_expansion: dict[str, ExtractedScopeExpansion] = {}
+    indemnification: dict[str, ExtractedTextItem] = {}
+    termination_consequences: dict[str, ExtractedTextItem] = {}
     dangers: dict[str, ExtractedTextItem] = {}
     benefits: dict[str, ExtractedTextItem] = {}
     recommended_actions: dict[str, ExtractedTextItem] = {}
-    data_collection_details: dict[str, ExtractedDataPurposeLink] = {}
-    third_party_details: dict[str, ExtractedThirdPartyRecipient] = {}
-    retention_policy: dict[str, ExtractedTextItem] = {}
-    security_measures: dict[str, ExtractedTextItem] = {}
-    advertising_practices: dict[str, ExtractedTextItem] = {}
-    profiling_ai: dict[str, ExtractedTextItem] = {}
-    contract_clauses: dict[str, ExtractedContractClause] = {}
+
     accumulated_signals = PrivacySignals()
 
-    async def _run_pipeline(
-        pipeline_name: str, chunk_text: str, chunk_index: int
-    ) -> dict[str, Any]:
-        """Run one specialised extraction pipeline against a chunk."""
+    async def _run_cluster(cluster_name: str, chunk_text: str, chunk_idx: int) -> dict[str, Any]:
         logger.debug(
-            f"Running cluster '{pipeline_name}' for document {document.id} "
-            f"chunk {chunk_index}/{len(chunks)}"
+            f"Running cluster '{cluster_name}' for {document.id} chunk {chunk_idx}/{len(chunks)}"
         )
         response = await acompletion_with_fallback(
             messages=[
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": _get_extraction_prompt(document, chunk_text, pipeline_name),
+                    "content": _get_extraction_prompt(document, chunk_text, cluster_name),
                 },
             ],
             model_priority=model_priority,
@@ -634,146 +1469,231 @@ async def extract_document_facts(
         content = message.content  # type: ignore[attr-defined]
         if not content:
             raise ValueError("Empty response from LLM")
-        payload = json.loads(content)
-        logger.debug(
-            f"Cluster '{pipeline_name}' completed for document {document.id} "
-            f"chunk {chunk_index}/{len(chunks)} (response_chars={len(content)})"
-        )
-        return payload
+        return json.loads(content)
 
-    for idx, chunk in enumerate(chunks, 1):
+    chunk_semaphore = asyncio.Semaphore(5)
+    merge_lock = asyncio.Lock()
+
+    async def _process_chunk(idx: int, chunk: str) -> None:
         await token.check_cancellation()
-        logger.debug(
-            f"Extracting facts for {document.id}: chunk {idx}/{len(chunks)} (3 parallel clusters)"
-        )
+        async with chunk_semaphore:
+            logger.debug(
+                f"Extracting v4 facts for {document.id}: chunk {idx}/{len(chunks)} (4 parallel clusters)"
+            )
 
-        # Run 3 clustered pipelines concurrently for this chunk.
-        cluster_names = ["data_storage", "sharing_rights", "risk_signals"]
-        results = await asyncio.gather(
-            *(_run_pipeline(name, chunk, idx) for name in cluster_names),
-            return_exceptions=True,
-        )
+            results = await asyncio.gather(
+                *(_run_cluster(name, chunk, idx) for name in CLUSTER_NAMES),
+                return_exceptions=True,
+            )
 
-        # Replace failed clusters with empty dicts (Pydantic models use default_factory=list)
-        safe_results: list[Any] = []
+        safe: list[dict[str, Any]] = []
         for i, result in enumerate(results):
             if isinstance(result, BaseException):
                 logger.warning(
-                    f"Cluster '{cluster_names[i]}' failed for document {document.id} "
-                    f"chunk {idx}: {result}"
+                    f"Cluster '{CLUSTER_NAMES[i]}' failed for {document.id} chunk {idx}: {result}"
                 )
-                safe_results.append({})
+                safe.append({})
             else:
-                safe_results.append(result)
+                safe.append(_clean_raw(result))
 
-        ds_raw, sr_raw, rs_raw = safe_results
+        dp_raw, st_raw, ra_raw, ls_raw = safe
 
-        # Clean raw data to handle LLM inconsistencies
-        sr_raw = _clean_sharing_rights_raw(sr_raw)
+        try:
+            dp = _ClusterDataPractices.model_validate(dp_raw, strict=False)
+        except Exception as e:
+            logger.warning(f"Validation failed for data_practices chunk {idx}: {e}")
+            dp = _ClusterDataPractices()
+        try:
+            st = _ClusterSharingTransfers.model_validate(st_raw, strict=False)
+        except Exception as e:
+            logger.warning(f"Validation failed for sharing_transfers chunk {idx}: {e}")
+            st = _ClusterSharingTransfers()
+        try:
+            ra = _ClusterRightsAI.model_validate(ra_raw, strict=False)
+        except Exception as e:
+            logger.warning(f"Validation failed for rights_ai chunk {idx}: {e}")
+            ra = _ClusterRightsAI()
+        try:
+            ls = _ClusterLegalScope.model_validate(ls_raw, strict=False)
+        except Exception as e:
+            logger.warning(f"Validation failed for legal_scope chunk {idx}: {e}")
+            ls = _ClusterLegalScope()
 
-        ds = _ClusterDataStorageResult.model_validate(ds_raw, strict=False)
-        sr = _ClusterSharingRightsResult.model_validate(sr_raw, strict=False)
-        rs = _ClusterRiskSignalsResult.model_validate(rs_raw, strict=False)
+        nonlocal children_policy
 
-        # Merge data_storage cluster
-        _merge_text_items(
-            data_collected, ds.data_collected, document=document, content_hash=content_hash
-        )
-        _merge_text_items(
-            data_purposes, ds.data_purposes, document=document, content_hash=content_hash
-        )
-        _merge_data_purpose_links(
-            data_collection_details,
-            ds.data_collection_details,
-            document=document,
-            content_hash=content_hash,
-        )
-        _merge_text_items(
-            retention_policy, ds.retention_policy, document=document, content_hash=content_hash
-        )
-        _merge_text_items(
-            security_measures, ds.security_measures, document=document, content_hash=content_hash
-        )
+        async with merge_lock:
+            # Cluster 1
+            _merge_data_items(
+                data_collected, dp.data_collected, document=document, content_hash=content_hash
+            )
+            _merge_purpose_links(
+                data_purposes, dp.data_purposes, document=document, content_hash=content_hash
+            )
+            _merge_retention_rules(
+                retention_policies,
+                dp.retention_policies,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_text_items(
+                security_measures,
+                dp.security_measures,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_cookie_trackers(
+                cookies_and_trackers,
+                dp.cookies_and_trackers,
+                document=document,
+                content_hash=content_hash,
+            )
 
-        # Merge sharing_rights cluster
-        _merge_third_parties(
-            third_party_details,
-            sr.third_party_details,
-            document=document,
-            content_hash=content_hash,
-        )
-        _merge_text_items(your_rights, sr.your_rights, document=document, content_hash=content_hash)
-        _merge_contract_clauses(
-            contract_clauses,
-            sr.contract_clauses,
-            document=document,
-            content_hash=content_hash,
-        )
+            # Cluster 2
+            _merge_third_parties(
+                third_party_details,
+                st.third_party_details,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_international_transfers(
+                international_transfers,
+                st.international_transfers,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_government_access(
+                government_access,
+                st.government_access,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_corporate_family(
+                corporate_family_sharing,
+                st.corporate_family_sharing,
+                document=document,
+                content_hash=content_hash,
+            )
 
-        # Merge risk_signals cluster
-        _merge_text_items(dangers, rs.dangers, document=document, content_hash=content_hash)
-        _merge_text_items(benefits, rs.benefits, document=document, content_hash=content_hash)
-        _merge_text_items(
-            recommended_actions,
-            rs.recommended_actions,
-            document=document,
-            content_hash=content_hash,
-        )
-        _merge_privacy_signals(accumulated_signals, rs.privacy_signals)
-        _merge_text_items(
-            advertising_practices,
-            rs.advertising_practices,
-            document=document,
-            content_hash=content_hash,
-        )
-        _merge_text_items(
-            profiling_ai, rs.profiling_ai, document=document, content_hash=content_hash
-        )
-        logger.debug(
-            f"Merged chunk {idx}/{len(chunks)} for document {document.id} "
-            f"(data_collected={len(data_collected)}, data_purposes={len(data_purposes)}, "
-            f"rights={len(your_rights)}, dangers={len(dangers)}, benefits={len(benefits)}, "
-            f"actions={len(recommended_actions)}, third_parties={len(third_party_details)}, "
-            f"contract_clauses={len(contract_clauses)})"
-        )
+            # Cluster 3
+            _merge_user_rights(
+                user_rights, ra.user_rights, document=document, content_hash=content_hash
+            )
+            _merge_text_items(
+                consent_mechanisms,
+                ra.consent_mechanisms,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_text_items(
+                account_lifecycle,
+                ra.account_lifecycle,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_ai_usage(ai_usage, ra.ai_usage, document=document, content_hash=content_hash)
+            children_policy = _merge_children_policy(
+                children_policy, ra.children_policy, document=document, content_hash=content_hash
+            )
+            _merge_privacy_signals(
+                accumulated_signals,
+                ra.privacy_signals,
+                document=document,
+                content_hash=content_hash,
+            )
+
+            # Cluster 4
+            _merge_liability(liability, ls.liability, document=document, content_hash=content_hash)
+            _merge_dispute_resolution(
+                dispute_resolution,
+                ls.dispute_resolution,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_content_ownership(
+                content_ownership,
+                ls.content_ownership,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_scope_expansion(
+                scope_expansion, ls.scope_expansion, document=document, content_hash=content_hash
+            )
+            _merge_text_items(
+                indemnification, ls.indemnification, document=document, content_hash=content_hash
+            )
+            _merge_text_items(
+                termination_consequences,
+                ls.termination_consequences,
+                document=document,
+                content_hash=content_hash,
+            )
+            _merge_text_items(dangers, ls.dangers, document=document, content_hash=content_hash)
+            _merge_text_items(benefits, ls.benefits, document=document, content_hash=content_hash)
+            _merge_text_items(
+                recommended_actions,
+                ls.recommended_actions,
+                document=document,
+                content_hash=content_hash,
+            )
+
+    chunk_results = await asyncio.gather(
+        *(_process_chunk(idx, chunk) for idx, chunk in enumerate(chunks, 1)),
+        return_exceptions=True,
+    )
+    failed_chunks = 0
+    for i, result in enumerate(chunk_results):
+        if isinstance(result, BaseException):
+            failed_chunks += 1
+            logger.warning(f"Chunk {i + 1}/{len(chunks)} failed for {document.id}: {result}")
+    if failed_chunks:
+        logger.warning(f"{failed_chunks}/{len(chunks)} chunks failed for {document.id}")
 
     extraction = DocumentExtraction(
-        version="v3",
+        version="v4",
         generated_at=datetime.now(),
         source_content_hash=content_hash,
+        # Cluster 1
         data_collected=list(data_collected.values()),
         data_purposes=list(data_purposes.values()),
-        data_collection_details=list(data_collection_details.values()),
+        retention_policies=list(retention_policies.values()),
+        security_measures=list(security_measures.values()),
+        cookies_and_trackers=list(cookies_and_trackers.values()),
+        # Cluster 2
         third_party_details=list(third_party_details.values()),
-        your_rights=list(your_rights.values()),
+        international_transfers=list(international_transfers.values()),
+        government_access=list(government_access.values()),
+        corporate_family_sharing=list(corporate_family_sharing.values()),
+        # Cluster 3
+        user_rights=list(user_rights.values()),
+        consent_mechanisms=list(consent_mechanisms.values()),
+        account_lifecycle=list(account_lifecycle.values()),
+        ai_usage=list(ai_usage.values()),
+        children_policy=children_policy,
+        # Cluster 4
+        liability=list(liability.values()),
+        dispute_resolution=list(dispute_resolution.values()),
+        content_ownership=list(content_ownership.values()),
+        scope_expansion=list(scope_expansion.values()),
+        indemnification=list(indemnification.values()),
+        termination_consequences=list(termination_consequences.values()),
+        # Cross-cutting
+        privacy_signals=accumulated_signals,
         dangers=list(dangers.values()),
         benefits=list(benefits.values()),
         recommended_actions=list(recommended_actions.values()),
-        privacy_signals=accumulated_signals,
-        retention_policy=list(retention_policy.values()),
-        security_measures=list(security_measures.values()),
-        advertising_practices=list(advertising_practices.values()),
-        profiling_ai=list(profiling_ai.values()),
-        contract_clauses=list(contract_clauses.values()),
     )
+
     logger.debug(
-        f"Extraction complete for document {document.id} "
-        f"(data_collected={len(extraction.data_collected)}, "
-        f"data_purposes={len(extraction.data_purposes)}, "
-        f"rights={len(extraction.your_rights)}, dangers={len(extraction.dangers)}, "
-        f"benefits={len(extraction.benefits)}, actions={len(extraction.recommended_actions)}, "
-        f"third_parties={len(extraction.third_party_details)}, "
-        f"contract_clauses={len(extraction.contract_clauses)})"
+        f"v4 extraction complete for {document.id}: "
+        f"data={len(extraction.data_collected)}, rights={len(extraction.user_rights)}, "
+        f"ai={len(extraction.ai_usage)}, liability={len(extraction.liability)}, "
+        f"scope_expansion={len(extraction.scope_expansion)}, "
+        f"content_ownership={len(extraction.content_ownership)}"
     )
 
     document.extraction = extraction
-    # Also store extraction metadata for debugging / cache busting
     document.metadata["extraction_version"] = extraction.version
     document.metadata["extraction_generated_at"] = extraction.generated_at.isoformat()
     document.metadata["extraction_source_hash"] = content_hash
-    logger.debug(
-        f"Stored extraction metadata for document {document.id} "
-        f"(version={extraction.version}, source_hash={content_hash})"
-    )
 
     return extraction

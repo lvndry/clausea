@@ -27,7 +27,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v2
@@ -63,18 +63,14 @@ jobs:
       run:
         working-directory: packages/backend
 
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v2
@@ -87,9 +83,9 @@ jobs:
           path: |
             packages/backend/.venv
             packages/backend/.uv/cache
-          key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('packages/backend/uv.lock') }}
+          key: ${{ runner.os }}-uv-3.12-${{ hashFiles('packages/backend/uv.lock') }}
           restore-keys: |
-            ${{ runner.os }}-uv-${{ matrix.python-version }}-
+            ${{ runner.os }}-uv-3.12-
 
       - name: Install dependencies
         run: uv sync --dev
@@ -101,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results-${{ matrix.python-version }}
+          name: test-results
           path: |
             packages/backend/.pytest_cache/
           retention-days: 7

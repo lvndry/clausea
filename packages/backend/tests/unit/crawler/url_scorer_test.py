@@ -64,7 +64,7 @@ class TestURLScorerAnchorTextBoost:
 class TestURLScorerNeutralPaths:
     """Paths like /help, /about, /support should NOT be penalised.
 
-    Many companies host legal documents under these sections (e.g. Airbnb
+    Many companies host policy documents under these sections (e.g. Airbnb
     Terms of Service at /help/article/2908).  Previous negative weights for
     these keywords caused the pipeline to deprioritise legitimate legal URLs.
     """
@@ -85,7 +85,7 @@ class TestURLScorerNeutralPaths:
         assert score >= 0.0, f"URL {url} should not receive a negative score, got {score}"
 
     def test_contact_path_is_penalised(self) -> None:
-        """Contact pages are not legal documents."""
+        """Contact pages are not policy documents."""
         scorer = URLScorer()
         score_contact = scorer.score_url("https://example.com/contact")
         score_legal = scorer.score_url("https://example.com/legal/privacy")

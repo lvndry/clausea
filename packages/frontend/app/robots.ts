@@ -6,11 +6,27 @@ export default function robots(): MetadataRoute.Robots {
   const baseUrl = siteUrl.replace(/\/$/, "");
 
   return {
-    rules: {
-      userAgent: "*",
-      allow: "/",
-      disallow: ["/api/", "/dashboard/", "/c/", "/checkout/", "/onboarding/"],
-    },
+    rules: [
+      {
+        userAgent: "*",
+        allow: "/",
+        disallow: ["/api/", "/dashboard/", "/c/", "/checkout/", "/onboarding/"],
+      },
+      // Explicitly allow AI crawlers used by LLMs / answer engines (GEO)
+      {
+        userAgent: [
+          "GPTBot",
+          "ChatGPT-User",
+          "ClaudeBot",
+          "anthropic-ai",
+          "PerplexityBot",
+          "Applebot-Extended",
+          "cohere-ai",
+          "Omgilibot",
+        ],
+        allow: ["/", "/products/"],
+      },
+    ],
     sitemap: `${baseUrl}/sitemap.xml`,
   };
 }

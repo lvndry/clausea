@@ -4,9 +4,9 @@
 import posthog from "posthog-js";
 
 import { useState } from "react";
-import { useAuth } from "@clerk/nextjs";
 
 import { type CheckoutRequest, subscriptionApi } from "@/lib/api/subscriptions";
+import { useAuth } from "@clerk/nextjs";
 
 // Custom hook for checkout flow
 

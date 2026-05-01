@@ -71,6 +71,7 @@ class PipelineJob(BaseModel):
 
     id: str = Field(default_factory=shortuuid.uuid)
     product_slug: str
+    product_id: str | None = None
     product_name: str
     url: str
     status: PipelineJobStatus = "pending"
@@ -84,7 +85,9 @@ class PipelineJob(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+    started_at: datetime | None = None
     completed_at: datetime | None = None
+    last_heartbeat: datetime | None = None
 
     # Stats from the crawl phase
     documents_found: int = 0

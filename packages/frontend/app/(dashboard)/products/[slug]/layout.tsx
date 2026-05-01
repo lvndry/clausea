@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 
-import { getBackendUrl } from "@lib/config";
+import { ProductStructuredData } from "@/components/seo/structured-data";
 
 const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
@@ -20,22 +21,104 @@ interface ProductOverview {
     | "very_pervasive";
 }
 
-async function getProductData(slug: string): Promise<ProductOverview | null> {
-  try {
-    const backendUrl = getBackendUrl(`/products/${slug}`);
-    const response = await fetch(backendUrl, {
-      next: { revalidate: 60 }, // 1 min — fresh enough for new products, cached for established ones
-    });
+function humanizeSlug(slug: string): string {
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
 
-    if (!response.ok) {
-      return null;
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error("Error fetching product data for metadata:", error);
+function resolveOriginFromHeaders(headerList: Headers): string | null {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+  if (explicit) {
+    return explicit;
+  }
+  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
+  if (!host) {
     return null;
   }
+  const proto = headerList.get("x-forwarded-proto") ?? "http";
+  return `${proto}://${host}`;
+}
+
+type ProductMetadataFetch =
+  | { kind: "ok"; product: ProductOverview }
+  | { kind: "not_found" }
+  | { kind: "uncertain"; displayName: string };
+
+/**
+ * Load product for SEO metadata via the same Next.js API route the client uses,
+ * forwarding the request cookies so Clerk auth matches. A direct backend fetch
+ * returns 401 (no Bearer token) and was incorrectly shown as "Product Not Found".
+ */
+async function fetchProductForMetadata(
+  slug: string,
+): Promise<ProductMetadataFetch> {
+  try {
+    const headerList = await headers();
+    const origin = resolveOriginFromHeaders(headerList);
+    if (!origin) {
+      console.error(
+        "Product metadata: could not resolve app origin (set NEXT_PUBLIC_APP_URL).",
+      );
+      return { kind: "uncertain", displayName: humanizeSlug(slug) };
+    }
+
+    const cookie = headerList.get("cookie");
+
+    const response = await fetch(`${origin}/api/products/${slug}`, {
+      headers: cookie ? { Cookie: cookie } : {},
+      next: { revalidate: 60 },
+    });
+
+    if (response.status === 404) {
+      return { kind: "not_found" };
+    }
+
+    if (!response.ok) {
+      console.error("Product metadata: API error", response.status, slug);
+      return { kind: "uncertain", displayName: humanizeSlug(slug) };
+    }
+
+    return { kind: "ok", product: (await response.json()) as ProductOverview };
+  } catch (error) {
+    console.error("Error fetching product data for metadata:", error);
+    return { kind: "uncertain", displayName: humanizeSlug(slug) };
+  }
+}
+
+function neutralProductMetadata(displayName: string, slug: string): Metadata {
+  const description = `Policy overview for ${displayName} — data practices, terms, and risks from crawled documents.`;
+  return {
+    title: `${displayName} | Clausea AI`,
+    description,
+    openGraph: {
+      title: `${displayName} | Clausea AI`,
+      description,
+      url: `${siteUrl}/products/${slug}`,
+      siteName: "Clausea AI",
+      images: [
+        {
+          url: `${siteUrl}/og`,
+          width: 1200,
+          height: 630,
+          alt: `${displayName}`,
+        },
+      ],
+      locale: "en_US",
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${displayName} | Clausea AI`,
+      description,
+      images: [`${siteUrl}/og`],
+    },
+    alternates: {
+      canonical: `${siteUrl}/products/${slug}`,
+    },
+  };
 }
 
 export async function generateMetadata({
@@ -44,9 +127,9 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const product = await getProductData(slug);
+  const result = await fetchProductForMetadata(slug);
 
-  if (!product) {
+  if (result.kind === "not_found") {
     return {
       title: "Product Not Found | Clausea AI",
       description: "The product you're looking for doesn't exist.",
@@ -57,10 +140,15 @@ export async function generateMetadata({
     };
   }
 
+  if (result.kind === "uncertain") {
+    return neutralProductMetadata(result.displayName, slug);
+  }
+
+  const product = result.product;
   const productName = product.name || product.company_name || "Product";
   const description =
     product.one_line_summary ||
-    `Privacy policy and terms of service analysis for ${productName}. Get insights into data collection, sharing practices, and user rights.`;
+    `Policy overview for ${productName} — data collection, sharing, terms, and user-facing risks from analyzed documents.`;
 
   // Create a risk description based on verdict
   const riskDescription =
@@ -81,7 +169,7 @@ export async function generateMetadata({
     : description;
 
   return {
-    title: `${productName} - Privacy Policy Analysis | Clausea AI`,
+    title: `${productName} - Policy overview | Clausea AI`,
     description: fullDescription,
     keywords: [
       `${productName} privacy policy`,
@@ -92,7 +180,7 @@ export async function generateMetadata({
       "legal document analysis",
     ],
     openGraph: {
-      title: `${productName} - Privacy Policy Analysis | Clausea AI`,
+      title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
       url: `${siteUrl}/products/${product.slug}`,
       siteName: "Clausea AI",
@@ -101,7 +189,7 @@ export async function generateMetadata({
           url: `${siteUrl}/og`,
           width: 1200,
           height: 630,
-          alt: `${productName} Privacy Analysis`,
+          alt: `${productName} policy overview`,
         },
       ],
       locale: "en_US",
@@ -109,7 +197,7 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title: `${productName} - Privacy Policy Analysis | Clausea AI`,
+      title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
       images: [`${siteUrl}/og`],
     },
@@ -121,9 +209,84 @@ export async function generateMetadata({
 
 export default async function ProductLayout({
   children,
+  params,
 }: {
   children: React.ReactNode;
   params: Promise<{ slug: string }>;
 }) {
-  return <>{children}</>;
+  const { slug } = await params;
+  const result = await fetchProductForMetadata(slug);
+
+  const product = result.kind === "ok" ? result.product : null;
+  const productName =
+    product?.name || product?.company_name || null;
+  const description = product?.one_line_summary || undefined;
+
+  return (
+    <>
+      {product && productName && (
+        <>
+          <ProductStructuredData
+            siteUrl={siteUrl}
+            productName={productName}
+            productSlug={product.slug}
+            description={description}
+            companyName={product.company_name || undefined}
+          />
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                "@context": "https://schema.org",
+                "@type": "WebPage",
+                name: `${productName} Privacy Policy Analysis`,
+                description:
+                  description ||
+                  `Privacy policy and terms of service analysis for ${productName}`,
+                url: `${siteUrl}/products/${product.slug}`,
+                isPartOf: { "@id": siteUrl },
+                about: {
+                  "@type": "SoftwareApplication",
+                  name: productName,
+                  ...(product.company_name
+                    ? { brand: { "@type": "Brand", name: product.company_name } }
+                    : {}),
+                },
+                ...(typeof product.risk_score === "number"
+                  ? {
+                      review: {
+                        "@type": "Review",
+                        reviewAspect: "Privacy & Data Practices",
+                        reviewRating: {
+                          "@type": "Rating",
+                          ratingValue: String(product.risk_score),
+                          bestRating: "10",
+                          worstRating: "0",
+                          description:
+                            product.verdict === "very_user_friendly"
+                              ? "Very user-friendly"
+                              : product.verdict === "user_friendly"
+                                ? "User-friendly"
+                                : product.verdict === "moderate"
+                                  ? "Moderate concerns"
+                                  : product.verdict === "pervasive"
+                                    ? "Pervasive data collection"
+                                    : "Very pervasive data collection",
+                        },
+                        author: {
+                          "@type": "Organization",
+                          name: "Clausea AI",
+                          url: siteUrl,
+                        },
+                      },
+                    }
+                  : {}),
+              }),
+            }}
+          />
+        </>
+      )}
+      {children}
+    </>
+  );
 }

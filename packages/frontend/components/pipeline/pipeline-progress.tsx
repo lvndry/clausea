@@ -12,7 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -68,7 +68,7 @@ const STEP_CONFIG: Record<
   crawling: {
     label: "Discovering Documents",
     icon: FileSearch,
-    description: "Scanning website for legal documents",
+    description: "Scanning website for policy documents",
   },
   summarizing: {
     label: "Analyzing Content",
@@ -201,7 +201,7 @@ function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
             </p>
             <p className="text-xs text-amber-600/80">
               This website restricts automated access. We were unable to crawl
-              any legal documents. You may need to review their policies
+              any policy documents. You may need to review their policies
               manually.
             </p>
           </div>
@@ -246,6 +246,7 @@ export function PipelineProgress({
   onDismiss,
 }: PipelineProgressProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [job, setJob] = useState<PipelineJobData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -275,7 +276,10 @@ export function PipelineProgress({
   }, []);
 
   const pollJob = useCallback(async () => {
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
       // Pause polling in background tabs.
       return;
     }
@@ -325,12 +329,7 @@ export function PipelineProgress({
     } finally {
       inFlightRef.current = false;
     }
-  }, [
-    jobId,
-    onComplete,
-    clearScheduledPoll,
-    computePollDelayMs,
-  ]);
+  }, [jobId, onComplete, clearScheduledPoll, computePollDelayMs]);
 
   useEffect(() => {
     startedAtRef.current = null;
@@ -475,7 +474,7 @@ export function PipelineProgress({
             {/* Stats */}
             {job.documents_stored > 0 && (
               <p className="text-xs text-muted-foreground">
-                {job.documents_stored} legal document
+                {job.documents_stored} policy document
                 {job.documents_stored !== 1 ? "s" : ""} found
               </p>
             )}
@@ -484,8 +483,20 @@ export function PipelineProgress({
             {job.status === "completed" && (
               <Button
                 size="sm"
-                className="w-full rounded-lg"
-                onClick={() => router.push(`/products/${job.product_slug}`)}
+                className="w-full rounded-lg cursor-pointer"
+                onClick={() => {
+                  const href = `/products/${job.product_slug}`;
+                  const here =
+                    (pathname ?? "").replace(/\/$/, "") ||
+                    "/";
+                  const there = href.replace(/\/$/, "") || "/";
+                  // Same route: client router.push is a no-op; hard-navigate to refetch UI state.
+                  if (here === there) {
+                    window.location.assign(href);
+                  } else {
+                    router.push(href);
+                  }
+                }}
               >
                 View Analysis
                 <ExternalLink className="ml-2 h-3.5 w-3.5" />

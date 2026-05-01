@@ -10,6 +10,25 @@ load_dotenv()
 logger = structlog.get_logger(service="config")
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+_DISCOVERY_PAGE_CAP = 1000
+_DISCOVERY_DEPTH_CAP = 3
+
+
+def discovery_crawl_limits(max_pages: int, max_depth: int) -> tuple[int, int]:
+    """Return (discovery_max_pages, discovery_max_depth) from the global crawl budget."""
+    return (
+        min(max_pages, _DISCOVERY_PAGE_CAP),
+        min(max_depth, _DISCOVERY_DEPTH_CAP),
+    )
+
+
 class StorageType(Enum):
     """Storage type enumeration"""
 
@@ -43,9 +62,6 @@ class DatabaseConfig:
         self.mongodb_ssl_keyfile: str | None = os.getenv("MONGODB_SSL_KEYFILE")
         # TODO: Change to clausea
         self.mongodb_database: str = os.getenv("MONGODB_DATABASE", "clausea")
-
-        if self.mongodb_uri is None:
-            raise ValueError("MONGO_URI is not set")
 
     @property
     def database_url(self) -> str | None:
@@ -149,16 +165,47 @@ class PaddleConfig:
 
 
 class CrawlerConfig:
-    """Crawler configuration"""
+    """Crawler and policy-pipeline crawl settings (env-tunable)."""
 
     def __init__(self) -> None:
-        self.max_pages: int = int(os.getenv("CRAWLER_MAX_PAGES", 2000))
-        self.max_depth: int = int(os.getenv("CRAWLER_MAX_DEPTH", 5))
-        self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", 20))
-        self.discovery_max_pages: int = int(os.getenv("CRAWLER_DISCOVERY_MAX_PAGES", 1000))
-        self.discovery_max_depth: int = int(os.getenv("CRAWLER_DISCOVERY_MAX_DEPTH", 3))
-        self.delay_between_requests: float = float(os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", 1.0))
-        self.rate_limit_jitter: float = float(os.getenv("CRAWLER_RATE_LIMIT_JITTER", 0.2))
+        self.max_pages: int = int(os.getenv("CRAWLER_MAX_PAGES", "2000"))
+        self.max_depth: int = int(os.getenv("CRAWLER_MAX_DEPTH", "5"))
+
+        # --- Concurrency & politeness ---
+        self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", "20"))
+        self.delay_between_requests: float = float(
+            os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.0")
+        )
+        self.rate_limit_jitter: float = float(os.getenv("CRAWLER_RATE_LIMIT_JITTER", "0.2"))
+        self.timeout: int = int(os.getenv("CRAWLER_TIMEOUT", "30"))
+
+        # --- Pipeline behavior ---
+        self.respect_robots_txt: bool = _env_bool("CRAWLER_RESPECT_ROBOTS_TXT", True)
+        self.max_parallel_products: int = int(os.getenv("CRAWLER_MAX_PARALLEL_PRODUCTS", "3"))
+        self.use_browser: bool = _env_bool("CRAWLER_USE_BROWSER", True)
+        _proxy = os.getenv("CRAWLER_PROXY")
+        self.proxy: str | None = _proxy.strip() if _proxy and _proxy.strip() else None
+
+        self.discovery_min_legal_score: float = float(
+            os.getenv("CRAWLER_DISCOVERY_MIN_LEGAL_SCORE", "2.5")
+        )
+        self.discovery_strategy: str = (
+            os.getenv("CRAWLER_DISCOVERY_STRATEGY", "best_first").strip().lower()
+        )
+        self.fallback_strategy: str = os.getenv("CRAWLER_FALLBACK_STRATEGY", "bfs").strip().lower()
+        self.fallback_min_legal_score: float = float(
+            os.getenv("CRAWLER_FALLBACK_MIN_LEGAL_SCORE", "1.5")
+        )
+        self.crawler_strategy: str = os.getenv("CRAWLER_STRATEGY", "bfs").strip().lower()
+
+        self.min_docs_before_fallback: int = int(os.getenv("CRAWLER_MIN_DOCS_BEFORE_FALLBACK", "2"))
+        _req = os.getenv("CRAWLER_REQUIRED_DOC_TYPES", "privacy_policy,terms_of_service")
+        self.required_doc_types: list[str] = [x.strip() for x in _req.split(",") if x.strip()]
+
+        self.user_agent: str = os.getenv(
+            "CRAWLER_USER_AGENT",
+            "ClauseaCrawler/2.0 (Policy Document Discovery Bot of Clausea)",
+        )
 
 
 class Config:

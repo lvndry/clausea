@@ -454,9 +454,9 @@ export default function App() {
                   {data.crawl_errors?.every(
                     (e) => e.error_type === "robots_txt_blocked",
                   )
-                    ? "This site blocks automated access via robots.txt. We cannot crawl their legal documents."
+                    ? "This site blocks automated access via robots.txt. We cannot crawl their policy documents."
                     : data.pipeline_error ??
-                      "We were unable to crawl legal documents from this site."}
+                      "We were unable to crawl policy documents from this site."}
                 </p>
               </div>
 

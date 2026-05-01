@@ -1,7 +1,7 @@
 """
 Region Detection Analyzer
 
-Specialized analyzer for detecting geographic/regional applicability of legal documents
+Specialized analyzer for detecting geographic/regional applicability of policy documents
 through URL patterns, compliance frameworks, explicit mentions, and jurisdiction clauses.
 """
 

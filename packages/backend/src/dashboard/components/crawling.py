@@ -9,15 +9,14 @@ from threading import Event
 
 import streamlit as st
 
-from src.core.config import config
 from src.dashboard.db_utils import get_all_products_isolated
 from src.dashboard.utils import run_async, suppress_streamlit_warnings
 from src.models.product import Product
-from src.pipeline import LegalDocumentPipeline, ProcessingStats
+from src.pipeline import PolicyDocumentPipeline, ProcessingStats
 
 
 def get_log_file_path(product: Product) -> Path:
-    """Generate the log file path for a product crawl (matching the format used in LegalDocumentPipeline)."""
+    """Generate the log file path for a product crawl (matching the format used in PolicyDocumentPipeline)."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filename = f"{timestamp}_{product.slug}_crawl.log"
     return Path("logs") / log_filename
@@ -91,7 +90,7 @@ def read_log_file_tail(
 
 
 def run_crawl_async(product: Product, stop_event: Event | None = None):
-    """Run crawling using LegalDocumentPipeline in a dedicated event loop."""
+    """Run crawling using PolicyDocumentPipeline in a dedicated event loop."""
 
     def run_in_thread():
         # Suppress Streamlit ScriptRunContext warnings in worker threads
@@ -100,13 +99,7 @@ def run_crawl_async(product: Product, stop_event: Event | None = None):
             asyncio.set_event_loop(loop)
 
             async def runner():
-                pipeline = LegalDocumentPipeline(
-                    max_depth=config.crawler.max_depth,
-                    max_pages=config.crawler.max_pages,
-                    crawler_strategy="bfs",
-                    concurrent_limit=5,  # Reduced for single product
-                    delay_between_requests=1.0,
-                )
+                pipeline = PolicyDocumentPipeline()
 
                 monitor_task: asyncio.Task | None = None
                 if stop_event is not None:
@@ -159,13 +152,7 @@ def run_crawl_all_products_async(products: list[Product], max_parallel: int = 2)
                 ):
                     async with semaphore:
                         try:
-                            pipeline = LegalDocumentPipeline(
-                                max_depth=config.crawler.max_depth,
-                                max_pages=config.crawler.max_pages,
-                                crawler_strategy="bfs",
-                                concurrent_limit=5,
-                                delay_between_requests=1.0,
-                            )
+                            pipeline = PolicyDocumentPipeline()
                             # Process single product - returns list[Document]
                             documents = await pipeline._process_product(product)
                             # Create a minimal ProcessingStats for single product
@@ -173,7 +160,7 @@ def run_crawl_all_products_async(products: list[Product], max_parallel: int = 2)
                                 products_processed=1,
                                 products_failed=0,
                                 failed_product_slugs=[],
-                                legal_documents_stored=len(documents) if documents else 0,
+                                policy_documents_stored=len(documents) if documents else 0,
                             )
                         except Exception as e:
                             # Log error but don't use st.error in thread context
@@ -312,7 +299,7 @@ def show_crawling() -> None:
         "Select Product to Crawl",
         options=list(product_options.keys()),
         index=default_index,
-        help="Choose which product you want to crawl for legal documents",
+        help="Choose which product you want to crawl for policy documents",
     )
 
     selected_product = product_options[selected_product_key]
@@ -358,7 +345,7 @@ def show_crawling() -> None:
     st.info(f"""
     **Single Product:**
     • Crawl the base URLs for {selected_product.name}
-    • Find and classify legal documents
+    • Find and classify policy documents
     • Store discovered documents in the database
     • This process may take several minutes
     """)
@@ -527,16 +514,16 @@ def show_crawling() -> None:
                 )
             elif crawl_state["stats"] is not None:
                 st.success("✅ Crawling completed successfully!")
-                if crawl_state["stats"].legal_documents_stored > 0:
+                if crawl_state["stats"].policy_documents_stored > 0:
                     st.write(
-                        f"**Found {crawl_state['stats'].legal_documents_stored} legal documents.**"
+                        f"**Found {crawl_state['stats'].policy_documents_stored} policy documents.**"
                     )
                 else:
-                    st.warning("No legal documents were found during the crawl.")
+                    st.warning("No policy documents were found during the crawl.")
                     with st.expander("Possible reasons:"):
-                        st.write("• The websites don't have legal documents")
+                        st.write("• The websites don't have policy documents")
                         st.write("• The documents aren't accessible")
-                        st.write("• The classification didn't identify them as legal documents")
+                        st.write("• The classification didn't identify them as policy documents")
             else:
                 st.error("Crawling failed. Please check the logs and try again.")
 
@@ -583,12 +570,12 @@ def show_crawling() -> None:
             successful = sum(1 for stats in results.values() if stats is not None)
             failed = len(results) - successful
             total_docs = sum(
-                stats.legal_documents_stored for stats in results.values() if stats is not None
+                stats.policy_documents_stored for stats in results.values() if stats is not None
             )
 
             if successful > 0:
                 st.success(f"✅ Crawling completed! {successful} products processed successfully.")
-                st.write(f"**Total legal documents found: {total_docs}**")
+                st.write(f"**Total policy documents found: {total_docs}**")
 
                 if failed > 0:
                     st.warning(f"⚠️ {failed} products failed to crawl.")
@@ -599,7 +586,7 @@ def show_crawling() -> None:
                         stats = results.get(product.slug)
                         if stats is not None:
                             st.write(
-                                f"✅ **{product.name}**: {stats.legal_documents_stored} documents"
+                                f"✅ **{product.name}**: {stats.policy_documents_stored} documents"
                             )
                         else:
                             st.write(f"❌ **{product.name}**: Failed")

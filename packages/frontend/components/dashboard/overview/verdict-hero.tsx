@@ -179,11 +179,11 @@ export function VerdictHero({
         </div>
       </div>
 
-      {/* Summary and Insights */}
+      {/* Analysis and Insights */}
       <div className="col-span-12 md:col-span-8 flex flex-col">
         <div className="p-8 md:p-10 border-b border-border flex-1">
           <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block mb-6">
-            Executive Summary
+            Executive Analysis
           </span>
           <div className="text-lg text-foreground leading-relaxed max-w-2xl prose prose-slate dark:prose-invert">
             <MarkdownRenderer>{summary}</MarkdownRenderer>

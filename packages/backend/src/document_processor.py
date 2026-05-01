@@ -11,10 +11,10 @@ from docx import Document as DocxDocument
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from src.analyser import analyse_document
 from src.core.logging import get_logger
 from src.llm import SupportedModel, acompletion_with_fallback
-from src.models.document import Document, DocumentAnalysis
-from src.summarizer import summarize_document
+from src.models.document import Document, DocumentAnalysis, coerce_doc_type_from_classifier
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ class DocumentProcessingResult(BaseModel):
     """Result of document processing."""
 
     success: bool
-    is_legal_document: bool
+    is_policy_document: bool
     document: Document | None = None
     analysis: DocumentAnalysis | None = None
     error_message: str | None = None
@@ -67,7 +67,9 @@ class DocumentProcessor:
             "data_processing_agreement",
             "gdpr_policy",
             "copyright_policy",
-            "safety_policy",
+            "community_guidelines",
+            "children_privacy_policy",
+            "security_policy",
             "other",
         ]
 
@@ -92,19 +94,19 @@ class DocumentProcessor:
             if not text_content:
                 return DocumentProcessingResult(
                     success=False,
-                    is_legal_document=False,
+                    is_policy_document=False,
                     error_message="Failed to extract text from document",
                 )
 
             # Step 2: Classify the document
             classification = await self._classify_document(text_content, filename)
 
-            # Step 3: Check if it's a legal document
-            if not classification.get("is_legal_document", False):
+            # Step 3: Check if it's a substantive policy document
+            if not classification.get("is_policy_document", False):
                 return DocumentProcessingResult(
                     success=False,
-                    is_legal_document=False,
-                    error_message="Document is not classified as a legal document",
+                    is_policy_document=False,
+                    error_message="Document is not classified as a policy document",
                 )
 
             # Step 4: Create document object
@@ -112,7 +114,7 @@ class DocumentProcessor:
                 url=f"uploaded://{filename}",
                 title=filename,
                 product_id=product_id,
-                doc_type=classification.get("classification", "other"),
+                doc_type=coerce_doc_type_from_classifier(classification.get("classification")),
                 markdown=text_content,
                 text=text_content,
                 metadata={
@@ -124,13 +126,13 @@ class DocumentProcessor:
             )
 
             # Step 5: Generate summary using existing summarizer
-            analysis = await summarize_document(document)
+            analysis = await analyse_document(document)
             if analysis:
                 document.analysis = analysis
 
             return DocumentProcessingResult(
                 success=True,
-                is_legal_document=True,
+                is_policy_document=True,
                 document=document,
                 analysis=analysis,
             )
@@ -139,7 +141,7 @@ class DocumentProcessor:
             logger.error(f"Error processing document {filename}: {str(e)}")
             return DocumentProcessingResult(
                 success=False,
-                is_legal_document=False,
+                is_policy_document=False,
                 error_message=f"Processing error: {str(e)}",
             )
 
@@ -278,7 +280,7 @@ class DocumentProcessor:
         if len(text_content) > self.max_content_length:
             text_content = text_content[: self.max_content_length]
 
-        prompt = f"""Analyze this document and classify it as a legal document.
+        prompt = f"""Analyze this document and classify it as a policy document.
 
 Document filename: {filename}
 Document content:
@@ -288,20 +290,20 @@ Please return a JSON object with the following fields:
 
 - classification: the most appropriate category from this list: {self.categories}
 - classification_justification: a brief explanation of why this category was selected
-- is_legal_document: a boolean. This should be True only if the document contains substantive legal text (e.g., terms of service, privacy policy, data protection policy, etc.)
-- is_legal_document_justification: a short rationale for your legal classification decision
+- is_policy_document: a boolean. This should be True only if the document contains substantive policy content (e.g., privacy policies, terms of service, cookie policies, security/trust practices, safety policies, community guidelines, data protection policies, etc.)
+- is_policy_document_justification: a short rationale for your policy document classification decision
 
 Example output:
 {{
   "classification": "privacy_policy",
   "classification_justification": "The document outlines data collection practices, user rights, and privacy protections consistent with a privacy policy.",
-  "is_legal_document": true,
-  "is_legal_document_justification": "The document contains substantive legal text defining privacy rights, data handling obligations, and user consent mechanisms."
+  "is_policy_document": true,
+  "is_policy_document_justification": "The document contains substantive text defining privacy rights, data handling obligations, and user consent mechanisms."
 }}
 
 Use caution: If the content appears incomplete, vague, or primarily promotional, treat it with skepticism and prefer "other" unless clear evidence suggests a more specific classification."""
 
-        system_prompt = """You are a legal document classifier. Identify substantive legal content and categorize accurately."""
+        system_prompt = """You are a policy document classifier. Identify substantive policy content (privacy, terms, cookies, security/trust practices, safety policies, community guidelines, etc.) and categorize accurately."""
 
         try:
             response = await acompletion_with_fallback(
@@ -331,6 +333,6 @@ Use caution: If the content appears incomplete, vague, or primarily promotional,
             return {
                 "classification": "other",
                 "classification_justification": f"Classification failed: {e}",
-                "is_legal_document": False,
-                "is_legal_document_justification": "Could not analyze due to error",
+                "is_policy_document": False,
+                "is_policy_document_justification": "Could not analyze due to error",
             }

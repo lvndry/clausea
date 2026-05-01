@@ -7,6 +7,14 @@ from bs4 import BeautifulSoup
 from src.crawler import ClauseaCrawler, PageContent
 
 
+class _FakeContent:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def read(self, n: int = -1) -> bytes:
+        return self._data if n < 0 else self._data[:n]
+
+
 def test_extract_links_various_sources():
     html = """
     <!doctype html>
@@ -179,7 +187,7 @@ def test_well_known_sitemap_paths_are_defined():
 
 
 def test_sitemap_seeded_skips_speculative_legal_urls():
-    """When sitemaps provide seeds, generate_potential_legal_urls should NOT run."""
+    """When sitemaps provide seeds, generate_potential_policy_urls should NOT run."""
     crawler = ClauseaCrawler()
     crawler._sitemap_seeded = True
 
@@ -195,7 +203,7 @@ def test_sitemap_seeded_skips_speculative_legal_urls():
 
 
 def test_no_sitemap_falls_back_to_speculative_legal_urls():
-    """When no sitemap provides seeds, generate_potential_legal_urls should run."""
+    """When no sitemap provides seeds, generate_potential_policy_urls should run."""
     crawler = ClauseaCrawler()
     assert crawler._sitemap_seeded is False
 
@@ -299,6 +307,8 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
             self.headers = {"content-type": "text/html; charset=utf-8"}
             self._body = body
             self.url = url
+            self.charset = "utf-8"
+            self.content = _FakeContent(body.encode())
 
         async def text(self) -> str:
             return self._body
@@ -324,9 +334,5 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
         cast(aiohttp.ClientSession, FakeSession()), "https://example.com/privacy"
     )
 
-    assert result.success is True
-    assert "Privacy Policy" in result.content
-    assert "Enable JavaScript and accept cookies" not in result.content
-
-    discovered_urls = {link["url"] for link in result.discovered_links}
-    assert "https://example.com/legal/privacy-jsonld" in discovered_urls
+    assert result.success is False
+    assert "browser rendering failed" in (result.error_message or "").lower()

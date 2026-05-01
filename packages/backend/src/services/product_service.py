@@ -145,6 +145,57 @@ class ProductService:
         products: list[Product] = await self._product_repo.find_all_with_documents(db)
         return products
 
+    async def delete_product_cascade(self, db: AgnosticDatabase, product_id: str) -> dict[str, Any]:
+        """Delete a product and all its related data across collections.
+
+        Returns counts of deleted records per collection, or ``{"error": ...}`` if the product
+        does not exist.
+        """
+        product = await self._product_repo.find_by_id(db, product_id)
+        if not product:
+            return {"error": "Product not found"}
+
+        counts: dict[str, Any] = {}
+
+        result = await db.documents.delete_many({"product_id": product_id})
+        counts["documents"] = result.deleted_count
+
+        result = await db.findings.delete_many({"product_id": product_id})
+        counts["findings"] = result.deleted_count
+
+        result = await db.pipeline_jobs.delete_many({"product_slug": product.slug})
+        counts["pipeline_jobs"] = result.deleted_count
+
+        result = await db.product_overviews.delete_many({"product_slug": product.slug})
+        counts["product_overviews"] = result.deleted_count
+
+        result = await db.deep_analyses.delete_many({"product_slug": product.slug})
+        counts["deep_analyses"] = result.deleted_count
+
+        result = await db.aggregations.delete_many({"product_id": product_id})
+        counts["aggregations"] = result.deleted_count
+
+        session_docs = await db.crawl_sessions.find({"product_id": product_id}, {"id": 1}).to_list(
+            length=None
+        )
+        session_ids = [s["id"] for s in session_docs if s.get("id")]
+        if session_ids:
+            result = await db.crawl_events.delete_many({"session_id": {"$in": session_ids}})
+            counts["crawl_events"] = result.deleted_count
+            result = await db.crawl_targets.delete_many({"session_id": {"$in": session_ids}})
+            counts["crawl_targets"] = result.deleted_count
+        else:
+            counts["crawl_events"] = 0
+            counts["crawl_targets"] = 0
+
+        result = await db.crawl_sessions.delete_many({"product_id": product_id})
+        counts["crawl_sessions"] = result.deleted_count
+
+        result = await db.products.delete_one({"id": product_id})
+        counts["products"] = result.deleted_count
+
+        return counts
+
     # ============================================================================
     # Product Overview Storage Operations
     # ============================================================================
@@ -287,7 +338,7 @@ class ProductService:
 
         # If compliance_status is missing from meta summary, aggregate from document analyses
         if not overview.compliance_status and product:
-            docs = await self._document_repo.find_by_product_id(db, product.id)
+            docs = await self._document_repo.find_by_product_id_full(db, product.id)
             aggregated_compliance: dict[str, list[int]] = {}
             for doc in docs:
                 if doc.analysis and doc.analysis.compliance_status:
@@ -331,7 +382,7 @@ class ProductService:
         product = await self._product_repo.find_by_slug(db, slug)
         documents: list[DocumentSummary] = []
         if product:
-            docs = await self._document_repo.find_by_product_id(db, product.id)
+            docs = await self._document_repo.find_by_product_id_full(db, product.id)
             documents = [DocumentSummary.from_document(doc) for doc in docs]
 
         return ProductAnalysis(
@@ -356,7 +407,7 @@ class ProductService:
         if not product:
             return []
 
-        docs = await self._document_repo.find_by_product_id(db, product.id)
+        docs = await self._document_repo.find_by_product_id_full(db, product.id)
         return [DocumentSummary.from_document(doc) for doc in docs]
 
     async def get_product_deep_analysis(
