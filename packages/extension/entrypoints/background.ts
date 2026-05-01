@@ -45,6 +45,40 @@ export default defineBackground(() => {
     },
   };
 
+  /** Get or create the persistent install UUID stored in chrome.storage.local. */
+  async function getOrCreateExtensionToken(): Promise<string> {
+    const stored = await chrome.storage.local.get("extension_token");
+    if (stored.extension_token) return stored.extension_token as string;
+    const token = crypto.randomUUID();
+    await chrome.storage.local.set({ extension_token: token });
+    return token;
+  }
+
+  /** Read the Clerk session JWT from the clausea.co cookie store. */
+  async function getClerkToken(): Promise<string | null> {
+    try {
+      const baseUrl =
+        import.meta.env.MODE === "development"
+          ? "http://localhost:3000"
+          : "https://clausea.co";
+      const cookie = await chrome.cookies.get({ url: baseUrl, name: "__session" });
+      return cookie?.value ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Return headers object: always includes X-Extension-Token, optionally Authorization. */
+  async function getExtensionHeaders(): Promise<Record<string, string>> {
+    const [extensionToken, clerkToken] = await Promise.all([
+      getOrCreateExtensionToken(),
+      getClerkToken(),
+    ]);
+    const headers: Record<string, string> = { "X-Extension-Token": extensionToken };
+    if (clerkToken) headers["Authorization"] = `Bearer ${clerkToken}`;
+    return headers;
+  }
+
   /**
    * Update extension icon based on verdict
    */
@@ -118,6 +152,11 @@ export default defineBackground(() => {
     }
   });
 
+  // Generate UUID on first install so it's ready before any popup opens
+  chrome.runtime.onInstalled.addListener(() => {
+    getOrCreateExtensionToken();
+  });
+
   // Listen for tab activation
   chrome.tabs.onActivated.addListener(async (activeInfo) => {
     const tab = await chrome.tabs.get(activeInfo.tabId);
@@ -156,6 +195,13 @@ export default defineBackground(() => {
     if (message.type === "CLEAR_CACHE") {
       cache.clear();
       sendResponse({ success: true });
+      return true;
+    }
+
+    if (message.type === "GET_EXTENSION_HEADERS") {
+      getExtensionHeaders()
+        .then((headers) => sendResponse({ success: true, headers }))
+        .catch(() => sendResponse({ success: true, headers: {} }));
       return true;
     }
   });

@@ -27,14 +27,21 @@ export default defineConfig({
       //   1. Get the current tab URL when popup opens (App.tsx:136, App-new.tsx:167)
       //   2. Listen for tab updates/activation to update extension icon (background.ts:112,119)
       //   3. Set extension icon for specific tabs based on privacy policy verdict (background.ts:56)
-      permissions: ["activeTab"],
+      permissions: ["activeTab", "cookies", "storage"],
       // Host permission justifications:
       // - "https://api.clausea.co/*": Production API endpoint for:
       //   1. /extension/check - Check if privacy analysis exists for URL (api.ts:33, background.ts:92,139, App.tsx:190)
       //   2. /extension/domains - Get list of supported domains (api.ts:53)
       //   3. /extension/request-support - Request support for new URL (api.ts:68, App.tsx:221)
       // - "http://localhost:8000/*": Development API endpoint (same endpoints, api.ts:7)
-      host_permissions: ["https://api.clausea.co/*", "http://localhost:8000/*"],
+      // - "https://clausea.co/*": For reading Clerk __session cookie
+      // - "http://localhost:3000/*": Development frontend (for Clerk __session cookie)
+      host_permissions: [
+        "https://api.clausea.co/*",
+        "https://clausea.co/*",
+        "http://localhost:8000/*",
+        "http://localhost:3000/*",
+      ],
       action: {
         default_icon: iconSizes,
       },
