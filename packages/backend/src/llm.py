@@ -69,6 +69,8 @@ _OPENROUTER_ALIASES: dict[str, str] = {
     "openrouter/kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
 }
 
+EscalationValidator = Callable[[str], bool]
+
 _NO_TEMPERATURE_MODELS: frozenset[str] = frozenset(
     {"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano", "gemini-3-flash-preview"}
 )
@@ -285,3 +287,53 @@ async def get_embeddings(
     except Exception as e:
         logger.error("Error getting embeddings with %s: %s", model_name, e)
         raise
+
+
+def _extract_json_from_response(response: ModelResponse) -> str:
+    choice = response.choices[0]
+    if not hasattr(choice, "message"):
+        raise ValueError("Response missing message attribute")
+    message = choice.message  # type: ignore[attr-defined]
+    if not message:
+        raise ValueError("Response message is None")
+    content = message.content  # type: ignore[attr-defined]
+    if not content:
+        raise ValueError("Response content is empty")
+    return content
+
+
+async def acompletion_with_escalation(
+    messages: list[dict[str, str]],
+    primary: list[SupportedModel],
+    escalation: list[SupportedModel],
+    validator: EscalationValidator,
+    **kwargs: Any,
+) -> ModelResponse:
+    """Call primary model, validate response quality, escalate to better model on failure.
+
+    If the escalated response also fails validation, returns it anyway with a warning —
+    partial data is better than blocking the pipeline.
+    """
+    response = await acompletion_with_fallback(messages, model_priority=primary, **kwargs)
+    content = _extract_json_from_response(response)
+
+    if validator(content):
+        return response
+
+    logger.warning(
+        "Primary model %s failed validation, escalating to %s",
+        response.model,
+        escalation[0] if escalation else "unknown",
+    )
+
+    escalated = await acompletion_with_fallback(messages, model_priority=escalation, **kwargs)
+    logger.info("Escalated completion used model %s", escalated.model)
+
+    escalated_content = _extract_json_from_response(escalated)
+    if not validator(escalated_content):
+        logger.warning(
+            "Escalated model %s also failed validation — returning response anyway",
+            escalated.model,
+        )
+
+    return escalated
