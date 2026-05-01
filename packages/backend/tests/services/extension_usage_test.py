@@ -2,9 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.services.extension_usage import ExtensionUsageService
-
-ANONYMOUS_LIMIT = 3
+from src.services.extension_usage import ANONYMOUS_LIMIT, ExtensionUsageService
 
 
 @pytest.fixture
@@ -13,7 +11,7 @@ def mock_db():
     collection = MagicMock()
     collection.find_one = AsyncMock()
     collection.update_one = AsyncMock()
-    # Support both attribute and dict access
+    # db[COLLECTION] is the production access path; attribute access is wired to the same object
     db.extension_anonymous_usage = collection
     db.__getitem__ = MagicMock(return_value=collection)
     return db
@@ -30,20 +28,26 @@ async def test_allows_first_use(mock_db):
 
 @pytest.mark.asyncio
 async def test_allows_up_to_limit(mock_db):
-    mock_db.extension_anonymous_usage.find_one.return_value = {"token": "uuid-1", "count": 2}
+    mock_db.extension_anonymous_usage.find_one.return_value = {
+        "token": "uuid-1",
+        "count": ANONYMOUS_LIMIT - 1,
+    }
     svc = ExtensionUsageService()
     allowed, count = await svc.check_and_increment(mock_db, token="uuid-1", ip="1.2.3.4")
     assert allowed is True
-    assert count == 3
+    assert count == ANONYMOUS_LIMIT
 
 
 @pytest.mark.asyncio
 async def test_blocks_over_limit(mock_db):
-    mock_db.extension_anonymous_usage.find_one.return_value = {"token": "uuid-1", "count": 3}
+    mock_db.extension_anonymous_usage.find_one.return_value = {
+        "token": "uuid-1",
+        "count": ANONYMOUS_LIMIT,
+    }
     svc = ExtensionUsageService()
     allowed, count = await svc.check_and_increment(mock_db, token="uuid-1", ip="1.2.3.4")
     assert allowed is False
-    assert count == 3
+    assert count == ANONYMOUS_LIMIT
 
 
 @pytest.mark.asyncio
