@@ -82,3 +82,9 @@ def test_extraction_validator_passes_valid_legal_scope() -> None:
 def test_extraction_validator_unknown_cluster_accepts_any_non_empty_json() -> None:
     content = json.dumps({"anything": [1, 2, 3]})
     assert _extraction_validator("unknown_cluster")(content) is True
+
+
+def test_extraction_validator_fails_on_non_dict_json() -> None:
+    assert _extraction_validator("data_practices")("[]") is False
+    assert _extraction_validator("data_practices")('"a string"') is False
+    assert _extraction_validator("data_practices")("42") is False

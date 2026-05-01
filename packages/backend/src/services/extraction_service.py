@@ -90,6 +90,8 @@ def _extraction_validator(cluster_name: str) -> EscalationValidator:
     def validate(content: str) -> bool:
         try:
             data = json.loads(content)
+            if not isinstance(data, dict):
+                return False
             if required and not all(k in data for k in required):
                 return False
             return any(
@@ -1485,14 +1487,16 @@ async def extract_document_facts(
 
     accumulated_signals = PrivacySignals()
 
+    _is_complex = (
+        len(document.text or "") > _COMPLEX_DOC_LENGTH_THRESHOLD
+        or document.doc_type in _COMPLEX_DOC_TYPES
+    )
+
     async def _run_cluster(cluster_name: str, chunk_text: str, chunk_idx: int) -> dict[str, Any]:
         logger.debug(
             f"Running cluster '{cluster_name}' for {document.id} chunk {chunk_idx}/{len(chunks)}"
         )
-        is_complex = (
-            len(document.text) > _COMPLEX_DOC_LENGTH_THRESHOLD
-            or document.doc_type in _COMPLEX_DOC_TYPES
-        )
+        is_complex = _is_complex
         messages = [
             {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
             {
@@ -1501,6 +1505,8 @@ async def extract_document_facts(
             },
         ]
         if is_complex:
+            # Complex docs go straight to the escalation model. No validation step:
+            # there is no higher-tier model to escalate to, so we accept the response.
             response = await acompletion_with_fallback(
                 messages,
                 model_priority=_EXTRACTION_ESCALATION,
