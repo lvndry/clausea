@@ -5,13 +5,15 @@ Provides lightweight endpoints optimized for the browser extension popup.
 
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
 
 from src.core.database import get_db
+from src.core.jwt import clerk_auth_service
 from src.core.logging import get_logger
 from src.repositories.pipeline_repository import PipelineRepository
+from src.services.extension_usage import ExtensionUsageService
 from src.services.pipeline_scheduler import schedule_pipeline_run
 from src.services.service_factory import (
     create_indexation_notification_service,
@@ -21,6 +23,20 @@ from src.services.service_factory import (
 from src.utils.domain import extract_domain
 
 logger = get_logger(__name__)
+
+_extension_usage_svc = ExtensionUsageService()
+
+
+async def _get_optional_user(request: Request) -> dict | None:
+    """Verify Clerk JWT if present; return user dict or None for anonymous."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        return await clerk_auth_service.verify_token(auth.split(" ")[1])
+    except Exception:
+        return None
+
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 
@@ -270,6 +286,7 @@ async def get_supported_domains(
 
 @router.post("/analyze", response_model=ExtensionAnalyzeResponse, status_code=202)
 async def analyze_url(
+    request: Request,
     payload: ExtensionAnalyzeRequest,
     background_tasks: BackgroundTasks,
     db: AgnosticDatabase = Depends(get_db),
@@ -282,6 +299,31 @@ async def analyze_url(
     Idempotent: if a pipeline is already running for this domain, returns the
     existing job. If the product is already fully indexed, reports that.
     """
+    user = await _get_optional_user(request)
+
+    if user is None:
+        extension_token = request.headers.get("X-Extension-Token", "").strip()
+        if not extension_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing X-Extension-Token header. Update the extension.",
+            )
+        client_ip = request.client.host if request.client else "unknown"
+        allowed, count = await _extension_usage_svc.check_and_increment(
+            db, token=extension_token, ip=client_ip
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "anonymous_limit_reached",
+                    "uses_allowed": 3,
+                    "uses_used": count,
+                    "requires_auth": True,
+                    "login_url": "https://clausea.co/sign-in",
+                },
+            )
+
     url = payload.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
