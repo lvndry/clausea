@@ -24,7 +24,7 @@ async def require_pro(
     request: Request,
     db: AgnosticDatabase = Depends(get_db),
 ) -> None:
-    """Dependency that blocks non-PRO users with HTTP 402."""
+    """Dependency that blocks unauthenticated requests (HTTP 401) and non-PRO users (HTTP 402)."""
     user_id = _get_user_id(request)
     if user_id in _BYPASS_USER_IDS:
         return
@@ -43,7 +43,7 @@ async def check_usage_limit(
     request: Request,
     db: AgnosticDatabase = Depends(get_db),
 ) -> None:
-    """Dependency that enforces monthly usage limits per tier."""
+    """Dependency that enforces monthly usage limits per tier. Unauthenticated → HTTP 401."""
     user_id = _get_user_id(request)
     if user_id in _BYPASS_USER_IDS:
         return
