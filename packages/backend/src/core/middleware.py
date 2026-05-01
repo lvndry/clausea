@@ -2,8 +2,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from src.core.config import config
 from src.core.jwt import clerk_auth_service
@@ -57,7 +58,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # No valid authentication found
-        raise HTTPException(status_code=401, detail="Authorization required")
+        return JSONResponse(status_code=401, content={"detail": "Authorization required"})
 
     def _is_whitelisted(self, request: Request) -> bool:
         """Check if the request path is whitelisted"""

@@ -227,9 +227,6 @@ class TestDispatchFlow:
         mock_config.app.is_development = False
         request = _make_request(path="/products", headers={}, client_host="1.2.3.4")
 
-        from fastapi import HTTPException
-
         call_next = AsyncMock()
-        with pytest.raises(HTTPException) as exc:
-            await middleware.dispatch(request, call_next)
-        assert exc.value.status_code == 401
+        response = await middleware.dispatch(request, call_next)
+        assert response.status_code == 401
