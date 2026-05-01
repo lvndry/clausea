@@ -934,7 +934,7 @@ class PolicyDocumentPipeline:
             text_content = markdown_to_text(result.markdown)
 
             # Skip empty or very short content without wasting LLM calls
-            if not text_content or len(text_content.strip()) < 100:
+            if not text_content or len(text_content.strip()) < 300:
                 logger_analysis.debug(f"skipping document with insufficient content: {result.url}")
                 return None
 
