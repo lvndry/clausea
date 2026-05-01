@@ -25,6 +25,7 @@ from src.utils.domain import extract_domain
 
 logger = get_logger(__name__)
 
+_extension_usage_svc = ExtensionUsageService()
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 
@@ -296,7 +297,7 @@ async def analyze_url(
                 detail="Missing X-Extension-Token header. Update the extension.",
             )
         client_ip = request.client.host if request.client else "unknown"
-        allowed, count = await ExtensionUsageService().check_and_increment(
+        allowed, count = await _extension_usage_svc.check_and_increment(
             db, token=extension_token, ip=client_ip
         )
         if not allowed:
