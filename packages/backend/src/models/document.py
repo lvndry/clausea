@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Literal, get_args
 
 import shortuuid
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 TierRelevance = Literal["core", "extended"]
 
@@ -52,7 +52,9 @@ class ExtractedTextItem(BaseModel):
 class ExtractedDataPurposeLink(BaseModel):
     """Evidence-backed DataPurposeLink."""
 
-    data_type: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    data_type: str = Field(validation_alias=AliasChoices("data_type", "value"))
     purposes: list[str] = Field(default_factory=list)
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
@@ -86,7 +88,9 @@ class ExtractedContractClause(BaseModel):
 class ExtractedDataItem(BaseModel):
     """A specific data type collected, with sensitivity and optionality."""
 
-    data_type: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    data_type: str = Field(validation_alias=AliasChoices("data_type", "value"))
     sensitivity: Literal["low", "medium", "high", "sensitive"] = "medium"
     required: Literal["required", "optional", "unclear"] = "unclear"
     evidence: list[EvidenceSpan] = Field(default_factory=list)
