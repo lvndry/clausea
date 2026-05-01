@@ -19,6 +19,8 @@ from src.models.document import Document, DocumentAnalysis, coerce_doc_type_from
 load_dotenv()
 logger = get_logger(__name__)
 
+_CLASSIFICATION_PRIORITY: list[SupportedModel] = ["gpt-5.4-nano", "gemini-2.5-flash-lite"]
+
 
 class DocumentProcessingResult(BaseModel):
     """Result of document processing."""
@@ -311,6 +313,7 @@ Use caution: If the content appears incomplete, vague, or primarily promotional,
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
+                model_priority=_CLASSIFICATION_PRIORITY,
                 response_format={"type": "json_object"},
             )
 
@@ -325,6 +328,7 @@ Use caution: If the content appears incomplete, vague, or primarily promotional,
                 raise ValueError("Empty response from LLM")
 
             result: dict[str, Any] = json.loads(content)
+            logger.debug("Classification used model %s for document", response.model)
             logger.debug(f"Document classification result: {result}")
             return result
 
