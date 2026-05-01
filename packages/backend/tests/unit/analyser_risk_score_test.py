@@ -85,35 +85,9 @@ def test_weighted_product_risk_skips_missing_analysis() -> None:
     assert _weighted_product_risk_score([d]) is None
 
 
-def _doc_with_analysis(doc_type: str, risk: int) -> Document:
-    analysis = DocumentAnalysis(
-        summary="x",
-        scores={
-            "transparency": DocumentAnalysisScores(score=5, justification=""),
-            "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-            "user_control": DocumentAnalysisScores(score=5, justification=""),
-            "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-        },
-        risk_score=risk,
-        verdict="moderate",
-        keypoints=[],
-        critical_clauses=[],
-        document_risk_breakdown=None,
-        key_sections=[],
-    )
-    return Document(
-        url="https://example.com/p",
-        product_id="p1",
-        doc_type=doc_type,  # type: ignore[arg-type]
-        markdown="",
-        text="",
-        analysis=analysis,
-    )
-
-
 def test_other_docs_excluded_from_weighted_score() -> None:
     """'other' documents must never influence the product risk score."""
-    privacy = _doc_with_analysis("privacy_policy", risk=8)
-    other = _doc_with_analysis("other", risk=0)  # artificially low — should be ignored
+    privacy = _doc(doc_type="privacy_policy", risk=8)
+    other = _doc(doc_type="other", risk=0)  # artificially low — should be ignored
     score = _weighted_product_risk_score([privacy, other])
     assert score == 8  # only privacy_policy contributes
