@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
 import type { Product } from "@/types";
 
-import CompanyPage from "./product-page-client";
+import CompanyPage, { type DocumentSummary, type ProductOverview } from "./product-page-client";
 
 async function fetchWithAuth(url: string, headers: HeadersInit): Promise<unknown> {
   try {
@@ -23,7 +23,7 @@ export default async function ProductPage({
   const { slug } = await params;
 
   const { getToken } = await auth();
-  const token = (await getToken({ template: "default" })) ?? (await getToken());
+  const token = await getToken();
   const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 
   const [initialProduct, initialData, initialDocuments] = await Promise.all([
@@ -35,10 +35,8 @@ export default async function ProductPage({
   return (
     <CompanyPage
       initialProduct={initialProduct as Product | null}
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      initialData={initialData as any}
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      initialDocuments={(initialDocuments as any[]) ?? []}
+      initialData={initialData as ProductOverview | null}
+      initialDocuments={(initialDocuments as DocumentSummary[]) ?? []}
     />
   );
 }

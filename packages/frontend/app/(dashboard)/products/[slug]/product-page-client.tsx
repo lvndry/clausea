@@ -71,7 +71,7 @@ interface CoverageItem {
   notes?: string | null;
 }
 
-interface ProductOverview {
+export interface ProductOverview {
   product_name: string;
   product_slug: string;
   company_name?: string | null;
@@ -103,7 +103,7 @@ interface ProductOverview {
   contract_clauses?: string[] | null;
 }
 
-interface DocumentSummary {
+export interface DocumentSummary {
   id: string;
   title: string | null;
   url: string;
