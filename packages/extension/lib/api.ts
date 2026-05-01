@@ -126,10 +126,10 @@ export async function analyzeUrl(
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     if (response.status === 429 && body?.requires_auth) {
-      const err = new Error("Login required to analyze more sites") as RateLimitError;
-      err.requiresAuth = true;
-      err.loginUrl = body.login_url ?? "https://clausea.co/sign-in";
-      throw err;
+      throw Object.assign(new Error("Login required to analyze more sites"), {
+        requiresAuth: true as const,
+        loginUrl: (body.login_url ?? "https://clausea.co/sign-in") as string,
+      }) as RateLimitError;
     }
     throw new Error(body?.detail ?? `Analysis failed with status ${response.status}`);
   }
