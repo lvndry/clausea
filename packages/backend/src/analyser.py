@@ -159,9 +159,6 @@ def _compute_document_signature(documents: list[Document]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
-_OPTIONAL_SCORE_KEYS: frozenset[str] = frozenset({"data_retention_score", "security_score"})
-
-
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
     """
     Calculate overall risk score from component scores.
@@ -172,6 +169,9 @@ def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
 
     Weights (sum 1.0): data_collection_scope and third_party_sharing dominate;
     transparency, user_control, retention, and security add nuance (e.g. E2EE).
+
+    Any absent score is filled with neutral (5) so the full weight set is always
+    applied — a missing dimension is unknown, not perfectly scored.
     """
     weights = {
         "transparency": 0.14,
@@ -182,23 +182,13 @@ def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
         "security_score": 0.08,
     }
 
-    # Fill absent optional scores with neutral (5) to keep the weight sum at 1.0.
     effective = dict(scores)
     for key in weights:
         if key not in effective:
             effective[key] = DocumentAnalysisScores(score=5, justification="not assessed")
 
-    weighted_sum = 0.0
-    total_weight = 0.0
-    for score_name, weight in weights.items():
-        if score_name in effective:
-            weighted_sum += effective[score_name].score * weight
-            total_weight += weight
-
-    if total_weight == 0:
-        return 5
-
-    return max(0, min(10, round(10 - weighted_sum / total_weight)))
+    weighted_sum = sum(effective[k].score * w for k, w in weights.items())
+    return max(0, min(10, round(10 - weighted_sum)))
 
 
 def _calculate_verdict(
