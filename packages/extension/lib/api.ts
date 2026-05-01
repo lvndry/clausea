@@ -109,8 +109,9 @@ export async function analyzeUrl(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Analysis failed with status ${response.status}`);
+    const body = await response.json().catch(() => null);
+    const message = body?.detail ?? `Analysis failed with status ${response.status}`;
+    throw new Error(message);
   }
 
   return response.json();
@@ -130,10 +131,9 @@ export async function subscribeEmail(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(
-      detail || `Subscription failed with status ${response.status}`,
-    );
+    const body = await response.json().catch(() => null);
+    const message = body?.detail ?? `Subscription failed with status ${response.status}`;
+    throw new Error(message);
   }
 }
 

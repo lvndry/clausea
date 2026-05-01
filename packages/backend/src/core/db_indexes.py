@@ -357,4 +357,36 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
         else:
             logger.warning(f"Could not create TTL index on crawl_targets.created_at: {e}")
 
+    # Extension anonymous usage tracking
+    try:
+        await db.extension_anonymous_usage.create_index(
+            "last_seen",
+            expireAfterSeconds=60 * 60 * 24 * 30,
+            name="ttl_extension_usage_30d",
+            background=True,
+        )
+        logger.info("Created TTL index on extension_anonymous_usage.last_seen")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("TTL index on extension_anonymous_usage.last_seen already exists")
+        else:
+            logger.warning(
+                f"Could not create TTL index on extension_anonymous_usage.last_seen: {e}"
+            )
+
+    try:
+        await db.extension_anonymous_usage.create_index(
+            "token", unique=True, name="idx_extension_usage_token", background=True
+        )
+        logger.info("Created unique index on extension_anonymous_usage.token")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug(
+                "Unique index on extension_anonymous_usage.token already exists or has duplicate values"
+            )
+        else:
+            logger.warning(f"Could not create unique index on extension_anonymous_usage.token: {e}")
+
     logger.info("Database indexes verified")
