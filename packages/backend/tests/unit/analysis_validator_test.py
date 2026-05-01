@@ -63,3 +63,25 @@ def test_analysis_validator_fails_empty_scores() -> None:
         }
     )
     assert _analysis_validator(content) is False
+
+
+def test_analysis_validator_fails_when_scores_have_bare_integer_values() -> None:
+    content = json.dumps(
+        {
+            "summary": "This policy collects data.",
+            "scores": {"transparency": 7},
+            "verdict": "moderate",
+        }
+    )
+    assert _analysis_validator(content) is False
+
+
+def test_analysis_validator_fails_whitespace_only_summary() -> None:
+    content = json.dumps(
+        {
+            "summary": "   ",
+            "scores": {"transparency": {"score": 7, "justification": "ok"}},
+            "verdict": "moderate",
+        }
+    )
+    assert _analysis_validator(content) is False

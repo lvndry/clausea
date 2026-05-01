@@ -85,6 +85,11 @@ def _analysis_validator(content: str) -> bool:
         scores = data.get("scores")
         if not isinstance(scores, dict) or len(scores) == 0:
             return False
+        # At least one score entry must be a dict with a numeric score field
+        if not any(
+            isinstance(v, dict) and isinstance(v.get("score"), int) for v in scores.values()
+        ):
+            return False
         return True
     except (json.JSONDecodeError, AttributeError):
         return False
@@ -664,24 +669,34 @@ Document content:
             async with usage_tracking(tracker_callback):
                 # Wrap the LLM call in a cancellable task
                 is_complex = should_use_reasoning_model(document)
-                model_primary = _ANALYSIS_ESCALATION if is_complex else _ANALYSIS_PRIMARY
 
-                llm_task = asyncio.create_task(
-                    acompletion_with_escalation(
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": DOCUMENT_ANALYSIS_PROMPT,
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        primary=model_primary,
-                        escalation=_ANALYSIS_ESCALATION,
-                        validator=_analysis_validator,
-                        response_format={"type": "json_object"},
-                        temperature=0,
+                if is_complex:
+                    # Complex docs go straight to the escalation model — no cheaper tier to try first.
+                    llm_task = asyncio.create_task(
+                        acompletion_with_fallback(
+                            messages=[
+                                {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
+                                {"role": "user", "content": prompt},
+                            ],
+                            model_priority=_ANALYSIS_ESCALATION,
+                            response_format={"type": "json_object"},
+                            temperature=0,
+                        )
                     )
-                )
+                else:
+                    llm_task = asyncio.create_task(
+                        acompletion_with_escalation(
+                            messages=[
+                                {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
+                                {"role": "user", "content": prompt},
+                            ],
+                            primary=_ANALYSIS_PRIMARY,
+                            escalation=_ANALYSIS_ESCALATION,
+                            validator=_analysis_validator,
+                            response_format={"type": "json_object"},
+                            temperature=0,
+                        )
+                    )
 
                 # Wait for either completion or cancellation
                 cancellation_task = asyncio.create_task(token.cancelled.wait())
