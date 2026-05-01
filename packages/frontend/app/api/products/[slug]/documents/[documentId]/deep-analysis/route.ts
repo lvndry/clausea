@@ -25,7 +25,7 @@ export async function GET(
 
     return new NextResponse(body, {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
     });
   } catch (error) {
     console.error("Error fetching document deep analysis:", error);
