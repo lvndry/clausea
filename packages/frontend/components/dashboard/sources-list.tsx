@@ -432,7 +432,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                       {/* No analysis available */}
                       {!displaySummary &&
                         displayKeypoints.length === 0 &&
-                        displayCriticalClauses.length === 0 && (
+                        displayCriticalClauses.length === 0 &&
+                        !riskBreakdown && (
                           <p className="py-4 text-sm text-muted-foreground text-center">
                             No analysis available for this document yet.
                           </p>
@@ -440,7 +441,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
 
                       {(displaySummary ||
                         displayKeypoints.length > 0 ||
-                        displayCriticalClauses.length > 0) && (
+                        displayCriticalClauses.length > 0 ||
+                        !!riskBreakdown) && (
                         <div className="space-y-4">
                           {/* Summary */}
                           {displaySummary && (
