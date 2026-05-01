@@ -20,7 +20,11 @@ from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.llm import acompletion_with_fallback
+from src.llm import (
+    SupportedModel,
+    acompletion_with_escalation,
+    acompletion_with_fallback,
+)
 from src.models.document import (
     BusinessImpact,
     BusinessImpactAssessment,
@@ -64,6 +68,27 @@ from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
 load_dotenv()
 logger = get_logger(__name__)
+
+_ANALYSIS_RESILIENCE: list[SupportedModel] = ["gemini-3.1-flash-lite"]
+_ANALYSIS_PRIMARY: list[SupportedModel] = ["gpt-5-mini"] + _ANALYSIS_RESILIENCE
+_ANALYSIS_ESCALATION: list[SupportedModel] = ["gpt-5.4-mini"] + _ANALYSIS_RESILIENCE
+_OVERVIEW_PRIORITY: list[SupportedModel] = ["gpt-5.4-nano", "gemini-2.5-flash-lite"]
+
+
+def _analysis_validator(content: str) -> bool:
+    try:
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            return False
+        if not isinstance(data.get("summary"), str) or not data["summary"].strip():
+            return False
+        scores = data.get("scores")
+        if not isinstance(scores, dict) or len(scores) == 0:
+            return False
+        return True
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
 
 ProgressCallback = Callable[[int, int, Document], Awaitable[None] | None]
 
@@ -638,8 +663,11 @@ Document content:
 
             async with usage_tracking(tracker_callback):
                 # Wrap the LLM call in a cancellable task
+                is_complex = should_use_reasoning_model(document)
+                model_primary = _ANALYSIS_ESCALATION if is_complex else _ANALYSIS_PRIMARY
+
                 llm_task = asyncio.create_task(
-                    acompletion_with_fallback(
+                    acompletion_with_escalation(
                         messages=[
                             {
                                 "role": "system",
@@ -647,6 +675,9 @@ Document content:
                             },
                             {"role": "user", "content": prompt},
                         ],
+                        primary=model_primary,
+                        escalation=_ANALYSIS_ESCALATION,
+                        validator=_analysis_validator,
                         response_format={"type": "json_object"},
                         temperature=0,
                     )
@@ -678,6 +709,7 @@ Document content:
 
                 # Get the response
                 response = await llm_task
+                logger.info("analyse_document %s used model %s", document.id, response.model)
 
             choice = response.choices[0]
             if not hasattr(choice, "message"):
@@ -999,6 +1031,7 @@ Per-document analyses and extractions:
                         },
                         {"role": "user", "content": prompt},
                     ],
+                    model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                 )
             )
@@ -1365,6 +1398,7 @@ Per-document analyses and extractions:
                     },
                     {"role": "user", "content": aggregate_prompt},
                 ],
+                model_priority=_OVERVIEW_PRIORITY,
                 response_format={"type": "json_object"},
             )
 
