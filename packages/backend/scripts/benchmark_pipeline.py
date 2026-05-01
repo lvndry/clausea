@@ -110,6 +110,7 @@ async def _run_doc(doc: Document, baseline: bool) -> dict[str, Any]:
             "doc_type": doc.doc_type,
             "text_length": len(doc.text or ""),
             "models_used": "",
+            "call_count": 0,
             "escalation_count": 0,
             "total_tokens": 0,
             "estimated_cost_usd": 0.0,
@@ -126,6 +127,7 @@ async def _run_doc(doc: Document, baseline: bool) -> dict[str, Any]:
         "doc_type": doc.doc_type,
         "text_length": len(doc.text or ""),
         "models_used": "|".join(summary.keys()),
+        "call_count": _call_count,
         "escalation_count": 0 if baseline else _escalation_count,
         "total_tokens": total_tokens,
         "estimated_cost_usd": round(total_cost, 6),
@@ -187,8 +189,8 @@ async def main() -> None:
     total_cost = sum(r["estimated_cost_usd"] for r in successful)
     total_escalations = sum(r["escalation_count"] for r in successful)
     avg_cost = total_cost / len(successful) if successful else 0
-    total_calls_est = sum(4 * (len(r.get("models_used", "").split("|")) or 1) for r in successful)
-    escalation_rate = total_escalations / max(total_calls_est, 1) * 100
+    total_calls = sum(r["call_count"] for r in successful)
+    escalation_rate = total_escalations / max(total_calls, 1) * 100
 
     print(f"\n{'=' * 50}")
     print(f"Mode:              {mode}")
@@ -199,9 +201,8 @@ async def main() -> None:
     print(f"Results saved to:  {out_path}")
     print(f"{'=' * 50}")
     print("\nAcceptance targets:")
-    print(
-        f"  Escalation rate < 30%: ~{escalation_rate:.0f}% (check CSV for exact cluster-level counts)"
-    )
+    print(f"  Total LLM calls:   {total_calls}")
+    print(f"  Escalation rate < 30%: {escalation_rate:.1f}%")
 
 
 if __name__ == "__main__":
