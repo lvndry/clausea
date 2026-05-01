@@ -9,7 +9,6 @@ import {
   FileText,
   FolderOpen,
   Link as LinkIcon,
-  Loader2,
   ShieldAlert,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -82,36 +81,12 @@ interface CriticalClause {
   compliance_impact: string[];
 }
 
-interface DocumentAnalysisScores {
-  score: number;
-  justification: string;
-}
-
 interface DocumentRiskBreakdown {
   overall_risk: number;
   risk_by_category: Record<string, number>;
   top_concerns: string[];
   positive_protections: string[];
   missing_information: string[];
-}
-
-interface DocumentDeepAnalysis {
-  document_id: string;
-  document_type: string;
-  title: string | null;
-  url: string;
-  analysis: {
-    summary: string;
-    scores: Record<string, DocumentAnalysisScores>;
-    risk_score: number;
-    verdict: string;
-    keypoints: string[] | null;
-    keypoints_with_evidence: KeypointWithEvidence[] | null;
-    critical_clauses: CriticalClause[] | null;
-    document_risk_breakdown: DocumentRiskBreakdown | null;
-  };
-  critical_clauses: CriticalClause[];
-  document_risk_breakdown: DocumentRiskBreakdown;
 }
 
 interface DocumentSummary {
@@ -125,6 +100,8 @@ interface DocumentSummary {
   summary?: string;
   keypoints?: string[];
   keypoints_with_evidence?: KeypointWithEvidence[] | null;
+  critical_clauses?: CriticalClause[] | null;
+  document_risk_breakdown?: DocumentRiskBreakdown | null;
 }
 
 interface SourcesListProps {
@@ -217,22 +194,6 @@ const RISK_LEVEL_CONFIG = {
   },
 };
 
-function formatScoreName(key: string): string {
-  return key
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function scoreColorClasses(score: number): { text: string; bar: string } {
-  if (score >= 7) return { text: "text-red-500", bar: "bg-red-500" };
-  if (score >= 4)
-    return {
-      text: "text-yellow-600 dark:text-yellow-400",
-      bar: "bg-yellow-500",
-    };
-  return { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" };
-}
-
 export function SourcesList({ productSlug, documents }: SourcesListProps) {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [expandedKeypoints, setExpandedKeypoints] = useState<
@@ -244,16 +205,6 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
   const [extractionLoading, setExtractionLoading] = useState<
     Record<string, boolean>
   >({});
-  const [deepAnalyses, setDeepAnalyses] = useState<
-    Record<string, DocumentDeepAnalysis>
-  >({});
-  const [deepAnalysisLoading, setDeepAnalysisLoading] = useState<
-    Record<string, boolean>
-  >({});
-  const [deepAnalysisErrors, setDeepAnalysisErrors] = useState<
-    Record<string, string>
-  >({});
-
   function toggleExpanded(docId: string, docTitle?: string | null) {
     const newExpanded = new Set(expandedDocs);
     const isExpanding = !newExpanded.has(docId);
@@ -301,50 +252,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
     }
   }
 
-  async function ensureDeepAnalysisLoaded(docId: string) {
-    if (deepAnalyses[docId] || deepAnalysisLoading[docId]) return;
-    setDeepAnalysisLoading((s) => ({ ...s, [docId]: true }));
-    setDeepAnalysisErrors((s) => {
-      const next = { ...s };
-      delete next[docId];
-      return next;
-    });
-
-    try {
-      const res = await fetch(
-        `/api/products/${productSlug}/documents/${docId}/deep-analysis`,
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        const msg =
-          res.status === 503
-            ? (body.error ?? "Analysis failed for this document")
-            : "Could not load analysis";
-        setDeepAnalysisErrors((s) => ({ ...s, [docId]: msg }));
-        return;
-      }
-      const json = (await res.json()) as DocumentDeepAnalysis;
-      setDeepAnalyses((s) => ({ ...s, [docId]: json }));
-    } catch {
-      setDeepAnalysisErrors((s) => ({
-        ...s,
-        [docId]: "Failed to load analysis",
-      }));
-    } finally {
-      setDeepAnalysisLoading((s) => ({ ...s, [docId]: false }));
-    }
-  }
-
-  async function handleToggleExpanded(doc: DocumentSummary) {
-    const isExpanding = !expandedDocs.has(doc.id);
+  function handleToggleExpanded(doc: DocumentSummary) {
     toggleExpanded(doc.id, doc.title);
-
-    if (isExpanding) {
-      // Document list (`DocumentSummary`) only includes summary, keypoints, verdict, and
-      // risk_score. Dimensional scores, risk breakdown, and critical clauses live on the
-      // deep-analysis payload — always fetch when expanding so the panel is complete.
-      await ensureDeepAnalysisLoaded(doc.id);
-    }
   }
 
   if (documents.length === 0) {
@@ -391,31 +300,14 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
           const verdictConfig = doc.verdict
             ? getVerdictConfig(doc.verdict)
             : null;
-          const deepAnalysis = deepAnalyses[doc.id];
-          const isLoadingDeep = deepAnalysisLoading[doc.id];
-          const deepAnalysisError = deepAnalysisErrors[doc.id];
-
-          // Merge local summary with deep analysis data
-          const effectiveSummary =
-            doc.summary || deepAnalysis?.analysis?.summary;
-          const effectiveKeypoints =
-            doc.keypoints ||
-            deepAnalysis?.analysis?.keypoints ||
-            [];
-          const effectiveKeypointsWithEvidence =
-            doc.keypoints_with_evidence ||
-            deepAnalysis?.analysis?.keypoints_with_evidence;
-          const criticalClauses =
-            deepAnalysis?.critical_clauses ||
-            deepAnalysis?.analysis?.critical_clauses ||
-            [];
-          const scores = deepAnalysis?.analysis?.scores;
-          const riskBreakdown =
-            deepAnalysis?.document_risk_breakdown ||
-            deepAnalysis?.analysis?.document_risk_breakdown;
+          const displaySummary = doc.summary;
+          const displayKeypoints = doc.keypoints ?? [];
+          const displayKeypointsWithEvidence = doc.keypoints_with_evidence;
+          const displayCriticalClauses = doc.critical_clauses ?? [];
+          const riskBreakdown = doc.document_risk_breakdown;
 
           const evidenceByKeypoint = new Map<string, EvidenceSpan[]>();
-          const kpwe = effectiveKeypointsWithEvidence;
+          const kpwe = displayKeypointsWithEvidence;
           if (kpwe && Array.isArray(kpwe)) {
             for (const entry of kpwe) {
               if (entry?.keypoint && entry.evidence?.length) {
@@ -539,9 +431,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                             : "text-muted-foreground hover:bg-muted",
                         )}
                       >
-                        {isLoadingDeep && !isExpanded ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : isExpanded ? (
+                        {isExpanded ? (
                           <>
                             <ChevronDown className="h-3.5 w-3.5" />
                             Close
@@ -569,138 +459,27 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                     className="overflow-hidden"
                   >
                     <div className="px-4 pb-4 pt-2 border-t border-violet-200 dark:border-violet-800">
-                      {/* Loading deep analysis (always requested on expand for scores / clauses) */}
-                      {isLoadingDeep && !deepAnalysis && (
-                        <div className="flex items-center gap-2 py-3 justify-center text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                          <span>
-                            {effectiveSummary
-                              ? "Loading scores and clause detail…"
-                              : "Loading analysis…"}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Analysis error (show even when list API returned a short summary) */}
-                      {deepAnalysisError && (() => {
-                        const isWarning = !!effectiveSummary;
-                        return (
-                          <div
-                            className={cn(
-                              "rounded-md border p-3 flex items-start gap-2",
-                              isWarning
-                                ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900"
-                                : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900",
-                            )}
-                          >
-                            <AlertTriangle
-                              className={cn(
-                                "h-4 w-4 shrink-0 mt-0.5",
-                                isWarning ? "text-amber-600" : "text-red-500",
-                              )}
-                            />
-                            <div>
-                              <p
-                                className={cn(
-                                  "text-sm font-medium",
-                                  isWarning
-                                    ? "text-amber-800 dark:text-amber-200"
-                                    : "text-red-700 dark:text-red-400",
-                                )}
-                              >
-                                {isWarning
-                                  ? "Could not load full document detail"
-                                  : "Analysis failed"}
-                              </p>
-                              <p
-                                className={cn(
-                                  "text-xs mt-0.5",
-                                  isWarning
-                                    ? "text-amber-700/90 dark:text-amber-300/80"
-                                    : "text-red-600/80 dark:text-red-400/70",
-                                )}
-                              >
-                                {deepAnalysisError}
-                              </p>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
                       {/* No analysis available */}
-                      {!isLoadingDeep &&
-                        !deepAnalysisError &&
-                        !effectiveSummary &&
-                        !deepAnalysis && (
+                      {!displaySummary &&
+                        displayKeypoints.length === 0 &&
+                        displayCriticalClauses.length === 0 && (
                           <p className="py-4 text-sm text-muted-foreground text-center">
                             No analysis available for this document yet.
                           </p>
                         )}
 
-                      {(effectiveSummary ||
-                        effectiveKeypoints.length > 0 ||
-                        criticalClauses.length > 0 ||
-                        scores) && (
+                      {(displaySummary ||
+                        displayKeypoints.length > 0 ||
+                        displayCriticalClauses.length > 0) && (
                         <div className="space-y-4">
                           {/* Summary */}
-                          {effectiveSummary && (
+                          {displaySummary && (
                             <div className="text-sm text-foreground/90 leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-2">
                               <MarkdownRenderer>
-                                {effectiveSummary}
+                                {displaySummary}
                               </MarkdownRenderer>
                             </div>
                           )}
-
-                          {/* Scores breakdown */}
-                          {scores &&
-                            Object.keys(scores).length > 0 && (
-                              <div>
-                                <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                  <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
-                                  Dimension Scores
-                                </h5>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                  {Object.entries(scores).map(
-                                    ([key, val]) => (
-                                      <div
-                                        key={key}
-                                        className="rounded-md bg-card/60 border border-border/60 p-2.5"
-                                      >
-                                        <div className="flex items-center justify-between mb-1">
-                                          <span className="text-xs font-medium text-foreground/80">
-                                            {formatScoreName(key)}
-                                          </span>
-                                          <span
-                                            className={cn(
-                                              "text-xs font-bold tabular-nums",
-                                              scoreColorClasses(val.score).text,
-                                            )}
-                                          >
-                                            {val.score}/10
-                                          </span>
-                                        </div>
-                                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                                          <div
-                                            className={cn(
-                                              "h-full rounded-full transition-all",
-                                              scoreColorClasses(val.score).bar,
-                                            )}
-                                            style={{
-                                              width: `${val.score * 10}%`,
-                                            }}
-                                          />
-                                        </div>
-                                        {val.justification && (
-                                          <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                                            {val.justification}
-                                          </p>
-                                        )}
-                                      </div>
-                                    ),
-                                  )}
-                                </div>
-                              </div>
-                            )}
 
                           {/* Risk breakdown */}
                           {riskBreakdown &&
@@ -753,14 +532,14 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                             )}
 
                           {/* Critical clauses */}
-                          {criticalClauses.length > 0 && (
+                          {displayCriticalClauses.length > 0 && (
                             <div>
                               <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
                                 <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
                                 Critical Clauses
                               </h5>
                               <div className="space-y-2">
-                                {criticalClauses
+                                {displayCriticalClauses
                                   .slice(0, 5)
                                   .map((clause, i) => {
                                     const cfg =
@@ -818,14 +597,14 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           )}
 
                           {/* Keypoints */}
-                          {effectiveKeypoints.length > 0 && (
+                          {displayKeypoints.length > 0 && (
                             <div className="pt-1">
                               <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
                                 <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
                                 Key Insights
                               </h5>
                               <div className="space-y-1.5">
-                                {effectiveKeypoints.map(
+                                {displayKeypoints.map(
                                   (point: string, idx: number) => {
                                     const isKpExpanded =
                                       expandedKeypoints[doc.id]?.has(idx) ||
