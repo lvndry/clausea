@@ -145,16 +145,18 @@ export default defineBackground(() => {
     }
   }
 
+  // Generate UUID on first install so it's ready before any popup opens
+  chrome.runtime.onInstalled.addListener(() => {
+    getOrCreateExtensionToken().catch((err) => {
+      console.error("[clausea] Failed to generate extension token on install:", err);
+    });
+  });
+
   // Listen for tab updates
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === "complete" && tab.url) {
       checkAndUpdateIcon(tabId, tab.url);
     }
-  });
-
-  // Generate UUID on first install so it's ready before any popup opens
-  chrome.runtime.onInstalled.addListener(() => {
-    getOrCreateExtensionToken();
   });
 
   // Listen for tab activation
