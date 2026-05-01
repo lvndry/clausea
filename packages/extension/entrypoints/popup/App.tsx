@@ -5,6 +5,7 @@ import {
   checkUrl,
   getVerdictColor,
   getVerdictLabel,
+  isRateLimitError,
   subscribeEmail,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -24,7 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 
 export const CLAUSEA_URL = "https://clausea.co";
 
-type ViewState = "loading" | "loaded" | "error" | "not-found" | "crawl-failed";
+type ViewState = "loading" | "loaded" | "error" | "not-found" | "crawl-failed" | "login-required";
 
 // Sub-states within the "not-found" view
 type NotFoundPhase =
@@ -79,6 +80,8 @@ export default function App() {
   const [data, setData] = useState<ExtensionCheckResponse | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [error, setError] = useState<string>("");
+
+  const [loginUrl, setLoginUrl] = useState<string>("https://clausea.co/sign-in");
 
   // Not-found / pipeline state
   const [notFoundPhase, setNotFoundPhase] = useState<NotFoundPhase>("initial");
@@ -188,12 +191,28 @@ export default function App() {
   }, []);
 
   // ── Trigger pipeline analysis ────────────────────────────────────────────
+  const getExtensionHeaders = (): Promise<Record<string, string>> =>
+    new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "GET_EXTENSION_HEADERS" }, (response) => {
+          if (chrome.runtime.lastError || !response?.success) {
+            resolve({});
+            return;
+          }
+          resolve((response.headers as Record<string, string>) ?? {});
+        });
+      } catch {
+        resolve({});
+      }
+    });
+
   const handleAnalyze = async () => {
     if (!currentUrl) return;
     setNotFoundPhase("triggering");
     setPhaseError("");
     try {
-      const result = await analyzeUrl(currentUrl);
+      const headers = await getExtensionHeaders();
+      const result = await analyzeUrl(currentUrl, headers);
       setAnalyzeResult(result);
 
       if (result.status === "already_indexed") {
@@ -209,6 +228,11 @@ export default function App() {
       // "started" or "already_running" → show email input
       setNotFoundPhase("triggered");
     } catch (err) {
+      if (isRateLimitError(err)) {
+        setLoginUrl(err.loginUrl);
+        setView("login-required");
+        return;
+      }
       setPhaseError(formatError(err));
       setNotFoundPhase("trigger-error");
     }
@@ -497,6 +521,33 @@ export default function App() {
                   <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
                 </button>
               )}
+            </div>
+          </section>
+        )}
+
+        {/* ── Login Required ── */}
+        {view === "login-required" && (
+          <section className="border-b border-border bg-card px-5 py-6">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <Shield className="h-10 w-10 text-muted-foreground" />
+              <div>
+                <p className="font-semibold text-sm">Sign in to keep analyzing</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  You've used your 3 free analyses. Sign in to continue.
+                </p>
+              </div>
+              <button
+                onClick={() => chrome.tabs.create({ url: loginUrl })}
+                className="w-full rounded-sm bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 transition-opacity"
+              >
+                Sign in to Clausea
+              </button>
+              <button
+                onClick={() => setView("not-found")}
+                className="text-xs text-muted-foreground underline underline-offset-2"
+              >
+                Go back
+              </button>
             </div>
           </section>
         )}
