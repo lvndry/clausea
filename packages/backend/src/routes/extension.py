@@ -10,8 +10,9 @@ from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
 
 from src.core.database import get_db
-from src.core.jwt import clerk_auth_service
+from src.core.jwt import get_optional_user
 from src.core.logging import get_logger
+from src.models.clerkUser import ClerkUser
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.extension_usage import ExtensionUsageService
 from src.services.pipeline_scheduler import schedule_pipeline_run
@@ -23,19 +24,6 @@ from src.services.service_factory import (
 from src.utils.domain import extract_domain
 
 logger = get_logger(__name__)
-
-_extension_usage_svc = ExtensionUsageService()
-
-
-async def _get_optional_user(request: Request) -> dict | None:
-    """Verify Clerk JWT if present; return user dict or None for anonymous."""
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None
-    try:
-        return await clerk_auth_service.verify_token(auth.split(" ")[1])
-    except Exception:
-        return None
 
 
 router = APIRouter(prefix="/extension", tags=["extension"])
@@ -290,6 +278,7 @@ async def analyze_url(
     payload: ExtensionAnalyzeRequest,
     background_tasks: BackgroundTasks,
     db: AgnosticDatabase = Depends(get_db),
+    user: ClerkUser | None = Depends(get_optional_user),
 ) -> ExtensionAnalyzeResponse:
     """Trigger the analysis pipeline for a URL.
 
@@ -299,8 +288,6 @@ async def analyze_url(
     Idempotent: if a pipeline is already running for this domain, returns the
     existing job. If the product is already fully indexed, reports that.
     """
-    user = await _get_optional_user(request)
-
     if user is None:
         extension_token = request.headers.get("X-Extension-Token", "").strip()
         if not extension_token:
@@ -309,7 +296,7 @@ async def analyze_url(
                 detail="Missing X-Extension-Token header. Update the extension.",
             )
         client_ip = request.client.host if request.client else "unknown"
-        allowed, count = await _extension_usage_svc.check_and_increment(
+        allowed, count = await ExtensionUsageService().check_and_increment(
             db, token=extension_token, ip=client_ip
         )
         if not allowed:
