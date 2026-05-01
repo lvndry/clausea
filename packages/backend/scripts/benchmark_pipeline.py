@@ -53,8 +53,12 @@ async def _count_escalations():
         global _escalation_count, _call_count
         _call_count += 1
         resp = await acompletion_with_fallback(messages, model_priority=primary, **kwargs)
-        content = _extract_json_from_response(resp)
-        if not validator(content):
+        try:
+            content = _extract_json_from_response(resp)
+            should_escalate = not validator(content)
+        except ValueError:
+            should_escalate = True
+        if should_escalate:
             _escalation_count += 1
             resp = await acompletion_with_fallback(messages, model_priority=escalation, **kwargs)
         return resp
@@ -122,7 +126,7 @@ async def _run_doc(doc: Document, baseline: bool) -> dict[str, Any]:
         "doc_type": doc.doc_type,
         "text_length": len(doc.text or ""),
         "models_used": "|".join(summary.keys()),
-        "escalation_count": _escalation_count,
+        "escalation_count": 0 if baseline else _escalation_count,
         "total_tokens": total_tokens,
         "estimated_cost_usd": round(total_cost, 6),
         "duration_s": round(time.time() - start, 2),
