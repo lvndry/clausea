@@ -505,6 +505,11 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
         except Exception as e:
             logger.warning(f"Failed to parse critical_clauses: {e}")
 
+    analysis.analysis_completeness = data.get("analysis_completeness", "full")
+    raw_gaps = data.get("coverage_gaps", [])
+    if isinstance(raw_gaps, list):
+        analysis.coverage_gaps = [str(g) for g in raw_gaps if g]
+
     raw_sections = data.get("key_sections", [])
     if isinstance(raw_sections, list):
         try:
@@ -513,11 +518,6 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
             ]
         except Exception as e:
             logger.warning(f"Failed to parse key_sections: {e}")
-
-    analysis.analysis_completeness = data.get("analysis_completeness", "full")
-    raw_gaps = data.get("coverage_gaps", [])
-    if isinstance(raw_gaps, list):
-        analysis.coverage_gaps = [str(g) for g in raw_gaps if g]
 
     if analysis.document_risk_breakdown is not None:
         br = analysis.document_risk_breakdown
@@ -746,11 +746,10 @@ Document content:
                 parsed: DocumentAnalysis = DocumentAnalysis.model_validate(
                     parsed_dict, strict=False
                 )
-
                 # Ensure all required scores are present, normalize names, and calculate risk_score/verdict
                 parsed = _ensure_required_scores(parsed)
 
-                # Parse deep analysis fields (critical_clauses, risk_breakdown, key_sections,
+                # Parse deep analysis fields (critical_clauses, risk_breakdown,
                 # analysis_completeness, coverage_gaps) from the same response — deep is default.
                 _attach_deep_fields(parsed, parsed_dict)
 

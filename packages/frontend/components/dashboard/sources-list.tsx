@@ -75,6 +75,14 @@ interface DocumentRiskBreakdown {
   missing_information: string[];
 }
 
+interface DocumentSection {
+  section_title: string;
+  content: string;
+  importance: "low" | "medium" | "high" | "critical";
+  analysis: string;
+  related_clauses: string[];
+}
+
 interface DocumentSummary {
   id: string;
   title: string | null;
@@ -88,6 +96,7 @@ interface DocumentSummary {
   keypoints_with_evidence?: KeypointWithEvidence[] | null;
   critical_clauses?: CriticalClause[] | null;
   document_risk_breakdown?: DocumentRiskBreakdown | null;
+  key_sections?: DocumentSection[] | null;
 }
 
 interface SourcesListProps {
@@ -274,6 +283,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
           const displayKeypoints = doc.keypoints ?? [];
           const displayKeypointsWithEvidence = doc.keypoints_with_evidence;
           const displayCriticalClauses = doc.critical_clauses ?? [];
+          const displayKeySections = doc.key_sections ?? [];
           const riskBreakdown = doc.document_risk_breakdown;
 
           const evidenceByKeypoint = new Map<string, EvidenceSpan[]>();
@@ -433,6 +443,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                       {!displaySummary &&
                         displayKeypoints.length === 0 &&
                         displayCriticalClauses.length === 0 &&
+                        displayKeySections.length === 0 &&
                         !riskBreakdown && (
                           <p className="py-4 text-sm text-muted-foreground text-center">
                             No analysis available for this document yet.
@@ -442,6 +453,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                       {(displaySummary ||
                         displayKeypoints.length > 0 ||
                         displayCriticalClauses.length > 0 ||
+                        displayKeySections.length > 0 ||
                         !!riskBreakdown) && (
                         <div className="space-y-4">
                           {/* Summary */}
@@ -564,6 +576,58 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                       </div>
                                     );
                                   })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Key sections */}
+                          {displayKeySections.length > 0 && (
+                            <div>
+                              <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                                Key Sections
+                              </h5>
+                              <div className="space-y-2">
+                                {displayKeySections.slice(0, 5).map((section, i) => {
+                                  const importanceColors = {
+                                    critical: "border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-950/20",
+                                    high: "border-orange-200 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20",
+                                    medium: "border-yellow-200 dark:border-yellow-900 bg-yellow-50/50 dark:bg-yellow-950/20",
+                                    low: "border-border bg-card/50",
+                                  };
+                                  const importanceDotColors = {
+                                    critical: "bg-red-400",
+                                    high: "bg-orange-400",
+                                    medium: "bg-yellow-400",
+                                    low: "bg-muted-foreground",
+                                  };
+                                  return (
+                                    <div
+                                      key={i}
+                                      className={cn(
+                                        "rounded-md border p-3",
+                                        importanceColors[section.importance] ?? importanceColors.low,
+                                      )}
+                                    >
+                                      <div className="flex items-center gap-2 mb-1.5">
+                                        <span className={cn("h-2 w-2 rounded-full shrink-0", importanceDotColors[section.importance] ?? importanceDotColors.low)} />
+                                        <span className="text-xs font-semibold text-foreground/90">
+                                          {section.section_title}
+                                        </span>
+                                      </div>
+                                      {section.analysis && (
+                                        <p className="text-xs text-foreground/80 leading-snug mb-2 ml-4">
+                                          {section.analysis}
+                                        </p>
+                                      )}
+                                      {section.content && (
+                                        <blockquote className="text-xs leading-relaxed text-foreground/70 border-l-2 border-current/30 pl-2 ml-4 italic">
+                                          &ldquo;{section.content}&rdquo;
+                                        </blockquote>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           )}

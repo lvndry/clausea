@@ -670,6 +670,9 @@ class DocumentSummary(BaseModel):
     summary: str | None = None  # User-oriented explanation from analysis
     keypoints: list[str] | None = None  # Key bullet points from analysis
     keypoints_with_evidence: list[KeypointWithEvidence] | None = None  # Optional citations
+    critical_clauses: "list[CriticalClause] | None" = None
+    document_risk_breakdown: "DocumentRiskBreakdown | None" = None
+    key_sections: "list[DocumentSection] | None" = None
 
     @classmethod
     def from_document(cls, doc: "Document") -> "DocumentSummary":
@@ -685,12 +688,18 @@ class DocumentSummary(BaseModel):
             summary_data["keypoints_with_evidence"] = doc.analysis.keypoints_with_evidence
             summary_data["verdict"] = doc.analysis.verdict
             summary_data["risk_score"] = doc.analysis.risk_score
+            summary_data["critical_clauses"] = doc.analysis.critical_clauses
+            summary_data["document_risk_breakdown"] = doc.analysis.document_risk_breakdown
+            summary_data["key_sections"] = doc.analysis.key_sections
         else:
             summary_data["summary"] = None
             summary_data["keypoints"] = None
             summary_data["keypoints_with_evidence"] = None
             summary_data["verdict"] = None
             summary_data["risk_score"] = None
+            summary_data["critical_clauses"] = None
+            summary_data["document_risk_breakdown"] = None
+            summary_data["key_sections"] = None
 
         return cls(**summary_data)
 

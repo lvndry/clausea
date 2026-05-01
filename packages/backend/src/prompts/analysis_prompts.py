@@ -42,16 +42,16 @@ OVERVIEW_CORE_DOC_TYPES: frozenset[str] = frozenset(
 # ─── 1. DOCUMENT ANALYSIS (deep by default) ────────────────────────────────────
 
 DOCUMENT_ANALYSIS_JSON_SCHEMA = """{
-  "summary": string,
+  "summary": string (3-5 concrete sentences),
   "scores": {
-    "transparency":          {"score": int (0-10), "justification": string},
-    "data_collection_scope": {"score": int (0-10), "justification": string},
-    "user_control":          {"score": int (0-10), "justification": string},
-    "third_party_sharing":   {"score": int (0-10), "justification": string},
-    "data_retention_score":  {"score": int (0-10), "justification": string},  // OMIT KEY if extraction has no retention information
-    "security_score":        {"score": int (0-10), "justification": string}   // OMIT KEY if extraction has no security information
+    "transparency":          {"score": int 0-10, "justification": string},
+    "data_collection_scope": {"score": int 0-10, "justification": string},
+    "user_control":          {"score": int 0-10, "justification": string},
+    "third_party_sharing":   {"score": int 0-10, "justification": string},
+    "data_retention_score":  {"score": int 0-10, "justification": string},
+    "security_score":        {"score": int 0-10, "justification": string}
   },
-  "liability_risk": int (0-10) | null,
+  "liability_risk": int 0-10 | null,
   "compliance_status": {"GDPR": int|null, "CCPA": int|null, "PIPEDA": int|null, "LGPD": int|null} | null,
   "keypoints": [string],
   "applicability": string | null,
@@ -59,23 +59,17 @@ DOCUMENT_ANALYSIS_JSON_SCHEMA = """{
   "coverage_gaps": [string],
   "critical_clauses": [
     {
-      "clause_type": "data_collection" | "data_sharing" | "user_rights" | "liability"
-                   | "indemnification" | "retention" | "deletion" | "security"
-                   | "breach_notification" | "dispute_resolution" | "governing_law",
-      "section_title": string | null,
+      "clause_type": string,
       "quote": string,
       "risk_level": "low" | "medium" | "high" | "critical",
       "plain_english": string,
-      "why_notable": string,
-      "compliance_impact": [string]
+      "why_notable": string
     }
   ],
   "document_risk_breakdown": {
-    "overall_risk": int (0-10),
     "risk_by_category": {string: int},
     "top_concerns": [string],
-    "positive_protections": [string],
-    "missing_information": [string]
+    "positive_protections": [string]
   },
   "key_sections": [
     {
@@ -87,124 +81,57 @@ DOCUMENT_ANALYSIS_JSON_SCHEMA = """{
     }
   ]
 }
-
 """
 
-DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy and legal analyst at a policy intelligence firm. Produce a thorough, evidence-backed analysis of a single policy document that a non-lawyer can trust and act on.
+DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evidence-backed analysis of ONE policy document for a privacy-conscious non-lawyer.
 
-## Input
-You will receive:
-1. Document metadata: title, type, URL, locale, regions.
-2. Structured extraction: evidence-backed facts drawn from the document by a prior extraction step.
-3. A completeness indicator: whether the extraction covered the full document or was truncated.
+## Rules (non-negotiable)
+- Use ONLY facts from the extraction below. If absent, state "Not specified in document".
+- Every critical clause quote must be an exact substring from the extraction evidence.
+- Never output `risk_score` or `verdict` — the platform computes them deterministically from your scores.
+- If the extraction is partial, set analysis_completeness to "partial".
 
-## Non-negotiable rules
-- Use ONLY facts present in the extraction input.
-- Every critical clause must use the exact quote from the extraction evidence.
-- If something is absent from the extraction, state "Not specified in document". Never infer or fabricate.
-- If the extraction is partial, set analysis_completeness to "partial" and list what is unknown in coverage_gaps.
+## SUMMARY
+3-5 concrete sentences. Name exact data types ("precise GPS", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics"), exact rights paths ("Settings > Privacy > Delete"). Start with the service/product name, never with "This document" or "This policy".
 
-## Output
-Write for a user who knows nothing about law but is privacy-conscious.
+## SCORES
+Six dimensions, each 0-10 (higher = better for user). Only include a key when the extraction provides real evidence — a missing key is an honest signal.
 
+- **transparency**: clarity of what is collected, why, and by whom. 10=crystal clear, 0=deliberately opaque.
+- **data_collection_scope**: breadth of collection. 10=minimal/necessary only, 0=sweeping.
+- **user_control**: self-service controls. 10=full opt-out/deletion/portability, 0=none.
+- **third_party_sharing**: breadth of sharing. 10=no sharing, 0=unrestricted.
+- **data_retention_score**: retention specificity. 10=short specific periods, 0=indefinite. **Omit if extraction has no retention data.**
+- **security_score**: stated security measures. 10=E2EE/SOC2/pen-tests, 0=no mention. **Omit if extraction has no security data.**
 
-- Up to 5 sentences: what service this is, the single biggest data concern OR strongest protection, and what the user must know immediately.
+Calibration: minimal-collection + E2EE → high collection/sharing scores (7-10). Ad-tech ecosystem + AI training on user content → low (0-4). Clear disclosure of invasive practices does NOT raise scores.
 
-Put all numbered/bulleted takeaways in the `keypoints` array only (see KEY POINTS below) so they are not duplicated inside `summary`.
-
-Rules:
-- Never start with "This document", "The policy", or "This service".
-- Be concrete: name exact data types ("precise GPS location", "browsing history across sites", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics", "Salesforce"), exact rights ("delete account via Settings > Privacy > Delete Account").
-- Use "This means…" or "In practice…" to explain user impact without adding new facts not in the extraction.
-- No legalese, no hedging, no marketing language.
+## KEYPOINTS
+5-10 specific, concrete bullets (fewer acceptable when extraction is thin). Prioritize: AI training on user data, biometrics/health, arbitration waivers, content licenses, government access, cross-entity binding, liability caps.
 
 ## CRITICAL CLAUSES
-Identify every clause in the extraction that is materially significant for the user's privacy, rights, or legal exposure.
+Flag every materially significant clause. For each: clause_type (short label), quote (exact from extraction), risk_level, plain_english (what this means to a non-lawyer), why_notable.
 
-For each clause:
-- clause_type: pick the closest match.
-- quote: exact text from the document taken directly from the extraction's evidence fields.
-- section_title: section heading from the document if available, else null.
-- risk_level: low / medium / high / critical.
-- plain_english: what this means to a non-lawyer. Use simple language and avoid legal jargon.
-- why_notable: why this clause matters: surprising scope, invasive practice, strong protection, or significant legal weight.
-- compliance_impact: regulations directly implicated.
-
-Always produce a clause entry for any of the following if present in the extraction:
-- AI training on user-generated content or data
-- Biometric, health, genetic, or precise location data collection
-- Forced arbitration and class-action / jury-trial waivers
-- Broad content licenses (perpetual, irrevocable, sublicensable, for AI or commercial use)
-- Cross-entity or subsidiary scope expansion ("by using this service you agree to our affiliates' terms")
-- Government and law enforcement data access especially without a warrant requirement
-- International data transfers without adequate safeguards
-- Unilateral right to modify terms with minimal or no notice
-- User indemnification obligations
-- Liability caps or exclusions that expose the user
-- Any clause that is worrisome or surprising.
-
-## SCORES (integers 0-10, higher = better for the user)
-- transparency: Does the document clearly explain what data is collected, why, and by whom? 10 = very clear, 0 = deliberately opaque.
-- data_collection_scope: How limited is data collection? 10 = minimal/necessary only, 0 = sweeping collection of everything possible.
-- user_control: How much control does the user have? 10 = full opt-out, deletion, portability with self-service. 0 = no control at all.
-- third_party_sharing: How limited is data sharing? 10 = no third-party sharing. 0 = unrestricted sharing with all partners.
-- data_retention_score: How limited is retention duration? 10 = short, specific periods. 0 = indefinite. **Omit this key entirely if the extraction contains no retention information** — do not guess or use a neutral default.
-- security_score: Quality of stated security measures. 10 = strong, specific technical controls (E2EE, SOC 2, pen tests). 0 = no mention at all. **Omit this key entirely if the extraction contains no security information** — do not guess or use a neutral default.
-
-Important: only include a score key when the extraction gives you real evidence to base it on. A missing key is an honest signal; a fabricated score misleads users.
-
-### Calibration
-Score from the extraction only — not brand reputation.
-
-- Minimal collection, no ads ecosystem, E2EE stated → `data_collection_scope` / `third_party_sharing` high (7-10); lower only where extraction shows exceptions (address-book flows, analytics, metadata use).
-- Broad profiling, ad-tech ecosystem, cross-app tracking, AI training on user content → collection/sharing low (0-4).
-- Clear disclosure of invasive practices does not raise collection/sharing scores.
-
-## Headline risk (platform-only)
-Do not output `risk_score` or `verdict`. The platform computes them from your six scores with fixed weights so the product always shows one consistent headline number. Your job is to make those six scores faithful to the extraction.
-
----
-
-## KEY POINTS (`keypoints`)
-The only place for takeaway bullets. 5-10 strings when `analysis_completeness` is `full`; fewer (but at least one) when `partial` and the extraction is thin. Concrete and specific; no generalisations.
-Prioritise: AI training, biometrics, arbitration, scope expansion, content licenses, government access, cross-entity binding.
-
-
-
-## APPLICABILITY (`applicability`)
-One short phrase: who and where this document applies (jurisdiction, product, or audience). Do not use this field for how *much* data is collected that is the score `data_collection_scope`.
-
-Examples: "Global", "EU-specific", "US state residents only", "Product-specific: [name]", "Service-specific: [name]". Use document title, URL, locale, and regions.
-
-## COVERAGE GAPS
-List things a user would reasonably expect a document of this type to cover that are absent or deliberately vague.
-Examples: "No breach notification timeline stated", "Retention periods not specified for any data category", "Security measures not described", "No information on how to exercise deletion rights".
-This is factual reporting — a gap does not mean non-compliance.
-
-## COMPLIANCE (`compliance_status`)
-Not every document should carry regulatory scores.
-
-- Set `compliance_status` to `null` (omit the object) when the document has no honest basis for these regimes: e.g. pure liability/dispute ToS with no personal-data content, a narrow cookie mechanics notice with no rights narrative, boilerplate unrelated to data protection, or extraction so thin that no regime can be scored without guessing.
-- When the document does address privacy, data subjects, rights, regions, or legal bases, include the object and score only regimes supported by the extraction.
-- Per-regulation `null`: inside the object, use `null` for a given key when that specific law is not implicated or evidence is insufficient. If every key would be `null`, set the whole `compliance_status` to `null` instead of an empty object.
-- Scores are 0-10 (higher = stronger alignment with what that regime typically expects to see disclosed); do not invent scores to fill all four keys.
+Must flag when present: AI training on user data, biometric/health/genetic collection, forced arbitration, class/jury waivers, perpetual/irrevocable content licenses, cross-entity scope expansion, government access without warrant, international transfers lacking safeguards, unilateral modification rights, user indemnification, liability exclusions.
 
 ## DOCUMENT RISK BREAKDOWN
-- overall_risk: 0-10 holistic severity (higher = worse for the user). Omit this field if unsure — the platform fills it from the derived headline score.
-- risk_by_category: one entry per meaningful category found in the extraction (e.g. "data_sharing": 8, "retention": 5).
-- top_concerns: up to 5 substantive concerns with concrete detail. Do not treat normal requirements for the product category (e.g. contact info needed to run a communications service) as a "top concern" unless combined with unusual risk in the extraction.
-- positive_protections: up to 5 specific protective measures actually stated in the document.
-- missing_information: omit or `[]` — platform derives this from `coverage_gaps`.
+- risk_by_category: one entry per meaningful category (e.g. "data_sharing": 8, "user_control": 3).
+- top_concerns: up to 5 substantive concerns. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing.
+- positive_protections: up to 5 genuine protections the document states.
 
 ## KEY SECTIONS
-3-7 most important sections with:
-- section_title: as it appears in the document.
-- content: full text of the section (from extraction).
-- importance: low / medium / high / critical.
-- analysis: plain-language explanation of the section's significance.
-- related_clauses: indices (as strings) of any critical_clauses entries that originate from this section.
+3-7 structurally important sections of the document (e.g. "Data Sharing", "User Rights", "Arbitration Clause"). For each: section_title (exact or paraphrased heading), content (verbatim excerpt, max 300 chars), importance (critical/high/medium/low), analysis (one sentence on what this means to the user), related_clauses (list of clause_type values from critical_clauses that this section produced, or empty list).
 
-Return valid JSON strictly matching this schema:
+## APPLICABILITY
+One phrase: who/where this applies. Examples: "Global", "EU residents only", "US state residents", "Product-specific: [name]".
+
+## COVERAGE GAPS
+What a reasonable user would expect this document type to cover that is absent or vague. Factual, not alarmist.
+
+## COMPLIANCE
+Set compliance_status to null when the document has no basis for regulatory scores. When relevant, score only supported regimes 0-10. Use null for individual unsupported keys.
+
+Return valid JSON matching this schema:
 {DOCUMENT_ANALYSIS_JSON_SCHEMA}
 """
 
@@ -274,7 +201,7 @@ You will receive for each core document:
 - Structured extraction: evidence-backed facts already drawn from the full document
 - Per-document analysis: summary, scores, critical clauses, key points, coverage gaps
 
-Core documents may include: privacy policy, terms of service, terms of use, terms and conditions, cookie policy, GDPR/DPA policy, data processing agreement, children's privacy policy, security / trust practices (encryption, audits, incident handling).
+Core documents may include: privacy policy, terms of service, cookie policy, GDPR/DPA policy, data processing agreement, children's privacy policy, security / trust practices (encryption, audits, incident handling).
 
 ## Your task
 Produce a comprehensive overview covering data practices and contractual terms together:
@@ -288,22 +215,22 @@ Explicitly surface, when the inputs support it: children's or teens' data, sale 
 - Deduplicate across documents report each fact once, clearly.
 - When documents conflict, report the conflict in `contradictions` and use the more conservative interpretation for factual claims — not for tone (stay measured, not alarmist).
 - If a field cannot be filled from the evidence, use "Not specified in documents" — never invent.
-- Be honest: if the company collects a lot of data, do not soften it; but do not invent or exaggerate risks beyond what the documents support.s
+- Be honest: if the company collects a lot of data, do not soften it; but do not invent or exaggerate risks beyond what the documents support.
 
 ## SUMMARY
 1. Up to 5 sentences: who this company is, what data they collect overall, the most important privacy risk, and the most important protection (if any). Start directly with the company or service name.
-2. A markdown bullet list titled "Key Takeaways" -6-10 specific cross-document findings users must know.
+2. A markdown bullet list titled "Key Takeaways" - 6-10 specific cross-document findings users must know.
 
 Rules: start with the company/service name; be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
 
 ## SCORES
-Synthesize from all document scores. Where documents conflict, use the most conservative (worst) interpretation for the underlying factss, then assign scores that spread across the 0-10 scale.
-Apply the same calibration as single-document analysis: minimal-data / low-sharing / strong technical protections (per extraction) → high scores on `data_collection_scope`, `third_party_sharing`, and usually `security_score`; ad-tech-scale collection, many recipients, tracking, training on user content → low scores on collection and sharing. The product’s cached `risk_score` is derived from per-document analyses with privacy_policy weighted most heavily, so privacy-policy scores must honestly reflect breadth of collection and sharing.
+Synthesize from all document scores. Where documents conflict, use the most conservative (worst) interpretation for the underlying facts, then assign scores that spread across the 0-10 scale.
+Apply the same calibration as single-document analysis: minimal-data / low-sharing / strong technical protections (per extraction) → high scores on `data_collection_scope`, `third_party_sharing`; ad-tech-scale collection, many recipients, tracking, training on user content → low scores on collection and sharing. The product's cached `risk_score` is derived from per-document analyses with privacy_policy weighted most heavily, so privacy-policy scores must honestly reflect breadth of collection and sharing.
 
 Provide only: transparency, data_collection_scope, user_control, third_party_sharing.
 
 ## DATA COLLECTED
-10-20 specific data types. Be precise: "device fingerprint", "precise GPS coordinates", "browsing history across third-party sites", "keystroke dynamics" — not "device information" or "usage data".
+10-20 specific data types. Be precise: "device fingerprint", "precise GPS coordinates", "browsing history across third-party sites" — not "device information" or "usage data".
 
 ## DATA PURPOSES
 8-15 specific purposes. Be honest: include "targeted advertising", "sale to data brokers", "AI model training" if present — not just sanitised descriptions.
@@ -315,50 +242,25 @@ For each data type, list the specific purposes for which it is used. Create one 
 Every named or implied third-party recipient from all documents. For each: what data they receive, for what purpose, and a risk level.
 
 ## YOUR RIGHTS
-8-12 items: what the documents say users may do or choose (controls, opt-outs, access/deletion paths, where to read more). Phrase as helpful facts, not lectures. For each, include how to exercise it when stated — URL, email, in-app path, or process name.
-Examples:
-- "Delete your account and data — go to Settings > Privacy > Delete Account or email privacy@company.com"
-- "Opt out of AI training on your content — toggle off in Settings > Data > AI Personalization"
-- "Request a copy of your data — submit a DSAR at company.com/privacy/request"
+8-12 items: what the documents say users may do (controls, opt-outs, access/deletion paths). Phrase as helpful facts, not lectures. Include how to exercise it — URL, email, in-app path.
 
 ## DANGERS
-Meaningful risks or trade-offs actually stated in the documents — things a reasonable user might want to weigh beyond signing up for this type of product. Aim for 5-7 items; use fewer if the evidence is thin.
-
-Do NOT treat as dangers:
-- Normal requirements for the category (e.g. a phone number to register a messaging app, an email for account recovery, basic profile fields) unless the document ties them to unusual extra uses, retention, or sharing you should call out separately.
-- Mere factual statements of how the service works when they are standard and not framed as a downside in the documents.
-
-Do include when supported: unusually broad data use, weak or one-sided legal terms (e.g. liability caps, forced venue), sensitive categories, third-party flows that add real exposure, or practices that materially limit recourse or control.
-
-Each entry should tie to what the documents say and the practical implication neutral, specific language, not hype.
-
-Examples (when actually in the documents):
-- "Photos and videos you upload may be used to train AI models with no opt-out stated"
-- "The Terms require disputes in a specific jurisdiction, which may be inconvenient depending on where you live"
-- "Location data is shared with named advertising partners for ad delivery"
+5-7 meaningful risks actually stated in documents. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing. Include: unusually broad data use, one-sided legal terms, sensitive categories, third-party flows adding real exposure.
 
 ## BENEFITS
-Up to 8 specific protections or user-friendly practices the documents actually describe. Do not invent or inflate. This balances `dangers` include genuine positives (e.g. encryption claims, data-sale disclaimers, retention limits) when the text supports them.
-
-Examples:
-- "The policy states messages are end-to-end encrypted so the provider cannot read content"
-- "A published list names categories of partners who receive data"
+Up to 8 specific protections the documents actually describe. Balance dangers with genuine positives (encryption, data-sale disclaimers, retention limits).
 
 ## RECOMMENDED ACTIONS
-Up to 8 practical next steps that help someone use the product informedly — settings to review, policies to read if they care about a topic, or choices the documents highlight. Prefer guidance over fear. Include exact navigation paths, URLs, or contact details when available.
-Example: "If you use ad personalisation, review Settings > Ads > Manage Preferences and adjust what you share"
+Up to 8 practical next steps with exact navigation paths/URLs/contact details.
 
 ## PRIVACY SIGNALS
-Synthesize from all documents. When documents conflict, use the more conservative value.
+Synthesize from all documents. Use conservative value on conflict.
 
 ## COMPLIANCE
-Score each regulation 0-10 across all documents combined. Use null when evidence is insufficient.
+Score each regulation 0-10 across all documents. Use null when evidence is insufficient.
 
 ## CONTRADICTIONS
-List every meaningful inconsistency between documents. This is valuable information — users and compliance teams need it.
-Example: "Privacy Policy states data is not sold to third parties; Terms of Service permits sharing with 'commercial partners for business purposes' — these statements may conflict on whether revenue-generating data transfers constitute a sale."
-
----
+List every meaningful inconsistency between documents with verbatim statements and practical impact.
 
 Return valid JSON strictly matching this schema:
 {PRODUCT_OVERVIEW_JSON_SCHEMA}
