@@ -1,12 +1,13 @@
+import { auth } from "@clerk/nextjs/server";
+
 import { getBackendUrl } from "@lib/config";
 import type { Product } from "@/types";
 
 import CompanyPage from "./product-page-client";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchPublic(url: string): Promise<any> {
+async function fetchWithAuth(url: string, headers: HeadersInit): Promise<unknown> {
   try {
-    const res = await fetch(url, { next: { revalidate: 300 } });
+    const res = await fetch(url, { headers });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -21,17 +22,23 @@ export default async function ProductPage({
 }) {
   const { slug } = await params;
 
+  const { getToken } = await auth();
+  const token = (await getToken({ template: "default" })) ?? (await getToken());
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
   const [initialProduct, initialData, initialDocuments] = await Promise.all([
-    fetchPublic(getBackendUrl(`/products/${slug}`)),
-    fetchPublic(getBackendUrl(`/products/${slug}/overview`)),
-    fetchPublic(getBackendUrl(`/products/${slug}/documents`)),
+    fetchWithAuth(getBackendUrl(`/products/${slug}`), headers),
+    fetchWithAuth(getBackendUrl(`/products/${slug}/overview`), headers),
+    fetchWithAuth(getBackendUrl(`/products/${slug}/documents`), headers),
   ]);
 
   return (
     <CompanyPage
       initialProduct={initialProduct as Product | null}
-      initialData={initialData}
-      initialDocuments={initialDocuments ?? []}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      initialData={initialData as any}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      initialDocuments={(initialDocuments as any[]) ?? []}
     />
   );
 }
