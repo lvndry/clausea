@@ -31,7 +31,7 @@ def test_assign_tier_relevance_marks_core_docs() -> None:
 
 
 def test_assign_tier_relevance_marks_extended_docs() -> None:
-    doc = _make_document("unclassified")
+    doc = _make_document("other")
     DocumentService._assign_tier_relevance(doc)
     assert doc.tier_relevance == "extended"
 
@@ -55,7 +55,7 @@ def test_can_access_document_for_free_user_core_by_type() -> None:
 def test_cannot_access_document_for_free_user_extended() -> None:
     assert not _can_access_document(
         tier=UserTier.FREE,
-        doc_type="unclassified",
+        doc_type="other",
         tier_relevance="extended",
     )
 

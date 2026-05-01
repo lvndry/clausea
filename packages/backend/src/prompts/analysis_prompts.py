@@ -25,7 +25,7 @@ Excluded from overview (analyzed per-document but not synthesised into the overv
 #   - community_guidelines and copyright_policy are excluded: they cover editorial/IP rules,
 #     not data/privacy risk, and dilute the overview signal.
 #   - security_policy is included: technical/organizational protections matter alongside privacy text.
-#   - "other" and "unclassified" are excluded by definition.
+#   - "other" is excluded by definition (classifier could not assign a type).
 OVERVIEW_CORE_DOC_TYPES: frozenset[str] = frozenset(
     {
         "privacy_policy",

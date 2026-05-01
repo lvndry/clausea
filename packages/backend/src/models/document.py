@@ -540,7 +540,6 @@ DocType = Literal[
     "copyright_policy",
     "security_policy",
     "other",
-    "unclassified",
 ]
 
 
@@ -1139,7 +1138,7 @@ class Document(BaseModel):
     url: str
     title: str | None = None
     product_id: str
-    doc_type: DocType
+    doc_type: DocType = "other"
     markdown: str
     text: str
     metadata: dict[str, Any] = Field(default_factory=dict)

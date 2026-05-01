@@ -94,7 +94,7 @@ async def analyse_product_documents(
     documents = [d for d in all_documents if d.doc_type != "other"]
     skipped = len(all_documents) - len(documents)
     if skipped:
-        logger.info(f"Skipping {skipped} unclassified ('other') documents for {product_slug}")
+        logger.info(f"Skipping {skipped} 'other' documents for {product_slug}")
     total_docs: int = len(documents)
     logger.info(f"Analysing {total_docs} documents for {product_slug} (up to 3 concurrently)")
 

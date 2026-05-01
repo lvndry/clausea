@@ -385,6 +385,16 @@ class TestDocument:
                 text="text",
             )
 
+    def test_unclassified_is_not_a_valid_doc_type(self) -> None:
+        with pytest.raises(ValidationError):
+            Document(
+                url="https://example.com",
+                product_id="p1",
+                doc_type="unclassified",  # type: ignore[arg-type]
+                markdown="",
+                text="",
+            )
+
     def test_valid_regions(self) -> None:
         doc = Document(
             url="https://example.com",
