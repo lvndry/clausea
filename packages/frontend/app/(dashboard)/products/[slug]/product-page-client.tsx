@@ -180,7 +180,7 @@ export default function CompanyPage({
   const [product, setProduct] = useState<Product | null>(initialProduct ?? null);
   const [data, setData] = useState<ProductOverview | null>(initialOverview ?? null);
   const [documents, setDocuments] = useState<DocumentSummary[]>(initialDocs ?? []);
-  const [loading, setLoading] = useState(!initialProduct);
+  const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
     "ready" | "indexing" | "unknown"
