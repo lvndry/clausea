@@ -3,6 +3,31 @@ import pytest
 from src.crawler import ClauseaCrawler, URLScorer
 
 
+class TestURLScorerGlossaryGuard:
+    """'terms' used as glossary/terminology must not score like Terms of Service."""
+
+    def test_chess_terms_glossary_scores_zero(self) -> None:
+        scorer = URLScorer()
+        assert scorer.score_url("https://www.duolingo.com/chess/terms/absolute-pin") == 0.0
+        assert (
+            scorer.score_url("https://www.duolingo.com/chess/terms/what-is-checkmate-in-chess")
+            == 0.0
+        )
+
+    def test_real_terms_pages_keep_high_score(self) -> None:
+        scorer = URLScorer()
+        # Terminal /terms and legal-qualified sub-paths must remain strong signals.
+        assert scorer.score_url("https://example.com/terms") >= 5.0
+        assert scorer.score_url("https://example.com/legal/terms/service") >= 5.0
+        assert scorer.score_url("https://example.com/help/terms") >= 5.0
+        assert scorer.score_url("https://example.com/policies/terms/cookies") >= 5.0
+
+    def test_glossary_guard_does_not_touch_privacy_or_cookies(self) -> None:
+        scorer = URLScorer()
+        assert scorer.score_url("https://www.duolingo.com/privacy") >= 5.0
+        assert scorer.score_url("https://www.duolingo.com/cookies") >= 5.0
+
+
 class TestURLScorerAnchorTextBoost:
     """Anchor text should be the dominant signal for opaque URLs."""
 

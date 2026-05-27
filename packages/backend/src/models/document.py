@@ -3,7 +3,14 @@ from datetime import datetime
 from typing import Any, Literal, get_args
 
 import shortuuid
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 TierRelevance = Literal["core", "extended"]
 
@@ -775,6 +782,22 @@ class DocumentRiskBreakdown(BaseModel):
     risk_by_category: dict[str, int] = Field(
         default_factory=dict
     )  # {"data_sharing": 8, "retention": 5}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_overall_risk(cls, data: Any) -> Any:
+        """Tolerate cheaper models that omit overall_risk but provide per-category risks.
+
+        Without this, a single missing nested field discards the entire document
+        analysis. When overall_risk is absent we derive it from risk_by_category
+        (mean), falling back to a neutral 5 only when no category signal exists.
+        """
+        if isinstance(data, dict) and data.get("overall_risk") in (None, ""):
+            categories = data.get("risk_by_category") or {}
+            values = [v for v in categories.values() if isinstance(v, int | float)]
+            data["overall_risk"] = round(sum(values) / len(values)) if values else 5
+        return data
+
     top_concerns: list[str] = Field(default_factory=list)  # Specific concerns
     positive_protections: list[str] = Field(default_factory=list)  # Good practices
     missing_information: list[str] = Field(default_factory=list)  # What's not mentioned

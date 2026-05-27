@@ -279,7 +279,7 @@ class TestFetchPageInternalOrchestration:
 
     @pytest.mark.asyncio
     async def test_browser_failure_falls_back_to_static(self):
-        """When browser returns None, the static content is used."""
+        """When browser returns None for a policy-relevant page, surface the failure."""
         thin_html = "<html><head><title>Page</title></head><body>Loading...</body></html>"
 
         class FakeResponse:
@@ -310,11 +310,101 @@ class TestFetchPageInternalOrchestration:
 
         crawler._browser_fetch = failing_browser_fetch  # type: ignore[method-assign]
 
+        # Use a policy-relevant URL so the browser-fetch gate is passed and the
+        # browser-failure path is actually exercised.
         result = await crawler._fetch_page_internal(
-            cast(aiohttp.ClientSession, FakeSession()), "https://example.com/page"
+            cast(aiohttp.ClientSession, FakeSession()), "https://example.com/privacy-policy"
         )
         assert result.success is False
         assert "browser rendering failed" in (result.error_message or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_low_relevance_page_skips_browser(self):
+        """Content-insufficient but non-policy pages must NOT trigger an expensive
+        browser render — they return the static content as-is."""
+        thin_html = "<html><head><title>Learn Spanish</title></head><body>Loading...</body></html>"
+
+        class FakeResponse:
+            def __init__(self, url: str):
+                self.status = 200
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = url
+                self.charset = "utf-8"
+                self.content = _FakeContent(thin_html.encode())
+
+            async def text(self):
+                return thin_html
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse(url)
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
+
+        browser_called = False
+
+        async def tracking_browser_fetch(url: str) -> PageContent | None:
+            nonlocal browser_called
+            browser_called = True
+            return None
+
+        crawler._browser_fetch = tracking_browser_fetch  # type: ignore[method-assign]
+
+        # A course page scores ~0 (no policy keywords) — below min_legal_score (2.0).
+        result = await crawler._fetch_page_internal(
+            cast(aiohttp.ClientSession, FakeSession()),
+            "https://example.com/course/es/en/Learn-Spanish",
+        )
+        assert browser_called is False, "browser must not be invoked for low-relevance pages"
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_blocked_static_falls_back_to_browser_for_policy_url(self):
+        """A 406/empty static response (bot block) on a policy URL must trigger the
+        browser fallback rather than failing as 'unsupported content type'."""
+
+        class FakeResponse:
+            """Simulates a bot-block: HTTP 406, empty content-type, empty body."""
+
+            def __init__(self, url: str):
+                self.status = 406
+                self.headers = {"content-type": ""}
+                self.url = url
+                self.charset = None
+                self.content = _FakeContent(b"")
+
+            async def text(self):
+                return ""
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse(url)
+
+        crawler = ClauseaCrawler(respect_robots_txt=False, use_browser=True)
+
+        async def good_browser_fetch(url: str) -> PageContent | None:
+            body = "Privacy Policy. " + ("We collect personal data and share it. " * 80)
+            return PageContent(text=body, markdown=body, title="Privacy Policy", metadata={})
+
+        crawler._browser_fetch = good_browser_fetch  # type: ignore[method-assign]
+
+        result = await crawler._fetch_page_internal(
+            cast(aiohttp.ClientSession, FakeSession()), "https://example.com/privacy"
+        )
+        assert result.success is True
+        assert "privacy policy" in (result.content or result.markdown).lower()
 
     @pytest.mark.asyncio
     async def test_no_browser_when_disabled(self):

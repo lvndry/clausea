@@ -5,7 +5,6 @@ import {
   ArrowRight,
   ArrowUpDown,
   CheckCircle2,
-  ChevronDown,
   Search,
   ShieldAlert,
   Sparkles,
@@ -15,18 +14,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import posthog from "posthog-js";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import { IndexForm } from "@/components/pipeline/index-form";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -156,6 +148,13 @@ function ProductCard({
   );
 }
 
+interface ProductsPage {
+  items: Product[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
 function ProductsPageContent() {
   const { user } = useUser();
   const router = useRouter();
@@ -163,14 +162,12 @@ function ProductsPageContent() {
 
   const { trackUserJourney, trackPageView } = useAnalytics();
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [sortBy, setSortBy] = useState<"name" | "risk" | "recent">("name");
+  const [pageData, setPageData] = useState<ProductsPage>({ items: [], total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  // Pagination
-  const ITEMS_PER_PAGE = 20;
   const pageParam = searchParams.get("page");
   const currentPage = pageParam ? parseInt(pageParam) : 1;
 
@@ -190,61 +187,51 @@ function ProductsPageContent() {
     trackPageView("products");
   }, [trackPageView]);
 
+  // Debounce search — 300 ms
   useEffect(() => {
-    if (searchTerm.trim()) {
-      const filteredCount = products.filter(
-        (product) =>
-          product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          product.description
-            ?.toLowerCase()
-            .includes(searchTerm.toLowerCase()) ||
-          product.categories?.some((cat) =>
-            cat.toLowerCase().includes(searchTerm.toLowerCase()),
-          ),
-      ).length;
-      trackUserJourney.productSearched(searchTerm, filteredCount);
-    }
-  }, [searchTerm, products, trackUserJourney]);
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
+  // Reset to page 1 when search changes
+  const prevSearch = useRef(debouncedSearch);
+  useEffect(() => {
+    if (prevSearch.current !== debouncedSearch) {
+      prevSearch.current = debouncedSearch;
+      if (currentPage !== 1) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("page", "1");
+        router.replace(`/products?${params.toString()}`, { scroll: false });
+      }
+    }
+  }, [debouncedSearch, currentPage, searchParams, router]);
+
+  // Fetch page from server whenever page or search changes
   useEffect(() => {
     async function fetchProducts() {
       try {
         setLoading(true);
-        const response = await fetch("/api/products");
+        const params = new URLSearchParams({ page: String(currentPage), limit: "20" });
+        if (debouncedSearch) params.set("search", debouncedSearch);
+        const response = await fetch(`/api/products?${params.toString()}`);
         if (!response.ok) throw new Error("Failed to fetch products");
-        const data = await response.json();
-        setProducts(data);
+        const data: ProductsPage = await response.json();
+        setPageData(data);
+        if (debouncedSearch.trim()) {
+          trackUserJourney.productSearched(debouncedSearch, data.total);
+        }
       } catch (err) {
         console.error("Error fetching products:", err);
-        setError(
-          err instanceof Error ? err.message : "Failed to fetch products",
-        );
+        setError(err instanceof Error ? err.message : "Failed to fetch products");
       } finally {
         setLoading(false);
       }
     }
     fetchProducts();
-  }, []);
+  }, [currentPage, debouncedSearch, trackUserJourney]);
 
-  const filteredProducts = products.filter(
-    (product) =>
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.categories?.some((cat) =>
-        cat.toLowerCase().includes(searchTerm.toLowerCase()),
-      ),
-  );
-
-  const sortedProducts = [...filteredProducts].sort((a, b) => {
-    if (sortBy === "name") return a.name.localeCompare(b.name);
-    return a.name.localeCompare(b.name);
-  });
-
-  const totalPages = Math.ceil(sortedProducts.length / ITEMS_PER_PAGE);
-  const paginatedProducts = sortedProducts.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE,
-  );
+  const paginatedProducts = pageData.items;
+  const totalPages = pageData.pages;
 
   const setPage = (page: number) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -436,58 +423,22 @@ function ProductsPageContent() {
         </div>
 
         <div className="flex items-center p-2 bg-muted/5">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-10 rounded-none px-6 text-[10px] uppercase tracking-widest font-bold hover:bg-transparent"
-              >
-                <ArrowUpDown
-                  className="mr-3 h-4 w-4 text-foreground/40"
-                  strokeWidth={1.5}
-                />
-                <span className="text-muted-foreground mr-2">Sort:</span>
-                <span className="text-foreground">{sortBy}</span>
-                <ChevronDown className="ml-3 h-3 w-3 opacity-30" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-56 p-2 rounded-none border-border shadow-none"
-            >
-              <DropdownMenuItem
-                onClick={() => setSortBy("name")}
-                className="rounded-none cursor-pointer text-[10px] uppercase tracking-widest font-bold focus:bg-muted/10 p-3"
-              >
-                Name (A-Z)
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setSortBy("risk")}
-                className="rounded-none cursor-pointer text-[10px] uppercase tracking-widest font-bold focus:bg-muted/10 p-3"
-              >
-                Risk Level
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setSortBy("recent")}
-                className="rounded-none cursor-pointer text-[10px] uppercase tracking-widest font-bold focus:bg-muted/10 p-3"
-              >
-                Recently Updated
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center px-6 gap-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            <ArrowUpDown className="h-4 w-4 text-foreground/40" strokeWidth={1.5} />
+            <span>Name (A–Z)</span>
+          </div>
 
           <div className="h-6 w-px bg-border mx-2" />
 
           <div className="px-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            {filteredProducts.length} Entries
+            {pageData.total} Entries
           </div>
         </div>
       </div>
 
       {/* Grid - Varied spacing */}
       <AnimatePresence mode="popLayout">
-        {filteredProducts.length === 0 ? (
+        {paginatedProducts.length === 0 ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

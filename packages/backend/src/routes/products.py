@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import ceil
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
@@ -61,23 +63,27 @@ class IndexationNotifyRequest(BaseModel):
     email: EmailStr
 
 
-@router.get("", response_model=list[Product])
+class ProductsPage(BaseModel):
+    items: list[Product]
+    total: int
+    page: int
+    pages: int
+
+
+@router.get("", response_model=ProductsPage)
 async def get_all_products(
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
-    include_all: bool = Query(
-        default=False,
-        description="If true, returns all products. If false (default), returns only products with at least one document.",
-    ),
-) -> list[Product]:
-    """Get a list of products.
-
-    By default, only returns products that have at least one document.
-    Set include_all=true to get all products regardless of document count.
-    """
-    if include_all:
-        return await service.get_all_products(db)
-    return await service.get_products_with_documents(db)
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    search: str = Query(default=""),
+) -> ProductsPage:
+    """Get a paginated list of products with optional search."""
+    products, total = await service.get_products_paginated(
+        db, page=page, limit=limit, search=search
+    )
+    pages = ceil(total / limit) if total > 0 else 1
+    return ProductsPage(items=products, total=total, page=page, pages=pages)
 
 
 @router.get("/{slug}/overview", response_model=ProductOverview)
@@ -102,7 +108,7 @@ async def get_product_overview(
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
-    overview = await service.get_product_overview(db, slug)
+    overview = await service.get_product_overview(db, slug, product=product)
     if overview:
         return overview
 

@@ -52,6 +52,7 @@ import tracemalloc
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -96,6 +97,29 @@ def _content_fingerprint(text: str) -> str:
     return hashlib.md5(normalized[:5000].encode()).hexdigest()
 
 
+# Locale path segment (/es/, /fr/, /pt-br/, /en_US/) or locale subdomain (es., de.).
+# Used only to prefer a canonical URL when collapsing same-content duplicates — the
+# collapse decision itself is content-based, so genuinely different regional policies
+# (different text) are never merged.
+_LOCALE_PATH_RE = re.compile(r"^/[a-z]{2}([-_][a-z]{2})?(/|$)", re.IGNORECASE)
+_LOCALE_HOST_RE = re.compile(r"^[a-z]{2}([-_][a-z]{2})?\.", re.IGNORECASE)
+
+
+def _canonical_rank(url: str) -> tuple[int, int]:
+    """Lower rank = more canonical. Prefers non-locale URLs, then shorter paths.
+
+    Ensures that when several URLs serve identical content (e.g. /privacy and
+    /es/privacy), the locale-neutral one is kept as the representative.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path or "/"
+    looks_locale = bool(_LOCALE_PATH_RE.match(path)) or (
+        bool(_LOCALE_HOST_RE.match(host)) and not host.startswith("www.")
+    )
+    return (1 if looks_locale else 0, len(path))
+
+
 class ProcessingStats(BaseModel):
     """Statistics for document processing pipeline."""
 
@@ -117,6 +141,12 @@ class ProcessingStats(BaseModel):
 
     # Per-URL crawl failures collected during the pipeline run
     crawl_errors: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Per-URL silent skips — pages fetched OK but rejected by a filter
+    # (e.g. insufficient_content, low_legal_score, non_policy_classification).
+    # Mirrors models.pipeline_job.CrawlSkip; kept as dicts here to avoid an
+    # import cycle.
+    crawl_skip_reasons: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
@@ -728,6 +758,7 @@ class PolicyDocumentPipeline:
             max_parallel_products if max_parallel_products is not None else c.max_parallel_products
         )
         self.use_browser = use_browser if use_browser is not None else c.use_browser
+        self.browser_concurrency = c.browser_concurrency
         self.proxy = proxy if proxy is not None else c.proxy
         self.fallback_min_legal_score = (
             fallback_min_legal_score
@@ -824,6 +855,7 @@ class PolicyDocumentPipeline:
             strategy=strategy or self.crawler_strategy,
             log_file_path=log_file_path,
             use_browser=self.use_browser,
+            browser_concurrency=self.browser_concurrency,
             proxy=self.proxy,
             allowed_paths=product.crawl_allowed_paths,
             denied_paths=product.crawl_denied_paths,
@@ -844,6 +876,14 @@ class PolicyDocumentPipeline:
         updated_count = 0
         duplicate_count = 0
         error_count = 0
+
+        # Process canonical (locale-neutral, shorter) URLs first so they win as the
+        # representative when collapsing same-content locale variants.
+        documents = sorted(documents, key=lambda d: _canonical_rank(d.url))
+        # (product_id, content fingerprint) -> URL kept for that content. Lets us collapse
+        # locale variants that serve identical policy text (e.g. /privacy and /es/privacy)
+        # while keeping genuinely different regional policies (different text → different fp).
+        seen_fingerprints: dict[tuple[str | None, str], str] = {}
 
         async with db_session() as db:
             document_service = create_document_service()
@@ -895,7 +935,31 @@ class PolicyDocumentPipeline:
                             )
                             self.stats.duplicates_skipped += 1
                             duplicate_count += 1
+                        if document.text and document.text.strip():
+                            seen_fingerprints[
+                                (document.product_id, _content_fingerprint(document.text))
+                            ] = document.url
                     else:
+                        # Collapse same-content locale variants: if another doc for this
+                        # product already holds identical policy text at a different URL,
+                        # skip this one. Different regional policies have different text and
+                        # therefore a different fingerprint, so they are never merged.
+                        if document.text and document.text.strip():
+                            fp_key = (
+                                document.product_id,
+                                _content_fingerprint(document.text),
+                            )
+                            kept_url = seen_fingerprints.get(fp_key)
+                            if kept_url and kept_url != document.url:
+                                logger_storage.info(
+                                    f"collapsing same-content variant {document.url} "
+                                    f"(identical to {kept_url})"
+                                )
+                                self.stats.duplicates_skipped += 1
+                                duplicate_count += 1
+                                continue
+                            seen_fingerprints[fp_key] = document.url
+
                         # Create new document
                         logger_storage.info(f"storing new document: {document.url}")
                         await document_service.store_document(db, document)
@@ -935,19 +999,37 @@ class PolicyDocumentPipeline:
 
             # Skip empty or very short content without wasting LLM calls
             if not text_content or len(text_content.strip()) < 300:
-                logger_analysis.debug(f"skipping document with insufficient content: {result.url}")
+                text_len = len(text_content.strip()) if text_content else 0
+                self.stats.crawl_skip_reasons.append(
+                    {
+                        "url": result.url,
+                        "reason": "insufficient_content",
+                        "detail": f"text={text_len} chars",
+                    }
+                )
+                logger_analysis.info(
+                    f"[skip:insufficient_content] {result.url} (text={text_len} chars)"
+                )
                 return None
 
             # Skip garbled/binary content that slipped through
             if ClauseaCrawler._is_garbled_content(text_content):
-                logger_analysis.debug(
-                    f"skipping document with garbled/binary content: {result.url}"
+                self.stats.crawl_skip_reasons.append(
+                    {"url": result.url, "reason": "garbled_content", "detail": None}
                 )
+                logger_analysis.info(f"[skip:garbled_content] {result.url}")
                 return None
 
             if result.legal_score is not None and result.legal_score < MIN_LEGAL_SCORE_THRESHOLD:
-                logger.debug(
-                    f"Skipping low legal-score page ({result.legal_score:.2f}): {result.url}"
+                self.stats.crawl_skip_reasons.append(
+                    {
+                        "url": result.url,
+                        "reason": "low_legal_score",
+                        "detail": f"legal_score={result.legal_score:.2f}",
+                    }
+                )
+                logger_analysis.info(
+                    f"[skip:low_legal_score] {result.url} (legal_score={result.legal_score:.2f})"
                 )
                 return None
 
@@ -962,10 +1044,18 @@ class PolicyDocumentPipeline:
 
             # Skip pages that are not policy documents
             if not classification.get("is_policy_document", False):
-                logger_analysis.debug(f"skipping non-policy document: {result.url}")
-                usage_reason = (
-                    f"non-policy classification: {classification.get('classification', 'unknown')}"
+                classification_label = str(classification.get("classification", "unknown"))
+                self.stats.crawl_skip_reasons.append(
+                    {
+                        "url": result.url,
+                        "reason": "non_policy_classification",
+                        "detail": f"classifier={classification_label}",
+                    }
                 )
+                logger_analysis.info(
+                    f"[skip:non_policy_classification] {result.url} (classifier={classification_label})"
+                )
+                usage_reason = f"non-policy classification: {classification_label}"
                 return None
 
             # Detect locale only for policy documents
@@ -982,9 +1072,14 @@ class PolicyDocumentPipeline:
             # Skip non-English documents*
             # TODO: Support other languages
             if "en" not in detected_locale.lower():
-                logger_analysis.debug(
-                    f"skipping non-English document ({detected_locale}): {result.url}"
+                self.stats.crawl_skip_reasons.append(
+                    {
+                        "url": result.url,
+                        "reason": "non_english",
+                        "detail": f"locale={detected_locale}",
+                    }
                 )
+                logger_analysis.info(f"[skip:non_english] {result.url} (locale={detected_locale})")
                 self.stats.non_english_skipped += 1
                 usage_reason = f"non-English locale: {detected_locale}"
                 return None
