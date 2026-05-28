@@ -617,7 +617,10 @@ class AggregationService:
     async def rebuild_findings_for_product(
         self, db: AgnosticDatabase, product_id: str
     ) -> list[Finding]:
-        documents = await self._document_repo.find_by_product_id(db, product_id)
+        # Must use the *_full loader: find_by_product_id projects out text/markdown
+        # and replaces them with "". Passing such a partial Document to update()
+        # would $set those empty strings back to MongoDB, wiping the source text.
+        documents = await self._document_repo.find_by_product_id_full(db, product_id)
         all_findings: list[Finding] = []
 
         for doc in documents:

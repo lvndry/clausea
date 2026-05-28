@@ -50,6 +50,28 @@ class CrawlError(BaseModel):
     error_type: CrawlErrorType = "unknown"
 
 
+CrawlSkipReason = Literal[
+    "insufficient_content",
+    "garbled_content",
+    "low_legal_score",
+    "non_policy_classification",
+    "non_english",
+]
+
+
+class CrawlSkip(BaseModel):
+    """A single URL that was fetched without error but dropped by a pipeline filter.
+
+    Distinct from CrawlError — these are pages we got, looked at, and decided not to
+    store. Knowing which filter rejected which URL is essential for diagnosing why
+    a pipeline finishes with zero stored documents despite a successful crawl.
+    """
+
+    url: str
+    reason: CrawlSkipReason
+    detail: str | None = None  # e.g. "text=212 chars", "legal_score=0.18", "locale=fr-FR"
+
+
 class PipelineStep(BaseModel):
     """Status of an individual pipeline step."""
 
@@ -95,3 +117,9 @@ class PipelineJob(BaseModel):
 
     # Per-URL crawl failures (e.g. robots.txt blocks, HTTP errors)
     crawl_errors: list[CrawlError] = Field(default_factory=list)
+
+    # Per-URL silent skips: pages we fetched OK but rejected by a filter.
+    # Populated by pipeline._process_crawl_result. Used to produce a
+    # categorized failure message when crawl_errors is empty but the
+    # pipeline still found no policy documents.
+    crawl_skip_reasons: list[CrawlSkip] = Field(default_factory=list)

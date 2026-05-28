@@ -15,7 +15,7 @@ from src.analyser import analyse_product_documents, generate_product_overview
 from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document import Document
-from src.models.pipeline_job import CrawlError, PipelineJob
+from src.models.pipeline_job import CrawlError, CrawlSkip, PipelineJob
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.repositories.pipeline_repository import PipelineRepository
@@ -304,6 +304,12 @@ class PipelineService:
                     if stats.crawl_errors:
                         job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]
 
+                    # Persist silent skips (fetched OK but rejected by a filter)
+                    if stats.crawl_skip_reasons:
+                        job.crawl_skip_reasons = [
+                            CrawlSkip(**skip) for skip in stats.crawl_skip_reasons
+                        ]
+
                     await self._update_step(
                         db,
                         job,
@@ -334,6 +340,22 @@ class PipelineService:
                             job.error = (
                                 f"Crawling failed for {len(job.crawl_errors)} URL(s). "
                                 "No policy documents could be found."
+                            )
+                        elif job.crawl_skip_reasons:
+                            # Categorize: which filter rejected the URLs? This gives the
+                            # operator a concrete next action (tune classifier, enable JS
+                            # rendering, etc.) instead of the prior opaque message.
+                            counts: dict[str, int] = {}
+                            for skip in job.crawl_skip_reasons:
+                                counts[skip.reason] = counts.get(skip.reason, 0) + 1
+                            breakdown = ", ".join(
+                                f"{n}× {reason}"
+                                for reason, n in sorted(counts.items(), key=lambda kv: -kv[1])
+                            )
+                            job.error = (
+                                f"{len(job.crawl_skip_reasons)} URLs fetched but all "
+                                f"rejected by content filters ({breakdown}). "
+                                "See crawl_skip_reasons for the per-URL detail."
                             )
                         else:
                             job.error = "No policy documents found on this site"
