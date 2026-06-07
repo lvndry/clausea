@@ -53,6 +53,15 @@ export interface ExtensionAnalyzeResponse {
   job_id: string | null;
 }
 
+export interface RateLimitError extends Error {
+  readonly requiresAuth: true;
+  readonly loginUrl: string;
+}
+
+export function isRateLimitError(e: unknown): e is RateLimitError {
+  return e instanceof Error && (e as RateLimitError).requiresAuth === true;
+}
+
 // ---------------------------------------------------------------------------
 // API calls
 // ---------------------------------------------------------------------------
@@ -101,17 +110,33 @@ export async function getSupportedDomains(): Promise<string[]> {
  */
 export async function analyzeUrl(
   url: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<ExtensionAnalyzeResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...extraHeaders,
+  };
+
   const response = await fetch(`${API_BASE_URL}/extension/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ url }),
   });
 
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    const message = body?.detail ?? `Analysis failed with status ${response.status}`;
-    throw new Error(message);
+    const detail = body?.detail;
+    if (response.status === 429 && detail?.requires_auth) {
+      throw Object.assign(new Error("Login required to analyze more sites"), {
+        requiresAuth: true as const,
+        loginUrl: (detail.login_url ?? "https://clausea.co/sign-in") as string,
+      }) as RateLimitError;
+    }
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : `Analysis failed with status ${response.status}`,
+    );
   }
 
   return response.json();

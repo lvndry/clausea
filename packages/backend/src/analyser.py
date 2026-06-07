@@ -69,12 +69,26 @@ from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 load_dotenv()
 logger = get_logger(__name__)
 
-_ANALYSIS_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
-_ANALYSIS_PRIMARY: list[SupportedModel] = ["openrouter/gpt-oss-120b-nitro"] + _ANALYSIS_RESILIENCE
-_ANALYSIS_ESCALATION: list[SupportedModel] = ["openrouter/grok-4.1-fast"] + _ANALYSIS_RESILIENCE
+# Cheap, fast, reliable structured-output models spanning four providers. Policy
+# analysis is structured extraction, not frontier reasoning, so small models suffice.
+# Spanning providers means a single model deprecation or provider outage (as happened
+# when openrouter/grok-4.1-fast was deprecated) can no longer break analysis.
+# Mid-tier, cross-provider models. Structured policy extraction needs real capability:
+# tiny models (gemini-flash-lite, gpt-5-nano) run fast/cheap but produce wrong analyses
+# (e.g. "data collection not specified" on a detailed policy). These three are capable
+# enough for reliable extraction while still cheap, and span three providers so a single
+# model deprecation or provider outage cannot break analysis.
+_ANALYSIS_RESILIENCE: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro",  # OpenRouter (120B, capable)
+    "gpt-5-mini",  # OpenAI
+]
+_ANALYSIS_PRIMARY: list[SupportedModel] = ["gemini-2.5-flash"] + _ANALYSIS_RESILIENCE
+# Escalation leads with a stronger model for harder documents.
+_ANALYSIS_ESCALATION: list[SupportedModel] = ["gpt-5-mini"] + _ANALYSIS_RESILIENCE
 _OVERVIEW_PRIORITY: list[SupportedModel] = [
+    "gemini-2.5-flash",
     "openrouter/gpt-oss-120b-nitro",
-    "openrouter/deepseek-v4-flash",
+    "gpt-5-mini",
 ]
 
 
@@ -133,6 +147,8 @@ async def analyse_product_documents(
 
     sem = asyncio.Semaphore(3)
 
+    failed_doc_ids: list[str] = []
+
     async def _analyse_one(index: int, doc: Document) -> None:
         await token.check_cancellation()
         async with sem:
@@ -150,9 +166,41 @@ async def analyse_product_documents(
             except asyncio.CancelledError:
                 logger.info(f"Summarization cancelled at document {index}/{total_docs}")
                 raise
+            except Exception as exc:
+                # Per-document failure isolation: one bad document must not block
+                # the rest of the product from getting its overview. Log loudly so
+                # the failure is visible to operators, but allow sibling tasks to
+                # complete. The overview stage downstream filters by doc.analysis,
+                # so this doc simply contributes nothing rather than poisoning the
+                # whole product.
+                failed_doc_ids.append(doc.id)
+                logger.error(
+                    f"✗ Document analysis raised for {doc.id} ({doc.url}): "
+                    f"{exc.__class__.__name__}: {exc}",
+                    exc_info=True,
+                )
 
-    await asyncio.gather(*[_analyse_one(i, doc) for i, doc in enumerate(documents, 1)])
-    logger.info(f"✓ Successfully analysed all {total_docs} documents for {product_slug}")
+    # return_exceptions=True so a sibling raise (e.g. CancelledError) doesn't
+    # mask the in-flight successful ones. Per-document failures are already
+    # caught inside _analyse_one, so anything that escapes to gather is either
+    # cancellation or a harness bug (cancellation check / progress callback) —
+    # re-raise both rather than swallowing them.
+    results = await asyncio.gather(
+        *[_analyse_one(i, doc) for i, doc in enumerate(documents, 1)],
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+    succeeded = total_docs - len(failed_doc_ids)
+    if failed_doc_ids:
+        logger.warning(
+            f"⚠ Analysed {succeeded}/{total_docs} documents for {product_slug}; "
+            f"{len(failed_doc_ids)} failed: {failed_doc_ids}"
+        )
+    else:
+        logger.info(f"✓ Successfully analysed all {total_docs} documents for {product_slug}")
     return documents
 
 
@@ -1008,6 +1056,17 @@ async def generate_product_overview(
                 "benefits": [b.value for b in doc.extraction.benefits],
             }
         doc_inputs.append(entry)
+
+    # Refuse to synthesise an overview when no document was successfully analysed.
+    # With no analysed input the model fabricates a confident but false verdict
+    # (e.g. "no documents supplied", risk_score 0, verdict very_pervasive) that reads
+    # like a real assessment. Raise instead so the pipeline marks the job failed rather
+    # than publishing a misleading overview.
+    if not doc_inputs:
+        raise ValueError(
+            f"Cannot generate overview for {product_slug}: none of {len(core_docs)} "
+            "core document(s) have analysis (upstream document analysis failed)."
+        )
 
     # Include cross-document conflicts from the aggregation engine.
     # These are deterministically detected facts (e.g., one doc says data is not sold,

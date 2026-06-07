@@ -34,6 +34,7 @@ export default async function ProductPage({
 
   return (
     <CompanyPage
+      key={slug}
       initialProduct={initialProduct as Product | null}
       initialData={initialData as ProductOverview | null}
       initialDocuments={(initialDocuments as DocumentSummary[]) ?? []}

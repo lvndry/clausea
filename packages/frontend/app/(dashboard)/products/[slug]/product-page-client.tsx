@@ -202,26 +202,40 @@ export default function CompanyPage({
 
     async function fetchData() {
       try {
-        // Fetch the base product first so we can trigger indexation if needed
-        const prodRes = await fetch(`/api/products/${slug}`);
+        setDocumentsLoading(true);
+
+        // Fire all three requests in parallel — product, documents, and overview
+        // arrive together instead of in a sequential chain.
+        const [prodRes, docsRes, overviewRes] = await Promise.all([
+          fetch(`/api/products/${slug}`),
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/overview`),
+        ]);
+
         if (!prodRes.ok) {
           setProduct(null);
           setData(null);
+          setDocumentsLoading(false);
           setIndexationMode("ready"); // render not-found
           return;
         }
         const prodJson = (await prodRes.json()) as Product;
         setProduct(prodJson);
 
-        // Fetch documents next; if none, auto-trigger pipeline and show "indexing" UI
-        setDocumentsLoading(true);
-        const docsRes = await fetch(`/api/products/${slug}/documents`);
         const docsJson = docsRes.ok
           ? ((await docsRes.json()) as DocumentSummary[])
           : [];
         setDocuments(docsJson);
         setDocumentsLoading(false);
 
+        // Overview was fetched in parallel — use the result immediately.
+        if (overviewRes.ok) {
+          setData((await overviewRes.json()) as ProductOverview);
+          setIndexationMode("ready");
+          return;
+        }
+
+        // No overview yet — decide whether to trigger the pipeline.
         if (!docsJson.length) {
           // Check if there's a recently failed job before auto-triggering
           const latestRes = await fetch(
@@ -233,7 +247,6 @@ export default function CompanyPage({
               latestJob?.status === "failed" &&
               latestJob.crawl_errors?.length > 0
             ) {
-              // Show the failure state instead of auto-retriggering
               setFailedJob({
                 error: latestJob.error,
                 crawl_errors: latestJob.crawl_errors,
@@ -243,25 +256,11 @@ export default function CompanyPage({
               return;
             }
           }
-
-          await ensurePipelineRunning(slug, prodJson);
-          setIndexationMode("indexing");
-          setData(null);
-          return;
         }
 
-        // Documents exist; try to fetch overview (may generate on the fly)
-        const res = await fetch(`/api/products/${slug}/overview`);
-        if (res.ok) {
-          const json = await res.json();
-          setData(json);
-          setIndexationMode("ready");
-        } else {
-          // If overview isn't available yet, treat as "indexing" and ensure pipeline is running.
-          await ensurePipelineRunning(slug, prodJson);
-          setIndexationMode("indexing");
-          setData(null);
-        }
+        await ensurePipelineRunning(slug, prodJson);
+        setIndexationMode("indexing");
+        setData(null);
       } catch (error) {
         console.error("Failed to fetch product data", error);
       } finally {

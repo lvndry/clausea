@@ -61,6 +61,16 @@ async def ensure_product_indexes(db: AgnosticDatabase) -> None:
         else:
             logger.warning(f"Could not create index on products.domains: {e}")
 
+    try:
+        await collection.create_index("name", name="idx_product_name", background=True)
+        logger.info("Created index on products.name")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("Index on products.name already exists")
+        else:
+            logger.warning(f"Could not create index on products.name: {e}")
+
 
 async def ensure_document_indexes(db: AgnosticDatabase) -> None:
     """Ensure indexes exist on the documents collection.

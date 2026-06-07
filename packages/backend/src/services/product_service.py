@@ -7,6 +7,7 @@ and instead accepts database instances as parameters.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -144,6 +145,17 @@ class ProductService:
         """
         products: list[Product] = await self._product_repo.find_all_with_documents(db)
         return products
+
+    async def get_products_paginated(
+        self,
+        db: AgnosticDatabase,
+        *,
+        page: int,
+        limit: int,
+        search: str = "",
+    ) -> tuple[list[Product], int]:
+        skip = (page - 1) * limit
+        return await self._product_repo.find_paginated(db, skip=skip, limit=limit, search=search)
 
     async def delete_product_cascade(self, db: AgnosticDatabase, product_id: str) -> dict[str, Any]:
         """Delete a product and all its related data across collections.
@@ -285,7 +297,12 @@ class ProductService:
     # Business Logic Methods (Level 1, 2, 3 Analysis)
     # ============================================================================
 
-    async def get_product_overview(self, db: AgnosticDatabase, slug: str) -> ProductOverview | None:
+    async def get_product_overview(
+        self,
+        db: AgnosticDatabase,
+        slug: str,
+        product: Product | None = None,
+    ) -> ProductOverview | None:
         """Get the Level 1 overview for a product.
 
         This is business logic that transforms cached data into a user-facing overview.
@@ -293,6 +310,7 @@ class ProductService:
         Args:
             db: Database instance
             slug: Product slug
+            product: Pre-fetched product to avoid a duplicate lookup (optional)
 
         Returns:
             ProductOverview or None if not available
@@ -302,15 +320,18 @@ class ProductService:
             return None
         meta_summary = MetaSummary(**overview_data["overview"])
 
-        # Fetch product info (name, id)
-        product = await self._product_repo.find_by_slug(db, slug)
+        # Fetch product info if not provided by caller
+        if product is None:
+            product = await self._product_repo.find_by_slug(db, slug)
 
-        # Compute document counts and types
+        # Compute document counts and types in parallel — independent queries
         document_counts = None
         document_types = None
         if product:
-            document_counts = await self._product_repo.get_document_counts(db, product.id)
-            document_types = await self._product_repo.get_document_types(db, product.id)
+            document_counts, document_types = await asyncio.gather(
+                self._product_repo.get_document_counts(db, product.id),
+                self._product_repo.get_document_types(db, product.id),
+            )
 
         # Extract updated_at from overview payload if present
         updated_at = None
@@ -338,13 +359,14 @@ class ProductService:
 
         # If compliance_status is missing from meta summary, aggregate from document analyses
         if not overview.compliance_status and product:
-            docs = await self._document_repo.find_by_product_id_full(db, product.id)
+            compliance_maps = await self._document_repo.get_compliance_status_by_product(
+                db, product.id
+            )
             aggregated_compliance: dict[str, list[int]] = {}
-            for doc in docs:
-                if doc.analysis and doc.analysis.compliance_status:
-                    for reg, score in doc.analysis.compliance_status.items():
-                        if score is not None:
-                            aggregated_compliance.setdefault(reg, []).append(score)
+            for compliance_status in compliance_maps:
+                for reg, score in compliance_status.items():
+                    if score is not None:
+                        aggregated_compliance.setdefault(reg, []).append(score)
             if aggregated_compliance:
                 overview.compliance_status = {
                     reg: round(sum(scores) / len(scores))
@@ -407,7 +429,7 @@ class ProductService:
         if not product:
             return []
 
-        docs = await self._document_repo.find_by_product_id_full(db, product.id)
+        docs = await self._document_repo.find_by_product_id_with_analysis(db, product.id)
         return [DocumentSummary.from_document(doc) for doc in docs]
 
     async def get_product_deep_analysis(

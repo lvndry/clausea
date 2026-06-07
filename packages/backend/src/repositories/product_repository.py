@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from datetime import datetime
 from typing import Any
 
@@ -125,6 +127,43 @@ class ProductRepository(BaseRepository):
             {"id": {"$in": product_ids}}
         ).to_list(length=None)
         return [Product(**product_data) for product_data in products_data]
+
+    async def find_paginated(
+        self,
+        db: AgnosticDatabase,
+        *,
+        skip: int,
+        limit: int,
+        search: str = "",
+    ) -> tuple[list[Product], int]:
+        """Get a paginated list of products with optional name/description/category search.
+
+        Args:
+            db: Database instance
+            skip: Number of documents to skip
+            limit: Maximum number of documents to return
+            search: Case-insensitive search string matched against name, description, categories
+
+        Returns:
+            Tuple of (products, total_count)
+        """
+        query: dict[str, Any] = {}
+        if search:
+            # Escape so user input is matched literally — raw regex metacharacters
+            # would 500 on invalid patterns or open a ReDoS vector.
+            escaped_search = re.escape(search)
+            query = {
+                "$or": [
+                    {"name": {"$regex": escaped_search, "$options": "i"}},
+                    {"description": {"$regex": escaped_search, "$options": "i"}},
+                    {"categories": {"$regex": escaped_search, "$options": "i"}},
+                ]
+            }
+        total, items_data = await asyncio.gather(
+            db.products.count_documents(query),
+            db.products.find(query).sort("name", 1).skip(skip).limit(limit).to_list(length=limit),
+        )
+        return [Product(**p) for p in items_data], total
 
     # ============================================================================
     # Product Overview Storage Operations

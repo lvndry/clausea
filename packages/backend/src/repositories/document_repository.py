@@ -156,6 +156,42 @@ class DocumentRepository(BaseRepository):
         ).to_list(length=None)
         return [Document(**_normalize_document_record(document)) for document in documents]
 
+    async def find_by_product_id_with_analysis(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> list[Document]:
+        """Get all documents with analysis, excluding heavy body fields (text, markdown, extraction).
+
+        Use this when DocumentSummary fields are needed but the raw text/markdown is not —
+        avoids transferring large body fields over the wire.
+        """
+        projection = {"text": 0, "markdown": 0, "extraction": 0}
+        documents: list[dict[str, Any]] = await db.documents.find(
+            {"product_id": product_id}, projection
+        ).to_list(length=None)
+        for document in documents:
+            document.setdefault("text", "")
+            document.setdefault("markdown", "")
+        return [Document(**_normalize_document_record(document)) for document in documents]
+
+    async def get_compliance_status_by_product(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> list[dict[str, int]]:
+        """Return only the compliance_status maps for a product's documents.
+
+        Tight projection — pulls only ``analysis.compliance_status`` from each document, avoiding
+        the cost of streaming full document bodies just to aggregate one nested field.
+        """
+        projection = {"_id": 0, "analysis.compliance_status": 1}
+        rows: list[dict[str, Any]] = await db.documents.find(
+            {"product_id": product_id, "analysis.compliance_status": {"$exists": True}},
+            projection,
+        ).to_list(length=None)
+        return [
+            row["analysis"]["compliance_status"]
+            for row in rows
+            if row.get("analysis", {}).get("compliance_status")
+        ]
+
     async def find_by_type(self, db: AgnosticDatabase, doc_type: str) -> list[Document]:
         """Get all documents of a specific type.
 
@@ -197,6 +233,13 @@ class DocumentRepository(BaseRepository):
     async def save(self, db: AgnosticDatabase, document: Document) -> Document:
         """Store a document in the database.
 
+        Refuses to persist a Document whose ``text`` AND ``markdown`` are both
+        effectively empty. Such inserts created the 40-empty-doc graveyard in
+        the past — a Document with no source text is useless for analysis and
+        masks crawl bugs by looking superficially valid in MongoDB. Callers
+        that legitimately need to store empty content (none today) should
+        catch ValueError explicitly.
+
         Args:
             db: Database instance
             document: Document to store
@@ -205,8 +248,15 @@ class DocumentRepository(BaseRepository):
             The stored document
 
         Raises:
-            Exception: If storage fails
+            ValueError: If text and markdown are both empty / whitespace.
+            Exception: If storage fails for other reasons.
         """
+        if not (document.text or "").strip() and not (document.markdown or "").strip():
+            raise ValueError(
+                f"Refusing to store empty document {document.id} for url={document.url} "
+                f"(text and markdown are both empty — fix upstream extraction instead "
+                f"of persisting a placeholder)."
+            )
         try:
             document_dict = document.model_dump()
             await db.documents.insert_one(document_dict)
@@ -219,6 +269,13 @@ class DocumentRepository(BaseRepository):
     async def update(self, db: AgnosticDatabase, document: Document) -> bool:
         """Update a document in the database.
 
+        Defensive: callers that load a Document via a projecting reader
+        (e.g. find_by_product_id strips text/markdown to "") and then $set
+        the full model_dump would wipe the stored source text. To prevent
+        that class of round-trip data loss, this method drops empty text /
+        markdown from the update payload when the stored row has content,
+        and logs a warning so the misuse stays visible.
+
         Args:
             db: Database instance
             document: Document to update
@@ -230,9 +287,30 @@ class DocumentRepository(BaseRepository):
             Exception: If update fails
         """
         try:
-            result = await db.documents.update_one(
-                {"id": document.id}, {"$set": document.model_dump()}
-            )
+            document_dict = document.model_dump()
+            incoming_text = document_dict.get("text") or ""
+            incoming_markdown = document_dict.get("markdown") or ""
+
+            if not incoming_text or not incoming_markdown:
+                existing = await db.documents.find_one(
+                    {"id": document.id}, {"text": 1, "markdown": 1}
+                )
+                if existing:
+                    if not incoming_text and (existing.get("text") or ""):
+                        document_dict.pop("text", None)
+                        logger.warning(
+                            "DocumentRepository.update refused to overwrite non-empty "
+                            f"text for document {document.id} with an empty value "
+                            "(caller likely loaded via a projecting reader)."
+                        )
+                    if not incoming_markdown and (existing.get("markdown") or ""):
+                        document_dict.pop("markdown", None)
+                        logger.warning(
+                            "DocumentRepository.update refused to overwrite non-empty "
+                            f"markdown for document {document.id} with an empty value."
+                        )
+
+            result = await db.documents.update_one({"id": document.id}, {"$set": document_dict})
             success = result.modified_count > 0
             if not success:
                 logger.warning(f"No document found with id {document.id} to update")

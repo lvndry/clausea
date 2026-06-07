@@ -245,6 +245,22 @@ class URLScorer:
         # Compile word extraction pattern once
         self.word_pattern = re.compile(r"\b\w+\b")
 
+        # "terms" used as glossary/terminology (e.g. /chess/terms/absolute-pin,
+        # /glossary/terms/foo) rather than legal "Terms of Service". Matches when
+        # "terms" is a non-terminal mid-path segment followed by a slug that is NOT a
+        # legal qualifier. Such pages score as high as a real /terms page otherwise,
+        # because both the "/terms/" path pattern and the "terms" keyword fire.
+        self._glossary_terms_re = re.compile(
+            r"/[^/]+/terms/"
+            r"(?!service|use|conditions|sale|payment|payments|business|"
+            r"general|user|website|privacy|cookie|cookies|policy|of-|and-)"
+            r"[^/]+",
+            re.IGNORECASE,
+        )
+        # Total weight contributed by a "/terms/" path-pattern match (4.5) plus the
+        # "terms" keyword match (4.0); removed when the glossary guard fires.
+        self._terms_signal_weight = 8.5
+
         self.legal_keywords = {
             # Generic legal terms
             "legal": 3.5,
@@ -387,6 +403,12 @@ class URLScorer:
                     ):
                         score += weight * 0.8
                         scored_keywords.add(keyword)
+
+        # Demote glossary/terminology pages whose only legal signal is "terms" used
+        # in a non-legal sense (e.g. /chess/terms/absolute-pin). Without this they
+        # score identically to a real /terms page and flood the crawl.
+        if self._glossary_terms_re.search(path):
+            score -= self._terms_signal_weight
 
         return max(0.0, score)
 
@@ -1098,6 +1120,7 @@ class ClauseaCrawler:
         max_retries: int = 3,  # Maximum retry attempts for transient errors
         log_file_path: str | None = None,  # Optional path to log file for crawl session
         use_browser: bool = False,  # Whether to use a headless browser for dynamic rendering
+        browser_concurrency: int = 2,  # Max concurrent browser renders (shared browser instance)
         proxy: str | None = None,  # Optional proxy URL (e.g., "http://user:pass@host:port")
         allowed_paths: list[str] | None = None,  # Optional list of allowed path regexes
         denied_paths: list[str] | None = None,  # Optional list of denied path regexes
@@ -1147,6 +1170,10 @@ class ClauseaCrawler:
         self.max_retries = max_retries
         self.log_file_path = log_file_path
         self.use_browser = use_browser
+        self.browser_concurrency = max(1, browser_concurrency)
+        # Throttles concurrent Camoufox renders, which all share one browser instance.
+        # Created lazily in the running loop (see _browser_render_slot).
+        self._browser_semaphore: asyncio.Semaphore | None = None
         self.proxy = proxy
         self.allowed_paths = allowed_paths
         self.denied_paths = denied_paths
@@ -1194,6 +1221,15 @@ class ClauseaCrawler:
         self.url_stack: list[tuple[str, int]] = []  # For DFS
         self.url_priority_queue: list[tuple[float, str, int]] = []  # For best-first (scored URLs)
         self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
+        # Best policy-relevance score assigned to each queued URL (anchor-aware).
+        # Consulted by the browser-fetch gate so opaque policy URLs discovered via
+        # anchor text still get a browser render when needed.
+        self._url_scores: dict[str, float] = {}
+        # URLs that are speculative guesses (generate_potential_policy_urls), not real
+        # discovered links. They must NOT each trigger an expensive browser render:
+        # SPA catch-all sites return a 200 shell for every guessed path, so escalating
+        # all ~80 guesses to the browser floods the shared instance and trips bot defenses.
+        self._speculative_urls: set[str] = set()
         self.results: list[CrawlResult] = []
         self.stats = CrawlStats()
 
@@ -1458,8 +1494,14 @@ class ClauseaCrawler:
         # Secondary check: if the extracted markdown body is effectively empty the
         # page is almost certainly a JS SPA shell — the raw text came from nav/JSON
         # but the policy content isn't there. Trigger a browser retry.
+        #
+        # Threshold is 400 (not 200) so the body that survives this gate will still
+        # clear the downstream processor gate, which demands text-after-strip >= 300
+        # in pipeline._process_crawl_result. See tests/unit/threshold_mismatch_test.py
+        # for the regression fixture; changing one threshold without the other will
+        # re-open the silent-skip class of bugs that motivated this constant.
         markdown = page.markdown or ""
-        if len(markdown.strip()) < 200:
+        if len(markdown.strip()) < 400:
             return False
         return True
 
@@ -1793,6 +1835,12 @@ class ClauseaCrawler:
         "context or browser has been closed",
         "browser closed",
     )
+
+    def _browser_render_slot(self) -> asyncio.Semaphore:
+        """Browser-render semaphore, created on first use so it binds to the running loop."""
+        if self._browser_semaphore is None:
+            self._browser_semaphore = asyncio.Semaphore(self.browser_concurrency)
+        return self._browser_semaphore
 
     async def _browser_fetch(self, url: str) -> PageContent | None:
         """Fetch page with Camoufox headless browser, returning PageContent or None on failure."""
@@ -2724,6 +2772,65 @@ class ClauseaCrawler:
 
             page = await self._extract_page_content(raw, effective_url)
 
+            # The static result is unusable when the content type is unsupported / the
+            # body is empty (page is None — e.g. a 406/403 bot block returns no usable
+            # body) OR when it parsed but is too thin (a JS-rendered SPA shell).
+            static_unusable = page is None or not self._content_is_sufficient(page, effective_url)
+
+            # Speculative guessed URLs never escalate to the browser — see _speculative_urls.
+            is_speculative = self.normalize_url(url) in self._speculative_urls
+
+            if static_unusable and self.use_browser and not is_speculative:
+                # Only spend an expensive browser render (full navigation + hydration,
+                # up to the navigation timeout) on pages that plausibly host a policy
+                # document. JS-heavy marketing/app pages (e.g. /course/*) are also
+                # content-insufficient, but rendering them burns a full timeout for a
+                # page we don't want anyway. Honour anchor-aware scores recorded at
+                # queue time so opaque policy URLs still get rendered.
+                relevance = max(
+                    self._url_scores.get(self.normalize_url(url), 0.0),
+                    self.url_scorer.score_url(effective_url),
+                )
+                if relevance >= self.min_legal_score:
+                    reason = "blocked/empty" if page is None else "insufficient"
+                    logger.info(f"🔄 Static content {reason}, trying browser: {effective_url}")
+                    # Limit concurrent renders — all share one Camoufox instance, and too
+                    # many simultaneous JS-heavy navigations starve each other into timeouts.
+                    async with self._browser_render_slot():
+                        browser_page = await self._browser_fetch(effective_url)
+                    if browser_page is not None and self._content_is_sufficient(
+                        browser_page, effective_url
+                    ):
+                        # The browser may have followed additional redirects / JS
+                        # navigations; prefer its resolved URL if available.
+                        browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
+                        if browser_resolved and browser_resolved != effective_url:
+                            effective_url = browser_resolved
+                            self.visited_urls.add(self.normalize_url(effective_url))
+                        return self._build_crawl_result(effective_url, browser_page)
+                    # Policy-relevant but neither static nor browser produced usable content.
+                    logger.warning(
+                        f"⚠️ Browser render did not yield usable content: {effective_url}"
+                    )
+                    return CrawlResult(
+                        url=effective_url,
+                        title=(browser_page.title if browser_page else ""),
+                        content="",
+                        markdown="",
+                        metadata=(browser_page.metadata if browser_page else {}),
+                        status_code=(browser_page.status_code if browser_page else raw.status_code),
+                        success=False,
+                        error_message="Static content unusable and browser rendering failed",
+                    )
+                if page is not None:
+                    # Not policy-relevant but we parsed something — keep the static content
+                    # (cheap) so its links can still be followed.
+                    logger.info(
+                        f"⏭️  Skipping browser render for low-relevance page "
+                        f"(score {relevance:.2f} < {self.min_legal_score}): {effective_url}"
+                    )
+                    return self._build_crawl_result(effective_url, page)
+
             if page is None:
                 return CrawlResult(
                     url=effective_url,
@@ -2735,42 +2842,6 @@ class ClauseaCrawler:
                     success=False,
                     error_message=f"Unsupported content type: {raw.content_type}",
                 )
-
-            if not self._content_is_sufficient(page, effective_url) and self.use_browser:
-                logger.info(f"🔄 Static content insufficient, trying browser: {effective_url}")
-                browser_page = await self._browser_fetch(effective_url)
-                if browser_page is not None:
-                    if not self._content_is_sufficient(browser_page, effective_url):
-                        logger.warning(f"⚠️ Browser content still insufficient: {effective_url}")
-                        return CrawlResult(
-                            url=effective_url,
-                            title=browser_page.title,
-                            content="",
-                            markdown="",
-                            metadata=browser_page.metadata,
-                            status_code=browser_page.status_code,
-                            success=False,
-                            error_message="Browser rendered content is still insufficient",
-                        )
-                    # The browser may have followed additional redirects / JS
-                    # navigations; prefer its resolved URL if available.
-                    browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
-                    if browser_resolved and browser_resolved != effective_url:
-                        effective_url = browser_resolved
-                        self.visited_urls.add(self.normalize_url(effective_url))
-                    page = browser_page
-                else:
-                    logger.warning(f"⚠️ Browser and static fetch both failed for: {effective_url}")
-                    return CrawlResult(
-                        url=effective_url,
-                        title=page.title if page else "",
-                        content="",
-                        markdown="",
-                        metadata=page.metadata if page else {},
-                        status_code=page.status_code if page else 0,
-                        success=False,
-                        error_message="Static content insufficient and browser rendering failed",
-                    )
 
             return self._build_crawl_result(effective_url, page)
 
@@ -3059,6 +3130,13 @@ class ClauseaCrawler:
 
         return 0.0
 
+    def _remember_score(self, url: str, score: float) -> None:
+        """Record the best (highest) policy-relevance score seen for a URL."""
+        key = self.normalize_url(url)
+        prev = self._url_scores.get(key)
+        if prev is None or score > prev:
+            self._url_scores[key] = score
+
     def add_urls_to_queue(
         self,
         links: list[dict[str, str]],
@@ -3108,6 +3186,11 @@ class ClauseaCrawler:
             if not self.should_crawl_url(url, base_url, depth + 1):
                 continue
 
+            # Compute the anchor-aware relevance score once (cheap, lru-cached) for all
+            # strategies and remember it so the browser-fetch gate can honour it later.
+            score = self.url_scorer.score_url(url, anchor_text=anchor_text) + parent_boost
+            self._remember_score(url, score)
+
             self.queued_urls.add(url)
             if self.strategy == "bfs":
                 self.url_queue.append((url, depth + 1))
@@ -3116,7 +3199,6 @@ class ClauseaCrawler:
                 self.url_stack.append((url, depth + 1))
                 logger.debug(f"Added to DFS stack: {url} (depth: {depth + 1})")
             elif self.strategy == "best_first":
-                score = self.url_scorer.score_url(url, anchor_text=anchor_text) + parent_boost
                 if score < self.min_legal_score:
                     logger.debug(
                         f"Skipping URL below min_legal_score ({score:.2f} < {self.min_legal_score}): {url}"
@@ -3150,6 +3232,12 @@ class ClauseaCrawler:
                 if not self.should_crawl_url(url, base_url, 1):
                     continue
 
+                # Generated policy URLs are policy-relevant by construction; record a
+                # score so the browser-fetch gate will render them if needed.
+                score = self.url_scorer.score_url(url, anchor_text=None)
+                self._remember_score(url, score)
+                self._speculative_urls.add(normalized)
+
                 self.queued_urls.add(url)
                 if self.strategy == "bfs":
                     self.url_queue.append((url, 1))
@@ -3158,7 +3246,6 @@ class ClauseaCrawler:
                     self.url_stack.append((url, 1))
                     logger.debug(f"Added potential legal URL to DFS stack: {url}")
                 elif self.strategy == "best_first":
-                    score = self.url_scorer.score_url(url, anchor_text=None)
                     heapq.heappush(self.url_priority_queue, (-score, url, 1))
                     logger.debug(
                         f"Added potential legal URL to Best-First queue: {url} (score: {score:.2f})"
@@ -3205,8 +3292,13 @@ class ClauseaCrawler:
             base_url = self.normalize_url(base_url)
             self.stats = CrawlStats()
 
-            # Add base URL to queue
+            # Add base URL to queue. Base URLs are explicit seeds (crawl_base_urls) and
+            # are always crawled regardless of score; record a generous score so the
+            # browser-fetch gate never blocks rendering a seed page.
             self.queued_urls.add(base_url)
+            self._remember_score(
+                base_url, max(self.url_scorer.score_url(base_url), self.min_legal_score)
+            )
             if self.strategy == "bfs":
                 self.url_queue.append((base_url, 0))
                 logger.debug(f"Added base URL to BFS queue: {base_url} (depth: 0)")
@@ -3229,21 +3321,35 @@ class ClauseaCrawler:
                 try:
                     sitemap_urls = await self._discover_sitemap_urls(session, base_url)
                     seeded = 0
+                    skipped_irrelevant = 0
                     for url in sitemap_urls:
                         if not self.should_crawl_url(url, base_url, 0):
                             continue
+                        # Sitemap entries are speculative bulk seeds with no anchor-text
+                        # context. A large sitemap (e.g. thousands of course/product pages)
+                        # would otherwise flood the queue and waste crawl budget + browser
+                        # renders on non-policy pages. Only seed policy-relevant URLs —
+                        # the same gate discovered links pass through. If none qualify,
+                        # _sitemap_seeded stays False and speculative path probing kicks in.
+                        score = self.url_scorer.score_url(url, anchor_text=None)
+                        if score < self.min_legal_score:
+                            skipped_irrelevant += 1
+                            continue
+                        self._remember_score(url, score)
                         self.queued_urls.add(url)
                         if self.strategy == "bfs":
                             self.url_queue.append((url, 0))
                         elif self.strategy == "dfs":
                             self.url_stack.append((url, 0))
                         elif self.strategy == "best_first":
-                            score = self.url_scorer.score_url(url, anchor_text=None)
                             heapq.heappush(self.url_priority_queue, (-score, url, 0))
                         seeded += 1
                     if seeded:
                         self._sitemap_seeded = True
-                        logger.info(f"🗺️  Seeded {seeded} URLs from sitemaps (depth 0)")
+                    logger.info(
+                        f"🗺️  Seeded {seeded} policy-relevant URLs from sitemaps (depth 0); "
+                        f"skipped {skipped_irrelevant} non-policy"
+                    )
                 except Exception:
                     logger.debug("Sitemap discovery failed; continuing without sitemap")
 
