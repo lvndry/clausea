@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 from typing import Any
 
@@ -148,11 +149,14 @@ class ProductRepository(BaseRepository):
         """
         query: dict[str, Any] = {}
         if search:
+            # Escape so user input is matched literally — raw regex metacharacters
+            # would 500 on invalid patterns or open a ReDoS vector.
+            escaped_search = re.escape(search)
             query = {
                 "$or": [
-                    {"name": {"$regex": search, "$options": "i"}},
-                    {"description": {"$regex": search, "$options": "i"}},
-                    {"categories": {"$regex": search, "$options": "i"}},
+                    {"name": {"$regex": escaped_search, "$options": "i"}},
+                    {"description": {"$regex": escaped_search, "$options": "i"}},
+                    {"categories": {"$regex": escaped_search, "$options": "i"}},
                 ]
             }
         total, items_data = await asyncio.gather(

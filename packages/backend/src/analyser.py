@@ -181,15 +181,17 @@ async def analyse_product_documents(
                 )
 
     # return_exceptions=True so a sibling raise (e.g. CancelledError) doesn't
-    # mask the in-flight successful ones. Re-raise CancelledError below to
-    # preserve cancellation semantics.
+    # mask the in-flight successful ones. Per-document failures are already
+    # caught inside _analyse_one, so anything that escapes to gather is either
+    # cancellation or a harness bug (cancellation check / progress callback) —
+    # re-raise both rather than swallowing them.
     results = await asyncio.gather(
         *[_analyse_one(i, doc) for i, doc in enumerate(documents, 1)],
         return_exceptions=True,
     )
-    for r in results:
-        if isinstance(r, asyncio.CancelledError):
-            raise r
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
 
     succeeded = total_docs - len(failed_doc_ids)
     if failed_doc_ids:

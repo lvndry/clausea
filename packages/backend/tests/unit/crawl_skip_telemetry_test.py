@@ -51,7 +51,7 @@ def test_crawl_skip_round_trips_through_pipeline_job() -> None:
         product_slug="example",
         product_name="Example",
         url="https://x.example",
-        crawl_skip_reasons=[CrawlSkip(**s) for s in skips_as_dicts],
+        crawl_skip_reasons=[CrawlSkip.model_validate(skip) for skip in skips_as_dicts],
     )
     assert [s.reason for s in job.crawl_skip_reasons] == [
         "insufficient_content",
