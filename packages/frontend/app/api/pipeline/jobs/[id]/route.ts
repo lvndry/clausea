@@ -3,12 +3,36 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBackendUrl } from "@lib/config";
 import { httpJson } from "@lib/http";
 
+type PipelineJobStatus =
+  | "pending"
+  | "crawling"
+  | "summarizing"
+  | "generating_overview"
+  | "completed"
+  | "failed";
+
 interface PipelineStep {
   name: string;
   status: "pending" | "running" | "completed" | "failed";
   message: string | null;
+  progress_current: number | null;
+  progress_total: number | null;
+  progress_percent: number | null;
   started_at: string | null;
   completed_at: string | null;
+}
+
+interface CrawlError {
+  url: string;
+  status_code: number;
+  error_message: string | null;
+  error_type: string;
+}
+
+interface CrawlSkip {
+  url: string;
+  reason: string;
+  detail: string | null;
 }
 
 interface PipelineJob {
@@ -16,14 +40,17 @@ interface PipelineJob {
   product_slug: string;
   product_name: string;
   url: string;
-  status: string;
+  status: PipelineJobStatus;
   steps: PipelineStep[];
   error: string | null;
   created_at: string;
   updated_at: string;
+  started_at: string | null;
   completed_at: string | null;
   documents_found: number;
   documents_stored: number;
+  crawl_errors: CrawlError[];
+  crawl_skip_reasons: CrawlSkip[];
 }
 
 export async function GET(

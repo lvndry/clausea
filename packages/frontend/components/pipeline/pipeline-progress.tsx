@@ -42,12 +42,20 @@ interface CrawlError {
     | "unknown";
 }
 
+type PipelineJobStatus =
+  | "pending"
+  | "crawling"
+  | "summarizing"
+  | "generating_overview"
+  | "completed"
+  | "failed";
+
 interface PipelineJobData {
   id: string;
   product_slug: string;
   product_name: string;
   url: string;
-  status: string;
+  status: PipelineJobStatus;
   steps: PipelineStep[];
   error: string | null;
   documents_found: number;
@@ -387,10 +395,27 @@ export function PipelineProgress({
     );
   }
 
+  const totalSteps = job.steps.length;
   const completedSteps = job.steps.filter(
     (s) => s.status === "completed",
   ).length;
-  const progress = (completedSteps / job.steps.length) * 100;
+  // Blend whole-step completion with the running step's own progress. This
+  // matches the backend extension status endpoint so both clients report the
+  // same number. Without the running-step contribution the bar is quantized to
+  // thirds and sits at 0% for the entire crawl (typically the longest phase).
+  let progress = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
+  const runningStep = job.steps.find((s) => s.status === "running");
+  if (
+    runningStep &&
+    runningStep.progress_percent !== undefined &&
+    runningStep.progress_percent !== null &&
+    totalSteps > 0
+  ) {
+    progress =
+      (completedSteps / totalSteps) * 100 +
+      Math.min(runningStep.progress_percent, 100) / totalSteps;
+  }
+  progress = Math.min(100, progress);
 
   return (
     <AnimatePresence>
