@@ -119,3 +119,35 @@ async def test_update_step_progress_does_not_overwrite_top_level_fields(
     # Check that step progress is present
     assert args["steps.0.progress_current"] == 2
     assert args["steps.0.progress_total"] == 10
+
+
+@pytest.mark.asyncio
+async def test_update_step_progress_is_monotonic(pipeline_service, mock_repo, mock_db):
+    # The crawl frontier grows as new links are discovered, so a raw
+    # current/total ratio can drop. The reported percent must never regress.
+    job = PipelineJob(
+        id="job-123",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="crawling",
+        steps=[PipelineStep(name="crawling", status="running")],
+    )
+
+    # First update: 5 of 10 -> 50%
+    await pipeline_service._update_step_progress(mock_db, job, "crawling", current=5, total=10)
+    assert job.steps[0].progress_percent == 50.0
+
+    # Frontier grew: 6 of 40 would be 15%, but the bar must not move backwards.
+    await pipeline_service._update_step_progress(mock_db, job, "crawling", current=6, total=40)
+    assert job.steps[0].progress_percent == 50.0
+    # The regressed percent must not be written to the DB payload either.
+    last_args = mock_repo.update_fields.call_args[0][2]
+    assert "steps.0.progress_percent" not in last_args
+    # Live counts still update so the message/count stay truthful.
+    assert last_args["steps.0.progress_current"] == 6
+    assert last_args["steps.0.progress_total"] == 40
+
+    # Genuine forward progress advances the bar.
+    await pipeline_service._update_step_progress(mock_db, job, "crawling", current=30, total=40)
+    assert job.steps[0].progress_percent == 75.0

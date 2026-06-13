@@ -217,8 +217,17 @@ class PipelineService:
                     and step.progress_total > 0
                 ):
                     percent = (step.progress_current / step.progress_total) * 100
-                    step.progress_percent = min(100.0, round(percent, 2))
-                    update_data[f"steps.{i}.progress_percent"] = step.progress_percent
+                    candidate = min(100.0, round(percent, 2))
+                    # Progress must never move backwards. During crawling the
+                    # frontier grows as new links are discovered, so a raw
+                    # current/total ratio oscillates downward; the discovery and
+                    # deep-crawl passes also share this step on fresh crawler stats,
+                    # which would otherwise reset the bar mid-crawl. Clamp to a
+                    # monotonic high-water mark so the UI bar only ever advances.
+                    monotonic = max(step.progress_percent or 0.0, candidate)
+                    if monotonic != step.progress_percent:
+                        step.progress_percent = monotonic
+                        update_data[f"steps.{i}.progress_percent"] = monotonic
 
                 if message is not None:
                     step.message = message
