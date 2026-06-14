@@ -164,10 +164,21 @@ class ProductRepository(BaseRepository):
                     {"categories": {"$regex": escaped_search, "$options": "i"}},
                 ]
             }
-        total, items_data = await asyncio.gather(
-            db.products.count_documents(query),
-            db.products.find(query).sort("name", 1).skip(skip).limit(limit).to_list(length=limit),
-        )
+            total, items_data = await asyncio.gather(
+                db.products.count_documents(query),
+                db.products.find(query)
+                .sort("name", 1)
+                .skip(skip)
+                .limit(limit)
+                .to_list(length=limit),
+            )
+        else:
+            # No filter: estimated_document_count() is an O(1) metadata read,
+            # whereas count_documents({}) scans the whole collection.
+            total, items_data = await asyncio.gather(
+                db.products.estimated_document_count(),
+                db.products.find().sort("name", 1).skip(skip).limit(limit).to_list(length=limit),
+            )
         return [Product(**p) for p in items_data], total
 
     # ============================================================================

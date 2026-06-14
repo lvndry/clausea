@@ -217,27 +217,35 @@ function ProductsPageContent() {
 
   // Fetch page from server whenever page or search changes
   useEffect(() => {
+    const controller = new AbortController();
     async function fetchProducts() {
       try {
         setLoading(true);
         const params = new URLSearchParams({ page: String(currentPage), limit: "20" });
         if (debouncedSearch) params.set("search", debouncedSearch);
-        const response = await fetch(`/api/products?${params.toString()}`);
+        const response = await fetch(`/api/products?${params.toString()}`, {
+          signal: controller.signal,
+        });
         if (!response.ok) throw new Error("Failed to fetch products");
         const data: ProductsPage = await response.json();
         setPageData(data);
+        setError(null);
         if (debouncedSearch.trim()) {
           trackUserJourney.productSearched(debouncedSearch, data.total);
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error("Error fetching products:", err);
         setError(err instanceof Error ? err.message : "Failed to fetch products");
       } finally {
-        setLoading(false);
-        setInitialLoad(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setInitialLoad(false);
+        }
       }
     }
     fetchProducts();
+    return () => controller.abort();
   }, [currentPage, debouncedSearch, trackUserJourney]);
 
   const paginatedProducts = pageData.items;
