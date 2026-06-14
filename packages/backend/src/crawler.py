@@ -1131,11 +1131,6 @@ class HTTPCache:
         """Clear the HTTP cache (useful between crawl sessions)."""
         self.cache.clear()
 
-    def remove_from_cache(self, url: str) -> None:
-        """Remove a specific URL from cache."""
-        if url in self.cache:
-            del self.cache[url]
-
 
 class AsyncFileLogHandler(logging.Handler):
     """Async logging handler that writes to file in a thread pool (fire-and-forget)."""
@@ -1429,50 +1424,6 @@ class ClauseaCrawler:
             # Shutdown executor and wait for pending tasks to complete
             # Use asyncio.to_thread to avoid blocking the event loop
             await asyncio.to_thread(self._log_executor.shutdown, wait=True)
-
-    def _cleanup_file_logging(self) -> None:
-        """Clean up file logging handler. Safe to call multiple times."""
-        root_logger = logging.getLogger()
-
-        # Mark handler as shut down FIRST to prevent new log submissions
-        if self._async_handler:
-            try:
-                self._async_handler.set_shutdown(True)
-            except Exception:
-                pass
-
-        # Remove async handler from logger BEFORE shutting down executor
-        # This prevents new log records from reaching the handler
-        if self._async_handler:
-            try:
-                if self._async_handler in root_logger.handlers:
-                    root_logger.removeHandler(self._async_handler)
-            except Exception as e:
-                logger.warning(f"Error removing async handler: {e}")
-            finally:
-                self._async_handler = None
-
-        # Shutdown executor if it exists (after handler is removed)
-        if self._log_executor:
-            try:
-                self._log_executor.shutdown(wait=False)  # Don't wait in sync cleanup
-            except Exception as e:
-                logger.warning(f"Error shutting down log executor: {e}")
-            finally:
-                self._log_executor = None
-
-        # Close file handler if it exists
-        if self.file_handler:
-            try:
-                if self.file_handler in root_logger.handlers:
-                    root_logger.removeHandler(self.file_handler)
-                self.file_handler.close()
-                if self.log_file_path:
-                    logger.info(f"📝 File logging closed: {self.log_file_path}")
-            except Exception as e:
-                logger.warning(f"Error closing file handler: {e}")
-            finally:
-                self.file_handler = None
 
     async def _setup_browser(self) -> tuple[AsyncCamoufox, Browser | BrowserContext]:
         """Initialize and return a Camoufox browser and context."""
@@ -2875,37 +2826,6 @@ class ClauseaCrawler:
         """
         await self.rate_limiter.rate_limit(url)
 
-    def _is_retryable_error(self, error: Exception) -> bool:
-        """
-        Determine if an error is retryable (transient) or permanent.
-
-        Retryable errors:
-        - Network errors (connection failures, DNS issues)
-        - Timeout errors
-        - Server errors (5xx)
-        - Rate limiting (429)
-
-        Non-retryable errors:
-        - Client errors (4xx except 429)
-        - Content type errors
-        - Robots.txt blocks
-        """
-        # Network and timeout errors are retryable
-        if isinstance(error, aiohttp.ClientError | asyncio.TimeoutError):
-            return True
-
-        # Check if it's an HTTP error with retryable status code
-        if isinstance(error, aiohttp.ClientResponseError):
-            status = error.status
-            # Retry on server errors (5xx) and rate limiting (429)
-            if status >= 500 or status == 429:
-                return True
-            # Don't retry on client errors (4xx except 429)
-            return False
-
-        # Other exceptions are not retryable
-        return False
-
     async def _fetch_page_internal(self, session: aiohttp.ClientSession, url: str) -> CrawlResult:
         """Fetch and extract content for a single URL (without retry logic).
 
@@ -3725,10 +3645,6 @@ class ClauseaCrawler:
             if cleanup:
                 await self._shutdown_log_executor()
 
-    def clear_rate_limiter_cache(self) -> None:
-        """Clear the rate limiter cache (useful between crawl sessions)."""
-        self.rate_limiter.clear_cache()
-
     async def crawl_multiple(self, urls: list[str]) -> list[CrawlResult]:
         """Crawl multiple base URLs."""
         all_results = []
@@ -3756,9 +3672,6 @@ class ClauseaCrawler:
                 # Clear caches between different base URLs
                 if self.robots_checker:
                     self.robots_checker.clear_cache()
-                # Optionally clear rate limiter cache between different base URLs
-                # Uncomment if you want to reset rate limiting between different sites:
-                # self.clear_rate_limiter_cache()
         finally:
             await self._shutdown_log_executor()
             await self._cleanup_browser()

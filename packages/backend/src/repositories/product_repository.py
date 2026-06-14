@@ -262,9 +262,6 @@ class ProductRepository(BaseRepository):
         )
         return result.matched_count > 0 or result.upserted_id is not None
 
-    async def delete_product_explainer(self, db: AgnosticDatabase, product_slug: str) -> None:
-        await db.product_explainers.delete_one({"product_slug": product_slug})
-
     # ============================================================================
     # Compliance Assessment Storage (product-level, per-regime score + why)
     # ============================================================================

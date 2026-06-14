@@ -53,18 +53,6 @@ class DocumentService:
     # Document Query Operations
     # ============================================================================
 
-    async def get_all_documents(self, db: AgnosticDatabase) -> list[Document]:
-        """Get all documents from the database.
-
-        Args:
-            db: Database instance
-
-        Returns:
-            List of all documents
-        """
-        documents: list[Document] = await self._document_repo.find_all(db)
-        return documents
-
     async def get_document_by_id(self, db: AgnosticDatabase, document_id: str) -> Document | None:
         """Get a document by its ID.
 
@@ -125,19 +113,6 @@ class DocumentService:
         documents: list[Document] = await self._document_repo.find_by_product_id_full(
             db, product.id
         )
-        return documents
-
-    async def get_documents_by_type(self, db: AgnosticDatabase, doc_type: str) -> list[Document]:
-        """Get all documents of a specific type.
-
-        Args:
-            db: Database instance
-            doc_type: Document type
-
-        Returns:
-            List of documents of the specified type
-        """
-        documents: list[Document] = await self._document_repo.find_by_type(db, doc_type)
         return documents
 
     async def get_documents_with_analysis(

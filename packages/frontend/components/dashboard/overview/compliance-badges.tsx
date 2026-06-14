@@ -11,7 +11,7 @@ export type ComplianceStatus =
   | "Non-Compliant"
   | "Unknown";
 
-export interface ComplianceBreakdown {
+interface ComplianceBreakdown {
   score: number;
   status: ComplianceStatus;
   strengths: string[];

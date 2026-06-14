@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from src.core.logging import get_logger
 
@@ -29,11 +29,6 @@ class DryRunUpdateResult:
 @dataclass(slots=True)
 class DryRunDeleteResult:
     deleted_count: int = 0
-
-
-@runtime_checkable
-class _MotorCollectionLike(Protocol):
-    name: str
 
 
 class DryRunCollection:

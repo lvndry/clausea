@@ -2,7 +2,6 @@
 
 import hashlib
 import os
-from collections.abc import Callable
 
 import streamlit as st
 
@@ -76,24 +75,6 @@ def check_password() -> bool:
     st.info("💡 Contact your administrator if you need access to the dashboard.")
 
     return False
-
-
-def require_auth(func: Callable) -> Callable:
-    """
-    Decorator to require authentication for a Streamlit page/function.
-
-    Usage:
-        @require_auth
-        def show_my_page():
-            st.title("My Page")
-    """
-
-    def wrapper(*args, **kwargs):
-        if not check_password():
-            return  # Login form is shown by check_password()
-        return func(*args, **kwargs)
-
-    return wrapper
 
 
 def logout() -> None:

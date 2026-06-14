@@ -52,20 +52,6 @@ class ConversationService:
         """Get a conversation by its ID."""
         return await self._conversation_repo.find_by_id(db, conversation_id)
 
-    async def get_user_conversations(
-        self, db: AgnosticDatabase, user_id: str
-    ) -> list[Conversation]:
-        """Get all conversations for a user."""
-        conversations: list[Conversation] = await self._conversation_repo.find_by_user_id(
-            db, user_id
-        )
-        return conversations
-
-    async def get_all_conversations(self, db: AgnosticDatabase) -> list[Conversation]:
-        """Get all conversations from the database."""
-        conversations: list[Conversation] = await self._conversation_repo.find_all(db)
-        return conversations
-
     async def update_conversation(self, db: AgnosticDatabase, conversation: Conversation) -> bool:
         """Update a conversation in the database."""
         updated: bool = await self._conversation_repo.update(db, conversation)
@@ -111,20 +97,6 @@ class ConversationService:
         """Add a document to a conversation."""
         added: bool = await self._conversation_repo.add_document(db, conversation_id, document_id)
         return added
-
-    async def get_conversation_messages(
-        self, db: AgnosticDatabase, conversation_id: str
-    ) -> list[Message]:
-        """Get all messages for a conversation."""
-        conversation = await self.get_conversation_by_id(db, conversation_id)
-        return conversation.messages if conversation else []
-
-    async def get_conversation_documents(
-        self, db: AgnosticDatabase, conversation_id: str
-    ) -> list[str]:
-        """Get all document IDs for a conversation."""
-        conversation = await self.get_conversation_by_id(db, conversation_id)
-        return conversation.documents if conversation else []
 
     async def send_message(
         self, db: AgnosticDatabase, conversation_id: str, message_text: str

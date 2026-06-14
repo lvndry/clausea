@@ -9,7 +9,7 @@ import {
   TrendingDown,
 } from "lucide-react";
 
-export type VerdictType =
+type VerdictType =
   | "very_user_friendly"
   | "user_friendly"
   | "moderate"

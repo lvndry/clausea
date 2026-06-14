@@ -4,7 +4,7 @@ import { getBackendUrl } from "@/lib/config";
 export interface CheckoutRequest {
   price_id: string;
 }
-export interface CheckoutResponse {
+interface CheckoutResponse {
   checkout_url: string;
   session_id: string;
 }
@@ -19,7 +19,7 @@ export interface SubscriptionResponse {
   canceled_at?: string;
 }
 
-export interface BillingPortalResponse {
+interface BillingPortalResponse {
   portal_url: string;
 }
 

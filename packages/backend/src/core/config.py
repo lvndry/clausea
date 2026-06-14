@@ -1,5 +1,4 @@
 import os
-from enum import Enum
 from functools import lru_cache
 
 import structlog
@@ -27,13 +26,6 @@ def discovery_crawl_limits(max_pages: int, max_depth: int) -> tuple[int, int]:
         min(max_pages, _DISCOVERY_PAGE_CAP),
         min(max_depth, _DISCOVERY_DEPTH_CAP),
     )
-
-
-class StorageType(Enum):
-    """Storage type enumeration"""
-
-    LOCAL = "local"
-    REMOTE = "remote"
 
 
 class AppConfig:

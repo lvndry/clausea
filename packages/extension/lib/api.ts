@@ -18,13 +18,13 @@ export type Verdict =
   | "pervasive"
   | "very_pervasive";
 
-export interface ExtensionCrawlError {
+interface ExtensionCrawlError {
   url: string;
   error_type: string;
   error_message: string | null;
 }
 
-export type ExtensionProductStatus =
+type ExtensionProductStatus =
   | "unknown"
   | "analyzing"
   | "failed"
@@ -78,22 +78,6 @@ export async function checkUrl(url: string): Promise<ExtensionCheckResponse> {
       headers: { "Content-Type": "application/json" },
     },
   );
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Get all supported domains
- */
-export async function getSupportedDomains(): Promise<string[]> {
-  const response = await fetch(`${API_BASE_URL}/extension/domains`, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-  });
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
