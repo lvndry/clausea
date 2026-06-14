@@ -4,19 +4,13 @@ import { Check, ShieldCheck, X } from "lucide-react";
 
 import { gradeToneStyle, scoreToGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
+import type { ComplianceBreakdown } from "@/types";
 
 export type ComplianceStatus =
   | "Compliant"
   | "Partially Compliant"
   | "Non-Compliant"
   | "Unknown";
-
-interface ComplianceBreakdown {
-  score: number;
-  status: ComplianceStatus;
-  strengths: string[];
-  gaps: string[];
-}
 
 interface ComplianceBadgesProps {
   compliance?: Record<string, ComplianceBreakdown> | null;

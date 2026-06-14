@@ -9,7 +9,7 @@ const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
 ).replace(/\/$/, "");
 
-interface ProductOverview {
+interface ProductMetadata {
   name: string;
   slug: string;
   company_name?: string | null;
@@ -45,7 +45,7 @@ function resolveOriginFromHeaders(headerList: Headers): string | null {
 }
 
 type ProductMetadataFetch =
-  | { kind: "ok"; product: ProductOverview }
+  | { kind: "ok"; product: ProductMetadata }
   | { kind: "not_found" }
   | { kind: "uncertain"; displayName: string };
 
@@ -83,7 +83,7 @@ const fetchProductForMetadata = cache(async function (
       return { kind: "uncertain", displayName: humanizeSlug(slug) };
     }
 
-    return { kind: "ok", product: (await response.json()) as ProductOverview };
+    return { kind: "ok", product: (await response.json()) as ProductMetadata };
   } catch (error) {
     console.error("Error fetching product data for metadata:", error);
     return { kind: "uncertain", displayName: humanizeSlug(slug) };

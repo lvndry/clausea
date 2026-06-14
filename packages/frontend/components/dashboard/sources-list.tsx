@@ -22,20 +22,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getVerdictConfig } from "@/lib/verdict";
 
-interface EvidenceSpan {
-  document_id: string;
-  url: string;
-  content_hash?: string | null;
-  quote: string;
-  start_char?: number | null;
-  end_char?: number | null;
-  section_title?: string | null;
-}
-
-interface KeypointWithEvidence {
-  keypoint: string;
-  evidence: EvidenceSpan[];
-}
+import type {
+  CriticalClause,
+  DocumentRiskBreakdown,
+  DocumentSection,
+  DocumentSummary,
+  EvidenceSpan,
+  KeypointWithEvidence,
+} from "@/types";
 
 interface ExtractedItem {
   value: string;
@@ -54,49 +48,6 @@ interface DocumentExtraction {
   consent_mechanisms: ExtractedItem[];
   dangers: ExtractedItem[];
   benefits: ExtractedItem[];
-}
-
-interface CriticalClause {
-  clause_type: string;
-  section_title?: string | null;
-  quote: string;
-  risk_level: "low" | "medium" | "high" | "critical";
-  plain_english: string;
-  why_notable: string;
-  analysis: string;
-  compliance_impact: string[];
-}
-
-interface DocumentRiskBreakdown {
-  overall_risk: number;
-  risk_by_category: Record<string, number>;
-  top_concerns: string[];
-  positive_protections: string[];
-  missing_information: string[];
-}
-
-interface DocumentSection {
-  section_title: string;
-  content: string;
-  importance: "low" | "medium" | "high" | "critical";
-  analysis: string;
-  related_clauses: string[];
-}
-
-interface DocumentSummary {
-  id: string;
-  title: string | null;
-  url: string;
-  doc_type?: string;
-  last_updated?: string | null;
-  verdict?: string | null;
-  risk_score?: number | null;
-  summary?: string;
-  keypoints?: string[];
-  keypoints_with_evidence?: KeypointWithEvidence[] | null;
-  critical_clauses?: CriticalClause[] | null;
-  document_risk_breakdown?: DocumentRiskBreakdown | null;
-  key_sections?: DocumentSection[] | null;
 }
 
 interface SourcesListProps {

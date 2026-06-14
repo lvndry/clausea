@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { resolvePipelineErrorMessage } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
+import type { CrawlError } from "@/types";
 
 interface PipelineStep {
   name: string;
@@ -28,19 +29,6 @@ interface PipelineStep {
   progress_current?: number | null;
   progress_total?: number | null;
   progress_percent?: number | null;
-}
-
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type:
-    | "robots_txt_blocked"
-    | "http_error"
-    | "timeout"
-    | "network_error"
-    | "content_error"
-    | "unknown";
 }
 
 type PipelineJobStatus =

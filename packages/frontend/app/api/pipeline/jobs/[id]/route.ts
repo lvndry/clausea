@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getBackendUrl } from "@lib/config";
 import { httpJson } from "@lib/http";
+import type { CrawlError } from "@/types";
 
 type PipelineJobStatus =
   | "pending"
@@ -20,13 +21,6 @@ interface PipelineStep {
   progress_percent: number | null;
   started_at: string | null;
   completed_at: string | null;
-}
-
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type: string;
 }
 
 interface CrawlSkip {

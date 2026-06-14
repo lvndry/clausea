@@ -16,14 +16,7 @@ import type { ReactNode } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-
-interface PrivacySignalsData {
-  sells_data: "yes" | "no" | "unclear";
-  cross_site_tracking: "yes" | "no" | "unclear";
-  account_deletion: "self_service" | "request_required" | "not_specified";
-  data_retention_summary?: string | null;
-  consent_model: "opt_in" | "opt_out" | "mixed" | "not_specified";
-}
+import type { PrivacySignalsData } from "@/types";
 
 interface PrivacySignalsProps {
   signals: PrivacySignalsData;

@@ -35,131 +35,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
-import type { Product } from "@/types";
-
-interface DataPurposeLink {
-  data_type: string;
-  purposes: string[];
-}
-
-interface ThirdPartyRecipient {
-  recipient: string;
-  data_shared: string[];
-  purpose?: string | null;
-  risk_level: "low" | "medium" | "high";
-}
-
-interface DetailedScore {
-  score: number;
-  justification: string;
-}
-
-interface DetailedScores {
-  transparency: DetailedScore;
-  data_collection_scope: DetailedScore;
-  user_control: DetailedScore;
-  third_party_sharing: DetailedScore;
-}
-
-interface PrivacySignalsData {
-  sells_data: "yes" | "no" | "unclear";
-  cross_site_tracking: "yes" | "no" | "unclear";
-  account_deletion: "self_service" | "request_required" | "not_specified";
-  data_retention_summary?: string | null;
-  consent_model: "opt_in" | "opt_out" | "mixed" | "not_specified";
-}
-
-interface CoverageItem {
-  category: string;
-  status: "found" | "missing" | "ambiguous" | "not_analyzed";
-  notes?: string | null;
-}
-
-interface ComplianceBreakdown {
-  score: number;
-  status: "Compliant" | "Partially Compliant" | "Non-Compliant" | "Unknown";
-  strengths: string[];
-  gaps: string[];
-}
-
-export interface ProductOverview {
-  product_name: string;
-  product_slug: string;
-  company_name?: string | null;
-  last_updated: string;
-  verdict:
-    | "very_user_friendly"
-    | "user_friendly"
-    | "moderate"
-    | "pervasive"
-    | "very_pervasive";
-  risk_score: number;
-  one_line_summary: string;
-  data_collected?: string[] | null;
-  data_purposes?: string[] | null;
-  data_collection_details?: DataPurposeLink[] | null;
-  third_party_details?: ThirdPartyRecipient[] | null;
-  your_rights?: string[] | null;
-  dangers?: string[] | null;
-  benefits?: string[] | null;
-  recommended_actions?: string[] | null;
-  keypoints?: string[] | null;
-  document_counts?: { total: number; analyzed: number; pending: number } | null;
-  document_types?: Record<string, number> | null;
-  third_party_sharing?: string | null;
-  detailed_scores?: DetailedScores | null;
-  compliance_status?: Record<string, number> | null;
-  compliance?: Record<string, ComplianceBreakdown> | null;
-  privacy_signals?: PrivacySignalsData | null;
-  coverage?: CoverageItem[] | null;
-  contract_clauses?: string[] | null;
-}
-
-export interface DocumentSummary {
-  id: string;
-  title: string | null;
-  url: string;
-  doc_type?: string;
-  last_updated?: string | null;
-  verdict?: string | null;
-  risk_score?: number | null;
-  summary?: string;
-  keypoints?: string[];
-  keypoints_with_evidence?: Array<{
-    keypoint: string;
-    evidence: Array<{
-      document_id: string;
-      url: string;
-      content_hash?: string | null;
-      quote: string;
-      start_char?: number | null;
-      end_char?: number | null;
-      section_title?: string | null;
-    }>;
-  }> | null;
-}
-
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type:
-    | "robots_txt_blocked"
-    | "http_error"
-    | "timeout"
-    | "network_error"
-    | "content_error"
-    | "unknown";
-}
-
-interface FailedCrawlJob {
-  error: string | null;
-  error_detail: string | null;
-  crawl_errors: CrawlError[];
-  // Stored document count from the crawl. >0 means the crawl succeeded and the
-  // failure happened downstream (analysis/overview), so we must not blame the crawl.
-  documents_stored?: number;
-}
+import type {
+  CoverageItem,
+  DocumentSummary,
+  FailedCrawlJob,
+  Product,
+  ProductOverview,
+} from "@/types";
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();

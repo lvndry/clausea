@@ -2,13 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getBackendUrl } from "@lib/config";
 import { httpJson } from "@lib/http";
-
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type: string;
-}
+import type { CrawlError } from "@/types";
 
 interface PipelineStep {
   name: string;

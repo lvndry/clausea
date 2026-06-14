@@ -4,18 +4,7 @@ import { Eye, Layers, Share2, ShieldAlert, SlidersHorizontal } from "lucide-reac
 
 import { gradeToneStyle, gradeToneWord, scoreToGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
-
-interface DetailedScore {
-  score: number;
-  justification: string;
-}
-
-interface DetailedScores {
-  transparency: DetailedScore;
-  data_collection_scope: DetailedScore;
-  user_control: DetailedScore;
-  third_party_sharing: DetailedScore;
-}
+import type { DetailedScores } from "@/types";
 
 interface ScoreBreakdownProps {
   detailedScores: DetailedScores;

@@ -1,12 +1,9 @@
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
-import type { Product } from "@/types";
+import type { DocumentSummary, Product, ProductOverview } from "@/types";
 import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
 
-import CompanyPage, {
-  type DocumentSummary,
-  type ProductOverview,
-} from "./product-page-client";
+import CompanyPage from "./product-page-client";
 
 async function fetchWithAuth(
   url: string,
