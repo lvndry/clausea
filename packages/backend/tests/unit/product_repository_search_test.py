@@ -19,8 +19,9 @@ from src.repositories.product_repository import ProductRepository
 def _fake_db_capturing_queries() -> tuple[Any, list[dict[str, Any]]]:
     captured_queries: list[dict[str, Any]] = []
 
-    def capture_find(query: dict[str, Any]) -> MagicMock:
-        captured_queries.append(query)
+    def capture_find(query: dict[str, Any] | None = None) -> MagicMock:
+        # The no-search path calls find() unfiltered (no positional query).
+        captured_queries.append(query if query is not None else {})
         cursor = MagicMock()
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
@@ -35,6 +36,8 @@ def _fake_db_capturing_queries() -> tuple[Any, list[dict[str, Any]]]:
     products_collection = MagicMock()
     products_collection.find = MagicMock(side_effect=capture_find)
     products_collection.count_documents = AsyncMock(side_effect=capture_count)
+    # No-search path uses estimated_document_count() (O(1)) instead of count_documents({}).
+    products_collection.estimated_document_count = AsyncMock(return_value=0)
 
     db = MagicMock()
     db.products = products_collection
@@ -65,4 +68,7 @@ async def test_find_paginated_without_search_uses_empty_query() -> None:
     db, captured_queries = _fake_db_capturing_queries()
 
     await repo.find_paginated(db, skip=0, limit=10, search="")
+    # No regex filter is built, and the count uses the O(1) estimated_document_count.
     assert all(query == {} for query in captured_queries)
+    db.products.estimated_document_count.assert_awaited_once()
+    db.products.count_documents.assert_not_awaited()
