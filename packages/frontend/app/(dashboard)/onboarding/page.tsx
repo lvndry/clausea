@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 
 import { useEffect, useState } from "react";
 
+import { completeOnboarding, upsertUser } from "@/app/actions/users";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -49,14 +50,10 @@ export default function OnboardingPage() {
         last_name: user.lastName,
       });
 
-      void fetch("/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: user.primaryEmailAddress?.emailAddress,
-          first_name: user.firstName,
-          last_name: user.lastName,
-        }),
+      void upsertUser({
+        email: user.primaryEmailAddress?.emailAddress,
+        first_name: user.firstName,
+        last_name: user.lastName,
       }).catch(() => {});
     }
   }, [user, trackUserJourney]);
@@ -116,7 +113,7 @@ export default function OnboardingPage() {
         goal,
       });
 
-      await fetch("/api/users/complete-onboarding", { method: "POST" });
+      await completeOnboarding();
 
       trackUserJourney.onboardingCompleted({
         user_id: user.id,

@@ -8,9 +8,13 @@ import CompanyPage from "./product-page-client";
 async function fetchWithAuth(
   url: string,
   headers: HeadersInit,
+  tag: string,
 ): Promise<unknown> {
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, {
+      headers,
+      next: { tags: [tag], revalidate: 3600 },
+    });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -31,12 +35,13 @@ export default async function ProductPage({
     ? { Authorization: `Bearer ${token}` }
     : {};
 
+  const tag = `product-${slug}`;
   const [initialProduct, initialData, initialDocuments, initialExplainer] =
     await Promise.all([
-      fetchWithAuth(getBackendUrl(`/products/${slug}`), headers),
-      fetchWithAuth(getBackendUrl(`/products/${slug}/overview`), headers),
-      fetchWithAuth(getBackendUrl(`/products/${slug}/documents`), headers),
-      fetchWithAuth(getBackendUrl(`/products/${slug}/explainer`), headers),
+      fetchWithAuth(getBackendUrl(`/products/${slug}`), headers, tag),
+      fetchWithAuth(getBackendUrl(`/products/${slug}/overview`), headers, tag),
+      fetchWithAuth(getBackendUrl(`/products/${slug}/documents`), headers, tag),
+      fetchWithAuth(getBackendUrl(`/products/${slug}/explainer`), headers, tag),
     ]);
 
   return (

@@ -16,6 +16,8 @@ import posthog from "posthog-js";
 
 import { useEffect, useRef, useState } from "react";
 
+import { triggerPipeline } from "@/app/actions/pipeline";
+import { subscribeIndexationNotify } from "@/app/actions/products";
 import { ConsumerExplainerView } from "@/components/dashboard/explainer/consumer-explainer-view";
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
 import { ComplianceBadges } from "@/components/dashboard/overview/compliance-badges";
@@ -240,25 +242,18 @@ export default function CompanyPage({
         // POSTing /api/pipeline is idempotent on the backend and will re-kick the runner
         // if it isn't currently executing in this process.
         if (!url) return;
-        void fetch("/api/pipeline", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
+        void triggerPipeline(url).catch(() => {});
         return;
       }
     }
 
     // 2. No active job — start a new one
     if (!url) return;
-    const pipelineRes = await fetch("/api/pipeline", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    if (pipelineRes.ok) {
-      const pipelineJson = await pipelineRes.json();
+    try {
+      const pipelineJson = await triggerPipeline(url);
       setActiveJobId(pipelineJson.job_id ?? null);
+    } catch {
+      // Surfaced via job polling / failed-state UI.
     }
   }
 
@@ -292,15 +287,7 @@ export default function CompanyPage({
     setNotifyStatus("submitting");
     setNotifyError(null);
     try {
-      const res = await fetch(`/api/products/${slug}/indexation-notify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(body || "Failed to subscribe.");
-      }
+      await subscribeIndexationNotify(slug, email);
       setNotifyStatus("success");
     } catch (err) {
       setNotifyStatus("error");

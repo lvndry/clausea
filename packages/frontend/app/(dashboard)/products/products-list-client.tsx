@@ -15,6 +15,8 @@ import posthog from "posthog-js";
 
 import { useEffect, useRef, useState } from "react";
 
+import { triggerPipeline } from "@/app/actions/pipeline";
+import { revalidateProduct } from "@/app/actions/products";
 import { IndexForm } from "@/components/pipeline/index-form";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Button } from "@/components/ui/button";
@@ -270,16 +272,7 @@ export function ProductsListClient({
     setIsSubmitting(true);
     setAlreadyIndexed(null);
     try {
-      const res = await fetch("/api/pipeline", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Failed to start analysis");
-      }
-      const data = await res.json();
+      const data = await triggerPipeline(url);
 
       if (data.already_indexed) {
         setAlreadyIndexed({ slug: data.product_slug, name: data.product_name });
@@ -303,6 +296,7 @@ export function ProductsListClient({
   function handlePipelineComplete(productSlug: string) {
     posthog.capture("pipeline_completed", { product_slug: productSlug });
     clearActiveJobId();
+    void revalidateProduct(productSlug);
     // Optionally auto-navigate after a brief delay
     setTimeout(() => {
       router.push(`/products/${productSlug}`);
