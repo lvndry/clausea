@@ -20,7 +20,7 @@ from src.analyser import (
 from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document import Document
-from src.models.pipeline_job import CrawlError, CrawlSkip, PipelineJob
+from src.models.pipeline_job import CrawlError, CrawlSkip, PipelineErrorCode, PipelineJob
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
@@ -264,7 +264,8 @@ class PipelineService:
             product = await product_svc.get_product_by_slug(db, job.product_slug)
             if not product:
                 job.status = "failed"
-                job.error = f"Product {job.product_slug} not found"
+                job.error = PipelineErrorCode.product_not_found
+                job.error_detail = f"Product {job.product_slug} not found"
                 await self._pipeline_repo.update(db, job)
                 return
 
@@ -355,18 +356,21 @@ class PipelineService:
                             if err.error_type == "robots_txt_blocked"
                         ]
                         if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
-                            job.error = (
+                            job.error = PipelineErrorCode.crawl_robots_blocked
+                            job.error_detail = (
                                 "This site blocks automated access via robots.txt. "
                                 "We were unable to crawl any policy documents."
                             )
                         elif robots_blocked:
-                            job.error = (
+                            job.error = PipelineErrorCode.crawl_robots_blocked
+                            job.error_detail = (
                                 f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
                                 f"of {len(job.crawl_errors)} failed URLs). "
                                 "No policy documents could be found."
                             )
                         elif job.crawl_errors:
-                            job.error = (
+                            job.error = PipelineErrorCode.crawl_failed
+                            job.error_detail = (
                                 f"Crawling failed for {len(job.crawl_errors)} URL(s). "
                                 "No policy documents could be found."
                             )
@@ -381,13 +385,15 @@ class PipelineService:
                                 f"{n}× {reason}"
                                 for reason, n in sorted(counts.items(), key=lambda kv: -kv[1])
                             )
-                            job.error = (
+                            job.error = PipelineErrorCode.no_documents_found
+                            job.error_detail = (
                                 f"{len(job.crawl_skip_reasons)} URLs fetched but all "
                                 f"rejected by content filters ({breakdown}). "
                                 "See crawl_skip_reasons for the per-URL detail."
                             )
                         else:
-                            job.error = "No policy documents found on this site"
+                            job.error = PipelineErrorCode.no_documents_found
+                            job.error_detail = "No policy documents found on this site"
 
                         job.completed_at = datetime.now()
                         await self._update_step(
@@ -416,7 +422,7 @@ class PipelineService:
                                 product_name=product.name,
                                 product_slug=job.product_slug,
                                 url=job.url,
-                                reason=job.error,
+                                reason=job.error_detail or "No policy documents found on this site",
                                 crawl_error_count=len(job.crawl_errors),
                                 skip_count=len(job.crawl_skip_reasons),
                             )
@@ -487,7 +493,8 @@ class PipelineService:
                     if no_analysis or core_wipeout:
                         job.status = "failed"
                         if core_wipeout and not no_analysis:
-                            job.error = (
+                            job.error = PipelineErrorCode.core_docs_unanalyzed
+                            job.error_detail = (
                                 f"Analyzed {analysed_count} of {len(analysed_docs)} documents, but "
                                 f"none of the {len(core_docs)} core policy document(s) (privacy/terms) "
                                 "could be analyzed — cannot build a reliable overview. Usually a "
@@ -498,7 +505,8 @@ class PipelineService:
                                 f"({analysed_count} of {len(analysed_docs)} total)"
                             )
                         else:
-                            job.error = (
+                            job.error = PipelineErrorCode.all_analysis_failed
+                            job.error_detail = (
                                 f"Found {len(analysed_docs)} documents but could not analyze any "
                                 "of them. This is usually a temporary issue (model rate limits or "
                                 "timeouts) — try again."
@@ -560,7 +568,8 @@ class PipelineService:
                     )
                     if not persisted_overview:
                         job.status = "failed"
-                        job.error = (
+                        job.error = PipelineErrorCode.overview_not_persisted
+                        job.error_detail = (
                             "Overview generation reported success but no overview was persisted "
                             f"for {job.product_slug}."
                         )
@@ -685,7 +694,8 @@ class PipelineService:
                         exc_info=True,
                     )
                     job.status = "failed"
-                    job.error = str(e)
+                    job.error = PipelineErrorCode.internal_error
+                    job.error_detail = str(e)
                     job.completed_at = datetime.now()
 
                     # Mark any running steps as failed
@@ -709,7 +719,8 @@ class PipelineService:
                     MAX_PIPELINE_DURATION_SECONDS,
                 )
                 job.status = "failed"
-                job.error = "Pipeline timed out after 2 hours"
+                job.error = PipelineErrorCode.timed_out
+                job.error_detail = "Pipeline timed out after 2 hours"
                 job.completed_at = datetime.now()
                 for step in job.steps:
                     if step.status == "running":

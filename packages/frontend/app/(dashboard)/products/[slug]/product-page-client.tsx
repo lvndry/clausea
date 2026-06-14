@@ -33,6 +33,7 @@ import { ErrorDisplay } from "@/components/ui/error-display";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
 import type { Product } from "@/types";
 
@@ -153,6 +154,7 @@ interface CrawlError {
 
 interface FailedCrawlJob {
   error: string | null;
+  error_detail: string | null;
   crawl_errors: CrawlError[];
   // Stored document count from the crawl. >0 means the crawl succeeded and the
   // failure happened downstream (analysis/overview), so we must not blame the crawl.
@@ -302,6 +304,7 @@ export default function CompanyPage({
         if (latestJob?.status === "no_documents") {
           setEmptyJob({
             error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
             crawl_errors: latestJob.crawl_errors ?? [],
           });
           return;
@@ -310,6 +313,7 @@ export default function CompanyPage({
         if (latestJob?.status === "failed") {
           setFailedJob({
             error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
             crawl_errors: latestJob.crawl_errors ?? [],
             documents_stored: latestJob.documents_stored ?? 0,
           });
@@ -537,7 +541,10 @@ export default function CompanyPage({
                           : "Unable to crawl policy documents"}
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      {terminalJob.error ??
+                      {(terminalJob.error
+                        ? PIPELINE_ERROR_CODE_MESSAGES[terminalJob.error]
+                        : undefined) ??
+                        terminalJob.error_detail ??
                         (crawlErrors.length > 0
                           ? `${crawlErrors.length} URL(s) failed during crawling.`
                           : "We could not retrieve any policy documents from this site.")}

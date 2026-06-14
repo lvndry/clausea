@@ -1,6 +1,5 @@
 import { ImageResponse } from "next/og";
 
-export const runtime = "edge";
 export const alt = "Clausea AI - Legal Document Intelligence Platform";
 export const contentType = "image/png";
 

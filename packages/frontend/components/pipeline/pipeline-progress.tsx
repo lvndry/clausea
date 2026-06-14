@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { resolvePipelineErrorMessage } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
 
 interface PipelineStep {
@@ -59,6 +60,7 @@ interface PipelineJobData {
   status: PipelineJobStatus;
   steps: PipelineStep[];
   error: string | null;
+  error_detail?: string | null;
   documents_found: number;
   documents_stored: number;
   crawl_errors: CrawlError[];
@@ -514,7 +516,7 @@ export function PipelineProgress({
             {job.error &&
               !(job.crawl_errors && job.crawl_errors.length > 0) && (
                 <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
-                  {job.error}
+                  {resolvePipelineErrorMessage(job.error, job.error_detail)}
                 </p>
               )}
 

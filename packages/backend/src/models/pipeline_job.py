@@ -1,10 +1,31 @@
 """Pipeline job model for tracking background crawl/analysis pipeline execution."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 import shortuuid
 from pydantic import BaseModel, Field
+
+
+class PipelineErrorCode(StrEnum):
+    """Stable machine codes for pipeline job failures.
+
+    The API stores one of these in `PipelineJob.error`; the human-readable
+    phrasing lives in the frontend (mapped from the code) and, for debugging,
+    in `PipelineJob.error_detail`.
+    """
+
+    product_not_found = "product_not_found"
+    crawl_robots_blocked = "crawl_robots_blocked"
+    crawl_failed = "crawl_failed"
+    no_documents_found = "no_documents_found"
+    all_analysis_failed = "all_analysis_failed"
+    core_docs_unanalyzed = "core_docs_unanalyzed"
+    overview_not_persisted = "overview_not_persisted"
+    internal_error = "internal_error"
+    timed_out = "timed_out"
+
 
 PipelineJobStatus = Literal[
     "pending",
@@ -122,7 +143,12 @@ class PipelineJob(BaseModel):
             PipelineStep(name="generating_overview"),
         ]
     )
+    # Stable machine error code (a `PipelineErrorCode` value). The frontend maps
+    # this to user-facing copy; never store a human string here.
     error: str | None = None
+    # Human/debug detail for the error (logs + optional tooltip). May embed
+    # counts, exception text, or a per-URL breakdown.
+    error_detail: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     started_at: datetime | None = None

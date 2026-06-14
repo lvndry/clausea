@@ -43,6 +43,7 @@ interface PipelineJob {
   status: PipelineJobStatus;
   steps: PipelineStep[];
   error: string | null;
+  error_detail: string | null;
   created_at: string;
   updated_at: string;
   started_at: string | null;

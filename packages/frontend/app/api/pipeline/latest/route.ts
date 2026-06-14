@@ -26,6 +26,7 @@ interface PipelineJob {
   status: string;
   steps: PipelineStep[];
   error: string | null;
+  error_detail: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

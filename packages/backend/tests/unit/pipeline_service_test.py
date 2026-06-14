@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models.pipeline_job import PipelineJob, PipelineStep
+from src.models.pipeline_job import PipelineErrorCode, PipelineJob, PipelineStep
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.pipeline_service import PipelineService
 
@@ -242,7 +242,8 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
         await service.run_pipeline("job-analysis")
 
     assert job.status == "failed"
-    assert "could not analyze" in (job.error or "").lower()
+    assert job.error == PipelineErrorCode.all_analysis_failed
+    assert "could not analyze" in (job.error_detail or "").lower()
     # Crawl succeeded, so the truthful frontend can tell this is an analysis failure.
     assert job.documents_stored == 3
     # Overview synthesis must be skipped entirely.
