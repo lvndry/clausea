@@ -13,6 +13,7 @@ from src.core.database import get_db
 from src.core.jwt import get_optional_user
 from src.core.logging import get_logger
 from src.models.clerkUser import ClerkUser
+from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.extension_usage import ExtensionUsageService
 from src.services.pipeline_scheduler import schedule_pipeline_run
@@ -145,7 +146,9 @@ async def check_url(
             pipeline_repo = PipelineRepository()
             recent_jobs = await pipeline_repo.find_by_product_slug(db, product.slug)
             for rj in recent_jobs:
-                if rj.status == "failed":
+                # Both genuine failures and "ran but found nothing" are terminal
+                # non-success outcomes the extension surfaces with the job's error.
+                if rj.status in ("failed", "no_documents"):
                     failed_job = rj
                     break
 
@@ -235,7 +238,7 @@ async def get_job_status_lightweight(
     retry_after = 3
     if job.status == "crawling":
         retry_after = 5
-    elif job.status in ("completed", "failed"):
+    elif job.status in TERMINAL_PIPELINE_STATUSES:
         retry_after = 0
 
     return ExtensionJobStatus(

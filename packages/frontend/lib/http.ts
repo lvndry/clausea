@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import type { ZodType } from "zod";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -105,9 +106,9 @@ function backoff(attempt: number, baseDelay: number): number {
 
 export async function httpJson<T, TBody = unknown>(
   url: string,
-  opts: HttpOptions<TBody> & { method?: HttpMethod } = {},
+  opts: HttpOptions<TBody> & { method?: HttpMethod; schema?: ZodType<T> } = {},
 ): Promise<T> {
-  const { body, headers, ...rest } = opts;
+  const { body, headers, schema, ...rest } = opts;
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   const mergedHeaders: HeadersInit = isForm
     ? headers || {}
@@ -125,5 +126,20 @@ export async function httpJson<T, TBody = unknown>(
       `Client HTTP ${response.status} ${response.statusText}: ${text}`,
     );
   }
-  return response.json() as Promise<T>;
+
+  const json = await response.json();
+
+  if (schema) {
+    const result = schema.safeParse(json);
+    if (!result.success) {
+      console.error(
+        `[schema] payload from ${url} failed validation:`,
+        result.error.issues,
+      );
+      throw new Error("Upstream payload failed schema validation");
+    }
+    return result.data;
+  }
+
+  return json as T;
 }

@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   Search,
   ShieldAlert,
-  Sparkles,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
@@ -85,8 +84,17 @@ function ProductCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: index * 0.03 }}
-      className="group"
+      className="group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground"
+      role="button"
+      tabIndex={0}
+      aria-label={`View analysis for ${product.name}`}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
     >
       <div
         ref={cardRef}
@@ -164,6 +172,7 @@ function ProductsPageContent() {
 
   const [pageData, setPageData] = useState<ProductsPage>({ items: [], total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -225,6 +234,7 @@ function ProductsPageContent() {
         setError(err instanceof Error ? err.message : "Failed to fetch products");
       } finally {
         setLoading(false);
+        setInitialLoad(false);
       }
     }
     fetchProducts();
@@ -291,7 +301,7 @@ function ProductsPageContent() {
     router.push(`/products/${product.slug}`);
   }
 
-  if (loading) {
+  if (initialLoad) {
     return (
       <div className="space-y-12">
         <div className="space-y-4">
@@ -341,9 +351,6 @@ function ProductsPageContent() {
       {/* Header */}
       <div className="space-y-6">
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 border border-border flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-foreground" strokeWidth={1.5} />
-          </div>
           <div>
             <h1 className="text-4xl md:text-5xl font-display font-medium text-foreground tracking-tight">
               Service Intelligence
@@ -351,8 +358,8 @@ function ProductsPageContent() {
           </div>
         </div>
         <p className="text-muted-foreground text-sm uppercase tracking-widest font-medium max-w-2xl leading-relaxed">
-          The privacy archive. AI-powered structural analysis of the digital
-          service layer.
+          Know what you&apos;re agreeing to. AI breaks down the privacy policy
+          and terms behind every service you use.
         </p>
       </div>
 
@@ -382,7 +389,7 @@ function ProductsPageContent() {
                   variant="ghost"
                   className="rounded-none h-8 px-0 text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C] hover:bg-transparent hover:text-[#2B7A5C]/70"
                 >
-                  View Archive
+                  View analysis
                 </Button>
               </Link>
               <Button
@@ -415,7 +422,7 @@ function ProductsPageContent() {
             strokeWidth={1.5}
           />
           <Input
-            placeholder="Search the archive..."
+            placeholder="Search services..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-12 h-10 border-none bg-transparent focus-visible:ring-0 text-sm uppercase tracking-widest font-medium placeholder:text-muted-foreground/30 rounded-none shadow-none"
@@ -431,12 +438,18 @@ function ProductsPageContent() {
           <div className="h-6 w-px bg-border mx-2" />
 
           <div className="px-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            {pageData.total} Entries
+            {pageData.total} Services
           </div>
         </div>
       </div>
 
-      {/* Grid - Varied spacing */}
+      <div
+        className={cn(
+          "transition-opacity duration-150",
+          loading && "opacity-40 pointer-events-none",
+        )}
+        aria-busy={loading}
+      >
       <AnimatePresence mode="popLayout">
         {paginatedProducts.length === 0 ? (
           <motion.div
@@ -449,11 +462,11 @@ function ProductsPageContent() {
             </div>
             <div className="space-y-2">
               <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">
-                Archive result: null
+                Not analyzed yet
               </h3>
               <p className="text-[10px] uppercase tracking-widest text-muted-foreground max-w-sm mx-auto">
-                The specified identifier does not exist within our current
-                mapping.
+                Paste a URL above and we&apos;ll break this service down for
+                you.
               </p>
             </div>
           </motion.div>
@@ -514,6 +527,7 @@ function ProductsPageContent() {
           </div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }

@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error starting pipeline:", error);
     return NextResponse.json(
-      { error: `Failed to start pipeline: ${error}` },
+      { error: `Failed to start pipeline` },
       { status: 500 },
     );
   }

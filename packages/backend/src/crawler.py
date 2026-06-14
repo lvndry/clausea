@@ -3,6 +3,7 @@ Policy document crawler for extracting privacy policies, terms of service, cooki
 """
 
 import asyncio
+import gzip
 import heapq
 import json
 import logging
@@ -17,7 +18,7 @@ from dataclasses import field as dataclass_field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
+from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import aiohttp
 import markdownify
@@ -53,6 +54,54 @@ MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
 
 # Browser fetch: short polling attempts when initial DOM text is below MIN_CONTENT_LENGTH_FOR_SPA_CHECK.
 SPA_HYDRATION_RETRIES = 3
+
+# Browser navigation budget. A render is a fallback for pages the static fetch couldn't
+# use, so it gets a tight cap: a page that hasn't reached domcontentloaded in this long is
+# almost always hung or bot-walled, not a slow policy page. Bounded by the static timeout.
+BROWSER_NAV_TIMEOUT_MS = 20_000
+# Per load-state settle wait after navigation. We do NOT wait for "networkidle": SPA/marketing
+# sites (analytics, websockets, long-polling) rarely reach it, so waiting just burns the budget
+# on a state that never fires. domcontentloaded + a short "load" settle is enough; late-hydrating
+# content is still captured by the SPA_HYDRATION_RETRIES polling below.
+BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
+
+# Query parameters that are pure tracking/attribution and NEVER change the
+# document content, so they can be dropped during URL normalization to avoid
+# fetching the same page many times. This list is deliberately conservative:
+# it contains ONLY unambiguous trackers. Content-bearing params (language,
+# nodeId, id, page, q, …) are kept — language can proxy region (en→US vs fr→EU
+# terms), and identity params carry the document itself (Amazon: ?nodeId=…).
+# Any param starting with "utm_" is also dropped (see _strip_tracking_params).
+_TRACKING_QUERY_PARAMS = frozenset(
+    {
+        "gclid",
+        "gbraid",
+        "wbraid",
+        "dclid",
+        "fbclid",
+        "msclkid",
+        "yclid",
+        "twclid",
+        "ttclid",
+        "igshid",
+        "li_fat_id",
+        "rdt_cid",
+        "_ga",
+        "_gl",
+        "mc_cid",
+        "mc_eid",
+        "mkt_tok",
+        "_hsenc",
+        "_hsmi",
+        "vero_id",
+        "vero_conv",
+        "oly_anon_id",
+        "oly_enc_id",
+        "ef_id",
+        "s_kwcid",
+        "rel",
+    }
+)
 
 # ContentAnalyzer reports legal relevance on a 0–10 scale; CrawlResult.legal_score is normalized to 0.0–1.0.
 MAX_LEGAL_SCORE_SCALE = 10.0
@@ -261,6 +310,17 @@ class URLScorer:
         # "terms" keyword match (4.0); removed when the glossary guard fires.
         self._terms_signal_weight = 8.5
 
+        # User-generated gallery / marketplace sections. Their object slugs routinely
+        # contain legal keywords (e.g. /templates/legal-case-tracking/exp123,
+        # /universe/exp9/the-startup-legal-setup-guide), so they pass the relevance
+        # gate and get browser-rendered — but they are never the company's own policy
+        # documents. Note this deliberately excludes /docs, /support, /help, /about,
+        # /company and /legal, which legitimately host policy content.
+        self._non_policy_section_re = re.compile(
+            r"^/(?:templates?|universe|marketplace|gallery|showcase|examples?)(?:/|$)",
+            re.IGNORECASE,
+        )
+
         self.legal_keywords = {
             # Generic legal terms
             "legal": 3.5,
@@ -410,7 +470,23 @@ class URLScorer:
         if self._glossary_terms_re.search(path):
             score -= self._terms_signal_weight
 
+        # User-generated gallery sections never host the company's own policies —
+        # zero them out regardless of keyword/anchor signal so they don't escalate
+        # to an expensive browser render.
+        if self.is_non_policy_section(url):
+            return 0.0
+
         return max(0.0, score)
+
+    def is_non_policy_section(self, url: str) -> bool:
+        """True for sections that are never the company's own policy documents.
+
+        User-generated galleries (templates, universe, marketplace, etc.) carry
+        legal keywords but host third-party/template content. This is a *hard*
+        exclusion: callers must not revive these with anchor or parent-page
+        boosts — see ``add_urls_to_queue``.
+        """
+        return bool(self._non_policy_section_re.search(urlparse(url.lower()).path))
 
 
 class ContentAnalyzer:
@@ -1100,6 +1176,13 @@ class AsyncFileLogHandler(logging.Handler):
 class ClauseaCrawler:
     """Powerful policy document crawler."""
 
+    # Emit a progress update to the callback once this many new URLs have been
+    # processed since the last report. A threshold (crossing) rather than an
+    # exact modulo, because URLs are processed in concurrent batches and
+    # ``stats.total_urls`` jumps by the batch size — an exact ``% N == 0`` gate
+    # is routinely skipped, freezing the UI mid-crawl.
+    PROGRESS_REPORT_INTERVAL = 10
+
     def __init__(
         self,
         max_depth: int = 5,
@@ -1186,6 +1269,8 @@ class ClauseaCrawler:
 
         # Progress callback for external monitoring
         self.progress_callback = progress_callback
+        # Number of processed URLs at the last progress report (for cadence).
+        self._last_progress_report = 0
 
         # Compile path patterns
         self.compiled_allowed_paths = (
@@ -1233,6 +1318,20 @@ class ClauseaCrawler:
         self.results: list[CrawlResult] = []
         self.stats = CrawlStats()
 
+        # Policy-relevant URLs whose browser render FAILED (returned no page —
+        # usually a starvation/navigation timeout). Re-attempted serially at the end
+        # of the crawl so a render that lost the concurrency race is never silently
+        # dropped (recall over speed). Set while draining to prevent re-deferral.
+        self._render_retry_queue: list[str] = []
+        self._in_render_retry: bool = False
+
+        # Lightweight render instrumentation (logged at crawl end) so future
+        # concurrency/pooling decisions are data-driven rather than guessed.
+        self._render_attempts: int = 0
+        self._render_failures: int = 0
+        self._render_slot_wait_total: float = 0.0
+        self._render_recovered: int = 0
+
         # Per-domain rate limiting (allows concurrent requests to different domains)
         self.rate_limiter = DomainRateLimiter(
             delay_between_requests=delay_between_requests, jitter=self.delay_jitter
@@ -1258,12 +1357,24 @@ class ClauseaCrawler:
                 r"/search\?",
                 r"/api/",
                 r"/ajax/",
+                # The extension groups below use ``(?:[?#]|$)`` rather than a bare
+                # ``$`` so they still match when a query string or fragment follows
+                # (e.g. Next.js chunks like ``app.css?dpl=...``). A bare ``$`` would
+                # let those through, queue them, and waste a full browser render.
                 # Skip compressed files and archives (we can't easily parse these)
-                r"\.(gz|zip|tar|bz2|7z|rar|xz)$",
+                r"\.(gz|zip|tar|bz2|7z|rar|xz)(?:[?#]|$)",
                 # Skip common binary/media files
-                r"\.(mp4|mp3|avi|mov|wmv|flv|wav|ogg|webm)$",
+                r"\.(mp4|mp3|avi|mov|wmv|flv|wav|ogg|webm)(?:[?#]|$)",
                 # Skip document formats we don't support
-                r"\.(doc|docx|xls|xlsx|ppt|pptx)$",
+                r"\.(doc|docx|xls|xlsx|ppt|pptx)(?:[?#]|$)",
+                # Skip front-end static assets — stylesheets, scripts, source maps.
+                # A statically-fetched asset looks "content-insufficient", which
+                # otherwise escalates it to an expensive (timeout-prone) browser render.
+                r"\.(css|js|mjs|map)(?:[?#]|$)",
+                # Skip web fonts
+                r"\.(woff2?|ttf|otf|eot)(?:[?#]|$)",
+                # Skip images (policy documents are never images)
+                r"\.(png|jpe?g|gif|svg|webp|avif|ico|bmp)(?:[?#]|$)",
             ]
         ]
 
@@ -1858,27 +1969,27 @@ class ClauseaCrawler:
 
             await page.route("**/*.{png,jpg,jpeg,gif,svg}", _abort_media)
 
-            total_timeout_ms = self.timeout * 1000
+            # Tight navigation budget: a page that hasn't reached domcontentloaded within
+            # BROWSER_NAV_TIMEOUT_MS is hung or bot-walled, not slow — don't burn the full
+            # static timeout on it (these dominate crawl time on JS-heavy sites).
+            nav_timeout_ms = min(self.timeout * 1000, BROWSER_NAV_TIMEOUT_MS)
 
-            # Initiate navigation once; domcontentloaded balances speed vs. DOM readiness.
-            # Progressive load-state waits below refine readiness further.
             logger.debug(f"🌐 Initiating browser fetch for {url}")
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=total_timeout_ms)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout_ms)
 
             if not response:
                 logger.warning(f"❌ Browser fetch failed to initiate for {url}")
                 return None
 
-            # Progressively wait for more complete states without restarting navigation.
-            # We try for 'networkidle' but settle for 'load' or 'domcontentloaded' if they complete.
-            wait_states: list[Literal["domcontentloaded", "load", "networkidle"]] = [
+            # Short load-state settle after navigation. We deliberately do NOT wait for
+            # "networkidle" — SPA/marketing sites rarely reach it, so it just times out and
+            # wastes the budget. Late-hydrating content is recovered by the SPA-hydration
+            # polling below, so dropping networkidle is recall-neutral.
+            wait_states: list[Literal["domcontentloaded", "load"]] = [
                 "domcontentloaded",
                 "load",
-                "networkidle",
             ]
-
-            # Allocate a portion of total timeout for each state check
-            state_timeout = total_timeout_ms // 2
+            state_timeout = BROWSER_LOAD_STATE_TIMEOUT_MS
 
             for state in wait_states:
                 try:
@@ -2000,12 +2111,29 @@ class ClauseaCrawler:
             )
         return result
 
+    @staticmethod
+    def _top_level_elements(elements: list[Any]) -> list[Any]:
+        """Drop elements that are descendants of another element in the set.
+
+        ``soup.select`` returns every match including nested ones (e.g. a
+        ``[class*="content"]`` wrapper and a ``[class*="content"]`` child inside
+        it). Combining both would double-count the child's text, inflating the
+        length comparison and duplicating content in the output.
+        """
+        match_set = set(elements)
+        return [el for el in elements if not any(parent in match_set for parent in el.parents)]
+
     def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
         """Extract likely primary content region and remove common boilerplate."""
-        main_candidate = None
-
-        # Prefer semantically meaningful content containers first.
-        for selector in (
+        # Candidate containers, most-specific first. Each selector may match
+        # MULTIPLE elements: sites such as Airbnb split a single article across
+        # many sibling ``data-testid="CEPHtmlSection"`` blocks, so taking only the
+        # first match (the old ``select_one`` behaviour) dropped almost the entire
+        # body. We therefore combine all top-level matches per selector and pick
+        # the selector that yields the most text — this prevents a small early
+        # widget (e.g. a "Related articles" sidebar whose ``data-testid`` contains
+        # "article") from winning over the real, much larger content region.
+        selectors = (
             "main",
             "article",
             '[role="main"]',
@@ -2023,18 +2151,30 @@ class ClauseaCrawler:
             '[class*="terms" i]',
             '[id*="policy" i]',
             '[class*="policy" i]',
-        ):
-            candidate = soup.select_one(selector)
-            if candidate:
-                candidate_text = candidate.get_text(" ", strip=True)
-                # For specific modern selectors, we can be more lenient with length
-                # as they are likely high-precision.
-                min_len = 50 if "data-testid" in selector else 300
-                if len(candidate_text) >= min_len:
-                    main_candidate = candidate
-                    break
+        )
 
-        content_root = main_candidate or soup.body or soup
+        best_html: str | None = None
+        best_text_len = 0
+        for selector in selectors:
+            matches = self._top_level_elements(soup.select(selector))
+            if not matches:
+                continue
+            combined_text_len = sum(len(el.get_text(" ", strip=True)) for el in matches)
+            # data-testid selectors are high-precision, so accept shorter regions.
+            min_len = 50 if "data-testid" in selector else 300
+            if combined_text_len < min_len or combined_text_len <= best_text_len:
+                continue
+            best_text_len = combined_text_len
+            best_html = (
+                str(matches[0])
+                if len(matches) == 1
+                else "<div>" + "".join(str(el) for el in matches) + "</div>"
+            )
+
+        if best_html is not None:
+            content_root: Any = BeautifulSoup(best_html, "html.parser")
+        else:
+            content_root = soup.body or soup
         cleaned = BeautifulSoup(str(content_root), "html.parser")
 
         # Remove elements that almost never contain legal body text.
@@ -2148,18 +2288,36 @@ class ClauseaCrawler:
 
         return domain_lower
 
+    @staticmethod
+    def _strip_tracking_params(query: str) -> str:
+        """Drop pure-tracking query params, preserving order of the rest.
+
+        Only unambiguous trackers (``_TRACKING_QUERY_PARAMS`` plus any ``utm_*``)
+        are removed — content-bearing params (language, nodeId, id, page, …) are
+        always kept, since collapsing those could merge genuinely distinct
+        documents (e.g. regional terms served by language).
+        """
+        if not query:
+            return query
+        kept = [
+            (key, value)
+            for key, value in parse_qsl(query, keep_blank_values=True)
+            if not (key.lower().startswith("utm_") or key.lower() in _TRACKING_QUERY_PARAMS)
+        ]
+        return urlencode(kept)
+
     def normalize_url(self, url: str) -> str:
-        """Normalize URL by removing fragments and unnecessary query params."""
+        """Normalize URL by removing fragments and tracking query params."""
         parsed = self._parse_url(url)
 
-        # Remove fragment
+        # Remove fragment and strip pure-tracking query params
         normalized = urlunparse(
             (
                 parsed.scheme,
                 parsed.netloc,
                 parsed.path,
                 parsed.params,
-                parsed.query,
+                self._strip_tracking_params(parsed.query),
                 "",  # Remove fragment
             )
         )
@@ -2210,6 +2368,24 @@ class ClauseaCrawler:
             logger.debug(f"Failed to process canonical URL {candidate}: {e}")
 
         return self.normalize_url(url)
+
+    @staticmethod
+    def _decode_sitemap_bytes(raw: bytes, url: str) -> str:
+        """Decode a sitemap response body, transparently inflating gzip.
+
+        Sitemap indexes are frequently served as gzip *files* (``.xml.gz``).
+        Unlike ``Content-Encoding: gzip`` transfer compression, aiohttp does not
+        inflate a gzip file body, so a plain ``.text()`` decode raises
+        ``'utf-8' codec can't decode byte 0x8b`` (the gzip magic header). Detect
+        the gzip header (or a ``.gz`` suffix) and decompress before decoding.
+        """
+        if raw[:2] == b"\x1f\x8b" or url.lower().endswith(".gz"):
+            try:
+                raw = gzip.decompress(raw)
+            except (OSError, EOFError) as exc:
+                logger.debug(f"Failed to gunzip sitemap {url}: {exc}")
+                return ""
+        return raw.decode("utf-8", errors="replace")
 
     def _parse_sitemap_xml(self, content: str) -> list[str]:
         """Parse XML sitemap content and extract URLs.
@@ -2308,7 +2484,8 @@ class ClauseaCrawler:
                 async with session.get(sitemap_url, headers=headers) as resp:
                     if resp.status != 200:
                         return []
-                    return self._parse_sitemap_xml(await resp.text())
+                    body = self._decode_sitemap_bytes(await resp.read(), sitemap_url)
+                    return self._parse_sitemap_xml(body) if body else []
             except Exception as e:
                 logger.debug(f"Failed to fetch sitemap {sitemap_url}: {e}")
                 return []
@@ -2321,7 +2498,7 @@ class ClauseaCrawler:
             # Separate sitemap-index entries from regular page URLs
             child_sitemaps: list[str] = []
             for url in urls:
-                if "sitemap" in url.lower() and url.endswith(".xml"):
+                if "sitemap" in url.lower() and url.lower().endswith((".xml", ".xml.gz")):
                     child_sitemaps.append(url)
                 elif url not in seen_urls:
                     seen_urls.add(url)
@@ -2796,7 +2973,10 @@ class ClauseaCrawler:
                     logger.info(f"🔄 Static content {reason}, trying browser: {effective_url}")
                     # Limit concurrent renders — all share one Camoufox instance, and too
                     # many simultaneous JS-heavy navigations starve each other into timeouts.
+                    slot_wait_start = time.monotonic()
                     async with self._browser_render_slot():
+                        self._render_slot_wait_total += time.monotonic() - slot_wait_start
+                        self._render_attempts += 1
                         browser_page = await self._browser_fetch(effective_url)
                     if browser_page is not None and self._content_is_sufficient(
                         browser_page, effective_url
@@ -2807,7 +2987,22 @@ class ClauseaCrawler:
                         if browser_resolved and browser_resolved != effective_url:
                             effective_url = browser_resolved
                             self.visited_urls.add(self.normalize_url(effective_url))
+                        if self._in_render_retry:
+                            self._render_recovered += 1
                         return self._build_crawl_result(effective_url, browser_page)
+
+                    if browser_page is None:
+                        # The render itself produced no page — almost always a
+                        # navigation/starvation timeout, not a genuinely empty page.
+                        # Defer for a serial retry at the end of the crawl rather than
+                        # dropping a policy-relevant page (recall over speed).
+                        self._render_failures += 1
+                        if not self._in_render_retry:
+                            self._render_retry_queue.append(effective_url)
+                            logger.info(
+                                f"⏳ Render failed, deferring for serial retry: {effective_url}"
+                            )
+
                     # Policy-relevant but neither static nor browser produced usable content.
                     logger.warning(
                         f"⚠️ Browser render did not yield usable content: {effective_url}"
@@ -2964,7 +3159,10 @@ class ClauseaCrawler:
         parsed = urlparse(base_url)
         domain = parsed.netloc
 
-        # Common policy document paths
+        # Common policy document paths. Kept comprehensive on purpose: speculative
+        # probing only runs as a last resort (no sitemap seeds AND no policy links on
+        # the seed page), and the crawler favours recall over speed — a missed policy
+        # document is far worse than a few extra 404 probes.
         legal_paths = [
             "/legal",
             "/legal/privacy",
@@ -3020,6 +3218,9 @@ class ClauseaCrawler:
             "/policy/community",
             "/policy/safety",
             "/policy/copyright",
+            "/trust",
+            "/trust/legal",
+            "/trust/privacy",
         ]
 
         # Hub / listing / index pages common on knowledge-base platforms
@@ -3172,6 +3373,10 @@ class ClauseaCrawler:
         # Track URLs explicitly skipped due to rel='nofollow' so generated potential
         # policy URLs that match them are not redundantly added.
         skipped_urls: set[str] = set()
+        # Whether this page surfaces at least one policy-relevant link. When the seed
+        # page (depth 0) does, link-following will reach the real policy pages, so the
+        # speculative-probe fallback below is unnecessary and skipped.
+        policy_lead_found = False
         for link in links:
             url = link["url"]
             anchor_text = link.get("text")
@@ -3188,8 +3393,16 @@ class ClauseaCrawler:
 
             # Compute the anchor-aware relevance score once (cheap, lru-cached) for all
             # strategies and remember it so the browser-fetch gate can honour it later.
-            score = self.url_scorer.score_url(url, anchor_text=anchor_text) + parent_boost
+            # A parent policy-hub boost must NOT revive a hard-excluded section
+            # (templates/galleries score 0 by design) — otherwise those pages get
+            # queued and burn an expensive browser render. See is_non_policy_section.
+            base_score = self.url_scorer.score_url(url, anchor_text=anchor_text)
+            score = base_score
+            if parent_boost and not self.url_scorer.is_non_policy_section(url):
+                score += parent_boost
             self._remember_score(url, score)
+            if score >= self.min_legal_score:
+                policy_lead_found = True
 
             self.queued_urls.add(url)
             if self.strategy == "bfs":
@@ -3210,14 +3423,18 @@ class ClauseaCrawler:
                     f"Added to Best-First queue: {url} (score: {score:.2f}, anchor: {anchor_text})"
                 )
 
-        # Fallback: if sitemaps didn't provide seeds, speculatively probe
-        # common policy paths from the starting page.  When sitemaps DID
-        # provide seeds we skip this — the sitemap already tells us what
-        # pages exist, so blind probing would only waste requests.
-        if depth == 0 and not self._sitemap_seeded:
+        # Fallback: speculatively probe common policy paths from the starting page —
+        # but ONLY as a last resort. We skip it when sitemaps already seeded policy
+        # URLs, OR when the seed page itself links to a policy page (link-following
+        # will reach it). Blind probing mostly 404s and burns rate-limit budget, so
+        # it's reserved for sites that expose no policy leads at all.
+        if depth == 0 and not self._sitemap_seeded and policy_lead_found:
+            logger.info("🔗 Seed page links to policy pages — skipping speculative probing")
+        elif depth == 0 and not self._sitemap_seeded:
             potential_legal_urls = self.generate_potential_policy_urls(base_url)
             logger.info(
-                f"🔍 No sitemap seeds — probing {len(potential_legal_urls)} potential policy URLs"
+                f"🔍 No sitemap seeds and no policy links on seed page — "
+                f"probing {len(potential_legal_urls)} potential policy URLs"
             )
 
             for url in potential_legal_urls:
@@ -3261,6 +3478,71 @@ class ClauseaCrawler:
             _, url, depth = heapq.heappop(self.url_priority_queue)
             return url, depth
         return None
+
+    def _report_crawl_progress(self, *, force: bool = False) -> None:
+        """Emit a crawl progress update to the callback.
+
+        Reports when at least ``PROGRESS_REPORT_INTERVAL`` URLs have been
+        processed since the last report, or whenever ``force`` is set (used for
+        the final update so the UI lands on the true total even if the last
+        batch didn't cross the threshold).
+
+        Uses a threshold crossing (``>=``) rather than ``total_urls % N == 0``
+        because URLs are processed in concurrent batches: ``total_urls`` jumps
+        by the batch size each iteration and would routinely skip an exact
+        multiple, freezing the reported progress mid-crawl.
+        """
+        if not self.progress_callback:
+            return
+
+        # Cadence is driven by processed URLs so we report regularly even during a
+        # burst of speculative 404 probes — but the value we REPORT is successfully
+        # fetched pages (crawled_urls). total_urls is inflated by those probes, so
+        # reporting it would massively overstate real progress.
+        processed = self.stats.total_urls
+        if not force and processed - self._last_progress_report < self.PROGRESS_REPORT_INTERVAL:
+            return
+
+        self._last_progress_report = processed
+        pending = self._get_pending_url_count()
+        total_known = min(self.max_pages, len(self.visited_urls) + pending)
+
+        logger.info(
+            f"📊 Progress: {processed} processed, "
+            f"{self.stats.crawled_urls} successful, "
+            f"{self.stats.crawl_rate:.1f} pages/sec"
+        )
+        self.progress_callback(self.stats.crawled_urls, total_known)
+
+    async def _drain_render_retries(self, session: aiohttp.ClientSession) -> None:
+        """Serially re-attempt renders that failed during the concurrent crawl.
+
+        A failed render usually means a starvation/navigation timeout, not a
+        genuinely empty page. Re-running one-at-a-time (no concurrency contention)
+        recovers most of them, so a policy-relevant page is never dropped just
+        because it lost the render race. Each URL is retried at most once.
+        """
+        if not self._render_retry_queue:
+            return
+
+        pending = list(dict.fromkeys(self._render_retry_queue))  # dedup, keep order
+        self._render_retry_queue = []
+        logger.info(f"🔁 Serially retrying {len(pending)} failed render(s)")
+
+        self._in_render_retry = True
+        try:
+            for url in pending:
+                result = await self.fetch_page(session, url)
+                if result.success:
+                    self.stats.crawled_urls += 1
+                    self.stats.failed_urls = max(0, self.stats.failed_urls - 1)
+                    self.failed_urls.discard(url)
+                    self.results.append(result)
+                    logger.info(f"✅ Recovered on serial retry: {url}")
+                else:
+                    logger.warning(f"❌ Still failed after serial retry: {url}")
+        finally:
+            self._in_render_retry = False
 
     def _get_pending_url_count(self) -> int:
         """Return the number of URLs waiting in the active queue/stack."""
@@ -3407,24 +3689,25 @@ class ClauseaCrawler:
                             self.failed_urls.add(url)
                             logger.warning(f"❌ Failed: {url} - {result.error_message}")
 
-                    # Progress update
-                    if self.stats.total_urls % 10 == 0:
-                        logger.info(
-                            f"📊 Progress: {self.stats.total_urls} processed, "
-                            f"{self.stats.crawled_urls} successful, "
-                            f"{self.stats.crawl_rate:.1f} pages/sec"
-                        )
-                        if self.progress_callback:
-                            pending = self._get_pending_url_count()
-                            total_known = min(self.max_pages, len(self.visited_urls) + pending)
-                            self.progress_callback(self.stats.total_urls, total_known)
+                    # Progress update — emitted on a threshold crossing so it
+                    # survives batched jumps in total_urls (see helper docstring).
+                    self._report_crawl_progress()
 
-                # Ensure the UI gets a final progress update even if we finish
-                # before hitting the next modulo threshold.
-                if self.progress_callback:
-                    pending = self._get_pending_url_count()
-                    total_known = min(self.max_pages, len(self.visited_urls) + pending)
-                    self.progress_callback(self.stats.total_urls, total_known)
+                # Ensure the UI gets a final progress update even if the last
+                # batch didn't cross the reporting threshold.
+                self._report_crawl_progress(force=True)
+
+                # Recover any policy-relevant pages whose render failed under load.
+                await self._drain_render_retries(session)
+
+            # Render instrumentation — data for future concurrency/pooling decisions.
+            if self._render_attempts:
+                logger.info(
+                    f"🧭 Render stats: {self._render_attempts} attempts, "
+                    f"{self._render_failures} failed, {self._render_recovered} recovered on "
+                    f"serial retry, {self._render_slot_wait_total:.1f}s total spent waiting for "
+                    f"a render slot"
+                )
 
             # Final statistics
             logger.info("🎉 Crawl completed!")

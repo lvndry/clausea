@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from typing import Any, Literal, get_args
 
@@ -11,6 +12,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 TierRelevance = Literal["core", "extended"]
 
@@ -47,6 +50,15 @@ class EvidenceSpan(BaseModel):
     end_char: int | None = None
     section_title: str | None = None
     verified: bool = True
+
+    @model_validator(mode="after")
+    def _verified_requires_offsets(self) -> "EvidenceSpan":
+        # A quote is only "verified" — i.e. citable, highlightable, "show me where
+        # it says that" — when we resolved real character offsets. Fuzzy/normalized
+        # matches without offsets must not wear a verified badge.
+        if self.start_char is None or self.end_char is None:
+            self.verified = False
+        return self
 
 
 class ExtractedTextItem(BaseModel):
@@ -538,6 +550,221 @@ class MetaSummary(BaseModel):
         return cleaned if cleaned else None
 
 
+# ---------------------------------------------------------------------------
+# Consumer TOS-Explainer (plain-English, second-person output for end users)
+#
+# This is the consumer-facing companion to DocumentAnalysis. Where
+# DocumentAnalysis scores a document for operators, ConsumerExplainer turns the
+# same gated extraction + analysis into plain English a non-lawyer reads.
+#
+# These models are populated by free/weak LLMs (the FREE-FIRST cascade), so
+# every enum is coerced leniently rather than enforced with strict Literals:
+# an unknown value is logged and defaulted instead of discarding the whole
+# finding. This mirrors the enum-drift coercion in extraction_service.py.
+# ---------------------------------------------------------------------------
+
+# Plain string + lenient coercion, NOT a strict Literal. Weak models drift
+# ("severe", "warning", "critical!"); a strict Literal would reject the entire
+# parse. We coerce to the nearest valid bucket and log the drift.
+ConsumerSeverity = str
+ConsumerGrade = str
+
+_VALID_CONSUMER_SEVERITIES: frozenset[str] = frozenset({"critical", "high", "medium", "low"})
+_VALID_CONSUMER_GRADES: frozenset[str] = frozenset({"A", "B", "C", "D", "E"})
+_VALID_QUOTE_STATUSES: frozenset[str] = frozenset({"from_extraction", "none"})
+_VALID_CONFIDENCE_LEVELS: frozenset[str] = frozenset({"high", "medium", "low"})
+
+
+def _coerce_consumer_severity(value: Any, default: str = "medium") -> str:
+    """Coerce a model-emitted severity to one of critical/high/medium/low."""
+    if not isinstance(value, str):
+        logger.warning(
+            "ConsumerExplainer: non-string severity %r, defaulting to %s", value, default
+        )
+        return default
+    candidate = value.strip().lower()
+    if candidate in _VALID_CONSUMER_SEVERITIES:
+        return candidate
+    # Common drift synonyms map to the nearest bucket.
+    synonyms = {
+        "severe": "critical",
+        "blocker": "critical",
+        "dangerous": "critical",
+        "major": "high",
+        "warning": "high",
+        "moderate": "medium",
+        "minor": "low",
+        "info": "low",
+        "informational": "low",
+    }
+    if candidate in synonyms:
+        return synonyms[candidate]
+    logger.warning("ConsumerExplainer: unknown severity %r, defaulting to %s", value, default)
+    return default
+
+
+class ActionStep(BaseModel):
+    """A concrete thing the reader can do, with who it applies to.
+
+    Maps onto the finalized Prompt 2 ``what_you_can_do[]`` item.
+    """
+
+    action: str
+    applies_to: str = "Everyone"
+
+
+class ConsumerCase(BaseModel):
+    """A single consumer-facing finding (a risk, a recipient, or a data item).
+
+    One model backs the three finalized worst-first lists (``watch_out_for``,
+    ``who_gets_your_data``, ``what_they_collect``) so the validator can treat
+    every finding uniformly when re-citing quotes and recounting criticals.
+
+    ``means_for_you`` is the load-bearing consumer field: the direct real-world
+    consequence, not the capability. ``quote`` is copied from an extraction
+    evidence quote and is set to None (with ``quote_status="none"``) by the
+    server-side validator whenever it is not a verbatim substring of the
+    extraction — the finding is kept but de-cited, never dropped.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str = Field(
+        validation_alias=AliasChoices("title", "who", "data"),
+        description="Short plain label (or the recipient/data name for the typed lists).",
+    )
+    means_for_you: str = ""
+    severity: ConsumerSeverity = "medium"
+    classification: str | None = None
+    # Typed extras kept optional so one model serves all three lists.
+    what_they_get: str | None = None  # who_gets_your_data
+    why: str | None = None  # what_they_collect (purpose)
+    quote: str | None = None
+    quote_status: str = "none"
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _coerce_severity(cls, value: Any) -> str:
+        return _coerce_consumer_severity(value)
+
+    @field_validator("quote_status", mode="before")
+    @classmethod
+    def _coerce_quote_status(cls, value: Any) -> str:
+        if isinstance(value, str) and value.strip().lower() in _VALID_QUOTE_STATUSES:
+            return value.strip().lower()
+        return "none"
+
+
+class ConsumerDataItem(ConsumerCase):
+    """A data-collection finding for ``what_they_collect[]``.
+
+    v1 DESCOPE: the finalized roll-up references richer fields (linkage_tier,
+    a ``sold`` flag) that are NOT present in the current DocumentExtraction
+    schema. Per the build brief we ship ONLY fields derivable from real
+    extraction data (the data name via ``title``, purpose via ``why``, the
+    consequence, severity, and the evidence quote). The deferred fields are
+    intentionally omitted rather than shipped unpopulated.
+
+    TODO(consumer-explainer-v2): add ``linkage_tier`` and ``sold`` once the
+    extraction schema carries identity-linkage and data-sale signals.
+    """
+
+
+class ConsumerSilentTopic(BaseModel):
+    """A topic a reader expects but the evidence does not cover (``silent_on[]``)."""
+
+    topic: str
+    why_it_matters: str = ""
+
+
+class ConsumerContradiction(BaseModel):
+    """A cross-document conflict for the product roll-up (``conflicts[]``)."""
+
+    topic: str
+    what_one_doc_says: str = ""
+    what_another_says: str = ""
+    assume: str = ""
+
+
+class ConsumerRegionVerdict(BaseModel):
+    """Per-region rights summary for the product roll-up (``rights_by_region[]``)."""
+
+    region: str
+    you_can: list[str] = Field(default_factory=list)
+    you_cannot: list[str] = Field(default_factory=list)
+
+
+class ConsumerExplainer(BaseModel):
+    """Plain-English explainer of ONE document (or a product roll-up) for end users.
+
+    Field names follow the finalized "PROMPT 2 — Consumer per-document
+    explainer" schema verbatim. Lists are worst-first. The grade is advisory as
+    emitted by the model and is re-clamped server-side from
+    ``critical_findings_count`` by the validator in analyser.py.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_product_rollup: bool = False
+
+    headline: str = ""
+    tl_dr: str = Field(default="", validation_alias=AliasChoices("tl_dr", "bottom_line"))
+    grade: ConsumerGrade = "C"
+    grade_reason: str = ""
+    critical_findings_count: int = 0
+    confidence: str = "medium"
+    region: str | None = None
+
+    # Worst-first finding lists (per-document).
+    watch_out_for: list[ConsumerCase] = Field(default_factory=list)
+    who_gets_your_data: list[ConsumerCase] = Field(default_factory=list)
+    what_they_collect: list[ConsumerDataItem] = Field(default_factory=list)
+    good_to_know: list[str] = Field(default_factory=list)
+    silent_on: list[ConsumerSilentTopic] = Field(default_factory=list)
+    what_you_can_do: list[ActionStep] = Field(default_factory=list)
+
+    # Product roll-up extras (only populated when is_product_rollup is True).
+    the_deal: str | None = None
+    contradictions: list[ConsumerContradiction] = Field(default_factory=list)
+    region_verdicts: list[ConsumerRegionVerdict] = Field(default_factory=list)
+
+    @field_validator("grade", mode="before")
+    @classmethod
+    def _coerce_grade(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            logger.warning("ConsumerExplainer: non-string grade %r, defaulting to C", value)
+            return "C"
+        candidate = value.strip().upper()[:1]
+        if candidate in _VALID_CONSUMER_GRADES:
+            return candidate
+        logger.warning("ConsumerExplainer: unknown grade %r, defaulting to C", value)
+        return "C"
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, value: Any) -> str:
+        if isinstance(value, str) and value.strip().lower() in _VALID_CONFIDENCE_LEVELS:
+            return value.strip().lower()
+        return "medium"
+
+    @field_validator("critical_findings_count", mode="before")
+    @classmethod
+    def _coerce_count(cls, value: Any) -> int:
+        try:
+            return max(0, int(value))
+        except (ValueError, TypeError):
+            return 0
+
+    @field_validator("good_to_know", mode="before")
+    @classmethod
+    def _coerce_good_to_know(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if item is not None]
+
+
 DocType = Literal[
     "privacy_policy",
     "terms_of_service",
@@ -740,22 +967,27 @@ class ProductAnalysis(BaseModel):
 class CriticalClause(BaseModel):
     """Analysis of a critical clause in a document."""
 
-    clause_type: Literal[
-        "data_collection",
-        "data_sharing",
-        "user_rights",
-        "liability",
-        "indemnification",
-        "retention",
-        "deletion",
-        "security",
-        "breach_notification",
-        "dispute_resolution",
-        "governing_law",
-    ]
+    # Free-form: the LLM produces specific, high-signal types (e.g. "arbitration_clause",
+    # "liability_cap", "ai_training_rights") that a fixed enum can't anticipate. A rigid
+    # Literal here rejected the entire DocumentAnalysis on any unlisted value; keeping the
+    # specific string preserves the signal (arbitration/biometric/etc. drive consumer risk).
+    clause_type: str
     section_title: str | None = None
     quote: str  # Exact text from document
-    risk_level: Literal["low", "medium", "high", "critical"]
+    risk_level: Literal["low", "medium", "high", "critical"] = "medium"
+
+    @field_validator("risk_level", mode="before")
+    @classmethod
+    def _coerce_risk_level(cls, value: object) -> str:
+        mapping = {"severe": "critical", "moderate": "medium", "minor": "low", "none": "low"}
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"low", "medium", "high", "critical"}:
+                return normalized
+            if normalized in mapping:
+                return mapping[normalized]
+        return "medium"
+
     plain_english: str = ""  # What this means to a non-lawyer
     why_notable: str = ""  # Why this clause is significant
     # Legacy alias — kept for backward compatibility, maps to plain_english
@@ -1181,6 +1413,7 @@ class Document(BaseModel):
     versions: list[dict[str, Any]] = Field(default_factory=list)
     analysis: DocumentAnalysis | None = None
     extraction: DocumentExtraction | None = None
+    consumer_explainer: ConsumerExplainer | None = None
     locale: str | None = None
     regions: list[Region] = Field(default_factory=list)
     effective_date: datetime | None = None

@@ -35,7 +35,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: Ensure database indexes are created
     async with db_session() as db:
         await ensure_all_indexes(db)
+        # Reap orphaned jobs first (frees the active slot), THEN build the partial
+        # unique index that enforces at-most-one active job per product.
         await PipelineRepository().mark_stale_as_failed(db)
+        await PipelineRepository().ensure_indexes(db)
 
     yield
 

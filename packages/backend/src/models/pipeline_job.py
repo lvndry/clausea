@@ -13,7 +13,21 @@ PipelineJobStatus = Literal[
     "generating_overview",
     "completed",
     "failed",
+    "no_documents",
 ]
+
+# Statuses a job can never leave. A job in any of these is "done" and must not be
+# treated as active, reused, or retriggered automatically:
+#   - completed:    ran to the end, overview generated
+#   - no_documents: crawl ran to completion but found 0 policy documents (a valid,
+#                   deterministic result — retrying yields the same outcome)
+#   - failed:       interrupted (orphaned/timeout) or errored — eligible for a
+#                   user-initiated retry, but never auto-retriggered
+TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
+    "completed",
+    "failed",
+    "no_documents",
+)
 
 CrawlErrorType = Literal[
     "robots_txt_blocked",
@@ -97,6 +111,10 @@ class PipelineJob(BaseModel):
     product_name: str
     url: str
     status: PipelineJobStatus = "pending"
+    # Discriminator backing the partial unique index that enforces at-most-one active
+    # job per product. Kept in sync with `status` by PipelineRepository on every write
+    # (assignment to `status` does not re-derive it, so the repo is the source of truth).
+    active: bool = True
     steps: list[PipelineStep] = Field(
         default_factory=lambda: [
             PipelineStep(name="crawling"),

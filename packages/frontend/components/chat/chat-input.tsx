@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Paperclip, Send } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
 
 import * as React from "react";
 
@@ -40,17 +40,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   }, [input]);
 
   return (
-    <div className="relative flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
-        disabled={disabled}
-      >
-        <Paperclip className="h-5 w-5" />
-        <span className="sr-only">Attach file</span>
-      </Button>
-
+    <div className="relative flex items-end gap-2 rounded-lg border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring">
       <Textarea
         ref={textareaRef}
         value={input}

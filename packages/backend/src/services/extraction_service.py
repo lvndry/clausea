@@ -25,9 +25,9 @@ import hashlib
 import json
 import re
 from datetime import datetime
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from src.core.logging import get_logger
 from src.llm import (
@@ -62,11 +62,19 @@ from src.utils.cancellation import CancellationToken
 
 logger = get_logger(__name__)
 
-_EXTRACTION_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+# FREE-FIRST cascade. Extraction is the biggest token sink (4 parallel cluster calls per
+# chunk), so leading with the free tiers saves the most; a 429/failure auto-falls-through
+# to the cheap paid tail (cross-provider for resilience).
+_EXTRACTION_RESILIENCE: list[SupportedModel] = [
+    "openrouter/gpt-oss-120b-nitro",
+    "openrouter/deepseek-v4-flash",
+]
 _EXTRACTION_PRIMARY: list[SupportedModel] = [
-    "openrouter/gpt-oss-120b-nitro"
+    "gemini-2.5-flash",  # slot 1: Google free tier (native)
+    "openrouter/kimi-k2.6-free",  # slot 2: OpenRouter free
+    "openrouter/gemma-free",  # slot 3: OpenRouter free
 ] + _EXTRACTION_RESILIENCE
-_EXTRACTION_ESCALATION: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
+_EXTRACTION_ESCALATION: list[SupportedModel] = _EXTRACTION_RESILIENCE
 
 _COMPLEX_DOC_LENGTH_THRESHOLD: int = 50_000
 _COMPLEX_DOC_TYPES: frozenset[str] = frozenset(
@@ -182,19 +190,55 @@ def _chunk_text(text: str, *, chunk_size: int = 8000, overlap: int = 800) -> lis
     return final_chunks
 
 
+def _coerce_bool(value: object) -> bool:
+    """Lenient bool for LLM cluster output. Cheaper/free models emit strings like
+    "yes"/"required"/"unclear" where the schema expects a bool; pydantic's default
+    bool coercion rejects those, which previously dropped the whole cluster's data.
+    Map the common representations; unknown/None -> False (the conservative default).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"true", "yes", "y", "required", "1"}:
+            return True
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return value != 0
+    return False
+
+
+LenientBool = Annotated[bool, BeforeValidator(_coerce_bool)]
+
+
 def _collapse_ws(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def _normalize_quotes(s: str) -> str:
-    return (
-        s.replace("\u201c", '"')
-        .replace("\u201d", '"')
-        .replace("\u2018", "'")
-        .replace("\u2019", "'")
-        .replace("\u2013", "-")
-        .replace("\u2014", "-")
-    )
+def _flexible_quote_regex(quote: str) -> re.Pattern[str] | None:
+    """Compile a regex matching ``quote`` in the ORIGINAL text while tolerating
+    whitespace runs and smart-quote/dash variants \u2014 so a hit yields REAL offsets.
+
+    This replaces the old collapse/normalize "in" checks, which confirmed presence
+    but returned no offsets (and so could not back a "show me where it says that" UI).
+    """
+    tokens = [token for token in re.split(r"\s+", quote.strip()) if token]
+    if not tokens:
+        return None
+
+    def char_class(ch: str) -> str:
+        if ch in "'\u2018\u2019`":
+            return r"['\u2018\u2019`]"
+        if ch in '"\u201c\u201d':
+            return r"[\"\u201c\u201d]"
+        if ch in "-\u2013\u2014":
+            return r"[-\u2013\u2014]"
+        return re.escape(ch)
+
+    body = r"\s+".join("".join(char_class(ch) for ch in token) for token in tokens)
+    try:
+        return re.compile(body)
+    except re.error:
+        return None
 
 
 def _resolve_quote_offsets(haystack: str, quote: str) -> tuple[int | None, int | None, bool]:
@@ -205,24 +249,24 @@ def _resolve_quote_offsets(haystack: str, quote: str) -> tuple[int | None, int |
     if idx != -1:
         return idx, idx + len(quote), True
 
-    collapsed_h = _collapse_ws(haystack)
-    collapsed_q = _collapse_ws(quote)
-    if collapsed_q and collapsed_q in collapsed_h:
-        return None, None, True
+    # Whitespace- and smart-quote-tolerant match against the ORIGINAL text. A hit
+    # yields real offsets, so a "verified" span always backs a usable highlight.
+    pattern = _flexible_quote_regex(quote)
+    if pattern is not None:
+        match = pattern.search(haystack)
+        if match is not None:
+            return match.start(), match.end(), True
 
-    norm_h = _normalize_quotes(collapsed_h)
-    norm_q = _normalize_quotes(collapsed_q)
-    if norm_q and norm_q in norm_h:
-        return None, None, True
-
+    # Fuzzy fragment match confirms the gist is present but NOT a byte-exact span:
+    # report it unverified with no offsets rather than a false "verified" badge.
     if len(quote) >= 40:
+        collapsed_h = _collapse_ws(haystack)
         target = _collapse_ws(quote)
         window = len(target) * 3 // 4
         if window >= 30:
             for i in range(len(target) - window + 1):
-                fragment = target[i : i + window]
-                if fragment in collapsed_h:
-                    return None, None, True
+                if target[i : i + window] in collapsed_h:
+                    return None, None, False
 
     return None, None, False
 
@@ -276,7 +320,7 @@ class _CookieTracker(BaseModel):
     name_or_type: str
     category: str = "other"
     duration: str | None = None
-    third_party: bool = False
+    third_party: LenientBool = False
     opt_out_mechanism: str | None = None
     quote: str
 
@@ -329,7 +373,7 @@ class _AIUsage(BaseModel):
 
 class _ChildrenPolicy(BaseModel):
     minimum_age: int | None = None
-    parental_consent_required: bool = False
+    parental_consent_required: LenientBool = False
     special_protections: str | None = None
     quote: str | None = None
 
@@ -338,14 +382,14 @@ class _Liability(BaseModel):
     scope: str
     limitation_type: str
     description: str
-    extends_beyond_product: bool = False
+    extends_beyond_product: LenientBool = False
     quote: str
 
 
 class _DisputeResolution(BaseModel):
     mechanism: str
-    class_action_waiver: bool = False
-    jury_trial_waiver: bool = False
+    class_action_waiver: LenientBool = False
+    jury_trial_waiver: LenientBool = False
     venue: str | None = None
     governing_law: str | None = None
     description: str | None = None

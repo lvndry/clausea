@@ -1,10 +1,8 @@
 "use client";
 
-import { Eye, Info, Layers, Share2, SlidersHorizontal } from "lucide-react";
+import { Eye, Layers, Share2, ShieldAlert, SlidersHorizontal } from "lucide-react";
 
-import { useState } from "react";
-
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { gradeToneStyle, gradeToneWord, scoreToGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
 
 interface DetailedScore {
@@ -29,87 +27,41 @@ const scoreConfig = {
     label: "Transparency",
     description: "How clearly they explain their practices",
     icon: Eye,
-    color: "blue",
   },
   data_collection_scope: {
     label: "Data Collection",
     description: "How much data they collect",
     icon: Layers,
-    color: "purple",
   },
   user_control: {
     label: "User Control",
     description: "How much control you have over your data",
     icon: SlidersHorizontal,
-    color: "emerald",
   },
   third_party_sharing: {
     label: "Third-Party Sharing",
     description: "How widely they share your data",
     icon: Share2,
-    color: "orange",
   },
 } as const;
-
-const colorClasses = {
-  blue: {
-    bg: "bg-blue-100 dark:bg-blue-900/30",
-    text: "text-blue-600 dark:text-blue-400",
-    bar: "bg-blue-500",
-    barBg: "bg-blue-100 dark:bg-blue-900/30",
-  },
-  purple: {
-    bg: "bg-purple-100 dark:bg-purple-900/30",
-    text: "text-purple-600 dark:text-purple-400",
-    bar: "bg-purple-500",
-    barBg: "bg-purple-100 dark:bg-purple-900/30",
-  },
-  emerald: {
-    bg: "bg-emerald-100 dark:bg-emerald-900/30",
-    text: "text-emerald-600 dark:text-emerald-400",
-    bar: "bg-emerald-500",
-    barBg: "bg-emerald-100 dark:bg-emerald-900/30",
-  },
-  orange: {
-    bg: "bg-orange-100 dark:bg-orange-900/30",
-    text: "text-orange-600 dark:text-orange-400",
-    bar: "bg-orange-500",
-    barBg: "bg-orange-100 dark:bg-orange-900/30",
-  },
-} as const;
-
-function getScoreLabel(score: number): {
-  label: string;
-  color: string;
-  bg: string;
-} {
-  if (score >= 8)
-    return { label: "STRONG", color: "text-[#2B7A5C]", bg: "bg-[#2B7A5C]/5" };
-  if (score >= 6)
-    return { label: "GOOD", color: "text-[#2B7A5C]", bg: "bg-[#2B7A5C]/5" };
-  if (score >= 4)
-    return { label: "FAIR", color: "text-[#B58D2D]", bg: "bg-[#B58D2D]/5" };
-  if (score >= 2)
-    return { label: "WEAK", color: "text-[#BD452D]", bg: "bg-[#BD452D]/5" };
-  return { label: "POOR", color: "text-[#BD452D]", bg: "bg-[#BD452D]/5" };
-}
 
 export function ScoreBreakdown({
   detailedScores,
   riskScore,
 }: ScoreBreakdownProps) {
-  const [expandedScore, setExpandedScore] = useState<string | null>(null);
-
-  const scores = Object.entries(scoreConfig).map(([key, config]) => {
-    const score = detailedScores[key as keyof DetailedScores];
+  const dimensions = Object.entries(scoreConfig).map(([key, config]) => {
+    const detail = detailedScores[key as keyof DetailedScores];
     return {
       key,
       ...config,
-      score: score.score,
-      justification: score.justification,
-      colors: colorClasses[config.color],
+      score: detail.score,
+      justification: detail.justification,
+      grade: scoreToGrade(detail.score),
     };
   });
+
+  const riskGrade = scoreToGrade(riskScore, { invert: true });
+  const riskStyle = gradeToneStyle(riskGrade.tone);
 
   return (
     <div className="border border-border bg-background">
@@ -123,20 +75,34 @@ export function ScoreBreakdown({
             Dimension Breakdown
           </h3>
         </div>
+        <div className="flex items-center gap-3">
+          <ShieldAlert
+            className={cn("h-4 w-4", riskStyle.color)}
+            strokeWidth={1.5}
+          />
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            Overall Risk
+          </span>
+          <div
+            className={cn(
+              "px-2.5 py-1 border font-display font-medium text-base leading-none",
+              riskStyle.color,
+              riskStyle.bg,
+              riskStyle.border,
+            )}
+          >
+            {riskGrade.letter}
+          </div>
+        </div>
       </div>
 
       <div className="divide-y divide-border">
-        {scores.map((item) => {
-          const scoreInfo = getScoreLabel(item.score);
-          const isExpanded = expandedScore === item.key;
+        {dimensions.map((item) => {
+          const style = gradeToneStyle(item.grade.tone);
 
           return (
-            <div key={item.key} className="group">
-              <button
-                type="button"
-                onClick={() => setExpandedScore(isExpanded ? null : item.key)}
-                className="w-full text-left p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-muted/5 transition-colors"
-              >
+            <div key={item.key} className="p-6 space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div className="flex-1 space-y-1">
                   <div className="flex items-center gap-3">
                     <span className="font-display font-medium text-xl text-foreground">
@@ -144,12 +110,13 @@ export function ScoreBreakdown({
                     </span>
                     <div
                       className={cn(
-                        "px-2 py-0.5 text-[8px] font-bold tracking-tighter border",
-                        scoreInfo.color,
-                        scoreInfo.bg,
+                        "px-2 py-0.5 text-[8px] font-bold uppercase tracking-tighter border",
+                        style.color,
+                        style.bg,
+                        style.border,
                       )}
                     >
-                      {scoreInfo.label}
+                      {gradeToneWord(item.grade.tone)}
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground max-w-md">
@@ -157,39 +124,35 @@ export function ScoreBreakdown({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-8 md:w-64">
-                  {/* Minimal progress bar */}
+                <div className="flex items-center gap-8 md:w-56">
                   <div className="flex-1 h-px bg-border relative">
                     <div
                       className={cn(
-                        "absolute top-1/2 -translate-y-1/2 h-1.5 w-1.5 border border-border transition-all duration-500",
-                        scoreInfo.bg,
+                        "absolute top-1/2 -translate-y-1/2 h-1.5 w-1.5 border transition-all duration-500",
+                        style.bg,
+                        style.border,
                       )}
                       style={{ left: `${item.score * 10}%` }}
                     />
                   </div>
-                  <div className="flex items-baseline gap-1 w-12 justify-end">
-                    <span className="text-lg font-display font-medium text-foreground">
-                      {item.score}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
-                      /10
+                  <div className="flex items-baseline justify-end w-12">
+                    <span
+                      className={cn(
+                        "text-2xl font-display font-medium leading-none",
+                        style.color,
+                      )}
+                    >
+                      {item.grade.letter}
                     </span>
                   </div>
-                  <Info
-                    className={cn(
-                      "h-3.5 w-3.5 text-muted-foreground/30 transition-transform hidden md:block",
-                      isExpanded && "rotate-180 text-foreground",
-                    )}
-                  />
                 </div>
-              </button>
+              </div>
 
-              {isExpanded && item.justification && (
-                <div className="px-6 pb-6 pt-0">
-                  <div className="p-6 bg-muted/5 border border-border/50 text-sm text-muted-foreground leading-relaxed italic font-serif">
-                    &ldquo;{item.justification}&rdquo;
-                  </div>
+              {item.justification && (
+                <div className="flex items-start gap-3 border-l border-border/60 pl-4">
+                  <p className="text-sm text-muted-foreground leading-relaxed italic font-serif">
+                    {item.justification}
+                  </p>
                 </div>
               )}
             </div>

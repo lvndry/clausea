@@ -45,6 +45,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const isConversationId = /^[a-zA-Z0-9]{22}$/.test(slug);
 
@@ -97,6 +98,13 @@ export default function ChatPage() {
     };
 
     setMessages((prev) => [...prev, userMsg]);
+    await deliverMessage(content);
+  }
+
+  async function deliverMessage(content: string) {
+    if (!conversation) return;
+
+    setSendError(null);
     setSending(true);
 
     try {
@@ -123,6 +131,7 @@ export default function ChatPage() {
     } catch (err) {
       console.error(err);
       posthog.captureException(err);
+      setSendError(content);
     } finally {
       setSending(false);
     }
@@ -158,7 +167,7 @@ export default function ChatPage() {
           animate={{ opacity: 1, scale: 1 }}
           className="max-w-md"
         >
-          <Alert variant="destructive" className="rounded-2xl">
+          <Alert variant="destructive">
             <AlertCircle className="h-5 w-5" />
             <AlertTitle className="font-semibold">Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
@@ -254,6 +263,19 @@ export default function ChatPage() {
               <span>AI is thinking...</span>
             </motion.div>
           )}
+          {sendError && !sending && (
+            <div className="flex items-center gap-3 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>Message failed to send.</span>
+              <button
+                type="button"
+                onClick={() => deliverMessage(sendError)}
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                Retry
+              </button>
+            </div>
+          )}
           <div ref={scrollRef} />
         </div>
       </ScrollArea>
@@ -266,7 +288,7 @@ export default function ChatPage() {
         className="pt-4 border-t border-border/50"
       >
         <div className="mx-auto max-w-3xl">
-          <Card variant="glass" className="p-2 rounded-2xl">
+          <Card className="p-2">
             <ChatInput
               onSend={handleSendMessage}
               disabled={sending}

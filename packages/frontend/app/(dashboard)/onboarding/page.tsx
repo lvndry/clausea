@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Shield, Sparkles } from "lucide-react";
+import { ArrowRight, Shield } from "lucide-react";
 import { motion } from "motion/react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -91,13 +91,16 @@ export default function OnboardingPage() {
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === "Enter" && !loading) {
       event.preventDefault();
-      void handleSubmit(event as any);
+      void submit();
     }
   }
 
-  async function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    void submit();
+  }
 
+  async function submit() {
     if (!user) return;
 
     if (!validateForm()) {
@@ -356,7 +359,6 @@ export default function OnboardingPage() {
                 <span>Secure & Private</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Sparkles className="h-4 w-4 text-primary" />
                 <span>AI-Powered</span>
               </div>
             </div>

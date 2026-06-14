@@ -1,10 +1,10 @@
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class UserTier(str, Enum):
+class UserTier(StrEnum):
     FREE = "free"
     PRO = "pro"
 

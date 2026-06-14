@@ -24,7 +24,7 @@ export default function Hero() {
         transition={{ duration: 0.6, ease: "easeOut" }}
         className="text-[10px] md:text-xs uppercase tracking-[0.3em] text-muted-foreground"
       >
-        Volume 01 / Document Intelligence
+        Document Intelligence
       </motion.span>
       <motion.h1
         initial={{ opacity: 0, y: 20 }}

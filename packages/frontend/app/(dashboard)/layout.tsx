@@ -1,18 +1,25 @@
 import { MobileSidebar, Sidebar } from "@/components/dashboard/sidebar";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { UserButton } from "@clerk/nextjs";
+import { cookies } from "next/headers";
 
-export default function DashboardLayout({
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const sidebarCollapsed =
+    (await cookies()).get("sidebar-collapsed")?.value === "true";
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Sidebar - Solid background */}
-      <aside className="hidden h-full w-72 border-r border-border bg-background md:block">
-        <Sidebar />
-      </aside>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:border focus:border-border focus:bg-background focus:px-4 focus:py-2 focus:text-xs focus:uppercase focus:tracking-widest focus:text-foreground"
+      >
+        Skip to content
+      </a>
+      <Sidebar defaultCollapsed={sidebarCollapsed} />
 
       {/* Main Content Area */}
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -25,7 +32,6 @@ export default function DashboardLayout({
             </div>
             <div className="h-8 w-px bg-border hidden md:block" />
             <UserButton
-              afterSignOutUrl="/"
               appearance={{
                 elements: {
                   avatarBox:
@@ -37,7 +43,7 @@ export default function DashboardLayout({
         </header>
 
         {/* Content */}
-        <main className="flex-1 overflow-y-auto">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto">
           <div className="min-h-full p-4 sm:p-6 md:p-8 lg:p-10">{children}</div>
         </main>
       </div>

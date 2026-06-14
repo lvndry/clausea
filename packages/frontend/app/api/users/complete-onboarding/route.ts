@@ -16,7 +16,7 @@ export async function POST(_request: NextRequest) {
   } catch (error) {
     console.error("Error completing onboarding:", error);
     return NextResponse.json(
-      { error: `Failed to complete onboarding: ${error}` },
+      { error: `Failed to complete onboarding` },
       { status: 500 },
     );
   }

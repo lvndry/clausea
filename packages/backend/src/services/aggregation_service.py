@@ -729,8 +729,12 @@ class AggregationService:
         self, db: AgnosticDatabase, product_id: str, product_slug: str
     ) -> Aggregation:
         findings = await self._finding_repo.find_by_product(db, product_id)
-        documents = await self._document_repo.find_by_product_id(db, product_id)
-        analyzed_docs = sum(1 for doc in documents if doc.extraction)
+        # Derive analyzed-doc count from the findings themselves: findings are produced
+        # only from a document's extraction, so a distinct document_id here means that
+        # document was extracted+analysed. (The previous find_by_product_id load
+        # projected OUT `extraction`, so the count was always 0 and every coverage
+        # category was wrongly reported "not_analyzed" despite real findings existing.)
+        analyzed_docs = len({finding.document_id for finding in findings})
         aggregated_findings = self._aggregate_findings(findings)
         coverage = self._build_coverage(findings, analyzed_docs=analyzed_docs)
         conflicts = self._detect_conflicts(findings)

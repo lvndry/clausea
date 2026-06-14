@@ -22,12 +22,16 @@ from motor.core import AgnosticDatabase
 from src.core.logging import get_logger
 from src.llm import (
     SupportedModel,
+    _extract_json_from_response,
     acompletion_with_escalation,
     acompletion_with_fallback,
 )
 from src.models.document import (
     BusinessImpact,
     BusinessImpactAssessment,
+    ComplianceBreakdown,
+    ConsumerCase,
+    ConsumerExplainer,
     ContractClauseReview,
     CrossDocumentAnalysis,
     DataProcessingProfile,
@@ -36,6 +40,7 @@ from src.models.document import (
     DocumentAnalysis,
     DocumentAnalysisScores,
     DocumentDeepAnalysis,
+    DocumentExtraction,
     DocumentRiskBreakdown,
     DPIATriggerAssessment,
     IndividualImpact,
@@ -51,6 +56,11 @@ from src.models.document import (
 )
 from src.models.finding import Aggregation
 from src.prompts.analysis_prompts import (
+    COMPLIANCE_ASSESSMENT_SYSTEM_PROMPT,
+    COMPLIANCE_ASSESSMENT_USER_TEMPLATE,
+    CONSUMER_EXPLAINER_ROLLUP_USER_TEMPLATE,
+    CONSUMER_EXPLAINER_SYSTEM_PROMPT,
+    CONSUMER_EXPLAINER_USER_TEMPLATE,
     DOCUMENT_ANALYSIS_PROMPT,
     OVERVIEW_CORE_DOC_TYPES,
     PRODUCT_DEEP_ANALYSIS_PROMPT,
@@ -78,17 +88,25 @@ logger = get_logger(__name__)
 # (e.g. "data collection not specified" on a detailed policy). These three are capable
 # enough for reliable extraction while still cheap, and span three providers so a single
 # model deprecation or provider outage cannot break analysis.
+# FREE-FIRST cascade (PM decision): a 429/failure auto-falls-through to the next model,
+# so the free tiers are used until exhausted/rate-limited, then a cheap paid tail. The
+# paid tail is cross-provider (gpt-oss + deepseek) so one outage can't break analysis.
 _ANALYSIS_RESILIENCE: list[SupportedModel] = [
-    "openrouter/gpt-oss-120b-nitro",  # OpenRouter (120B, capable)
-    "gpt-5-mini",  # OpenAI
+    "openrouter/gpt-oss-120b-nitro",  # cheap paid, OpenRouter (120B, capable)
+    "openrouter/deepseek-v4-flash",  # cheap paid, OpenRouter (different family)
 ]
-_ANALYSIS_PRIMARY: list[SupportedModel] = ["gemini-2.5-flash"] + _ANALYSIS_RESILIENCE
-# Escalation leads with a stronger model for harder documents.
-_ANALYSIS_ESCALATION: list[SupportedModel] = ["gpt-5-mini"] + _ANALYSIS_RESILIENCE
+_ANALYSIS_PRIMARY: list[SupportedModel] = [
+    "gemini-2.5-flash",  # slot 1: Google free tier (native)
+    "openrouter/kimi-k2.6-free",  # slot 2: OpenRouter free
+    "openrouter/gemma-free",  # slot 3: OpenRouter free
+] + _ANALYSIS_RESILIENCE
+# Escalation leads with the cheap-paid capable models for harder documents.
+_ANALYSIS_ESCALATION: list[SupportedModel] = _ANALYSIS_RESILIENCE
 _OVERVIEW_PRIORITY: list[SupportedModel] = [
     "gemini-2.5-flash",
+    "openrouter/kimi-k2.6-free",
+    "openrouter/gemma-free",
     "openrouter/gpt-oss-120b-nitro",
-    "gpt-5-mini",
 ]
 
 
@@ -159,9 +177,27 @@ async def analyse_product_documents(
                 analysis = await analyse_document(doc, cancellation_token=token)
                 if analysis:
                     doc.analysis = analysis
+                    # Persist the full document first so the extraction and analysis
+                    # metadata stamps set by analyse_document land alongside the body.
                     await document_svc.update_document(db, doc, invalidate_product_overview=False)
-                    logger.info(f"✓ Stored analysis for document {doc.id}")
+                    # Then persist analysis through the dedicated surgical path so the
+                    # field is written with its own $set and cannot be silently dropped
+                    # by a full-document rewrite. Confirm the write actually landed —
+                    # an unpersisted analysis must surface as a failure, not be masked
+                    # by the in-memory doc.analysis that the overview stage counts.
+                    persisted = await document_svc.update_document_analysis(db, doc.id, analysis)
+                    if not persisted:
+                        doc.analysis = None
+                        failed_doc_ids.append(doc.id)
+                        logger.error(
+                            f"✗ Analysis for document {doc.id} ({doc.url}) was generated "
+                            "but the database write did not persist it (update_analysis "
+                            "reported no modification)."
+                        )
+                    else:
+                        logger.info(f"✓ Stored analysis for document {doc.id}")
                 else:
+                    failed_doc_ids.append(doc.id)
                     logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
             except asyncio.CancelledError:
                 logger.info(f"Summarization cancelled at document {index}/{total_docs}")
@@ -885,6 +921,456 @@ Document content:
 
     logger.error(
         f"Failed to analyse document {document.id} after {max_retries} attempts: {last_exception}"
+    )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Consumer TOS-explainer (plain-English, end-user facing)
+# ---------------------------------------------------------------------------
+
+
+def _collect_extraction_quotes(extraction: DocumentExtraction) -> list[str]:
+    """Collect every verbatim evidence ``quote`` string across the extraction.
+
+    The validator uses these as the allow-list for explainer citations: an
+    explainer quote is only kept (cited) when it is a substring of one of these.
+    """
+    quotes: list[str] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "quote" and isinstance(value, str) and value.strip():
+                    quotes.append(value)
+                else:
+                    _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(extraction.model_dump())
+    return quotes
+
+
+def _strip_json_fences(content: str) -> str:
+    """Drop leading/trailing markdown code fences weak models leak despite Rule 7."""
+    text = content.strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline + 1 :]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[: -len("```")]
+    return text.strip()
+
+
+def _validate_consumer_explainer(
+    explainer: ConsumerExplainer, extraction: DocumentExtraction
+) -> ConsumerExplainer:
+    """Validate a per-document explainer against that document's extraction."""
+    return _validate_consumer_explainer_quotes(explainer, _collect_extraction_quotes(extraction))
+
+
+def _validate_consumer_explainer_quotes(
+    explainer: ConsumerExplainer, allowed_quotes: list[str]
+) -> ConsumerExplainer:
+    """Server-side validator the finalized prompt explicitly depends on.
+
+    1. De-cite any quote that is not a verbatim substring of some allowed
+       extraction quote: set ``quote=None`` and ``quote_status="none"``. The
+       finding is KEPT, only its citation is dropped. (For a product roll-up,
+       ``allowed_quotes`` is the union across all of the product's documents.)
+    2. Recompute ``critical_findings_count`` from the finding lists.
+    3. Clamp ``grade`` server-side: >=1 critical -> at most D; >=2 -> at most E.
+       The model's grade is never trusted on its own.
+    """
+
+    def _recite(cases: list[ConsumerCase]) -> None:
+        for case in cases:
+            if not case.quote:
+                case.quote = None
+                case.quote_status = "none"
+                continue
+            is_cited = any(case.quote in haystack for haystack in allowed_quotes)
+            if is_cited:
+                case.quote_status = "from_extraction"
+            else:
+                case.quote = None
+                case.quote_status = "none"
+
+    _recite(explainer.watch_out_for)
+    _recite(explainer.who_gets_your_data)
+    _recite(explainer.what_they_collect)  # type: ignore[arg-type]
+
+    critical_count = sum(
+        1
+        for case in (
+            *explainer.watch_out_for,
+            *explainer.who_gets_your_data,
+            *explainer.what_they_collect,
+        )
+        if case.severity == "critical" or (case.classification or "").strip().lower() == "blocker"
+    )
+    explainer.critical_findings_count = critical_count
+
+    grade_order = ["A", "B", "C", "D", "E"]
+    if critical_count >= 2:
+        floor = "E"
+    elif critical_count == 1:
+        floor = "D"
+    else:
+        floor = None
+
+    if floor is not None:
+        current_index = grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
+        floor_index = grade_order.index(floor)
+        if current_index < floor_index:
+            logger.info(
+                "ConsumerExplainer grade clamp: %s -> %s (%d critical findings)",
+                explainer.grade,
+                floor,
+                critical_count,
+            )
+            explainer.grade = floor
+
+    return explainer
+
+
+async def generate_consumer_explainer(
+    document: Document,
+    *,
+    cancellation_token: CancellationToken | None = None,
+    max_retries: int = 2,
+) -> ConsumerExplainer | None:
+    """Generate a plain-English consumer explainer for ONE document.
+
+    Builds the finalized Prompt 2 from the document's gated extraction (and the
+    analysis when present), calls the FREE-FIRST cascade with JSON response
+    format, parses defensively with retries, and runs the server-side validator
+    (quote de-citation + grade clamp) before returning.
+
+    Returns None when there is no extraction to ground the explainer in, or when
+    every attempt fails to parse — the caller decides how to surface that.
+    """
+    token = cancellation_token or CancellationToken()
+
+    extraction = document.extraction
+    if extraction is None:
+        logger.warning(
+            "generate_consumer_explainer: document %s has no extraction; skipping "
+            "(explainer must be grounded in extracted evidence).",
+            document.id,
+        )
+        return None
+
+    user_prompt = (
+        CONSUMER_EXPLAINER_USER_TEMPLATE.replace("{doc_type}", str(document.doc_type))
+        .replace("{doc_title}", document.title or "Not specified")
+        .replace("{regions}", ", ".join(document.regions) if document.regions else "Not specified")
+        .replace("{extraction_json}", extraction.model_dump_json())
+    )
+
+    usage_tracker = UsageTracker()
+    tracker_callback = usage_tracker.create_tracker("generate_consumer_explainer")
+
+    last_exception: Exception | None = None
+
+    for attempt in range(max_retries):
+        await token.check_cancellation()
+        try:
+            async with usage_tracking(tracker_callback):
+                response = await acompletion_with_fallback(
+                    messages=[
+                        {"role": "system", "content": CONSUMER_EXPLAINER_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model_priority=_OVERVIEW_PRIORITY,
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+            logger.info("generate_consumer_explainer %s used model %s", document.id, response.model)
+
+            content = _extract_json_from_response(response)
+            parsed_dict = json.loads(_strip_json_fences(content))
+            if not isinstance(parsed_dict, dict):
+                raise ValueError("Consumer explainer response was not a JSON object")
+
+            explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
+            explainer = _validate_consumer_explainer(explainer, extraction)
+
+            summary, records = usage_tracker.consume_summary()
+            log_usage_summary(
+                summary,
+                records,
+                context=f"document_{document.id}",
+                reason="success",
+                operation_type="consumer_explainer",
+                product_id=document.product_id,
+                document_id=document.id,
+                document_url=document.url,
+            )
+            return explainer
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:  # noqa: BLE001 - retry on any parse/LLM failure
+            last_exception = exception
+            logger.warning(
+                "generate_consumer_explainer attempt %d/%d failed for document %s: %s",
+                attempt + 1,
+                max_retries,
+                document.id,
+                exception,
+            )
+
+    logger.error(
+        "Failed to generate consumer explainer for document %s after %d attempts: %s",
+        document.id,
+        max_retries,
+        last_exception,
+    )
+    return None
+
+
+async def generate_product_consumer_explainer(
+    db: AgnosticDatabase,
+    product_slug: str,
+    product_svc: ProductService,
+    document_svc: DocumentService,
+    *,
+    cancellation_token: CancellationToken | None = None,
+    max_retries: int = 2,
+) -> ConsumerExplainer | None:
+    """Synthesize ONE product-level consumer explainer (roll-up) across all core docs.
+
+    This is the consumer-facing, product-page output: it reads every core document's
+    extraction (and analysis when present), runs the roll-up prompt on the FREE-FIRST
+    cascade, and validates citations against the UNION of all the documents' evidence
+    quotes (a quote may legitimately come from any of the product's documents).
+    Returns None when no core document has extraction, or when every attempt fails.
+    """
+    token = cancellation_token or CancellationToken()
+
+    product = await product_svc.get_product_by_slug(db, product_slug)
+    product_name = product.name if product else product_slug
+
+    documents = await document_svc.get_product_documents_by_slug(db, product_slug)
+    core_docs = [
+        doc
+        for doc in documents
+        if doc.doc_type in OVERVIEW_CORE_DOC_TYPES and doc.extraction is not None
+    ]
+    if not core_docs:
+        logger.warning(
+            "generate_product_consumer_explainer: no core document with extraction for %s",
+            product_slug,
+        )
+        return None
+
+    allowed_quotes: list[str] = []
+    doc_inputs: list[dict[str, Any]] = []
+    regions: set[str] = set()
+    for doc in core_docs:
+        allowed_quotes.extend(_collect_extraction_quotes(doc.extraction))
+        regions.update(doc.regions or [])
+        doc_inputs.append(
+            {
+                "title": doc.title or doc.doc_type,
+                "doc_type": doc.doc_type,
+                "regions": doc.regions or [],
+                "extraction": doc.extraction.model_dump(),
+                "analysis": doc.analysis.model_dump() if doc.analysis else None,
+            }
+        )
+
+    user_prompt = (
+        CONSUMER_EXPLAINER_ROLLUP_USER_TEMPLATE.replace("{product_name}", product_name)
+        .replace("{regions}", ", ".join(sorted(regions)) if regions else "Not specified")
+        .replace("{extraction_json}", json.dumps(doc_inputs, default=str))
+    )
+
+    usage_tracker = UsageTracker()
+    tracker_callback = usage_tracker.create_tracker("generate_product_consumer_explainer")
+    last_exception: Exception | None = None
+
+    for attempt in range(max_retries):
+        await token.check_cancellation()
+        try:
+            async with usage_tracking(tracker_callback):
+                response = await acompletion_with_fallback(
+                    messages=[
+                        {"role": "system", "content": CONSUMER_EXPLAINER_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model_priority=_OVERVIEW_PRIORITY,
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+            logger.info(
+                "generate_product_consumer_explainer %s used model %s", product_slug, response.model
+            )
+            content = _extract_json_from_response(response)
+            parsed_dict = json.loads(_strip_json_fences(content))
+            if not isinstance(parsed_dict, dict):
+                raise ValueError("Product consumer explainer response was not a JSON object")
+            explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
+            explainer.is_product_rollup = True
+            explainer = _validate_consumer_explainer_quotes(explainer, allowed_quotes)
+
+            summary, records = usage_tracker.consume_summary()
+            log_usage_summary(
+                summary,
+                records,
+                context=f"product_{product_slug}",
+                reason="success",
+                operation_type="consumer_explainer",
+                product_id=product.id if product else None,
+            )
+            return explainer
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:  # noqa: BLE001 - retry on any parse/LLM failure
+            last_exception = exception
+            logger.warning(
+                "generate_product_consumer_explainer attempt %d/%d failed for %s: %s",
+                attempt + 1,
+                max_retries,
+                product_slug,
+                exception,
+            )
+
+    logger.error(
+        "Failed to generate product consumer explainer for %s after %d attempts: %s",
+        product_slug,
+        max_retries,
+        last_exception,
+    )
+    return None
+
+
+async def generate_product_compliance(
+    db: AgnosticDatabase,
+    product_slug: str,
+    product_svc: ProductService,
+    document_svc: DocumentService,
+    *,
+    cancellation_token: CancellationToken | None = None,
+    max_retries: int = 2,
+) -> dict[str, ComplianceBreakdown] | None:
+    """Generate a JUSTIFIED product-level compliance assessment across all core docs.
+
+    Produces, per applicable regime, a ComplianceBreakdown (score + status + concrete
+    strengths and gaps) grounded in the documents — the "why" behind each compliance
+    grade. Only regimes the documents give a basis to assess are returned. Returns
+    None when there is no core extraction or every attempt fails.
+    """
+    token = cancellation_token or CancellationToken()
+
+    product = await product_svc.get_product_by_slug(db, product_slug)
+    product_name = product.name if product else product_slug
+
+    documents = await document_svc.get_product_documents_by_slug(db, product_slug)
+    core_docs = [
+        doc
+        for doc in documents
+        if doc.doc_type in OVERVIEW_CORE_DOC_TYPES and doc.extraction is not None
+    ]
+    if not core_docs:
+        logger.warning(
+            "generate_product_compliance: no core document with extraction for %s", product_slug
+        )
+        return None
+
+    doc_inputs: list[dict[str, Any]] = []
+    regions: set[str] = set()
+    for doc in core_docs:
+        regions.update(doc.regions or [])
+        doc_inputs.append(
+            {
+                "title": doc.title or doc.doc_type,
+                "doc_type": doc.doc_type,
+                "regions": doc.regions or [],
+                "extraction": doc.extraction.model_dump(),
+                "analysis": doc.analysis.model_dump() if doc.analysis else None,
+            }
+        )
+
+    user_prompt = (
+        COMPLIANCE_ASSESSMENT_USER_TEMPLATE.replace("{product_name}", product_name)
+        .replace("{regions}", ", ".join(sorted(regions)) if regions else "Not specified")
+        .replace("{docs_json}", json.dumps(doc_inputs, default=str))
+    )
+
+    usage_tracker = UsageTracker()
+    tracker_callback = usage_tracker.create_tracker("generate_product_compliance")
+    last_exception: Exception | None = None
+
+    for attempt in range(max_retries):
+        await token.check_cancellation()
+        try:
+            async with usage_tracking(tracker_callback):
+                response = await acompletion_with_fallback(
+                    messages=[
+                        {"role": "system", "content": COMPLIANCE_ASSESSMENT_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model_priority=_OVERVIEW_PRIORITY,
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+            logger.info(
+                "generate_product_compliance %s used model %s", product_slug, response.model
+            )
+            content = _extract_json_from_response(response)
+            parsed = json.loads(_strip_json_fences(content))
+            if not isinstance(parsed, dict):
+                raise ValueError("Compliance assessment response was not a JSON object")
+
+            breakdowns: dict[str, ComplianceBreakdown] = {}
+            for regime, payload in parsed.items():
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    breakdowns[str(regime)] = ComplianceBreakdown.model_validate(
+                        payload, strict=False
+                    )
+                except Exception as item_error:  # noqa: BLE001 - skip one bad regime, keep the rest
+                    logger.debug(
+                        "generate_product_compliance: dropped invalid regime %s for %s: %s",
+                        regime,
+                        product_slug,
+                        item_error,
+                    )
+            if not breakdowns:
+                raise ValueError("No valid compliance regimes parsed")
+
+            summary, records = usage_tracker.consume_summary()
+            log_usage_summary(
+                summary,
+                records,
+                context=f"product_{product_slug}",
+                reason="success",
+                operation_type="compliance_assessment",
+                product_id=product.id if product else None,
+            )
+            return breakdowns
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:  # noqa: BLE001 - retry on any parse/LLM failure
+            last_exception = exception
+            logger.warning(
+                "generate_product_compliance attempt %d/%d failed for %s: %s",
+                attempt + 1,
+                max_retries,
+                product_slug,
+                exception,
+            )
+
+    logger.error(
+        "Failed to generate product compliance for %s after %d attempts: %s",
+        product_slug,
+        max_retries,
+        last_exception,
     )
     return None
 

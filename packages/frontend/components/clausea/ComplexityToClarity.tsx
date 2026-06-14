@@ -2,7 +2,6 @@
 
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { Sparkles } from "lucide-react";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -141,7 +140,6 @@ export default function ComplexityToClarity() {
         {/* Clear/Illuminated State */}
         <div className="clear-text hidden md:flex absolute inset-0 flex-col items-center justify-center opacity-0 pointer-events-none px-6 w-full">
           <div className="clarity-badge mb-12 flex items-center gap-3 border border-foreground bg-background px-6 py-2.5">
-            <Sparkles className="w-5 h-5 text-foreground" />
             <span className="text-[10px] md:text-xs font-medium tracking-widest uppercase text-foreground">
               Crystal Clear
             </span>
@@ -164,17 +162,7 @@ export default function ComplexityToClarity() {
           </p>
 
           {/* Social Proof */}
-          <div className="mt-16 flex items-center gap-6">
-            <div className="flex -space-x-3">
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className="w-11 h-11 rounded-full border border-background bg-foreground flex items-center justify-center text-[10px] font-medium text-background"
-                >
-                  {["JD", "AS", "MK", "LP"][i - 1]}
-                </div>
-              ))}
-            </div>
+          <div className="mt-16">
             <p className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
               Trusted by <span className="text-foreground">5,000+</span> Legal
               Teams
@@ -185,7 +173,7 @@ export default function ComplexityToClarity() {
         {/* Mobile Static State */}
         <div className="md:hidden space-y-6 text-center mt-10">
           <div className="inline-flex items-center gap-3 border border-foreground bg-background px-5 py-2 text-foreground text-[10px] font-medium tracking-widest uppercase">
-            <Sparkles className="h-4 w-4" /> Clarity Mode
+            Clarity Mode
           </div>
           <h2 className="text-5xl font-display font-medium leading-[0.9] text-foreground">
             Legal speak, translated into{" "}
@@ -200,16 +188,6 @@ export default function ComplexityToClarity() {
             phone.
           </p>
           <div className="flex flex-col items-center gap-4 pt-4">
-            <div className="flex -space-x-3">
-              {["JD", "AS", "MK", "LP"].map((initials) => (
-                <div
-                  key={initials}
-                  className="w-10 h-10 rounded-full border border-background bg-foreground flex items-center justify-center text-[10px] font-medium text-background"
-                >
-                  {initials}
-                </div>
-              ))}
-            </div>
             <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
               Trusted by 5,000+ legal teams
             </p>

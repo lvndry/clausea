@@ -10,7 +10,12 @@ from __future__ import annotations
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.models.document import CORE_DOC_TYPES, Document, DocumentAnalysis
+from src.models.document import (
+    CORE_DOC_TYPES,
+    ConsumerExplainer,
+    Document,
+    DocumentAnalysis,
+)
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 
@@ -301,4 +306,22 @@ class DocumentService:
             Exception: If update fails
         """
         updated: bool = await self._document_repo.update_analysis(db, document_id, analysis)
+        return updated
+
+    async def update_document_consumer_explainer(
+        self, db: AgnosticDatabase, document_id: str, explainer: ConsumerExplainer
+    ) -> bool:
+        """Persist the plain-English consumer explainer for one document.
+
+        Args:
+            db: Database instance
+            document_id: Document ID
+            explainer: ConsumerExplainer object (post-validation/grade-clamp)
+
+        Returns:
+            True if a document was matched and updated, False otherwise.
+        """
+        updated: bool = await self._document_repo.update_consumer_explainer(
+            db, document_id, explainer
+        )
         return updated

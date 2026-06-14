@@ -24,7 +24,7 @@ export async function POST(
   } catch (error) {
     console.error("Error uploading document:", error);
     return NextResponse.json(
-      { error: `Failed to upload document: ${error}` },
+      { error: `Failed to upload document` },
       { status: 500 },
     );
   }

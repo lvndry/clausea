@@ -1,3 +1,5 @@
+import { LenisProvider } from "@/components/providers/lenis-provider";
+
 export default function Layout(props: { children: React.ReactNode }) {
-  return <>{props.children}</>;
+  return <LenisProvider>{props.children}</LenisProvider>;
 }

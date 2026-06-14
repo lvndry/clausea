@@ -1,6 +1,16 @@
 import posthog from "posthog-js";
 
-export function identifyUser(user: any) {
+type IdentifiableUser = {
+  id: string;
+  primaryEmailAddress?: { emailAddress?: string | null } | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  createdAt?: Date | string | null;
+  updatedAt?: Date | string | null;
+  lastSignInAt?: Date | string | null;
+};
+
+export function identifyUser(user: IdentifiableUser | null | undefined) {
   if (!user) return;
 
   posthog.identify(user.id, {
@@ -16,7 +26,7 @@ export function identifyUser(user: any) {
 // Page view tracking
 export function trackPageView(
   pageName: string,
-  properties?: Record<string, any>,
+  properties?: Record<string, unknown>,
 ) {
   posthog.capture("page_viewed", {
     page_name: pageName,
@@ -31,7 +41,7 @@ export const trackUserJourney = {
     posthog.capture("onboarding_started");
   },
 
-  onboardingCompleted(properties?: Record<string, any>) {
+  onboardingCompleted(properties?: Record<string, unknown>) {
     posthog.capture("onboarding_completed", properties);
   },
 
@@ -143,7 +153,7 @@ export const trackUserJourney = {
   },
 
   // Feature usage
-  featureUsed(featureName: string, properties?: Record<string, any>) {
+  featureUsed(featureName: string, properties?: Record<string, unknown>) {
     posthog.capture("feature_used", {
       feature_name: featureName,
       ...properties,
@@ -154,7 +164,7 @@ export const trackUserJourney = {
   errorOccurred(
     error: string,
     context: string,
-    properties?: Record<string, any>,
+    properties?: Record<string, unknown>,
   ) {
     posthog.capture("error_occurred", {
       error: error,

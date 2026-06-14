@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     }
     console.error("Error fetching latest pipeline job:", error);
     return NextResponse.json(
-      { error: `Failed to fetch latest pipeline job: ${error}` },
+      { error: `Failed to fetch latest pipeline job` },
       { status: 500 },
     );
   }

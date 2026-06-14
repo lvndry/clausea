@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle,
   Shield,
-  Sparkles,
   ThumbsUp,
   Zap,
 } from "lucide-react";
@@ -70,7 +69,7 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
                         strokeWidth={1.5}
                       />
                     ) : (
-                      <Sparkles
+                      <CheckCircle
                         className="h-4 w-4 text-[#2B7A5C]"
                         strokeWidth={1.5}
                       />

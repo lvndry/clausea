@@ -10,7 +10,12 @@ from typing import Any
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.models.document import MetaSummary, ProductDeepAnalysis
+from src.models.document import (
+    ComplianceBreakdown,
+    ConsumerExplainer,
+    MetaSummary,
+    ProductDeepAnalysis,
+)
 from src.models.product import Product
 from src.repositories.base_repository import BaseRepository
 
@@ -223,6 +228,59 @@ class ProductRepository(BaseRepository):
         """
         await db.product_overviews.delete_one({"product_slug": product_slug})
         logger.debug(f"Deleted product overview for {product_slug}")
+
+    # ============================================================================
+    # Consumer Explainer Storage (product-level roll-up, consumer-facing)
+    # ============================================================================
+
+    async def get_product_explainer(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> dict[str, Any] | None:
+        """Get the stored product-level consumer explainer, or None."""
+        return await db.product_explainers.find_one({"product_slug": product_slug}, {"_id": 0})
+
+    async def save_product_explainer(
+        self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer
+    ) -> bool:
+        """Upsert the product-level consumer explainer. Returns True when it landed."""
+        data = explainer.model_dump()
+        data["product_slug"] = product_slug
+        data["updated_at"] = datetime.now()
+        result = await db.product_explainers.update_one(
+            {"product_slug": product_slug}, {"$set": data}, upsert=True
+        )
+        return result.matched_count > 0 or result.upserted_id is not None
+
+    async def delete_product_explainer(self, db: AgnosticDatabase, product_slug: str) -> None:
+        await db.product_explainers.delete_one({"product_slug": product_slug})
+
+    # ============================================================================
+    # Compliance Assessment Storage (product-level, per-regime score + why)
+    # ============================================================================
+
+    async def get_product_compliance(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> dict[str, Any] | None:
+        """Get the stored per-regime compliance breakdown ({regime: {...}}), or None."""
+        stored = await db.product_compliance.find_one({"product_slug": product_slug})
+        return stored.get("compliance") if stored else None
+
+    async def save_product_compliance(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        compliance: dict[str, ComplianceBreakdown],
+    ) -> bool:
+        """Upsert the per-regime compliance breakdown. Returns True when it landed."""
+        data = {
+            "product_slug": product_slug,
+            "compliance": {regime: bd.model_dump() for regime, bd in compliance.items()},
+            "updated_at": datetime.now(),
+        }
+        result = await db.product_compliance.update_one(
+            {"product_slug": product_slug}, {"$set": data}, upsert=True
+        )
+        return result.matched_count > 0 or result.upserted_id is not None
 
     # ============================================================================
     # Deep Analysis Storage Operations

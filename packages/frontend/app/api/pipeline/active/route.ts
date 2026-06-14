@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     }
     console.error("Error fetching active pipeline job:", error);
     return NextResponse.json(
-      { error: `Failed to fetch active pipeline job: ${error}` },
+      { error: `Failed to fetch active pipeline job` },
       { status: 500 },
     );
   }

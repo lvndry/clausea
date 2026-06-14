@@ -1,0 +1,19 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "app/**/{page,layout,template,loading,error,global-error,not-found,route,default}.{ts,tsx}",
+    "app/**/{sitemap,robots,manifest,opengraph-image,twitter-image,icon,apple-icon}.{ts,tsx}",
+    "components/ui/**"
+  ],
+  "project": ["**/*.{ts,tsx}"],
+  "ignoreDependencies": [
+    "@babel/core",
+    "@eslint/eslintrc",
+    "@typescript-eslint/eslint-plugin",
+    "@typescript-eslint/parser",
+    "@testing-library/react",
+    "baseline-browser-mapping",
+    "tailwindcss",
+    "tailwindcss-animate"
+  ]
+}

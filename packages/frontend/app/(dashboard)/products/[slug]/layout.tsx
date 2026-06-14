@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+import { cache } from "react";
+
 import { ProductStructuredData } from "@/components/seo/structured-data";
 
 const siteUrl = (
@@ -52,7 +54,7 @@ type ProductMetadataFetch =
  * forwarding the request cookies so Clerk auth matches. A direct backend fetch
  * returns 401 (no Bearer token) and was incorrectly shown as "Product Not Found".
  */
-async function fetchProductForMetadata(
+const fetchProductForMetadata = cache(async function (
   slug: string,
 ): Promise<ProductMetadataFetch> {
   try {
@@ -86,7 +88,7 @@ async function fetchProductForMetadata(
     console.error("Error fetching product data for metadata:", error);
     return { kind: "uncertain", displayName: humanizeSlug(slug) };
   }
-}
+});
 
 function neutralProductMetadata(displayName: string, slug: string): Metadata {
   const description = `Policy overview for ${displayName} — data practices, terms, and risks from crawled documents.`;

@@ -1,4 +1,4 @@
-import { Cormorant_Garamond, Inter } from "next/font/google";
+import { Fraunces, Inter, Plus_Jakarta_Sans } from "next/font/google";
 
 import {
   OrganizationStructuredData,
@@ -14,10 +14,14 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
-const cormorant = Cormorant_Garamond({
+const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
-  variable: "--font-cormorant",
+  variable: "--font-jakarta",
+});
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
 });
 
 const siteUrl = (
@@ -97,7 +101,7 @@ export default function Layout(props: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${cormorant.variable} scroll-smooth`}
+      className={`${inter.variable} ${jakarta.variable} ${fraunces.variable} scroll-smooth`}
       suppressHydrationWarning
     >
       <head>

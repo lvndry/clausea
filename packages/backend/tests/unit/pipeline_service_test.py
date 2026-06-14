@@ -1,4 +1,6 @@
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -119,6 +121,132 @@ async def test_update_step_progress_does_not_overwrite_top_level_fields(
     # Check that step progress is present
     assert args["steps.0.progress_current"] == 2
     assert args["steps.0.progress_total"] == 10
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_zero_documents_marks_no_documents_not_failed(mock_db):
+    """A crawl that completes but stores 0 documents is a valid terminal outcome.
+
+    It must be marked ``no_documents`` (not ``failed``) so the product page does
+    not retrigger the pipeline on every visit. ``failed`` is reserved for genuine
+    interruptions/errors that warrant a retry.
+    """
+    job = PipelineJob(
+        id="job-zero",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="pending",
+    )
+
+    repo = MagicMock(spec=PipelineRepository)
+    repo.find_by_id = AsyncMock(return_value=job)
+    repo.update = AsyncMock()
+    repo.update_fields = AsyncMock()
+
+    service = PipelineService(pipeline_repo=repo)
+
+    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product_svc = MagicMock()
+    product_svc.get_product_by_slug = AsyncMock(return_value=product)
+
+    crawl_stats = SimpleNamespace(
+        total_documents_found=0,
+        policy_documents_stored=0,
+        crawl_errors=[],
+        crawl_skip_reasons=[],
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.run = AsyncMock(return_value=crawl_stats)
+
+    @asynccontextmanager
+    async def fake_db_session():
+        yield mock_db
+
+    with (
+        patch("src.services.pipeline_service.db_session", fake_db_session),
+        patch(
+            "src.services.pipeline_service.create_product_service",
+            return_value=product_svc,
+        ),
+        patch(
+            "src.services.pipeline_service.PolicyDocumentPipeline",
+            return_value=fake_pipeline,
+        ),
+    ):
+        await service.run_pipeline("job-zero")
+
+    assert job.status == "no_documents"
+    assert job.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
+    """Crawl succeeds but every document fails analysis.
+
+    The job must fail at the ANALYSIS stage with a truthful, retry-oriented error
+    (not a generic/crawl-flavored failure), the summarizing step must be marked
+    failed (not "completed"), and overview synthesis must never run.
+    """
+    job = PipelineJob(
+        id="job-analysis",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="pending",
+    )
+
+    repo = MagicMock(spec=PipelineRepository)
+    repo.find_by_id = AsyncMock(return_value=job)
+    repo.update = AsyncMock()
+    repo.update_fields = AsyncMock()
+    service = PipelineService(pipeline_repo=repo)
+
+    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product_svc = MagicMock()
+    product_svc.get_product_by_slug = AsyncMock(return_value=product)
+
+    # Crawl found 3 documents — the crawl did NOT fail.
+    crawl_stats = SimpleNamespace(
+        total_documents_found=3,
+        policy_documents_stored=3,
+        crawl_errors=[],
+        crawl_skip_reasons=[],
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.run = AsyncMock(return_value=crawl_stats)
+
+    # Analysis returns the documents, but none got an `.analysis` (all failed).
+    unanalysed_docs = [SimpleNamespace(analysis=None) for _ in range(3)]
+    analyse_mock = AsyncMock(return_value=unanalysed_docs)
+    overview_mock = AsyncMock()
+
+    @asynccontextmanager
+    async def fake_db_session():
+        yield mock_db
+
+    with (
+        patch("src.services.pipeline_service.db_session", fake_db_session),
+        patch(
+            "src.services.pipeline_service.create_product_service",
+            return_value=product_svc,
+        ),
+        patch("src.services.pipeline_service.create_document_service", return_value=MagicMock()),
+        patch(
+            "src.services.pipeline_service.PolicyDocumentPipeline",
+            return_value=fake_pipeline,
+        ),
+        patch("src.services.pipeline_service.analyse_product_documents", analyse_mock),
+        patch("src.services.pipeline_service.generate_product_overview", overview_mock),
+    ):
+        await service.run_pipeline("job-analysis")
+
+    assert job.status == "failed"
+    assert "could not analyze" in (job.error or "").lower()
+    # Crawl succeeded, so the truthful frontend can tell this is an analysis failure.
+    assert job.documents_stored == 3
+    # Overview synthesis must be skipped entirely.
+    overview_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

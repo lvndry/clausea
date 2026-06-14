@@ -6,8 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
-import { FaGithub } from "react-icons/fa";
-import { FaTwitter } from "react-icons/fa6";
+import { GithubIcon } from "@/components/ui/brand-icons";
 
 import { useRef, useState } from "react";
 
@@ -248,54 +247,34 @@ export function Footer() {
           </p>
         </div>
 
-        <div className="flex items-center gap-6 mt-16 md:mt-0">
-          {[
-            { icon: FaTwitter, href: "https://x.com/clausea_ai" },
-            { icon: FaGithub, href: "https://github.com/lvndry/clausea" },
-          ].map(({ icon: Icon, href }, i) => (
-            <a
-              key={i}
-              href={href}
-              className="text-foreground hover:text-muted-foreground transition-colors"
-            >
-              <Icon className="w-5 h-5" />
-            </a>
-          ))}
-        </div>
+        <a
+          href="https://github.com/lvndry/clausea"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Clausea on GitHub"
+          className="mt-8 inline-flex text-foreground hover:text-muted-foreground transition-colors"
+        >
+          <GithubIcon className="w-5 h-5" />
+        </a>
       </div>
 
       {/* Links Columns */}
-      <div className="col-span-12 md:col-span-8 grid grid-cols-1 md:grid-cols-3">
+      <div className="col-span-12 md:col-span-8 grid grid-cols-1 md:grid-cols-2">
         <div className="px-6 md:px-10 py-12 md:py-20 border-b md:border-b-0 md:border-r border-border">
           <h5 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground mb-8">
             Product
           </h5>
           <ul className="space-y-4">
-            {["Features", "Pricing", "API", "Integrations"].map((l) => (
-              <li key={l}>
+            {[
+              { label: "Features", href: "/features" },
+              { label: "Pricing", href: "/pricing" },
+            ].map((link) => (
+              <li key={link.label}>
                 <Link
-                  href="#"
+                  href={link.href}
                   className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  {l}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="px-6 md:px-10 py-12 md:py-20 border-b md:border-b-0 md:border-r border-border">
-          <h5 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground mb-8">
-            Resources
-          </h5>
-          <ul className="space-y-4">
-            {["Security", "Support", "Blog"].map((l) => (
-              <li key={l}>
-                <Link
-                  href="#"
-                  className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {l}
+                  {link.label}
                 </Link>
               </li>
             ))}
@@ -325,18 +304,10 @@ export function Footer() {
             </li>
             <li>
               <Link
-                href="#"
+                href="/cookie-policy"
                 className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
                 Cookie Policy
-              </Link>
-            </li>
-            <li>
-              <Link
-                href="#"
-                className="text-xs uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
-              >
-                GDPR
               </Link>
             </li>
           </ul>
@@ -346,23 +317,9 @@ export function Footer() {
       {/* Newsletter & Bottom Bar */}
       <div className="col-span-12 grid grid-cols-1 md:grid-cols-12">
         <div className="col-span-12 md:col-span-4 px-6 md:px-10 py-12 md:border-r border-border flex flex-col justify-center">
-          <p className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground mb-4">
-            © 2024 Clausea AI
+          <p className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+            © {new Date().getFullYear()} Clausea AI
           </p>
-          <div className="flex items-center gap-6">
-            <Link
-              href="#"
-              className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Status
-            </Link>
-            <Link
-              href="#"
-              className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Security
-            </Link>
-          </div>
         </div>
 
         <div className="col-span-12 md:col-span-8 px-6 md:px-10 py-12 flex flex-col md:flex-row md:items-center justify-between gap-6">

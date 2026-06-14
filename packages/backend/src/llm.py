@@ -76,15 +76,26 @@ _OPENROUTER_ALIASES: dict[str, str] = {
     "openrouter/gpt-oss-120b-nitro": "openrouter/openai/gpt-oss-120b:nitro",
     "openrouter/deepseek-v4-flash": "openrouter/deepseek/deepseek-v4-flash",
     "openrouter/grok-4.1-fast": "openrouter/x-ai/grok-4.1-fast",
+    # FREE-FIRST cascade: genuinely free on OpenRouter (slot 2, after native free Gemini).
+    # Free slugs rotate — override via OPENROUTER_KIMI_FREE_MODEL.
+    "openrouter/kimi-k2.6-free": os.getenv(
+        "OPENROUTER_KIMI_FREE_MODEL", "openrouter/moonshotai/kimi-k2.6:free"
+    ),
+    "openrouter/gemma-free": os.getenv(
+        "OPENROUTER_GEMMA_FREE_MODEL", "openrouter/google/gemma-4-26b-a4b-it:free"
+    ),
+    # Cheapest paid escalation in the Gemini family on OpenRouter ($0.10/$0.40 per 1M).
+    "openrouter/gemini-2.5-flash-lite": "openrouter/google/gemini-2.5-flash-lite",
     # legacy
     "openrouter/kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
 }
 
 EscalationValidator = Callable[[str], bool]
 
-_NO_TEMPERATURE_MODELS: frozenset[str] = frozenset(
-    {"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano", "gemini-3-flash-preview"}
-)
+# Models that reject a non-default temperature (the OpenAI gpt-5 reasoning family). The
+# FREE-FIRST cascade members — native gemini-2.5-flash and the OpenRouter free/paid models —
+# all accept temperature=0, so they are intentionally absent.
+_NO_TEMPERATURE_MODELS: frozenset[str] = frozenset({"gpt-5-mini", "gpt-5.4-mini", "gpt-5-nano"})
 
 
 def _sanitize_model_kwargs(model_name: SupportedModel, kwargs: dict[str, Any]) -> dict[str, Any]:

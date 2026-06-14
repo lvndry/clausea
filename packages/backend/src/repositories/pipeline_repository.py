@@ -7,10 +7,13 @@ from typing import Any
 
 from motor.core import AgnosticDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from src.core.logging import get_logger
-from src.models.pipeline_job import PipelineJob
+from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES, PipelineJob
 from src.repositories.base_repository import BaseRepository
+
+_TERMINAL_STATUSES = list(TERMINAL_PIPELINE_STATUSES)
 
 logger = get_logger(__name__)
 
@@ -44,21 +47,57 @@ class PipelineRepository(BaseRepository):
         Returns (job, created) tuple.
         """
         new_id = job.id
-        existing: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
-            {
-                "product_slug": job.product_slug,
-                "status": {"$nin": ["completed", "failed"]},
-            },
-            {"$setOnInsert": job.model_dump()},
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
+        payload = job.model_dump()
+        payload["active"] = True  # a freshly created job is always active
+        try:
+            existing: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
+                {"product_slug": job.product_slug, "active": True},
+                {"$setOnInsert": payload},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
+            # A concurrent caller won the insert race; the partial unique index rejected
+            # our insert. Return the active job that already exists.
+            existing = await db[self.COLLECTION].find_one(
+                {"product_slug": job.product_slug, "active": True}
+            )
         if existing is None:
             raise RuntimeError(
                 f"find_or_create_active returned no document for product_slug={job.product_slug}"
             )
         created = existing.get("id") == new_id
         return PipelineJob(**existing), created
+
+    async def ensure_indexes(self, db: AgnosticDatabase) -> None:
+        """Create the partial unique index that enforces at-most-one ACTIVE job per
+        product, and backfill the `active` discriminator on legacy documents.
+
+        This is the durable, race-free guarantee behind find_or_create_active: two
+        concurrent inserts can no longer both create an active job for the same product.
+        """
+        # Backfill legacy rows that predate the `active` field.
+        await db[self.COLLECTION].update_many(
+            {"active": {"$exists": False}, "status": {"$nin": _TERMINAL_STATUSES}},
+            {"$set": {"active": True}},
+        )
+        await db[self.COLLECTION].update_many(
+            {"active": {"$exists": False}, "status": {"$in": _TERMINAL_STATUSES}},
+            {"$set": {"active": False}},
+        )
+        try:
+            await db[self.COLLECTION].create_index(
+                [("product_slug", 1)],
+                unique=True,
+                partialFilterExpression={"active": True},
+                name="uniq_active_job_per_product",
+            )
+        except Exception as exc:  # noqa: BLE001 - pre-existing duplicate active jobs
+            logger.warning(
+                "Could not create unique active-job index (likely pre-existing duplicate "
+                "active jobs — clean those up to enable the guarantee): %s",
+                exc,
+            )
 
     async def find_by_id(self, db: AgnosticDatabase, job_id: str) -> PipelineJob | None:
         """Get a pipeline job by its ID.
@@ -106,7 +145,7 @@ class PipelineRepository(BaseRepository):
         data: dict[str, Any] | None = await db[self.COLLECTION].find_one(
             {
                 "product_slug": product_slug,
-                "status": {"$nin": ["completed", "failed"]},
+                "status": {"$nin": _TERMINAL_STATUSES},
             }
         )
         if not data:
@@ -121,9 +160,13 @@ class PipelineRepository(BaseRepository):
             job: PipelineJob with updated fields
         """
         job.updated_at = datetime.now()
+        payload = job.model_dump()
+        # Keep the index discriminator in sync with status on every write (status may
+        # have been reassigned after construction, which doesn't re-derive `active`).
+        payload["active"] = job.status not in _TERMINAL_STATUSES
         await db[self.COLLECTION].update_one(
             {"id": job.id},
-            {"$set": job.model_dump()},
+            {"$set": payload},
         )
         logger.debug(f"Updated pipeline job {job.id} -> status={job.status}")
 
@@ -159,7 +202,7 @@ class PipelineRepository(BaseRepository):
         cutoff = datetime.now() - timedelta(minutes=stale_threshold_minutes)
         result = await db[self.COLLECTION].update_many(
             {
-                "status": {"$nin": ["completed", "failed"]},
+                "status": {"$nin": _TERMINAL_STATUSES},
                 "$or": [
                     {"last_heartbeat": {"$lt": cutoff}},
                     {"last_heartbeat": None, "updated_at": {"$lt": cutoff}},
@@ -169,6 +212,7 @@ class PipelineRepository(BaseRepository):
             {
                 "$set": {
                     "status": "failed",
+                    "active": False,
                     "error": "Server restart — job was orphaned",
                     "updated_at": datetime.now(),
                     "completed_at": datetime.now(),
