@@ -3639,6 +3639,14 @@ class ClauseaCrawler:
                             self.stats.failed_urls += 1
                             self.failed_urls.add(url)
                             logger.warning(f"❌ Failed: {url} - {result.error_message}")
+                            # Surface robots.txt blocks so the pipeline can tell the user
+                            # the SITE blocked us (not that we failed). Other failures stay
+                            # a count to avoid recording large volumes of probe 404s.
+                            if (
+                                result.error_message
+                                and "robots.txt" in result.error_message.lower()
+                            ):
+                                self.results.append(result)
 
                     # Progress update — emitted on a threshold crossing so it
                     # survives batched jumps in total_urls (see helper docstring).

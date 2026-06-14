@@ -6,7 +6,7 @@ export const PIPELINE_ERROR_CODE_MESSAGES: Record<string, string> = {
   product_not_found:
     "We couldn't find this product. Please try submitting the URL again.",
   crawl_robots_blocked:
-    "This site blocks automated access via robots.txt, so we couldn't crawl any policy documents. You may need to review their policies manually.",
+    "This site's robots.txt blocks automated access, so we couldn't read its policy documents. That's a restriction set by the site — not an error on our end. You'll need to review their policies manually.",
   crawl_failed:
     "We couldn't crawl this site successfully, so no policy documents were found. Please try again later.",
   no_documents_found:
