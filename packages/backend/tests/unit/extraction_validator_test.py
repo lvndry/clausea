@@ -20,7 +20,9 @@ def test_extraction_validator_fails_on_invalid_json() -> None:
     assert _extraction_validator("data_practices")("not json") is False
 
 
-def test_extraction_validator_fails_when_all_lists_empty() -> None:
+def test_extraction_validator_passes_when_all_lists_empty_but_well_formed() -> None:
+    # A chunk with no content for this cluster correctly returns empty lists. That is a
+    # valid response, not a failure — it must NOT escalate through the model cascade.
     content = json.dumps(
         {
             "data_collected": [],
@@ -30,6 +32,12 @@ def test_extraction_validator_fails_when_all_lists_empty() -> None:
             "cookies_and_trackers": [],
         }
     )
+    assert _extraction_validator("data_practices")(content) is True
+
+
+def test_extraction_validator_fails_when_required_keys_wrong_shape() -> None:
+    # Present-but-not-a-list (e.g. a refusal string) is malformed → escalate.
+    content = json.dumps({"data_collected": "I cannot help with that"})
     assert _extraction_validator("data_practices")(content) is False
 
 

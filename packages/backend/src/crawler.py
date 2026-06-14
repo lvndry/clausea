@@ -2429,13 +2429,39 @@ class ClauseaCrawler:
         seen_urls: set[str] = set()
         discovered_urls: list[str] = []
 
+        # Bound sitemap ingestion. Large sites (e.g. streaming catalogs) list hundreds of
+        # multi-MB content sitemaps that hold no policy documents; fetching them all stalls
+        # discovery. Policy pages live in small sitemaps and are also reachable via the link
+        # crawl, so skipping oversized/excess sitemaps is recall-safe for policy docs.
+        max_sitemap_bytes = 5_000_000
+        max_child_sitemaps = 50
+        fetch_timeout = aiohttp.ClientTimeout(total=15)
+
         async def _fetch_and_parse_sitemap(sitemap_url: str) -> list[str]:
-            """Fetch a single sitemap and return the URLs it contains."""
+            """Fetch a single sitemap and return the URLs it contains.
+
+            Skips oversized sitemaps and bounds the fetch so a site with gigabytes of
+            sitemaps can't hang discovery.
+            """
             try:
-                async with session.get(sitemap_url, headers=headers) as resp:
+                async with session.get(sitemap_url, headers=headers, timeout=fetch_timeout) as resp:
                     if resp.status != 200:
                         return []
-                    body = self._decode_sitemap_bytes(await resp.read(), sitemap_url)
+                    declared = resp.headers.get("Content-Length")
+                    if declared and declared.isdigit() and int(declared) > max_sitemap_bytes:
+                        logger.info(
+                            f"Skipping oversized sitemap {sitemap_url} "
+                            f"(~{int(declared) // 1_000_000}MB > {max_sitemap_bytes // 1_000_000}MB cap)"
+                        )
+                        return []
+                    raw = await resp.content.read(max_sitemap_bytes + 1)
+                    if len(raw) > max_sitemap_bytes:
+                        logger.info(
+                            f"Skipping sitemap {sitemap_url}: body exceeds "
+                            f"{max_sitemap_bytes // 1_000_000}MB cap"
+                        )
+                        return []
+                    body = self._decode_sitemap_bytes(raw, sitemap_url)
                     return self._parse_sitemap_xml(body) if body else []
             except Exception as e:
                 logger.debug(f"Failed to fetch sitemap {sitemap_url}: {e}")
@@ -2455,8 +2481,13 @@ class ClauseaCrawler:
                     seen_urls.add(url)
                     discovered_urls.append(url)
 
-            # Follow child sitemaps one level deep
-            for child_url in child_sitemaps:
+            # Follow child sitemaps one level deep (bounded — an index may list hundreds).
+            if len(child_sitemaps) > max_child_sitemaps:
+                logger.info(
+                    f"Sitemap index {sitemap_url} lists {len(child_sitemaps)} children; "
+                    f"following the first {max_child_sitemaps}."
+                )
+            for child_url in child_sitemaps[:max_child_sitemaps]:
                 nested_urls = await _fetch_and_parse_sitemap(child_url)
                 for url in nested_urls:
                     if url not in seen_urls:

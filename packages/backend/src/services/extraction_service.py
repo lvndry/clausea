@@ -83,21 +83,24 @@ _CLUSTER_REQUIRED_KEYS: dict[str, list[str]] = {
 
 
 def _extraction_validator(cluster_name: str) -> EscalationValidator:
+    """A cluster response is valid when it is well-formed, even if empty.
+
+    A chunk often has no content for a given cluster (e.g. a cookie page has nothing for
+    legal_scope), and the model correctly returns empty lists. That is NOT a failure, so
+    it must not escalate through the whole model cascade — only malformed/unparseable
+    output, a non-dict, or output with no list-shaped expected key escalates.
+    """
     required = _CLUSTER_REQUIRED_KEYS.get(cluster_name, [])
 
     def validate(content: str) -> bool:
         try:
             data = json.loads(content)
-            if not isinstance(data, dict):
-                return False
-            if required and not all(k in data for k in required):
-                return False
-            return any(
-                isinstance(data.get(k), list) and len(data[k]) > 0
-                for k in (required if required else data)
-            )
-        except (json.JSONDecodeError, AttributeError):
+        except (json.JSONDecodeError, ValueError):
             return False
+        if not isinstance(data, dict):
+            return False
+        expected_keys = required or list(data.keys())
+        return any(isinstance(data.get(key), list) for key in expected_keys)
 
     return validate
 
