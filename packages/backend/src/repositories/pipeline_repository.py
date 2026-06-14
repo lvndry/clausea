@@ -69,36 +69,6 @@ class PipelineRepository(BaseRepository):
         created = existing.get("id") == new_id
         return PipelineJob(**existing), created
 
-    async def ensure_indexes(self, db: AgnosticDatabase) -> None:
-        """Create the partial unique index that enforces at-most-one ACTIVE job per
-        product, and backfill the `active` discriminator on legacy documents.
-
-        This is the durable, race-free guarantee behind find_or_create_active: two
-        concurrent inserts can no longer both create an active job for the same product.
-        """
-        # Backfill legacy rows that predate the `active` field.
-        await db[self.COLLECTION].update_many(
-            {"active": {"$exists": False}, "status": {"$nin": _TERMINAL_STATUSES}},
-            {"$set": {"active": True}},
-        )
-        await db[self.COLLECTION].update_many(
-            {"active": {"$exists": False}, "status": {"$in": _TERMINAL_STATUSES}},
-            {"$set": {"active": False}},
-        )
-        try:
-            await db[self.COLLECTION].create_index(
-                [("product_slug", 1)],
-                unique=True,
-                partialFilterExpression={"active": True},
-                name="uniq_active_job_per_product",
-            )
-        except Exception as exc:  # noqa: BLE001 - pre-existing duplicate active jobs
-            logger.warning(
-                "Could not create unique active-job index (likely pre-existing duplicate "
-                "active jobs — clean those up to enable the guarantee): %s",
-                exc,
-            )
-
     async def find_by_id(self, db: AgnosticDatabase, job_id: str) -> PipelineJob | None:
         """Get a pipeline job by its ID.
 

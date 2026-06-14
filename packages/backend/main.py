@@ -10,7 +10,7 @@ from slowapi.util import get_remote_address
 
 from src.core.config import config
 from src.core.database import close_motor_client, db_session
-from src.core.db_indexes import ensure_all_indexes
+from src.core.db_indexes import ensure_active_job_unique_index, ensure_all_indexes
 from src.core.logging import setup_logging
 from src.core.middleware import AuthMiddleware
 from src.repositories.pipeline_repository import PipelineRepository
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Reap orphaned jobs first (frees the active slot), THEN build the partial
         # unique index that enforces at-most-one active job per product.
         await PipelineRepository().mark_stale_as_failed(db)
-        await PipelineRepository().ensure_indexes(db)
+        await ensure_active_job_unique_index(db)
 
     yield
 
