@@ -11,45 +11,45 @@ export type ConsumerConfidence = "high" | "medium" | "low";
 
 export type QuoteStatus = "from_extraction" | "none";
 
+// One model backs watch_out_for and who_gets_your_data on the backend, so the
+// shape is shared: `title` is the risk label or recipient name, `what_they_get`
+// is set for recipients, `why` is the purpose for collected data.
 export interface ConsumerCase {
   title?: string | null;
   means_for_you?: string | null;
   severity?: string | null;
   classification?: string | null;
+  what_they_get?: string | null;
+  why?: string | null;
   quote?: string | null;
   quote_status?: string | null;
 }
 
-export interface ConsumerDataItem {
-  label?: string | null;
-  detail?: string | null;
-  sensitivity?: string | null;
+export type LinkageTier = "linked_to_you" | "linked_to_device" | "not_linked";
+
+export interface ConsumerDataItem extends ConsumerCase {
+  // How tied the data is to the reader's real identity, and whether the policy
+  // says it is sold or shared for value.
+  linkage_tier?: string | null;
+  sold?: boolean | null;
 }
 
 export interface ActionStep {
   action?: string | null;
-  detail?: string | null;
-  region?: string | null;
+  applies_to?: string | null;
 }
 
 export interface ConsumerContradiction {
-  title?: string | null;
-  description?: string | null;
-  document_a?: string | null;
-  document_b?: string | null;
-  impact?: string | null;
+  topic?: string | null;
+  what_one_doc_says?: string | null;
+  what_another_says?: string | null;
+  assume?: string | null;
 }
 
 export interface ConsumerRegionVerdict {
   region?: string | null;
-  summary?: string | null;
-  rights?: string[] | null;
-}
-
-export interface ConsumerRecipient {
-  recipient?: string | null;
-  data_shared?: string[] | null;
-  purpose?: string | null;
+  you_can?: string[] | null;
+  you_cannot?: string[] | null;
 }
 
 export interface ConsumerSilentTopic {
@@ -71,7 +71,7 @@ export interface ConsumerExplainer {
   watch_out_for?: ConsumerCase[] | null;
 
   what_they_collect?: Array<ConsumerDataItem | string> | null;
-  who_gets_your_data?: Array<ConsumerRecipient | string> | null;
+  who_gets_your_data?: Array<ConsumerCase | string> | null;
   good_to_know?: string[] | null;
   silent_on?: Array<ConsumerSilentTopic | string> | null;
 
@@ -140,18 +140,27 @@ export function hasCitation(quoteStatus: string | null | undefined): boolean {
 }
 
 // `what_they_collect` / `who_gets_your_data` / `what_you_can_do` may arrive as
-// plain strings from cheaper models; coerce both shapes to a stable object.
-export function asDataItem(item: ConsumerDataItem | string): ConsumerDataItem {
-  return typeof item === "string" ? { label: item } : item;
+// plain strings from cheaper models, or with null entries; coerce every shape
+// (including null/undefined) to a stable object so callers can read fields
+// without guarding each access.
+export function asDataItem(
+  item: ConsumerDataItem | string | null | undefined,
+): ConsumerDataItem {
+  if (!item) return {};
+  return typeof item === "string" ? { title: item } : item;
 }
 
-export function asRecipient(
-  item: ConsumerRecipient | string,
-): ConsumerRecipient {
-  return typeof item === "string" ? { recipient: item } : item;
+export function asConsumerCase(
+  item: ConsumerCase | string | null | undefined,
+): ConsumerCase {
+  if (!item) return {};
+  return typeof item === "string" ? { title: item } : item;
 }
 
-export function asActionStep(item: ActionStep | string): ActionStep {
+export function asActionStep(
+  item: ActionStep | string | null | undefined,
+): ActionStep {
+  if (!item) return {};
   return typeof item === "string" ? { action: item } : item;
 }
 

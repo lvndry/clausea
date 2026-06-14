@@ -1171,14 +1171,17 @@ async def generate_product_consumer_explainer(
     doc_inputs: list[dict[str, Any]] = []
     regions: set[str] = set()
     for doc in core_docs:
-        allowed_quotes.extend(_collect_extraction_quotes(doc.extraction))
+        extraction = doc.extraction
+        if extraction is None:
+            continue
+        allowed_quotes.extend(_collect_extraction_quotes(extraction))
         regions.update(doc.regions or [])
         doc_inputs.append(
             {
                 "title": doc.title or doc.doc_type,
                 "doc_type": doc.doc_type,
                 "regions": doc.regions or [],
-                "extraction": doc.extraction.model_dump(),
+                "extraction": extraction.model_dump(),
                 "analysis": doc.analysis.model_dump() if doc.analysis else None,
             }
         )
@@ -1284,13 +1287,16 @@ async def generate_product_compliance(
     doc_inputs: list[dict[str, Any]] = []
     regions: set[str] = set()
     for doc in core_docs:
+        extraction = doc.extraction
+        if extraction is None:
+            continue
         regions.update(doc.regions or [])
         doc_inputs.append(
             {
                 "title": doc.title or doc.doc_type,
                 "doc_type": doc.doc_type,
                 "regions": doc.regions or [],
-                "extraction": doc.extraction.model_dump(),
+                "extraction": extraction.model_dump(),
                 "analysis": doc.analysis.model_dump() if doc.analysis else None,
             }
         )

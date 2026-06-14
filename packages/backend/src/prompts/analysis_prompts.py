@@ -625,7 +625,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
     {"who": "named company if extraction names it, else plain description", "what_they_get": "string", "means_for_you": "string", "severity": "critical|high|medium|low", "quote": "exact copy or null", "quote_status": "from_extraction|none"}
   ],
   "what_they_collect": [
-    {"data": "plain name e.g. 'your exact location'", "why": "plain, or 'unclear from the document'", "means_for_you": "string", "severity": "critical|high|medium|low", "quote": "exact copy or null", "quote_status": "from_extraction|none"}
+    {"data": "plain name e.g. 'your exact location'", "why": "plain, or 'unclear from the document'", "means_for_you": "string", "severity": "critical|high|medium|low", "linkage_tier": "linked_to_you|linked_to_device|not_linked", "sold": true, "quote": "exact copy or null", "quote_status": "from_extraction|none"}
   ],
   "good_to_know": ["genuine protections stated in the evidence; [] if none"],
   "silent_on": [
@@ -636,7 +636,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   ]
 }
 
-Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on (never invented as a "no"); set critical_findings_count and honor the grade cap."""
+Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on (never invented as a "no"); for each what_they_collect item set linkage_tier (how tied the data is to the person's real identity) and sold=true ONLY when the evidence says the data is sold or shared for value, else sold=false and assume linked_to_you when unclear; set critical_findings_count and honor the grade cap."""
 
 
 # Product roll-up variant: same SYSTEM prompt, source line + schema swapped.
@@ -660,7 +660,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "confidence": "high|medium|low",
   "the_deal": "one short paragraph: what you trade to use this product",
   "biggest_risks": [{"title": "string", "means_for_you": "string", "severity": "critical|high|medium|low", "found_in": ["doc titles"], "quote": "exact copy or null", "quote_status": "from_extraction|none"}],
-  "what_they_collect": [{"data": "string", "why": "string", "means_for_you": "string", "severity": "critical|high|medium|low"}],
+  "what_they_collect": [{"data": "string", "why": "string", "means_for_you": "string", "severity": "critical|high|medium|low", "linkage_tier": "linked_to_you|linked_to_device|not_linked", "sold": true}],
   "who_gets_your_data": [{"who": "string", "what_they_get": "string", "means_for_you": "string", "severity": "critical|high|medium|low"}],
   "good_to_know": ["string"],
   "silent_on": [{"topic": "string", "why_it_matters": "string"}],
@@ -669,7 +669,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "what_you_can_do": [{"action": "string", "applies_to": "string"}]
 }
 
-Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on; report cross-document conflicts in conflicts; set critical_findings_count and honor the grade cap."""
+Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on; for each what_they_collect item set linkage_tier (how tied the data is to the person's real identity) and sold=true ONLY when the evidence says the data is sold or shared for value, else sold=false and assume linked_to_you when unclear; report cross-document conflicts in conflicts; set critical_findings_count and honor the grade cap."""
 
 
 COMPLIANCE_ASSESSMENT_SYSTEM_PROMPT = """You are a privacy/compliance analyst. Given a company's policy documents (as evidence-backed extractions and analyses), assess regulatory compliance per applicable regime and JUSTIFY each verdict.

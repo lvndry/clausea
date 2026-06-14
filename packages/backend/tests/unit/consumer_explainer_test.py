@@ -354,6 +354,7 @@ async def test_update_consumer_explainer_surgical_set() -> None:
     assert success is True
     update_one.assert_awaited_once()
     call_args = update_one.await_args
+    assert call_args is not None
     assert call_args.args[0] == {"id": "doc-1"}
     set_payload = call_args.args[1]["$set"]
     assert set_payload["consumer_explainer"]["headline"] == "h"

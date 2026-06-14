@@ -173,12 +173,7 @@ class CrawlerConfig:
 
         # --- Concurrency & politeness ---
         self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", "20"))
-        # Browser (Camoufox) renders share a single browser instance per crawler.
-        # Concurrency is a throughput knob — every queued page still gets rendered
-        # regardless — so we run several in parallel for speed. Kept below the
-        # static-fetch concurrency only because too many simultaneous JS renders can
-        # starve each other into navigation timeouts (a timed-out render = a missed page).
-        self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "4"))
+        self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "2"))
         self.delay_between_requests: float = float(
             os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.0")
         )

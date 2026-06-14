@@ -51,18 +51,14 @@ export function WhatYouCanDo({ items }: { items: Array<ActionStep | string> }) {
                 <span className="text-sm font-medium text-foreground leading-relaxed">
                   {step.action}
                 </span>
-                {step.region && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 border border-border text-[8px] uppercase tracking-widest font-bold text-muted-foreground">
-                    <Globe className="h-2.5 w-2.5" aria-hidden="true" />
-                    {step.region}
-                  </span>
-                )}
+                {step.applies_to &&
+                  step.applies_to.trim().toLowerCase() !== "everyone" && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 border border-border text-[8px] uppercase tracking-widest font-bold text-muted-foreground">
+                      <Globe className="h-2.5 w-2.5" aria-hidden="true" />
+                      {step.applies_to}
+                    </span>
+                  )}
               </div>
-              {step.detail && (
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {step.detail}
-                </p>
-              )}
             </div>
             <ArrowRight
               className="h-4 w-4 text-muted-foreground/30 shrink-0 mt-0.5"
@@ -182,42 +178,37 @@ export function Conflicts({ items }: { items: ConsumerContradiction[] }) {
       <div className="divide-y divide-border">
         {items.map((item, index) => (
           <div
-            key={`${item.title ?? "conflict"}-${index}`}
+            key={`${item.topic ?? "conflict"}-${index}`}
             className="p-6 space-y-4"
           >
-            {item.title && (
+            {item.topic && (
               <h4 className="font-display font-medium text-lg text-foreground leading-snug">
-                {item.title}
+                {item.topic}
               </h4>
             )}
-            {item.description && (
-              <p className="text-sm text-foreground/90 leading-relaxed max-w-2xl">
-                {item.description}
-              </p>
-            )}
-            {(item.document_a || item.document_b) && (
+            {(item.what_one_doc_says || item.what_another_says) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border border border-border">
                 <div className="bg-background p-4">
                   <span className="text-[10px] uppercase tracking-widest text-muted-foreground block mb-1">
-                    Document A
+                    One document says
                   </span>
                   <span className="text-sm text-foreground">
-                    {item.document_a ?? "—"}
+                    {item.what_one_doc_says ?? "—"}
                   </span>
                 </div>
                 <div className="bg-background p-4">
                   <span className="text-[10px] uppercase tracking-widest text-muted-foreground block mb-1">
-                    Document B
+                    Another says
                   </span>
                   <span className="text-sm text-foreground">
-                    {item.document_b ?? "—"}
+                    {item.what_another_says ?? "—"}
                   </span>
                 </div>
               </div>
             )}
-            {item.impact && (
+            {item.assume && (
               <p className="text-xs text-muted-foreground leading-relaxed border-l-2 border-[#B58D2D]/40 pl-4">
-                {item.impact}
+                Assume the worst case: {item.assume}
               </p>
             )}
           </div>
@@ -265,26 +256,47 @@ export function RightsByRegion({
               <Globe className="h-3 w-3" aria-hidden="true" />
               {verdict.region}
             </span>
-            {verdict.summary && (
-              <p className="text-sm text-foreground/90 leading-relaxed">
-                {verdict.summary}
-              </p>
+            {verdict.you_can && verdict.you_can.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase tracking-widest text-[#2B7A5C] font-medium block">
+                  You can
+                </span>
+                <ul className="space-y-2">
+                  {verdict.you_can.map((right, rightIndex) => (
+                    <li
+                      key={`can-${right}-${rightIndex}`}
+                      className="flex items-start gap-3 text-sm text-foreground/80 leading-relaxed"
+                    >
+                      <span
+                        className="mt-1.5 h-1.5 w-1.5 bg-[#2B7A5C] shrink-0"
+                        aria-hidden="true"
+                      />
+                      {right}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
-            {verdict.rights && verdict.rights.length > 0 && (
-              <ul className="space-y-2">
-                {verdict.rights.map((right, rightIndex) => (
-                  <li
-                    key={`${right}-${rightIndex}`}
-                    className="flex items-start gap-3 text-sm text-foreground/80 leading-relaxed"
-                  >
-                    <span
-                      className="mt-1.5 h-1.5 w-1.5 bg-foreground shrink-0"
-                      aria-hidden="true"
-                    />
-                    {right}
-                  </li>
-                ))}
-              </ul>
+            {verdict.you_cannot && verdict.you_cannot.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase tracking-widest text-[#BD452D] font-medium block">
+                  You cannot
+                </span>
+                <ul className="space-y-2">
+                  {verdict.you_cannot.map((right, rightIndex) => (
+                    <li
+                      key={`cannot-${right}-${rightIndex}`}
+                      className="flex items-start gap-3 text-sm text-foreground/80 leading-relaxed"
+                    >
+                      <span
+                        className="mt-1.5 h-1.5 w-1.5 bg-[#BD452D] shrink-0"
+                        aria-hidden="true"
+                      />
+                      {right}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         ))}

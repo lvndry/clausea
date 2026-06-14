@@ -133,7 +133,8 @@ export async function httpJson<T, TBody = unknown>(
     const result = schema.safeParse(json);
     if (!result.success) {
       console.error(
-        `[schema] payload from ${url} failed validation:`,
+        "[schema] payload failed validation for URL:",
+        url,
         result.error.issues,
       );
       throw new Error("Upstream payload failed schema validation");

@@ -53,9 +53,8 @@ class EvidenceSpan(BaseModel):
 
     @model_validator(mode="after")
     def _verified_requires_offsets(self) -> "EvidenceSpan":
-        # A quote is only "verified" — i.e. citable, highlightable, "show me where
-        # it says that" — when we resolved real character offsets. Fuzzy/normalized
-        # matches without offsets must not wear a verified badge.
+        # Without character offsets the quote can't be located in the source text,
+        # so it can't be highlighted — and isn't verified.
         if self.start_char is None or self.end_char is None:
             self.verified = False
         return self
@@ -604,27 +603,24 @@ def _coerce_consumer_severity(value: Any, default: str = "medium") -> str:
 
 
 class ActionStep(BaseModel):
-    """A concrete thing the reader can do, with who it applies to.
-
-    Maps onto the finalized Prompt 2 ``what_you_can_do[]`` item.
-    """
+    """A step the reader can take to protect themselves (e.g. opt out, delete data)."""
 
     action: str
+    # Who the step is available to: "Everyone", or the regions/conditions it is
+    # gated behind, e.g. "EU and UK only".
     applies_to: str = "Everyone"
 
 
 class ConsumerCase(BaseModel):
-    """A single consumer-facing finding (a risk, a recipient, or a data item).
+    """One consumer-facing finding: a risk, a data recipient, or a collected data item.
 
-    One model backs the three finalized worst-first lists (``watch_out_for``,
-    ``who_gets_your_data``, ``what_they_collect``) so the validator can treat
-    every finding uniformly when re-citing quotes and recounting criticals.
+    The same model backs ``watch_out_for``, ``who_gets_your_data`` and
+    ``what_they_collect`` so the validator can treat every finding uniformly.
 
-    ``means_for_you`` is the load-bearing consumer field: the direct real-world
-    consequence, not the capability. ``quote`` is copied from an extraction
-    evidence quote and is set to None (with ``quote_status="none"``) by the
-    server-side validator whenever it is not a verbatim substring of the
-    extraction — the finding is kept but de-cited, never dropped.
+    ``means_for_you`` is the real-world consequence for the reader, not the
+    capability. ``quote`` is a verbatim snippet copied from the document's
+    extraction; if it is not an exact substring of the extraction the validator
+    drops the quote (``quote_status="none"``) but keeps the finding.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -636,7 +632,6 @@ class ConsumerCase(BaseModel):
     means_for_you: str = ""
     severity: ConsumerSeverity = "medium"
     classification: str | None = None
-    # Typed extras kept optional so one model serves all three lists.
     what_they_get: str | None = None  # who_gets_your_data
     why: str | None = None  # what_they_collect (purpose)
     quote: str | None = None
@@ -656,18 +651,17 @@ class ConsumerCase(BaseModel):
 
 
 class ConsumerDataItem(ConsumerCase):
-    """A data-collection finding for ``what_they_collect[]``.
+    """A data-collection finding for ``what_they_collect``.
 
-    v1 DESCOPE: the finalized roll-up references richer fields (linkage_tier,
-    a ``sold`` flag) that are NOT present in the current DocumentExtraction
-    schema. Per the build brief we ship ONLY fields derivable from real
-    extraction data (the data name via ``title``, purpose via ``why``, the
-    consequence, severity, and the evidence quote). The deferred fields are
-    intentionally omitted rather than shipped unpopulated.
-
-    TODO(consumer-explainer-v2): add ``linkage_tier`` and ``sold`` once the
-    extraction schema carries identity-linkage and data-sale signals.
+    ``linkage_tier`` tells the reader how strongly this data is tied to their
+    real identity, and ``sold`` flags data the policy says is sold or shared for
+    value. Both are judged by the explainer from the same evidence the rest of
+    the finding draws on; they fall back to the conservative reading
+    (``linked_to_you``, not sold) when the document is silent.
     """
+
+    linkage_tier: Literal["linked_to_you", "linked_to_device", "not_linked"] = "linked_to_you"
+    sold: bool = False
 
 
 class ConsumerSilentTopic(BaseModel):
@@ -695,12 +689,11 @@ class ConsumerRegionVerdict(BaseModel):
 
 
 class ConsumerExplainer(BaseModel):
-    """Plain-English explainer of ONE document (or a product roll-up) for end users.
+    """Plain-English explainer of one document, or a product roll-up, for end users.
 
-    Field names follow the finalized "PROMPT 2 — Consumer per-document
-    explainer" schema verbatim. Lists are worst-first. The grade is advisory as
-    emitted by the model and is re-clamped server-side from
-    ``critical_findings_count`` by the validator in analyser.py.
+    Finding lists are ordered worst-first. ``grade`` is advisory as emitted by
+    the model and is re-clamped server-side from ``critical_findings_count`` by
+    the validator in analyser.py.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -715,18 +708,31 @@ class ConsumerExplainer(BaseModel):
     confidence: str = "medium"
     region: str | None = None
 
-    # Worst-first finding lists (per-document).
-    watch_out_for: list[ConsumerCase] = Field(default_factory=list)
+    # Worst-first finding lists. The roll-up prompt names the risk list
+    # ``biggest_risks``; the per-document prompt names it ``watch_out_for`` — both
+    # parse into this one field.
+    watch_out_for: list[ConsumerCase] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("watch_out_for", "biggest_risks"),
+    )
     who_gets_your_data: list[ConsumerCase] = Field(default_factory=list)
     what_they_collect: list[ConsumerDataItem] = Field(default_factory=list)
     good_to_know: list[str] = Field(default_factory=list)
     silent_on: list[ConsumerSilentTopic] = Field(default_factory=list)
     what_you_can_do: list[ActionStep] = Field(default_factory=list)
 
-    # Product roll-up extras (only populated when is_product_rollup is True).
+    # Product roll-up extras (only populated when is_product_rollup is True). The
+    # roll-up prompt emits ``conflicts`` and ``rights_by_region``; accept those
+    # names as aliases so the roll-up's data isn't dropped on parse.
     the_deal: str | None = None
-    contradictions: list[ConsumerContradiction] = Field(default_factory=list)
-    region_verdicts: list[ConsumerRegionVerdict] = Field(default_factory=list)
+    contradictions: list[ConsumerContradiction] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("contradictions", "conflicts"),
+    )
+    region_verdicts: list[ConsumerRegionVerdict] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("region_verdicts", "rights_by_region"),
+    )
 
     @field_validator("grade", mode="before")
     @classmethod

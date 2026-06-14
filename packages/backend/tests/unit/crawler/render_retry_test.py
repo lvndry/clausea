@@ -5,11 +5,17 @@ concurrency, not a genuinely empty page. Dropping it loses a policy document, so
 such URLs are deferred to an end-of-crawl serial retry pass (recall over speed).
 """
 
+from typing import cast
 from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
 
 from src.crawler import ClauseaCrawler, CrawlResult
+
+# _drain_render_retries forwards this to fetch_page, which the tests mock, so the
+# session is never used — a typed stand-in keeps the signature honest.
+_NO_SESSION = cast(aiohttp.ClientSession, None)
 
 
 def _result(url: str, *, success: bool) -> CrawlResult:
@@ -25,17 +31,16 @@ def _result(url: str, *, success: bool) -> CrawlResult:
 
 
 @pytest.mark.asyncio
-async def test_drain_recovers_a_render_that_succeeds_on_serial_retry():
+async def test_drain_recovers_a_render_that_succeeds_on_serial_retry(monkeypatch):
     crawler = ClauseaCrawler()
     crawler._render_retry_queue = ["https://example.com/privacy"]
     crawler.stats.failed_urls = 1
     crawler.failed_urls.add("https://example.com/privacy")
 
-    crawler.fetch_page = AsyncMock(
-        return_value=_result("https://example.com/privacy", success=True)
-    )
+    fetch_page = AsyncMock(return_value=_result("https://example.com/privacy", success=True))
+    monkeypatch.setattr(crawler, "fetch_page", fetch_page)
 
-    await crawler._drain_render_retries(session=None)
+    await crawler._drain_render_retries(session=_NO_SESSION)
 
     assert len(crawler.results) == 1
     assert crawler.stats.crawled_urls == 1
@@ -45,12 +50,13 @@ async def test_drain_recovers_a_render_that_succeeds_on_serial_retry():
 
 
 @pytest.mark.asyncio
-async def test_drain_leaves_a_genuinely_failing_url_failed():
+async def test_drain_leaves_a_genuinely_failing_url_failed(monkeypatch):
     crawler = ClauseaCrawler()
     crawler._render_retry_queue = ["https://example.com/terms"]
-    crawler.fetch_page = AsyncMock(return_value=_result("https://example.com/terms", success=False))
+    fetch_page = AsyncMock(return_value=_result("https://example.com/terms", success=False))
+    monkeypatch.setattr(crawler, "fetch_page", fetch_page)
 
-    await crawler._drain_render_retries(session=None)
+    await crawler._drain_render_retries(session=_NO_SESSION)
 
     assert crawler.results == []
     assert crawler.stats.crawled_urls == 0
@@ -58,20 +64,22 @@ async def test_drain_leaves_a_genuinely_failing_url_failed():
 
 
 @pytest.mark.asyncio
-async def test_drain_retries_each_url_at_most_once():
+async def test_drain_retries_each_url_at_most_once(monkeypatch):
     crawler = ClauseaCrawler()
     crawler._render_retry_queue = ["https://example.com/a", "https://example.com/a"]
-    crawler.fetch_page = AsyncMock(return_value=_result("https://example.com/a", success=False))
+    fetch_page = AsyncMock(return_value=_result("https://example.com/a", success=False))
+    monkeypatch.setattr(crawler, "fetch_page", fetch_page)
 
-    await crawler._drain_render_retries(session=None)
+    await crawler._drain_render_retries(session=_NO_SESSION)
 
     # Deduped: only one retry attempt despite the duplicate entry.
-    assert crawler.fetch_page.await_count == 1
+    assert fetch_page.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_drain_is_noop_when_queue_empty():
+async def test_drain_is_noop_when_queue_empty(monkeypatch):
     crawler = ClauseaCrawler()
-    crawler.fetch_page = AsyncMock()
-    await crawler._drain_render_retries(session=None)
-    crawler.fetch_page.assert_not_awaited()
+    fetch_page = AsyncMock()
+    monkeypatch.setattr(crawler, "fetch_page", fetch_page)
+    await crawler._drain_render_retries(session=_NO_SESSION)
+    fetch_page.assert_not_awaited()
