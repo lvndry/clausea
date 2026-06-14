@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { apiEndpoints } from "@lib/config";
 import { http } from "@lib/http";
+import { productOverviewSchema } from "@lib/schemas";
 
 export async function GET(
   request: NextRequest,
@@ -12,6 +13,32 @@ export async function GET(
     method: "GET",
   });
   const body = await response.text();
+
+  if (response.ok) {
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(body);
+    } catch {
+      console.error("[schema] overview payload was not valid JSON", slug);
+      return NextResponse.json(
+        { error: "Invalid overview payload" },
+        { status: 502 },
+      );
+    }
+    const result = productOverviewSchema.safeParse(parsedJson);
+    if (!result.success) {
+      console.error(
+        "[schema] overview payload failed validation:",
+        result.error.issues,
+      );
+      return NextResponse.json(
+        { error: "Invalid overview payload" },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json(result.data);
+  }
+
   return new NextResponse(body, {
     status: response.status,
     headers: {

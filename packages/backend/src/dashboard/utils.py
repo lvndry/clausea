@@ -2,7 +2,7 @@ import asyncio
 import concurrent.futures
 import os
 import warnings
-from collections.abc import Callable, Coroutine, Generator
+from collections.abc import Coroutine, Generator
 from contextlib import contextmanager
 from typing import Any, TypeVar
 
@@ -126,33 +126,6 @@ def run_async_with_retry(coro: Coroutine[None, None, T], max_retries: int = 3) -
                 time.sleep(1)  # Brief delay before retry
 
     return None
-
-
-def run_in_thread_with_warning_suppression(
-    func: Callable[..., Any], *args: Any, **kwargs: Any
-) -> Any:
-    """Run a function in a separate thread with Streamlit warning suppression
-
-    Args:
-        func: The function to run
-        *args: Arguments to pass to the function
-        **kwargs: Keyword arguments to pass to the function
-
-    Returns:
-        The result of the function
-    """
-
-    def run_in_thread() -> Any:
-        with suppress_streamlit_warnings():
-            return func(*args, **kwargs)
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(run_in_thread)
-        try:
-            return future.result()
-        except Exception as e:
-            logger.error(f"Error in threaded operation: {e}")
-            return None
 
 
 def get_streamlit_api_headers() -> dict[str, str]:

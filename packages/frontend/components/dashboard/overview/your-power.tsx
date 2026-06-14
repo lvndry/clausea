@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle,
   Shield,
-  Sparkles,
   ThumbsUp,
   Zap,
 } from "lucide-react";
@@ -50,10 +49,10 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
         <div className="border-b md:border-b-0 md:border-r border-border">
           <div className="p-6 border-b border-border bg-muted/5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C]">
+              <span className="text-[10px] uppercase tracking-widest font-bold text-risk-low">
                 Rights & Benefits
               </span>
-              <ThumbsUp className="h-4 w-4 text-[#2B7A5C]/40" />
+              <ThumbsUp className="h-4 w-4 text-risk-low/40" />
             </div>
           </div>
           <div className="divide-y divide-border">
@@ -66,12 +65,12 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
                   <div className="mt-1 shrink-0">
                     {item.type === "right" ? (
                       <Shield
-                        className="h-4 w-4 text-[#2B7A5C]"
+                        className="h-4 w-4 text-risk-low"
                         strokeWidth={1.5}
                       />
                     ) : (
-                      <Sparkles
-                        className="h-4 w-4 text-[#2B7A5C]"
+                      <CheckCircle
+                        className="h-4 w-4 text-risk-low"
                         strokeWidth={1.5}
                       />
                     )}
@@ -93,10 +92,10 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
         <div className="flex flex-col">
           <div className="p-6 border-b border-border bg-muted/5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest font-bold text-[#BD452D]">
+              <span className="text-[10px] uppercase tracking-widest font-bold text-risk-high">
                 Limitations & Concerns
               </span>
-              <AlertTriangle className="h-4 w-4 text-[#BD452D]/40" />
+              <AlertTriangle className="h-4 w-4 text-risk-high/40" />
             </div>
           </div>
           <div className="divide-y divide-border flex-1">
@@ -108,7 +107,7 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
                 >
                   <div className="mt-1 shrink-0">
                     <AlertTriangle
-                      className="h-4 w-4 text-[#BD452D]"
+                      className="h-4 w-4 text-risk-high"
                       strokeWidth={1.5}
                     />
                   </div>
@@ -120,10 +119,10 @@ export function YourPower({ rights, dangers, benefits }: YourPowerProps) {
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-10">
                 <CheckCircle
-                  className="h-8 w-8 text-[#2B7A5C] mb-4"
+                  className="h-8 w-8 text-risk-low mb-4"
                   strokeWidth={1.5}
                 />
-                <span className="text-xs text-[#2B7A5C] uppercase tracking-widest font-bold">
+                <span className="text-xs text-risk-low uppercase tracking-widest font-bold">
                   No critical concerns identified
                 </span>
               </div>

@@ -5,6 +5,7 @@ import {
   Calendar,
   FileText,
   LayoutDashboard,
+  RotateCcw,
   Shield,
   ShieldBan,
 } from "lucide-react";
@@ -15,6 +16,10 @@ import posthog from "posthog-js";
 
 import { useEffect, useRef, useState } from "react";
 
+import { triggerPipeline } from "@/app/actions/pipeline";
+import { subscribeIndexationNotify } from "@/app/actions/products";
+import { ConsumerExplainerView } from "@/components/dashboard/explainer/consumer-explainer-view";
+import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
 import { ComplianceBadges } from "@/components/dashboard/overview/compliance-badges";
 import { DataStory } from "@/components/dashboard/overview/data-story";
 import { PrivacySignals } from "@/components/dashboard/overview/privacy-signals";
@@ -30,120 +35,15 @@ import { ErrorDisplay } from "@/components/ui/error-display";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
-import type { Product } from "@/types";
-
-interface DataPurposeLink {
-  data_type: string;
-  purposes: string[];
-}
-
-interface ThirdPartyRecipient {
-  recipient: string;
-  data_shared: string[];
-  purpose?: string | null;
-  risk_level: "low" | "medium" | "high";
-}
-
-interface DetailedScore {
-  score: number;
-  justification: string;
-}
-
-interface DetailedScores {
-  transparency: DetailedScore;
-  data_collection_scope: DetailedScore;
-  user_control: DetailedScore;
-  third_party_sharing: DetailedScore;
-}
-
-interface PrivacySignalsData {
-  sells_data: "yes" | "no" | "unclear";
-  cross_site_tracking: "yes" | "no" | "unclear";
-  account_deletion: "self_service" | "request_required" | "not_specified";
-  data_retention_summary?: string | null;
-  consent_model: "opt_in" | "opt_out" | "mixed" | "not_specified";
-}
-
-interface CoverageItem {
-  category: string;
-  status: "found" | "missing" | "ambiguous" | "not_analyzed";
-  notes?: string | null;
-}
-
-export interface ProductOverview {
-  product_name: string;
-  product_slug: string;
-  company_name?: string | null;
-  last_updated: string;
-  verdict:
-    | "very_user_friendly"
-    | "user_friendly"
-    | "moderate"
-    | "pervasive"
-    | "very_pervasive";
-  risk_score: number;
-  one_line_summary: string;
-  data_collected?: string[] | null;
-  data_purposes?: string[] | null;
-  data_collection_details?: DataPurposeLink[] | null;
-  third_party_details?: ThirdPartyRecipient[] | null;
-  your_rights?: string[] | null;
-  dangers?: string[] | null;
-  benefits?: string[] | null;
-  recommended_actions?: string[] | null;
-  keypoints?: string[] | null;
-  document_counts?: { total: number; analyzed: number; pending: number } | null;
-  document_types?: Record<string, number> | null;
-  third_party_sharing?: string | null;
-  detailed_scores?: DetailedScores | null;
-  compliance_status?: Record<string, number> | null;
-  privacy_signals?: PrivacySignalsData | null;
-  coverage?: CoverageItem[] | null;
-  contract_clauses?: string[] | null;
-}
-
-export interface DocumentSummary {
-  id: string;
-  title: string | null;
-  url: string;
-  doc_type?: string;
-  last_updated?: string | null;
-  verdict?: string | null;
-  risk_score?: number | null;
-  summary?: string;
-  keypoints?: string[];
-  keypoints_with_evidence?: Array<{
-    keypoint: string;
-    evidence: Array<{
-      document_id: string;
-      url: string;
-      content_hash?: string | null;
-      quote: string;
-      start_char?: number | null;
-      end_char?: number | null;
-      section_title?: string | null;
-    }>;
-  }> | null;
-}
-
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type:
-    | "robots_txt_blocked"
-    | "http_error"
-    | "timeout"
-    | "network_error"
-    | "content_error"
-    | "unknown";
-}
-
-interface FailedCrawlJob {
-  error: string | null;
-  crawl_errors: CrawlError[];
-}
+import type {
+  CoverageItem,
+  DocumentSummary,
+  FailedCrawlJob,
+  Product,
+  ProductOverview,
+} from "@/types";
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
@@ -168,18 +68,29 @@ interface CompanyPageProps {
   initialProduct?: Product | null;
   initialData?: ProductOverview | null;
   initialDocuments?: DocumentSummary[];
+  initialExplainer?: ConsumerExplainer | null;
 }
 
 export default function CompanyPage({
   initialProduct,
   initialData: initialOverview,
   initialDocuments: initialDocs,
+  initialExplainer,
 }: CompanyPageProps = {}) {
   const params = useParams();
   const slug = params.slug as string;
-  const [product, setProduct] = useState<Product | null>(initialProduct ?? null);
-  const [data, setData] = useState<ProductOverview | null>(initialOverview ?? null);
-  const [documents, setDocuments] = useState<DocumentSummary[]>(initialDocs ?? []);
+  const [product, setProduct] = useState<Product | null>(
+    initialProduct ?? null,
+  );
+  const [data, setData] = useState<ProductOverview | null>(
+    initialOverview ?? null,
+  );
+  const [explainer, setExplainer] = useState<ConsumerExplainer | null>(
+    initialExplainer ?? null,
+  );
+  const [documents, setDocuments] = useState<DocumentSummary[]>(
+    initialDocs ?? [],
+  );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
@@ -187,6 +98,7 @@ export default function CompanyPage({
   >(initialOverview ? "ready" : "unknown");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [failedJob, setFailedJob] = useState<FailedCrawlJob | null>(null);
+  const [emptyJob, setEmptyJob] = useState<FailedCrawlJob | null>(null);
   const [notifyEmail, setNotifyEmail] = useState("");
   const [notifyStatus, setNotifyStatus] = useState<
     "idle" | "submitting" | "success" | "error"
@@ -204,13 +116,22 @@ export default function CompanyPage({
       try {
         setDocumentsLoading(true);
 
-        // Fire all three requests in parallel — product, documents, and overview
-        // arrive together instead of in a sequential chain.
-        const [prodRes, docsRes, overviewRes] = await Promise.all([
-          fetch(`/api/products/${slug}`),
-          fetch(`/api/products/${slug}/documents`),
-          fetch(`/api/products/${slug}/overview`),
-        ]);
+        // Fire all requests in parallel — product, documents, overview, and the
+        // consumer explainer arrive together instead of in a sequential chain.
+        const [prodRes, docsRes, overviewRes, explainerRes] = await Promise.all(
+          [
+            fetch(`/api/products/${slug}`),
+            fetch(`/api/products/${slug}/documents`),
+            fetch(`/api/products/${slug}/overview`),
+            fetch(`/api/products/${slug}/explainer`),
+          ],
+        );
+
+        // The explainer may 404/425 while the product is still indexing — a
+        // missing explainer is non-fatal, the overview sections still render.
+        if (explainerRes.ok) {
+          setExplainer((await explainerRes.json()) as ConsumerExplainer);
+        }
 
         if (!prodRes.ok) {
           setProduct(null);
@@ -235,32 +156,60 @@ export default function CompanyPage({
           return;
         }
 
-        // No overview yet — decide whether to trigger the pipeline.
-        if (!docsJson.length) {
-          // Check if there's a recently failed job before auto-triggering
-          const latestRes = await fetch(
-            `/api/pipeline/latest?product_slug=${encodeURIComponent(slug)}`,
-          );
-          if (latestRes.ok) {
-            const latestJob = await latestRes.json();
-            if (
-              latestJob?.status === "failed" &&
-              latestJob.crawl_errors?.length > 0
-            ) {
-              setFailedJob({
-                error: latestJob.error,
-                crawl_errors: latestJob.crawl_errors,
-              });
-              setIndexationMode("indexing");
-              setData(null);
-              return;
-            }
-          }
-        }
-
-        await ensurePipelineRunning(slug, prodJson);
+        // No overview yet — decide what to show based on the latest pipeline job.
+        // The pipeline is auto-triggered ONLY when the product has never been
+        // indexed (no job) or a job is still in progress. Terminal jobs are
+        // surfaced without retriggering:
+        //   - no_documents: crawl finished but found nothing (no retry — a
+        //     re-run yields the same result)
+        //   - failed: interrupted/errored (offer a manual Retry button)
         setIndexationMode("indexing");
         setData(null);
+
+        const latestRes = await fetch(
+          `/api/pipeline/latest?product_slug=${encodeURIComponent(slug)}`,
+        );
+        const latestJob = latestRes.ok ? await latestRes.json() : null;
+        const activeStatuses = [
+          "pending",
+          "crawling",
+          "summarizing",
+          "generating_overview",
+        ];
+
+        if (latestJob && activeStatuses.includes(latestJob.status)) {
+          // A run is already in progress — attach to it (ensurePipelineRunning
+          // re-kicks the backend if it isn't currently executing the job).
+          setActiveJobId(latestJob.id);
+          await ensurePipelineRunning(slug, prodJson);
+          return;
+        }
+
+        if (latestJob?.status === "no_documents") {
+          setEmptyJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+          });
+          return;
+        }
+
+        if (latestJob?.status === "failed") {
+          setFailedJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+            documents_stored: latestJob.documents_stored ?? 0,
+          });
+          return;
+        }
+
+        // Auto-trigger ONLY when the product has never been indexed. A `completed`
+        // job whose overview momentarily failed to load is a transient fetch issue,
+        // not a reason to re-run the whole pipeline — a refresh will pick it up.
+        if (!latestJob) {
+          await ensurePipelineRunning(slug, prodJson);
+        }
       } catch (error) {
         console.error("Failed to fetch product data", error);
       } finally {
@@ -293,26 +242,33 @@ export default function CompanyPage({
         // POSTing /api/pipeline is idempotent on the backend and will re-kick the runner
         // if it isn't currently executing in this process.
         if (!url) return;
-        void fetch("/api/pipeline", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
+        void triggerPipeline(url).catch(() => {});
         return;
       }
     }
 
     // 2. No active job — start a new one
     if (!url) return;
-    const pipelineRes = await fetch("/api/pipeline", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    if (pipelineRes.ok) {
-      const pipelineJson = await pipelineRes.json();
+    try {
+      const pipelineJson = await triggerPipeline(url);
       setActiveJobId(pipelineJson.job_id ?? null);
+    } catch {
+      // Surfaced via job polling / failed-state UI.
     }
+  }
+
+  /**
+   * Manually re-run the pipeline after a failed/interrupted job.
+   * Only offered for `failed` jobs — `no_documents` is a deterministic terminal
+   * result that a re-run would not change.
+   */
+  async function handleRetry() {
+    if (!product) return;
+    setFailedJob(null);
+    setEmptyJob(null);
+    setActiveJobId(null);
+    setIndexationMode("indexing");
+    await ensurePipelineRunning(slug, product);
   }
 
   async function handleSubscribeNotify() {
@@ -331,15 +287,7 @@ export default function CompanyPage({
     setNotifyStatus("submitting");
     setNotifyError(null);
     try {
-      const res = await fetch(`/api/products/${slug}/indexation-notify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(body || "Failed to subscribe.");
-      }
+      await subscribeIndexationNotify(slug, email);
       setNotifyStatus("success");
     } catch (err) {
       setNotifyStatus("error");
@@ -371,13 +319,20 @@ export default function CompanyPage({
   if (!data) {
     // If product exists but indexation isn't ready, show the indexation message + email capture
     if (product && indexationMode === "indexing") {
-      const hasCrawlFailure =
-        failedJob !== null && failedJob.crawl_errors.length > 0;
+      // Terminal outcomes that must NOT retrigger the pipeline:
+      //   - emptyJob  (no_documents): crawl finished, found nothing. No retry —
+      //                a re-run yields the same result.
+      //   - failedJob (failed):       interrupted/errored. Offer a manual Retry.
+      const terminalJob = emptyJob ?? failedJob;
+      const isEmpty = emptyJob !== null;
+      const isFailed = failedJob !== null;
+      // The crawl succeeded (documents were stored) but a later stage — document
+      // analysis or overview synthesis — failed. Don't blame the crawl in this case.
+      const isAnalysisFailure = isFailed && (failedJob?.documents_stored ?? 0) > 0;
+      const crawlErrors = terminalJob?.crawl_errors ?? [];
       const allRobotsBlocked =
-        hasCrawlFailure &&
-        failedJob.crawl_errors.every(
-          (e) => e.error_type === "robots_txt_blocked",
-        );
+        crawlErrors.length > 0 &&
+        crawlErrors.every((e) => e.error_type === "robots_txt_blocked");
 
       return (
         <div className="space-y-6">
@@ -386,14 +341,18 @@ export default function CompanyPage({
               {product.name}
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
-              {hasCrawlFailure
-                ? "We were unable to analyze this company's policy documents."
-                : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
+              {isEmpty
+                ? "We could not find any policy documents to analyze for this company."
+                : isAnalysisFailure
+                  ? "We found this company's policy documents but couldn't complete the analysis. This is usually temporary — please try again."
+                  : isFailed
+                    ? "We were unable to crawl this company's policy documents."
+                    : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
             </p>
           </div>
 
-          {/* Crawl failure details */}
-          {hasCrawlFailure && (
+          {/* Terminal outcome details (no documents found, or a failure) */}
+          {terminalJob && (
             <div className="border border-border bg-background">
               <div className="p-6 border-b border-border bg-muted/5">
                 <div className="flex items-center gap-3">
@@ -402,7 +361,11 @@ export default function CompanyPage({
                     strokeWidth={1.5}
                   />
                   <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                    Crawl Failed
+                    {isEmpty
+                      ? "No Documents Found"
+                      : isAnalysisFailure
+                        ? "Analysis Failed"
+                        : "Crawl Failed"}
                   </h3>
                 </div>
               </div>
@@ -419,7 +382,7 @@ export default function CompanyPage({
                       on their website.
                     </p>
                     <div className="space-y-2 pt-2">
-                      {failedJob.crawl_errors.map((err) => (
+                      {crawlErrors.map((err) => (
                         <div
                           key={err.url}
                           className="flex items-start gap-2 text-xs text-muted-foreground"
@@ -440,43 +403,67 @@ export default function CompanyPage({
                 ) : (
                   <div className="space-y-3">
                     <h2 className="text-xl font-display font-medium text-foreground">
-                      Unable to crawl policy documents
+                      {isEmpty
+                        ? "No policy documents found on this site"
+                        : isAnalysisFailure
+                          ? "We found documents but couldn't analyze them"
+                          : "Unable to crawl policy documents"}
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      {failedJob.error ??
-                        `${failedJob.crawl_errors.length} URL(s) failed during crawling.`}
+                      {(terminalJob.error
+                        ? PIPELINE_ERROR_CODE_MESSAGES[terminalJob.error]
+                        : undefined) ??
+                        terminalJob.error_detail ??
+                        (crawlErrors.length > 0
+                          ? `${crawlErrors.length} URL(s) failed during crawling.`
+                          : "We could not retrieve any policy documents from this site.")}
                     </p>
-                    <div className="space-y-2 pt-2">
-                      {failedJob.crawl_errors.slice(0, 5).map((err) => (
-                        <div
-                          key={err.url}
-                          className="flex items-start gap-2 text-xs text-muted-foreground"
-                        >
-                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 bg-destructive" />
-                          <div>
-                            <span className="font-mono text-[11px] break-all">
-                              {err.url}
-                            </span>
-                            <span className="ml-1.5 text-destructive/70">
-                              {err.error_message ?? err.error_type}
-                            </span>
+                    {crawlErrors.length > 0 && (
+                      <div className="space-y-2 pt-2">
+                        {crawlErrors.slice(0, 5).map((err) => (
+                          <div
+                            key={err.url}
+                            className="flex items-start gap-2 text-xs text-muted-foreground"
+                          >
+                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 bg-destructive" />
+                            <div>
+                              <span className="font-mono text-[11px] break-all">
+                                {err.url}
+                              </span>
+                              <span className="ml-1.5 text-destructive/70">
+                                {err.error_message ?? err.error_type}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                      {failedJob.crawl_errors.length > 5 && (
-                        <p className="text-xs text-muted-foreground pl-4">
-                          ...and {failedJob.crawl_errors.length - 5} more
-                        </p>
-                      )}
-                    </div>
+                        ))}
+                        {crawlErrors.length > 5 && (
+                          <p className="text-xs text-muted-foreground pl-4">
+                            ...and {crawlErrors.length - 5} more
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
+
+                {/* Manual retry — available for any terminal non-success outcome.
+                    Even when no documents were found and no error occurred, the
+                    crawler may have improved since, so allow another attempt. */}
+                <div className="pt-2">
+                  <Button
+                    onClick={handleRetry}
+                    className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                  >
+                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                    Try again
+                  </Button>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Notification + pipeline progress (only when no crawl failure) */}
-          {!hasCrawlFailure && (
+          {/* Notification + pipeline progress (only while in progress / fresh) */}
+          {!terminalJob && (
             <div className="border border-border bg-background">
               <div className="p-6 border-b border-border bg-muted/5">
                 <div className="flex items-center gap-3">
@@ -524,12 +511,12 @@ export default function CompanyPage({
                 </div>
 
                 {notifyStatus === "success" && (
-                  <div className="p-4 border border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C] text-[10px] uppercase tracking-widest font-bold">
+                  <div className="p-4 border border-risk-low/20 bg-risk-low/5 text-risk-low text-[10px] uppercase tracking-widest font-bold">
                     Subscription active. We will notify you upon completion.
                   </div>
                 )}
                 {notifyStatus === "error" && notifyError && (
-                  <div className="p-4 border border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D] text-[10px] uppercase tracking-widest font-bold">
+                  <div className="p-4 border border-risk-high/20 bg-risk-high/5 text-risk-high text-[10px] uppercase tracking-widest font-bold">
                     {notifyError}
                   </div>
                 )}
@@ -599,9 +586,10 @@ export default function CompanyPage({
               )}
             </div>
             <p className="mt-4 max-w-2xl text-sm text-muted-foreground leading-relaxed">
-              Generated after we crawl and analyze this product&apos;s published policy
-              documents (privacy, terms, cookies, and related notices). For a quick read on
-              data use, risks, and what you may be agreeing to — not legal advice.
+              Generated after we crawl and analyze this product&apos;s published
+              policy documents (privacy, terms, cookies, and related notices).
+              For a quick read on data use, risks, and what you may be agreeing
+              to. Not legal advice.
             </p>
           </div>
         </div>
@@ -620,16 +608,21 @@ export default function CompanyPage({
         }}
       >
         <div>
-          <TabsList className="w-full sm:w-auto h-auto p-0 bg-transparent border-b border-border gap-8">
+          <TabsList
+            variant="underline"
+            className="w-full sm:w-auto gap-8"
+          >
             <TabsTrigger
               value="overview"
-              className="px-0 py-4 text-[10px] uppercase tracking-[0.2em] font-bold data-[state=active]:border-b-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent rounded-none transition-all"
+              variant="underline"
+              className="px-0 text-[10px] uppercase tracking-[0.2em] font-bold"
             >
               Overview
             </TabsTrigger>
             <TabsTrigger
               value="sources"
-              className="px-0 py-4 text-[10px] uppercase tracking-[0.2em] font-bold data-[state=active]:border-b-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent rounded-none transition-all gap-2"
+              variant="underline"
+              className="px-0 text-[10px] uppercase tracking-[0.2em] font-bold gap-2"
             >
               Sources
               {documents.length > 0 && (
@@ -642,6 +635,22 @@ export default function CompanyPage({
         </div>
 
         <TabsContent value="overview" className="space-y-6 mt-0">
+          {/* PRIMARY: Consumer TOS-explainer — the free-funnel hero */}
+          {explainer && (
+            <>
+              <ConsumerExplainerView explainer={explainer} />
+
+              {/* Divider into the secondary, detailed policy overview */}
+              <div className="flex items-center gap-4 pt-8 pb-2">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[10px] uppercase tracking-[0.3em] font-medium text-muted-foreground whitespace-nowrap">
+                  Full Policy Overview
+                </span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+            </>
+          )}
+
           {/* Verdict Hero */}
           <VerdictHero
             productName={data.product_name}
@@ -672,31 +681,54 @@ export default function CompanyPage({
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4">
-                {data.coverage.map((item, idx) => (
-                  <div
-                    key={`${item.category}-${item.status}`}
-                    className={cn(
-                      "p-6 flex flex-col gap-4 bg-background border-b border-border",
-                      idx % 4 !== 3 ? "md:border-r border-border" : "",
-                    )}
-                  >
-                    <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                      {item.category.replace(/_/g, " ")}
-                    </span>
+                {data.coverage.map((item, idx) => {
+                  const coverageStyles: Record<
+                    CoverageItem["status"],
+                    { className: string; label: string }
+                  > = {
+                    found: {
+                      className:
+                        "border-risk-low/20 bg-risk-low/5 text-risk-low",
+                      label: "Found",
+                    },
+                    ambiguous: {
+                      className:
+                        "border-risk-medium/20 bg-risk-medium/5 text-risk-medium",
+                      label: "Ambiguous",
+                    },
+                    missing: {
+                      className:
+                        "border-risk-high/20 bg-risk-high/5 text-risk-high",
+                      label: "Missing",
+                    },
+                    not_analyzed: {
+                      className: "border-border bg-muted/5 text-muted-foreground",
+                      label: "Not Analyzed",
+                    },
+                  };
+                  const coverage = coverageStyles[item.status];
+                  return (
                     <div
+                      key={`${item.category}-${item.status}`}
                       className={cn(
-                        "px-2 py-0.5 text-[8px] font-bold tracking-tighter border w-fit capitalize",
-                        item.status === "found"
-                          ? "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]"
-                          : item.status === "ambiguous"
-                            ? "border-[#B58D2D]/20 bg-[#B58D2D]/5 text-[#B58D2D]"
-                            : "border-border bg-muted/5 text-muted-foreground",
+                        "p-6 flex flex-col gap-4 bg-background border-b border-border",
+                        idx % 4 !== 3 ? "md:border-r border-border" : "",
                       )}
                     >
-                      {item.status}
+                      <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground capitalize">
+                        {item.category.replace(/_/g, " ")}
+                      </span>
+                      <div
+                        className={cn(
+                          "px-2 py-0.5 text-[8px] font-bold uppercase tracking-tighter border w-fit",
+                          coverage.className,
+                        )}
+                      >
+                        {coverage.label}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -760,10 +792,14 @@ export default function CompanyPage({
           )}
 
           {/* Compliance Badges */}
-          {data.compliance_status &&
-            Object.keys(data.compliance_status).length > 0 && (
-              <ComplianceBadges complianceStatus={data.compliance_status} />
-            )}
+          {((data.compliance && Object.keys(data.compliance).length > 0) ||
+            (data.compliance_status &&
+              Object.keys(data.compliance_status).length > 0)) && (
+            <ComplianceBadges
+              compliance={data.compliance}
+              complianceStatus={data.compliance_status}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="sources" className="mt-0">

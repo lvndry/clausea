@@ -303,7 +303,56 @@ export default function PrivacyPolicyPage() {
 
             <section className="space-y-4">
               <h2 className="text-3xl font-display font-bold text-primary mt-12 mb-6">
-                10. Changes to This Privacy Policy
+                10. Your Data Protection Rights (GDPR &amp; CCPA)
+              </h2>
+              <p className="text-muted-foreground leading-relaxed">
+                Depending on your location, you may have the following rights
+                over your personal data:
+              </p>
+              <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
+                <li>
+                  <span className="text-foreground font-medium">Access</span> — request
+                  a copy of the personal data we hold about you.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Rectification</span> —
+                  ask us to correct inaccurate or incomplete data.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Erasure</span> — ask us
+                  to delete your personal data, subject to legal retention
+                  requirements.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Restriction &amp; objection</span>{" "}
+                  — ask us to limit or stop certain processing.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Portability</span> —
+                  receive your data in a structured, machine-readable format.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Withdraw consent</span>{" "}
+                  — where processing is based on consent, withdraw it at any
+                  time.
+                </li>
+              </ul>
+              <p className="text-muted-foreground leading-relaxed">
+                To exercise any of these rights, contact us at{" "}
+                <a
+                  href="mailto:privacy@clausea.co"
+                  className="text-primary hover:underline"
+                >
+                  privacy@clausea.co
+                </a>
+                . You also have the right to lodge a complaint with your local
+                data protection authority.
+              </p>
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="text-3xl font-display font-bold text-primary mt-12 mb-6">
+                11. Changes to This Privacy Policy
               </h2>
               <p className="text-muted-foreground leading-relaxed">
                 We may update this Privacy Policy from time to time. We will
@@ -316,7 +365,7 @@ export default function PrivacyPolicyPage() {
 
             <section className="space-y-4">
               <h2 className="text-3xl font-display font-bold text-primary mt-12 mb-6">
-                11. Contact Us
+                12. Contact Us
               </h2>
               <p className="text-muted-foreground leading-relaxed">
                 If you have questions or concerns about this Privacy Policy or

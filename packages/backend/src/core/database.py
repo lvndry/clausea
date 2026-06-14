@@ -106,20 +106,3 @@ async def db_session() -> AsyncIterator[AgnosticDatabase]:
     """
     async for db in get_db():
         yield db
-
-
-async def test_db_connection() -> bool:
-    """Test database connection using the context manager.
-
-    Returns:
-        bool: True if connection successful
-    """
-    try:
-        async with db_session() as db:
-            # Test connection
-            await db.command("ping")
-            logger.info("Successfully connected to MongoDB")
-            return True
-    except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
-        return False

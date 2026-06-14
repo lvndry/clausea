@@ -5,11 +5,7 @@ import { ArrowRight, Database, Layers, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-
-interface DataPurposeLink {
-  data_type: string;
-  purposes: string[];
-}
+import type { DataPurposeLink } from "@/types";
 
 interface DataStoryProps {
   dataCollectionDetails?: DataPurposeLink[] | null;

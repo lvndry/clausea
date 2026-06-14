@@ -28,6 +28,49 @@ class TestURLScorerGlossaryGuard:
         assert scorer.score_url("https://www.duolingo.com/cookies") >= 5.0
 
 
+class TestURLScorerNonPolicyGalleries:
+    """User-generated gallery sections must not score as policy documents.
+
+    Pages like /templates/legal-case-tracking/exp123 contain legal keywords in
+    their slugs and otherwise pass the relevance gate, triggering wasteful
+    browser renders — but they are never the company's own policy documents.
+    """
+
+    def test_template_and_universe_pages_score_zero(self) -> None:
+        scorer = URLScorer()
+        assert (
+            scorer.score_url(
+                "https://www.airtable.com/templates/legal-case-tracking-and-billing/exp2AvdLUMYh4kXoT"
+            )
+            == 0.0
+        )
+        assert (
+            scorer.score_url(
+                "https://www.airtable.com/universe/exps1dC0QDfDT8E7D/the-startup-legal-setup-guide"
+            )
+            == 0.0
+        )
+        assert scorer.score_url("https://example.com/marketplace/blk5/privacy-toolkit") == 0.0
+
+    def test_anchor_text_does_not_rescue_gallery_pages(self) -> None:
+        scorer = URLScorer()
+        # Even a strong legal anchor must not escalate a template gallery page.
+        assert (
+            scorer.score_url(
+                "https://www.airtable.com/templates/privacy-policy/exp9",
+                anchor_text="Privacy Policy",
+            )
+            == 0.0
+        )
+
+    def test_real_policy_paths_are_unaffected(self) -> None:
+        scorer = URLScorer()
+        # These were correctly rendered in production and must keep scoring high.
+        assert scorer.score_url("https://www.airtable.com/company/subprocessors") >= 4.0
+        assert scorer.score_url("https://support.airtable.com/docs/gdpr-at-airtable") >= 4.0
+        assert scorer.score_url("https://example.com/legal/privacy") >= 5.0
+
+
 class TestURLScorerAnchorTextBoost:
     """Anchor text should be the dominant signal for opaque URLs."""
 
@@ -192,6 +235,34 @@ class TestParentPageBoost:
         assert actual_score > base_score, (
             f"Parent-boosted score ({actual_score:.1f}) should exceed base score ({base_score:.1f})"
         )
+
+    def test_parent_boost_does_not_revive_gallery_pages(self) -> None:
+        """A legal-hub parent boost must never lift a hard-excluded section
+        (templates/universe/gallery) past min_legal_score.
+
+        Regression: CapCut's ``/trust/legal`` hub links to ``/template/*`` pages.
+        The scorer zeroes those sections, but the parent boost was added on top,
+        reviving them past the gate and wasting a browser render on each.
+        """
+        crawler = self._make_crawler(min_legal_score=2.5)
+
+        crawler.add_urls_to_queue(
+            [
+                {"url": "https://example.com/template/holiday", "text": "Holiday templates"},
+                {"url": "https://example.com/templates/legal-case/exp9", "text": "Legal case"},
+                # A genuinely opaque policy link on the same hub must still be boosted in.
+                {"url": "https://example.com/article/2908", "text": "Terms of Service"},
+            ],
+            "https://example.com",
+            depth=1,
+            page_metadata={"title": "Legal Resources"},
+        )
+
+        queued = {url for _neg, url, _depth in crawler.url_priority_queue}
+        assert "https://example.com/template/holiday" not in queued
+        assert "https://example.com/templates/legal-case/exp9" not in queued
+        # The boost still works for non-excluded opaque policy URLs.
+        assert "https://example.com/article/2908" in queued
 
 
 class TestMinLegalScoreFilter:

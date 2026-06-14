@@ -22,20 +22,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getVerdictConfig } from "@/lib/verdict";
 
-interface EvidenceSpan {
-  document_id: string;
-  url: string;
-  content_hash?: string | null;
-  quote: string;
-  start_char?: number | null;
-  end_char?: number | null;
-  section_title?: string | null;
-}
-
-interface KeypointWithEvidence {
-  keypoint: string;
-  evidence: EvidenceSpan[];
-}
+import type {
+  CriticalClause,
+  DocumentRiskBreakdown,
+  DocumentSection,
+  DocumentSummary,
+  EvidenceSpan,
+  KeypointWithEvidence,
+} from "@/types";
 
 interface ExtractedItem {
   value: string;
@@ -54,49 +48,6 @@ interface DocumentExtraction {
   consent_mechanisms: ExtractedItem[];
   dangers: ExtractedItem[];
   benefits: ExtractedItem[];
-}
-
-interface CriticalClause {
-  clause_type: string;
-  section_title?: string | null;
-  quote: string;
-  risk_level: "low" | "medium" | "high" | "critical";
-  plain_english: string;
-  why_notable: string;
-  analysis: string;
-  compliance_impact: string[];
-}
-
-interface DocumentRiskBreakdown {
-  overall_risk: number;
-  risk_by_category: Record<string, number>;
-  top_concerns: string[];
-  positive_protections: string[];
-  missing_information: string[];
-}
-
-interface DocumentSection {
-  section_title: string;
-  content: string;
-  importance: "low" | "medium" | "high" | "critical";
-  analysis: string;
-  related_clauses: string[];
-}
-
-interface DocumentSummary {
-  id: string;
-  title: string | null;
-  url: string;
-  doc_type?: string;
-  last_updated?: string | null;
-  verdict?: string | null;
-  risk_score?: number | null;
-  summary?: string;
-  keypoints?: string[];
-  keypoints_with_evidence?: KeypointWithEvidence[] | null;
-  critical_clauses?: CriticalClause[] | null;
-  document_risk_breakdown?: DocumentRiskBreakdown | null;
-  key_sections?: DocumentSection[] | null;
 }
 
 interface SourcesListProps {
@@ -145,31 +96,31 @@ function deriveEvidenceForKeypoint(
 const RISK_LEVEL_CONFIG = {
   critical: {
     label: "Critical",
-    className: "bg-red-100 dark:bg-red-950/40 border-red-200 dark:border-red-900",
+    className: "bg-risk-high/10 border-risk-high/30",
     badgeVariant: "danger" as const,
     icon: ShieldAlert,
-    iconClass: "text-red-500",
+    iconClass: "text-risk-high",
   },
   high: {
     label: "High",
-    className: "bg-orange-50 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900",
+    className: "bg-risk-high/5 border-risk-high/20",
     badgeVariant: "warning" as const,
     icon: AlertTriangle,
-    iconClass: "text-orange-500",
+    iconClass: "text-risk-high",
   },
   medium: {
     label: "Medium",
-    className: "bg-yellow-50 dark:bg-yellow-950/20 border-yellow-200 dark:border-yellow-900",
+    className: "bg-risk-medium/5 border-risk-medium/20",
     badgeVariant: "warning" as const,
     icon: AlertTriangle,
-    iconClass: "text-yellow-600",
+    iconClass: "text-risk-medium",
   },
   low: {
     label: "Low",
-    className: "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900",
+    className: "bg-risk-low/5 border-risk-low/20",
     badgeVariant: "success" as const,
     icon: CheckCircle,
-    iconClass: "text-emerald-500",
+    iconClass: "text-risk-low",
   },
 };
 
@@ -237,9 +188,9 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
 
   if (documents.length === 0) {
     return (
-      <Card variant="default" className="border-border">
+      <Card variant="default" className="border-border bg-background shadow-none">
         <CardContent className="py-12 text-center">
-          <div className="w-14 h-14 rounded-lg bg-muted/50 flex items-center justify-center mx-auto mb-3">
+          <div className="w-14 h-14 rounded-none bg-muted/50 flex items-center justify-center mx-auto mb-3">
             <FolderOpen className="h-7 w-7 text-muted-foreground/50" />
           </div>
           <h3 className="font-semibold text-base mb-1">No Source Documents</h3>
@@ -252,12 +203,12 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
   }
 
   return (
-    <Card variant="default" className="border-border overflow-hidden">
+    <Card variant="default" className="border-border bg-background shadow-none overflow-hidden">
       <CardHeader className="pb-4">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
-              <FileText className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+            <div className="w-10 h-10 rounded-none bg-muted flex items-center justify-center">
+              <FileText className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <CardTitle className="text-lg">Source Documents</CardTitle>
@@ -303,10 +254,10 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
             <div
               key={doc.id}
               className={cn(
-                "rounded-lg border overflow-hidden transition-all",
+                "rounded-none border overflow-hidden transition-all",
                 isExpanded
-                  ? "border-violet-300 dark:border-violet-700 bg-violet-50/50 dark:bg-violet-950/20"
-                  : "border-border bg-card hover:border-violet-200 dark:hover:border-violet-800",
+                  ? "border-foreground bg-muted/5"
+                  : "border-border bg-card hover:border-foreground/30",
               )}
             >
               {/* Document Header */}
@@ -318,9 +269,9 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                   {/* Icon */}
                   <div
                     className={cn(
-                      "w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-colors",
+                      "w-9 h-9 rounded-none flex items-center justify-center shrink-0 transition-colors",
                       isExpanded
-                        ? "bg-violet-100 dark:bg-violet-900/30"
+                        ? "bg-muted"
                         : "bg-muted/50",
                     )}
                   >
@@ -328,7 +279,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                       className={cn(
                         "h-4.5 w-4.5 transition-colors",
                         isExpanded
-                          ? "text-violet-600 dark:text-violet-400"
+                          ? "text-foreground"
                           : "text-muted-foreground",
                       )}
                     />
@@ -343,7 +294,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           className={cn(
                             "font-semibold text-sm mb-1 transition-colors",
                             isExpanded
-                              ? "text-violet-700 dark:text-violet-300"
+                              ? "text-foreground"
                               : "",
                           )}
                         >
@@ -405,9 +356,9 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           handleToggleExpanded(doc);
                         }}
                         className={cn(
-                          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all shrink-0",
+                          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-none text-xs font-medium transition-all shrink-0",
                           isExpanded
-                            ? "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+                            ? "bg-muted text-foreground"
                             : "text-muted-foreground hover:bg-muted",
                         )}
                       >
@@ -438,7 +389,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden"
                   >
-                    <div className="px-4 pb-4 pt-2 border-t border-violet-200 dark:border-violet-800">
+                    <div className="px-4 pb-4 pt-2 border-t border-border">
                       {/* No analysis available */}
                       {!displaySummary &&
                         displayKeypoints.length === 0 &&
@@ -472,8 +423,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                 0) && (
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 {riskBreakdown.top_concerns?.length > 0 && (
-                                  <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 p-3">
-                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-red-700 dark:text-red-400 mb-2">
+                                  <div className="rounded-none bg-risk-high/5 border border-risk-high/20 p-3">
+                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-risk-high mb-2">
                                       Top Concerns
                                     </h6>
                                     <ul className="space-y-1">
@@ -484,7 +435,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                             key={i}
                                             className="text-xs text-foreground/80 flex items-start gap-1.5"
                                           >
-                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-risk-high shrink-0" />
                                             {c}
                                           </li>
                                         ))}
@@ -493,8 +444,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                 )}
                                 {riskBreakdown.positive_protections?.length >
                                   0 && (
-                                  <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 p-3">
-                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-400 mb-2">
+                                  <div className="rounded-none bg-risk-low/5 border border-risk-low/20 p-3">
+                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-risk-low mb-2">
                                       Protections
                                     </h6>
                                     <ul className="space-y-1">
@@ -505,7 +456,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                             key={i}
                                             className="text-xs text-foreground/80 flex items-start gap-1.5"
                                           >
-                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-risk-low shrink-0" />
                                             {p}
                                           </li>
                                         ))}
@@ -518,8 +469,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           {/* Critical clauses */}
                           {displayCriticalClauses.length > 0 && (
                             <div>
-                              <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                              <h5 className="text-[10px] font-bold text-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <span className="h-px w-4 bg-border" />
                                 Critical Clauses
                               </h5>
                               <div className="space-y-2">
@@ -534,7 +485,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                       <div
                                         key={i}
                                         className={cn(
-                                          "rounded-md border p-3",
+                                          "rounded-none border p-3",
                                           cfg.className,
                                         )}
                                       >
@@ -583,29 +534,29 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           {/* Key sections */}
                           {displayKeySections.length > 0 && (
                             <div>
-                              <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                              <h5 className="text-[10px] font-bold text-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <span className="h-px w-4 bg-border" />
                                 Key Sections
                               </h5>
                               <div className="space-y-2">
                                 {displayKeySections.slice(0, 5).map((section, i) => {
                                   const importanceColors = {
-                                    critical: "border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-950/20",
-                                    high: "border-orange-200 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20",
-                                    medium: "border-yellow-200 dark:border-yellow-900 bg-yellow-50/50 dark:bg-yellow-950/20",
+                                    critical: "border-risk-high/20 bg-risk-high/5",
+                                    high: "border-risk-high/20 bg-risk-high/5",
+                                    medium: "border-risk-medium/20 bg-risk-medium/5",
                                     low: "border-border bg-card/50",
                                   };
                                   const importanceDotColors = {
-                                    critical: "bg-red-400",
-                                    high: "bg-orange-400",
-                                    medium: "bg-yellow-400",
+                                    critical: "bg-risk-high",
+                                    high: "bg-risk-high",
+                                    medium: "bg-risk-medium",
                                     low: "bg-muted-foreground",
                                   };
                                   return (
                                     <div
                                       key={i}
                                       className={cn(
-                                        "rounded-md border p-3",
+                                        "rounded-none border p-3",
                                         importanceColors[section.importance] ?? importanceColors.low,
                                       )}
                                     >
@@ -635,8 +586,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                           {/* Keypoints */}
                           {displayKeypoints.length > 0 && (
                             <div className="pt-1">
-                              <h5 className="text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <span className="h-px w-4 bg-violet-300 dark:bg-violet-700" />
+                              <h5 className="text-[10px] font-bold text-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <span className="h-px w-4 bg-border" />
                                 Key Insights
                               </h5>
                               <div className="space-y-1.5">
@@ -670,10 +621,10 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                     return (
                                       <div
                                         key={idx}
-                                        className="rounded-md bg-card/50 border border-border/50 overflow-hidden"
+                                        className="rounded-none bg-card/50 border border-border/50 overflow-hidden"
                                       >
                                         <div className="flex items-start gap-2.5 p-2">
-                                          <div className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
+                                          <div className="mt-1 h-1.5 w-1.5 rounded-full bg-foreground shrink-0" />
                                           <div className="flex-1 min-w-0">
                                             <div className="flex items-start justify-between gap-3">
                                               <span className="text-sm text-foreground/80 leading-snug">
@@ -691,9 +642,9 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                                     toggleKeypoint(doc.id, idx);
                                                   }}
                                                   className={cn(
-                                                    "shrink-0 text-[11px] font-semibold px-2 py-1 rounded-md border transition-colors",
+                                                    "shrink-0 text-[11px] font-semibold px-2 py-1 rounded-none border transition-colors",
                                                     isKpExpanded
-                                                      ? "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800"
+                                                      ? "bg-muted text-foreground border-border"
                                                       : "text-muted-foreground hover:text-foreground hover:bg-muted border-border",
                                                   )}
                                                 >
@@ -736,7 +687,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                                         .map((ev, j) => (
                                                           <div
                                                             key={j}
-                                                            className="rounded-md bg-muted/40 border border-border/50 p-2"
+                                                            className="rounded-none bg-muted/40 border border-border/50 p-2"
                                                           >
                                                             <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-2">
                                                               <span className="truncate">
@@ -757,7 +708,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                                                 <ExternalLink className="h-3 w-3 opacity-60" />
                                                               </a>
                                                             </div>
-                                                            <blockquote className="text-xs leading-relaxed text-foreground/85 border-l-2 border-violet-300 dark:border-violet-700 pl-2">
+                                                            <blockquote className="text-xs leading-relaxed text-foreground/85 border-l-2 border-foreground pl-2">
                                                               {ev.quote}
                                                             </blockquote>
                                                           </div>

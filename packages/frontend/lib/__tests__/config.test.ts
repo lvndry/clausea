@@ -60,10 +60,6 @@ describe("apiEndpoints", () => {
     expect(apiEndpoints.products()).toContain("/products");
   });
 
-  it("conversations returns correct URL", () => {
-    expect(apiEndpoints.conversations()).toContain("/conversations");
-  });
-
   it("users returns correct URL", () => {
     expect(apiEndpoints.users()).toContain("/users");
   });
@@ -71,9 +67,5 @@ describe("apiEndpoints", () => {
   it("metaSummary includes slug", () => {
     const url = apiEndpoints.metaSummary("test-product");
     expect(url).toContain("/products/test-product/overview");
-  });
-
-  it("q returns correct URL", () => {
-    expect(apiEndpoints.q()).toContain("/q");
   });
 });

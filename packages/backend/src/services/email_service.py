@@ -67,6 +67,36 @@ class EmailService:
         """Send an email from the contact form."""
         await self._send_email(subject=subject, to_email=self.to_email, text=body)
 
+    async def send_no_documents_alert(
+        self,
+        *,
+        product_name: str,
+        product_slug: str,
+        url: str,
+        reason: str | None,
+        crawl_error_count: int,
+        skip_count: int,
+    ) -> None:
+        """Alert the admin that a crawl completed but found zero policy documents.
+
+        Sent to the support/alert address so a human can investigate whether the
+        crawler missed the documents (a coverage bug) or the site genuinely
+        publishes none.
+        """
+        subject = f"Clausea - No documents found for {product_name} ({product_slug})"
+        body = (
+            f"A crawl completed but found 0 policy documents for {product_name}.\n\n"
+            f"Product: {product_name} ({product_slug})\n"
+            f"URL: {url}\n"
+            f"Reason: {reason or 'No policy documents found on this site'}\n"
+            f"Crawl errors: {crawl_error_count}\n"
+            f"Pages fetched but filtered out: {skip_count}\n\n"
+            f"Dashboard: https://clausea.co/products/{product_slug}\n"
+            "Check the crawl log to confirm whether this is a coverage gap or the "
+            "site genuinely has no policy documents."
+        )
+        await self._send_email(subject=subject, to_email=self.to_email, text=body)
+
     async def send_indexation_complete(
         self,
         *,

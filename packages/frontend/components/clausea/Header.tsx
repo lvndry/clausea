@@ -28,10 +28,7 @@ export function Header() {
     prevPathnameRef.current = pathname;
   }, [pathname, isOpen]);
 
-  const navLinks = [
-    { name: "Archive", href: "/archive" },
-    { name: "Methodology", href: "/methodology" },
-  ];
+  const navLinks: { name: string; href: string }[] = [];
 
   return (
     <>

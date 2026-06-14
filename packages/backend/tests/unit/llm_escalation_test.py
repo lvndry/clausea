@@ -1,13 +1,24 @@
+"""Validator-driven fallback: a model whose output fails validation is skipped for the
+next (stronger) model in the same priority list. Replaces the old separate escalation pass.
+"""
+
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from litellm import ModelResponse
 
-from src.llm import _extract_json_from_response, acompletion_with_escalation
+from src.llm import (
+    AllModelsFailedError,
+    Model,
+    _completion_with_fallback_impl,
+    _extract_json_from_response,
+)
+
+_DUMMY_MODEL = Model(model="dummy", api_key="k")
 
 
-def _make_response(content: str, model: str = "gpt-5-mini") -> ModelResponse:
+def _make_response(content: str, model: str = "m1") -> ModelResponse:
     response = MagicMock(spec=ModelResponse)
     response.model = model
     message = MagicMock()
@@ -47,90 +58,72 @@ def test_extract_json_from_response_raises_on_none_message() -> None:
         _extract_json_from_response(resp)
 
 
-@pytest.mark.asyncio
-async def test_escalation_escalates_when_primary_returns_empty_content() -> None:
-    primary_response = _make_response("", model="gpt-5-mini")
-    escalation_response = _make_response('{"data": [1]}', model="gpt-5.4-mini")
+def _sequential_completion_fn(responses: list[ModelResponse]):
+    calls = {"count": 0}
 
-    call_count = 0
+    async def completion_fn(**_kwargs) -> ModelResponse:
+        response = responses[calls["count"]]
+        calls["count"] += 1
+        return response
 
-    async def mock_fallback(messages, model_priority, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return primary_response if call_count == 1 else escalation_response
-
-    with patch("src.llm.acompletion_with_fallback", side_effect=mock_fallback):
-        result = await acompletion_with_escalation(
-            messages=[{"role": "user", "content": "test"}],
-            primary=["gpt-5-mini"],
-            escalation=["gpt-5.4-mini"],
-            validator=lambda c: True,
-        )
-
-    assert result is escalation_response
-    assert call_count == 2
+    return completion_fn, calls
 
 
 @pytest.mark.asyncio
-async def test_escalation_returns_primary_when_valid() -> None:
-    primary_response = _make_response('{"ok": true}', model="gpt-5-mini")
-
-    with patch("src.llm.acompletion_with_fallback", new_callable=AsyncMock) as mock_fb:
-        mock_fb.return_value = primary_response
-        result = await acompletion_with_escalation(
-            messages=[{"role": "user", "content": "test"}],
-            primary=["gpt-5-mini"],
-            escalation=["gpt-5.4-mini"],
-            validator=lambda c: True,
+async def test_returns_first_model_when_no_validator() -> None:
+    first = _make_response('{"a": 1}', "m1")
+    completion_fn, calls = _sequential_completion_fn([first, _make_response("{}", "m2")])
+    with patch("src.llm.get_model", return_value=_DUMMY_MODEL), patch("src.llm.track_usage"):
+        result = await _completion_with_fallback_impl(
+            messages=[], completion_fn=completion_fn, model_priority=["m1", "m2"]
         )
-
-    assert result is primary_response
-    assert mock_fb.call_count == 1
+    assert result is first
+    assert calls["count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_escalation_calls_escalation_model_when_primary_invalid() -> None:
-    primary_response = _make_response("{}", model="gpt-5-mini")
-    escalation_response = _make_response('{"data": [1]}', model="gpt-5.4-mini")
+async def test_validation_failure_advances_to_next_model() -> None:
+    weak = _make_response("{}", "m1")
+    strong = _make_response('{"data": [1]}', "m2")
+    completion_fn, calls = _sequential_completion_fn([weak, strong])
 
-    call_count = 0
+    def validator(content: str) -> bool:
+        return json.loads(content).get("data") is not None
 
-    async def mock_fallback(messages, model_priority, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return primary_response if call_count == 1 else escalation_response
-
-    with patch("src.llm.acompletion_with_fallback", side_effect=mock_fallback):
-        result = await acompletion_with_escalation(
-            messages=[{"role": "user", "content": "test"}],
-            primary=["gpt-5-mini"],
-            escalation=["gpt-5.4-mini"],
-            validator=lambda c: json.loads(c).get("data") is not None,
+    with patch("src.llm.get_model", return_value=_DUMMY_MODEL), patch("src.llm.track_usage"):
+        result = await _completion_with_fallback_impl(
+            messages=[],
+            completion_fn=completion_fn,
+            model_priority=["m1", "m2"],
+            validator=validator,
         )
-
-    assert result is escalation_response
-    assert call_count == 2
+    assert result is strong
+    assert calls["count"] == 2
 
 
 @pytest.mark.asyncio
-async def test_escalation_returns_escalated_response_even_when_both_fail_validation() -> None:
-    primary_response = _make_response("{}", model="gpt-5-mini")
-    escalation_response = _make_response("{}", model="gpt-5.4-mini")
-
-    call_count = 0
-
-    async def mock_fallback(messages, model_priority, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return primary_response if call_count == 1 else escalation_response
-
-    with patch("src.llm.acompletion_with_fallback", side_effect=mock_fallback):
-        result = await acompletion_with_escalation(
-            messages=[{"role": "user", "content": "test"}],
-            primary=["gpt-5-mini"],
-            escalation=["gpt-5.4-mini"],
-            validator=lambda c: False,
+async def test_returns_last_response_when_all_fail_validation() -> None:
+    first = _make_response("{}", "m1")
+    last = _make_response("{}", "m2")
+    completion_fn, calls = _sequential_completion_fn([first, last])
+    with patch("src.llm.get_model", return_value=_DUMMY_MODEL), patch("src.llm.track_usage"):
+        result = await _completion_with_fallback_impl(
+            messages=[],
+            completion_fn=completion_fn,
+            model_priority=["m1", "m2"],
+            validator=lambda _content: False,
         )
+    assert result is last  # partial data beats blocking the pipeline
+    assert calls["count"] == 2
 
-    assert result is escalation_response
-    assert call_count == 2
+
+@pytest.mark.asyncio
+async def test_raises_when_every_model_errors() -> None:
+    async def completion_fn(**_kwargs) -> ModelResponse:
+        raise RuntimeError("boom")
+
+    with patch("src.llm.get_model", return_value=_DUMMY_MODEL), patch("src.llm.track_usage"):
+        with pytest.raises(AllModelsFailedError):
+            await _completion_with_fallback_impl(
+                messages=[], completion_fn=completion_fn, model_priority=["m1", "m2"]
+            )

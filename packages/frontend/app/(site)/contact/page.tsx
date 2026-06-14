@@ -115,7 +115,7 @@ export default function ContactPage() {
           </div>
 
           {/* Form Side */}
-          <div className="flex-1 bg-white p-8 md:p-12 rounded-[2.5rem] border border-primary/5 shadow-2xl">
+          <div className="flex-1 bg-card p-8 md:p-12 rounded-[2.5rem] border border-primary/5 shadow-2xl">
             {submitted ? (
               <div className="flex flex-col items-center justify-center h-full text-center space-y-6 py-12">
                 <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">

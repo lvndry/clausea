@@ -33,7 +33,7 @@ export default function SignInPage() {
   }, [trackUserJourney]);
 
   return (
-    <div className="container max-w-md mx-auto px-4 py-20">
+    <div className="max-w-md mx-auto px-4 py-20">
       <div className="flex flex-col items-center gap-8">
         <div className="flex flex-col gap-4 text-center">
           <h1 className="text-4xl font-bold">

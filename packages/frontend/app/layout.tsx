@@ -1,4 +1,5 @@
-import { Cormorant_Garamond, Inter } from "next/font/google";
+import type { Viewport } from "next";
+import { Fraunces, Inter, Plus_Jakarta_Sans } from "next/font/google";
 
 import {
   OrganizationStructuredData,
@@ -14,15 +15,27 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
-const cormorant = Cormorant_Garamond({
+const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
-  variable: "--font-cormorant",
+  variable: "--font-jakarta",
+});
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
 });
 
 const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
 ).replace(/\/$/, "");
+
+export const viewport: Viewport = {
+  colorScheme: "light dark",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#faf9f6" },
+    { media: "(prefers-color-scheme: dark)", color: "#1a1918" },
+  ],
+};
 
 export const metadata = {
   metadataBase: new URL(siteUrl),
@@ -97,7 +110,7 @@ export default function Layout(props: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${cormorant.variable} scroll-smooth`}
+      className={`${inter.variable} ${jakarta.variable} ${fraunces.variable} scroll-smooth`}
       suppressHydrationWarning
     >
       <head>

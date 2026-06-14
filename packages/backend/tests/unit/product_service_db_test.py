@@ -134,6 +134,7 @@ async def test_get_product_analysis(
         visible_to_tiers=[UserTier.FREE],
     )
     mock_product_repo.find_by_slug.return_value = mock_product
+    mock_product_repo.get_product_compliance.return_value = None
 
     # Mock documents
     mock_doc = Document(

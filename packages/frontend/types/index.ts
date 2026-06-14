@@ -1,6 +1,20 @@
-// Barrel export - re-export all types from their individual files
-export type { Conversation } from "./conversation";
-export type { Document } from "./document";
-export type { Message } from "./message";
-export type { MetaSummary } from "./meta-summary";
 export type { Product } from "./product";
+export type {
+  Verdict,
+  DataPurposeLink,
+  ThirdPartyRecipient,
+  DetailedScore,
+  DetailedScores,
+  PrivacySignalsData,
+  CoverageItem,
+  ComplianceBreakdown,
+  ProductOverview,
+  EvidenceSpan,
+  KeypointWithEvidence,
+  CriticalClause,
+  DocumentRiskBreakdown,
+  DocumentSection,
+  DocumentSummary,
+  CrawlError,
+  FailedCrawlJob,
+} from "./analysis";

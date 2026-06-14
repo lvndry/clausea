@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+import { cache } from "react";
+
 import { ProductStructuredData } from "@/components/seo/structured-data";
 
 const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
 ).replace(/\/$/, "");
 
-interface ProductOverview {
+interface ProductMetadata {
   name: string;
   slug: string;
   company_name?: string | null;
@@ -43,7 +45,7 @@ function resolveOriginFromHeaders(headerList: Headers): string | null {
 }
 
 type ProductMetadataFetch =
-  | { kind: "ok"; product: ProductOverview }
+  | { kind: "ok"; product: ProductMetadata }
   | { kind: "not_found" }
   | { kind: "uncertain"; displayName: string };
 
@@ -52,7 +54,7 @@ type ProductMetadataFetch =
  * forwarding the request cookies so Clerk auth matches. A direct backend fetch
  * returns 401 (no Bearer token) and was incorrectly shown as "Product Not Found".
  */
-async function fetchProductForMetadata(
+const fetchProductForMetadata = cache(async function (
   slug: string,
 ): Promise<ProductMetadataFetch> {
   try {
@@ -81,12 +83,12 @@ async function fetchProductForMetadata(
       return { kind: "uncertain", displayName: humanizeSlug(slug) };
     }
 
-    return { kind: "ok", product: (await response.json()) as ProductOverview };
+    return { kind: "ok", product: (await response.json()) as ProductMetadata };
   } catch (error) {
     console.error("Error fetching product data for metadata:", error);
     return { kind: "uncertain", displayName: humanizeSlug(slug) };
   }
-}
+});
 
 function neutralProductMetadata(displayName: string, slug: string): Metadata {
   const description = `Policy overview for ${displayName} — data practices, terms, and risks from crawled documents.`;

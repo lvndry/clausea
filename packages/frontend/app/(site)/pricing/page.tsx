@@ -127,7 +127,7 @@ export default function PricingPage() {
             ].map((faq, i) => (
               <div
                 key={i}
-                className="p-8 rounded-3xl bg-white border border-primary/5"
+                className="p-8 rounded-3xl bg-card border border-primary/5"
               >
                 <h5 className="font-bold text-primary mb-2">{faq.q}</h5>
                 <p className="text-sm text-muted-foreground">{faq.a}</p>

@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowRight, Shield, Sparkles } from "lucide-react";
+import { ArrowRight, Shield } from "lucide-react";
 import { motion } from "motion/react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { useEffect, useState } from "react";
 
+import { completeOnboarding, upsertUser } from "@/app/actions/users";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -49,14 +50,10 @@ export default function OnboardingPage() {
         last_name: user.lastName,
       });
 
-      void fetch("/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: user.primaryEmailAddress?.emailAddress,
-          first_name: user.firstName,
-          last_name: user.lastName,
-        }),
+      void upsertUser({
+        email: user.primaryEmailAddress?.emailAddress,
+        first_name: user.firstName,
+        last_name: user.lastName,
       }).catch(() => {});
     }
   }, [user, trackUserJourney]);
@@ -91,13 +88,16 @@ export default function OnboardingPage() {
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === "Enter" && !loading) {
       event.preventDefault();
-      void handleSubmit(event as any);
+      void submit();
     }
   }
 
-  async function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    void submit();
+  }
 
+  async function submit() {
     if (!user) return;
 
     if (!validateForm()) {
@@ -113,7 +113,7 @@ export default function OnboardingPage() {
         goal,
       });
 
-      await fetch("/api/users/complete-onboarding", { method: "POST" });
+      await completeOnboarding();
 
       trackUserJourney.onboardingCompleted({
         user_id: user.id,
@@ -356,7 +356,6 @@ export default function OnboardingPage() {
                 <span>Secure & Private</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Sparkles className="h-4 w-4 text-primary" />
                 <span>AI-Powered</span>
               </div>
             </div>

@@ -11,13 +11,19 @@ from typing import Any
 import shortuuid
 from motor.core import AgnosticDatabase
 
-from src.analyser import analyse_product_documents, generate_product_overview
+from src.analyser import (
+    analyse_product_documents,
+    generate_product_compliance,
+    generate_product_consumer_explainer,
+    generate_product_overview,
+)
 from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document import Document
-from src.models.pipeline_job import CrawlError, CrawlSkip, PipelineJob
+from src.models.pipeline_job import CrawlError, CrawlSkip, PipelineErrorCode, PipelineJob
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
+from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service, create_product_service
 from src.utils.domain import extract_domain as _extract_domain
@@ -258,7 +264,8 @@ class PipelineService:
             product = await product_svc.get_product_by_slug(db, job.product_slug)
             if not product:
                 job.status = "failed"
-                job.error = f"Product {job.product_slug} not found"
+                job.error = PipelineErrorCode.product_not_found
+                job.error_detail = f"Product {job.product_slug} not found"
                 await self._pipeline_repo.update(db, job)
                 return
 
@@ -281,10 +288,17 @@ class PipelineService:
                     # the subsequent 'summarizing' job status in MongoDB.
                     crawl_tasks: list[asyncio.Task] = []
 
-                    # Create progress callback for crawl phase
-                    async def _on_crawl_progress(phase: str, current: int, total: int) -> None:
-                        remaining = max(total - current, 0)
-                        phase_name = "Discovery" if phase == "discovery" else "Deep Crawl"
+                    # Create progress callback for crawl phase.
+                    #
+                    # `current` is pages successfully fetched; `total` is the discovered
+                    # frontier. We deliberately do NOT emit a percentage or "X remaining"
+                    # for crawling: the frontier is a moving target (it grows as links are
+                    # found) and is inflated by speculative policy-URL probes that mostly
+                    # 404, so any ratio is fiction. Report an honest count and let the UI
+                    # render this step as indeterminate. (The summarizing step, which has a
+                    # real fixed total, keeps its genuine percentage.)
+                    async def _on_crawl_progress(_phase: str, current: int, _total: int) -> None:
+                        pages = "page" if current == 1 else "pages"
                         # We wrap this in a task so the crawler doesn't block on DB I/O,
                         # but we keep track of it to await it before phase transitions.
                         task = asyncio.create_task(
@@ -292,9 +306,7 @@ class PipelineService:
                                 db,
                                 job,
                                 "crawling",
-                                current=current,
-                                total=total,
-                                message=f"{phase_name}: {current}/{total} pages scanned ({remaining} remaining)",
+                                message=f"Discovering documents — {current} {pages} read so far",
                             )
                         )
                         crawl_tasks.append(task)
@@ -328,25 +340,37 @@ class PipelineService:
                     )
 
                     if stats.policy_documents_stored == 0:
-                        job.status = "failed"
+                        # The crawl ran to completion but found nothing storable. This
+                        # is a deterministic terminal outcome, NOT a failure to retry —
+                        # retrying yields the same result. Marking it `no_documents`
+                        # (rather than `failed`) stops the product page from
+                        # retriggering the pipeline on every visit. `failed` is
+                        # reserved for genuine interruptions/errors (see the except
+                        # and timeout handlers below).
+                        job.status = "no_documents"
 
                         # Build a descriptive error based on crawl error types
                         robots_blocked = [
-                            e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
+                            err
+                            for err in job.crawl_errors
+                            if err.error_type == "robots_txt_blocked"
                         ]
                         if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
-                            job.error = (
+                            job.error = PipelineErrorCode.crawl_robots_blocked
+                            job.error_detail = (
                                 "This site blocks automated access via robots.txt. "
                                 "We were unable to crawl any policy documents."
                             )
                         elif robots_blocked:
-                            job.error = (
+                            job.error = PipelineErrorCode.crawl_robots_blocked
+                            job.error_detail = (
                                 f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
                                 f"of {len(job.crawl_errors)} failed URLs). "
                                 "No policy documents could be found."
                             )
                         elif job.crawl_errors:
-                            job.error = (
+                            job.error = PipelineErrorCode.crawl_failed
+                            job.error_detail = (
                                 f"Crawling failed for {len(job.crawl_errors)} URL(s). "
                                 "No policy documents could be found."
                             )
@@ -361,13 +385,15 @@ class PipelineService:
                                 f"{n}× {reason}"
                                 for reason, n in sorted(counts.items(), key=lambda kv: -kv[1])
                             )
-                            job.error = (
+                            job.error = PipelineErrorCode.no_documents_found
+                            job.error_detail = (
                                 f"{len(job.crawl_skip_reasons)} URLs fetched but all "
                                 f"rejected by content filters ({breakdown}). "
                                 "See crawl_skip_reasons for the per-URL detail."
                             )
                         else:
-                            job.error = "No policy documents found on this site"
+                            job.error = PipelineErrorCode.no_documents_found
+                            job.error_detail = "No policy documents found on this site"
 
                         job.completed_at = datetime.now()
                         await self._update_step(
@@ -385,6 +411,27 @@ class PipelineService:
                             "Skipped - no documents to analyze",
                         )
                         await self._pipeline_repo.update(db, job)
+
+                        # Alert the admin so a human can check whether this is a
+                        # crawler coverage gap or the site genuinely has no policy
+                        # documents. Best-effort — never fail the job on email error.
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "No policy documents found on this site",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "no-documents admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
                         return
 
                     # === Step 2: Summarize ===
@@ -417,15 +464,80 @@ class PipelineService:
                             message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
                         )
 
-                    await analyse_product_documents(
+                    analysed_docs = await analyse_product_documents(
                         db,
                         job.product_slug,
                         doc_svc,
                         progress_callback=_on_summarize_progress,
                     )
 
+                    # Truthful step state: a document either got analysis or it didn't.
+                    # Per-document failures are isolated inside analyse_product_documents,
+                    # so the call returns even when every document failed. If NONE were
+                    # analysed, mark the step failed (not "completed") and stop here with
+                    # an accurate analysis-stage error — rather than reporting success and
+                    # letting overview synthesis blow up with a generic failure.
+                    analysed_count = sum(1 for doc in analysed_docs if doc.analysis)
+                    # Overview synthesis needs at least one analysed CORE doc. If core docs
+                    # were found but none of them got analysis, the overview will fail — so
+                    # fail here truthfully instead of reporting "completed" and letting the
+                    # next step blow up. (Non-core partial loss is reported, not failed.)
+                    core_docs = [
+                        doc
+                        for doc in analysed_docs
+                        if getattr(doc, "doc_type", None) in OVERVIEW_CORE_DOC_TYPES
+                    ]
+                    core_analysed = sum(1 for doc in core_docs if doc.analysis)
+                    no_analysis = bool(analysed_docs) and analysed_count == 0
+                    core_wipeout = bool(core_docs) and core_analysed == 0
+                    if no_analysis or core_wipeout:
+                        job.status = "failed"
+                        if core_wipeout and not no_analysis:
+                            job.error = PipelineErrorCode.core_docs_unanalyzed
+                            job.error_detail = (
+                                f"Analyzed {analysed_count} of {len(analysed_docs)} documents, but "
+                                f"none of the {len(core_docs)} core policy document(s) (privacy/terms) "
+                                "could be analyzed — cannot build a reliable overview. Usually a "
+                                "temporary model rate-limit/timeout issue — try again."
+                            )
+                            summarizing_message = (
+                                f"0 of {len(core_docs)} core documents could be analyzed "
+                                f"({analysed_count} of {len(analysed_docs)} total)"
+                            )
+                        else:
+                            job.error = PipelineErrorCode.all_analysis_failed
+                            job.error_detail = (
+                                f"Found {len(analysed_docs)} documents but could not analyze any "
+                                "of them. This is usually a temporary issue (model rate limits or "
+                                "timeouts) — try again."
+                            )
+                            summarizing_message = (
+                                f"0 of {len(analysed_docs)} documents could be analyzed"
+                            )
+                        job.completed_at = datetime.now()
+                        await self._update_step(
+                            db,
+                            job,
+                            "summarizing",
+                            "failed",
+                            summarizing_message,
+                        )
+                        await self._update_step(
+                            db,
+                            job,
+                            "generating_overview",
+                            "failed",
+                            "Skipped - no analyzed documents",
+                        )
+                        await self._pipeline_repo.update(db, job)
+                        return
+
                     await self._update_step(
-                        db, job, "summarizing", "completed", "All documents analyzed"
+                        db,
+                        job,
+                        "summarizing",
+                        "completed",
+                        f"Analyzed {analysed_count} of {len(analysed_docs)} documents",
                     )
 
                     # === Step 3: Generate Overview ===
@@ -447,6 +559,97 @@ class PipelineService:
                         product_svc=product_svc_for_overview,
                         document_svc=doc_svc_for_overview,
                     )
+
+                    # Verify the overview actually persisted — same truthfulness lesson as
+                    # the analysis-persistence bug: never report "completed" off an
+                    # in-memory success without confirming the row exists in the DB.
+                    persisted_overview = await product_svc_for_overview.get_product_overview_data(
+                        db, job.product_slug
+                    )
+                    if not persisted_overview:
+                        job.status = "failed"
+                        job.error = PipelineErrorCode.overview_not_persisted
+                        job.error_detail = (
+                            "Overview generation reported success but no overview was persisted "
+                            f"for {job.product_slug}."
+                        )
+                        job.completed_at = datetime.now()
+                        await self._update_step(
+                            db,
+                            job,
+                            "generating_overview",
+                            "failed",
+                            "Overview did not persist",
+                        )
+                        await self._pipeline_repo.update(db, job)
+                        return
+
+                    # Consumer explainer (product-level, the consumer-facing output).
+                    # Best-effort: a failure here must NOT fail a job whose overview already
+                    # succeeded — the product page degrades gracefully when it is absent.
+                    try:
+                        explainer = await generate_product_consumer_explainer(
+                            db,
+                            job.product_slug,
+                            product_svc_for_overview,
+                            doc_svc_for_overview,
+                        )
+                        if explainer is not None:
+                            saved = await product_svc_for_overview.save_product_explainer(
+                                db, job.product_slug, explainer
+                            )
+                            logger.info(
+                                "Saved consumer explainer for %s (grade=%s, persisted=%s)",
+                                job.product_slug,
+                                explainer.grade,
+                                saved,
+                            )
+                        else:
+                            logger.warning(
+                                "Consumer explainer not generated for %s "
+                                "(no core extraction or model failure).",
+                                job.product_slug,
+                            )
+                    except Exception as explainer_error:
+                        logger.warning(
+                            "Consumer explainer generation failed for %s: %s",
+                            job.product_slug,
+                            explainer_error,
+                            exc_info=True,
+                        )
+
+                    # Justified compliance assessment (per-regime score + strengths/gaps).
+                    # Also best-effort — secondary to the consumer-facing outputs above.
+                    try:
+                        compliance = await generate_product_compliance(
+                            db,
+                            job.product_slug,
+                            product_svc_for_overview,
+                            doc_svc_for_overview,
+                        )
+                        if compliance:
+                            saved = await product_svc_for_overview.save_product_compliance(
+                                db, job.product_slug, compliance
+                            )
+                            logger.info(
+                                "Saved compliance assessment for %s (%d regime(s), persisted=%s)",
+                                job.product_slug,
+                                len(compliance),
+                                saved,
+                            )
+                        else:
+                            logger.info(
+                                "No compliance assessment generated for %s "
+                                "(documents gave no basis).",
+                                job.product_slug,
+                            )
+                    except Exception as compliance_error:
+                        logger.warning(
+                            "Compliance assessment generation failed for %s: %s",
+                            job.product_slug,
+                            compliance_error,
+                            exc_info=True,
+                        )
 
                     await self._update_step(
                         db,
@@ -491,7 +694,8 @@ class PipelineService:
                         exc_info=True,
                     )
                     job.status = "failed"
-                    job.error = str(e)
+                    job.error = PipelineErrorCode.internal_error
+                    job.error_detail = str(e)
                     job.completed_at = datetime.now()
 
                     # Mark any running steps as failed
@@ -515,7 +719,8 @@ class PipelineService:
                     MAX_PIPELINE_DURATION_SECONDS,
                 )
                 job.status = "failed"
-                job.error = "Pipeline timed out after 2 hours"
+                job.error = PipelineErrorCode.timed_out
+                job.error_detail = "Pipeline timed out after 2 hours"
                 job.completed_at = datetime.now()
                 for step in job.steps:
                     if step.status == "running":

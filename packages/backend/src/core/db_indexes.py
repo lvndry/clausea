@@ -9,6 +9,7 @@ from __future__ import annotations
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
+from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES
 
 logger = get_logger(__name__)
 
@@ -143,37 +144,6 @@ async def ensure_user_indexes(db: AgnosticDatabase) -> None:
             logger.debug("Index on users.email already exists or has duplicate values")
         else:
             logger.warning(f"Could not create index on users.email: {e}")
-
-
-async def ensure_conversation_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the conversations collection."""
-    try:
-        await db.conversations.create_index(
-            "id", unique=True, name="idx_conversation_id", background=True
-        )
-        logger.info("Created unique index on conversations.id")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg or "duplicate key" in error_msg:
-            logger.debug("Index on conversations.id already exists or has duplicate values")
-        else:
-            logger.warning(f"Could not create index on conversations.id: {e}")
-
-    try:
-        await db.conversations.create_index(
-            [("user_id", 1), ("last_message_at", -1)],
-            name="idx_conversation_user_recent",
-            background=True,
-        )
-        logger.info("Created index on conversations.(user_id, last_message_at)")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg:
-            logger.debug("Index on conversations.(user_id, last_message_at) already exists")
-        else:
-            logger.warning(
-                f"Could not create index on conversations.(user_id, last_message_at): {e}"
-            )
 
 
 async def ensure_finding_indexes(db: AgnosticDatabase) -> None:
@@ -315,6 +285,36 @@ async def ensure_pipeline_indexes(db: AgnosticDatabase) -> None:
             logger.warning(f"Could not create index on indexation_subscriptions: {e}")
 
 
+async def ensure_active_job_unique_index(db: AgnosticDatabase) -> None:
+    """Enforce at-most-one ACTIVE pipeline job per product, via a partial unique index.
+
+    Must run AFTER orphaned jobs are reaped (so pre-existing duplicate active jobs don't
+    block index creation). Also backfills the ``active`` discriminator on legacy rows.
+    """
+    terminal = list(TERMINAL_PIPELINE_STATUSES)
+    await db.pipeline_jobs.update_many(
+        {"active": {"$exists": False}, "status": {"$nin": terminal}},
+        {"$set": {"active": True}},
+    )
+    await db.pipeline_jobs.update_many(
+        {"active": {"$exists": False}, "status": {"$in": terminal}},
+        {"$set": {"active": False}},
+    )
+    try:
+        await db.pipeline_jobs.create_index(
+            [("product_slug", 1)],
+            unique=True,
+            partialFilterExpression={"active": True},
+            name="uniq_active_job_per_product",
+        )
+    except Exception as exc:  # noqa: BLE001 - pre-existing duplicate active jobs
+        logger.warning(
+            "Could not create unique active-job index (likely pre-existing duplicate "
+            "active jobs — clean those up to enable the guarantee): %s",
+            exc,
+        )
+
+
 async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     """Ensure all database indexes are created.
 
@@ -326,7 +326,6 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     """
     logger.info("Ensuring database indexes are created...")
     await ensure_user_indexes(db)
-    await ensure_conversation_indexes(db)
     await ensure_product_indexes(db)
     await ensure_document_indexes(db)
     await ensure_finding_indexes(db)

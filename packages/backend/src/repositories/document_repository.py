@@ -9,7 +9,12 @@ from typing import Any
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.models.document import CORE_DOC_TYPES, Document, DocumentAnalysis
+from src.models.document import (
+    CORE_DOC_TYPES,
+    ConsumerExplainer,
+    Document,
+    DocumentAnalysis,
+)
 from src.repositories.base_repository import BaseRepository
 
 logger = get_logger(__name__)
@@ -270,11 +275,12 @@ class DocumentRepository(BaseRepository):
         """Update a document in the database.
 
         Defensive: callers that load a Document via a projecting reader
-        (e.g. find_by_product_id strips text/markdown to "") and then $set
-        the full model_dump would wipe the stored source text. To prevent
-        that class of round-trip data loss, this method drops empty text /
-        markdown from the update payload when the stored row has content,
-        and logs a warning so the misuse stays visible.
+        (e.g. find_by_product_id strips text/markdown/analysis/extraction and
+        replaces them with "" / None) and then $set the full model_dump would
+        wipe the stored source text, analysis, and extraction. To prevent that
+        class of round-trip data loss, this method drops the empty/None fields
+        from the update payload when the stored row already has content, and
+        logs a warning so the misuse stays visible.
 
         Args:
             db: Database instance
@@ -291,10 +297,19 @@ class DocumentRepository(BaseRepository):
             incoming_text = document_dict.get("text") or ""
             incoming_markdown = document_dict.get("markdown") or ""
 
-            if not incoming_text or not incoming_markdown:
-                existing = await db.documents.find_one(
-                    {"id": document.id}, {"text": 1, "markdown": 1}
-                )
+            # Guard against round-trip wipes: a projecting reader strips heavy fields
+            # to None/"" before this Document was built, so writing the full model_dump
+            # back would null out stored content. Drop any heavy field from the $set
+            # when it is empty incoming but non-empty stored.
+            guarded_fields = ("analysis", "extraction", "consumer_explainer")
+            needs_guard = (
+                not incoming_text
+                or not incoming_markdown
+                or any(document_dict.get(field) is None for field in guarded_fields)
+            )
+            if needs_guard:
+                projection = {"text": 1, "markdown": 1, **dict.fromkeys(guarded_fields, 1)}
+                existing = await db.documents.find_one({"id": document.id}, projection)
                 if existing:
                     if not incoming_text and (existing.get("text") or ""):
                         document_dict.pop("text", None)
@@ -309,6 +324,14 @@ class DocumentRepository(BaseRepository):
                             "DocumentRepository.update refused to overwrite non-empty "
                             f"markdown for document {document.id} with an empty value."
                         )
+                    for field in guarded_fields:
+                        if document_dict.get(field) is None and existing.get(field) is not None:
+                            document_dict.pop(field, None)
+                            logger.warning(
+                                "DocumentRepository.update refused to overwrite non-empty "
+                                f"{field} for document {document.id} with None "
+                                "(caller likely loaded via a projecting reader)."
+                            )
 
             result = await db.documents.update_one({"id": document.id}, {"$set": document_dict})
             success = result.modified_count > 0
@@ -369,10 +392,50 @@ class DocumentRepository(BaseRepository):
                 {"id": document_id},
                 {"$set": {"analysis": analysis.model_dump(), "updated_at": datetime.now()}},
             )
-            success = result.modified_count > 0
+            # matched_count, not modified_count: re-analysing a document can produce a
+            # byte-identical analysis, which Mongo reports as modified_count == 0. The
+            # caller treats False as a persistence failure, so success must mean "the
+            # document exists and now holds this analysis", i.e. the filter matched.
+            success = result.matched_count > 0
             if success:
                 logger.info(f"Updated analysis for document {document_id}")
+            else:
+                logger.warning(f"No document found with id {document_id} to update analysis for")
             return bool(success)
         except Exception as e:
             logger.error(f"Error updating analysis for document {document_id}: {e}")
+            raise e
+
+    async def update_consumer_explainer(
+        self, db: AgnosticDatabase, document_id: str, explainer: ConsumerExplainer
+    ) -> bool:
+        """Surgically persist the consumer explainer for one document.
+
+        Uses ``matched_count`` (not ``modified_count``) so re-persisting an
+        identical explainer still reports success — the row exists and is
+        up to date, which is what callers care about.
+
+        Returns:
+            True if a document with ``document_id`` was matched, False otherwise.
+        """
+        try:
+            result = await db.documents.update_one(
+                {"id": document_id},
+                {
+                    "$set": {
+                        "consumer_explainer": explainer.model_dump(),
+                        "updated_at": datetime.now(),
+                    }
+                },
+            )
+            success = result.matched_count > 0
+            if success:
+                logger.info(f"Updated consumer explainer for document {document_id}")
+            else:
+                logger.warning(
+                    f"No document found with id {document_id} to update consumer explainer"
+                )
+            return bool(success)
+        except Exception as e:
+            logger.error(f"Error updating consumer explainer for document {document_id}: {e}")
             raise e

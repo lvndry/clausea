@@ -27,7 +27,7 @@ export async function GET(
   } catch (error) {
     console.error("Error fetching document extraction:", error);
     return NextResponse.json(
-      { error: `Failed to fetch document extraction: ${error}` },
+      { error: `Failed to fetch document extraction` },
       { status: 500 },
     );
   }

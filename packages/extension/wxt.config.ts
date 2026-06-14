@@ -24,15 +24,14 @@ export default defineConfig({
         "Analyze privacy policies and terms of service with AI. Understand risks, rights, and key terms before you sign up.",
       // Permission justifications:
       // - "activeTab": Required to:
-      //   1. Get the current tab URL when popup opens (App.tsx:136, App-new.tsx:167)
+      //   1. Get the current tab URL when popup opens (App.tsx:136)
       //   2. Listen for tab updates/activation to update extension icon (background.ts:112,119)
       //   3. Set extension icon for specific tabs based on privacy policy verdict (background.ts:56)
       permissions: ["activeTab", "cookies", "storage"],
       // Host permission justifications:
       // - "https://api.clausea.co/*": Production API endpoint for:
       //   1. /extension/check - Check if privacy analysis exists for URL (api.ts:33, background.ts:92,139, App.tsx:190)
-      //   2. /extension/domains - Get list of supported domains (api.ts:53)
-      //   3. /extension/request-support - Request support for new URL (api.ts:68, App.tsx:221)
+      //   2. /extension/request-support - Request support for new URL (api.ts:68, App.tsx:221)
       // - "http://localhost:8000/*": Development API endpoint (same endpoints, api.ts:7)
       // - "https://clausea.co/*": For reading Clerk __session cookie
       // - "http://localhost:3000/*": Development frontend (for Clerk __session cookie)

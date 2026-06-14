@@ -9,14 +9,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.indexation_subscription_repository import (
     IndexationSubscriptionRepository,
 )
 from src.repositories.product_repository import ProductRepository
 from src.repositories.user_repository import UserRepository
-from src.services.conversation_service import ConversationService
 from src.services.document_service import DocumentService
 from src.services.indexation_notification_service import IndexationNotificationService
 from src.services.product_service import ProductService
@@ -94,13 +92,3 @@ def create_user_service() -> UserService:
     """
     user_repo = UserRepository()
     return UserService(user_repo)
-
-
-def create_conversation_service() -> ConversationService:
-    """Create a ConversationService with repository dependencies.
-
-    Returns:
-        Configured ConversationService instance
-    """
-    conversation_repo = ConversationRepository()
-    return ConversationService(conversation_repo)

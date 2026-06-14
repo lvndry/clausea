@@ -34,41 +34,41 @@ const verdictConfig = {
   very_user_friendly: {
     label: "LOW RISK",
     subtitle: "Your privacy is well protected",
-    color: "text-[#2B7A5C]",
-    border: "border-[#2B7A5C]/20",
-    bg: "bg-[#2B7A5C]/5",
+    color: "text-risk-low",
+    border: "border-risk-low/20",
+    bg: "bg-risk-low/5",
     icon: ShieldCheck,
   },
   user_friendly: {
     label: "FAIR",
     subtitle: "Generally respects your privacy",
-    color: "text-[#2B7A5C]",
-    border: "border-[#2B7A5C]/20",
-    bg: "bg-[#2B7A5C]/5",
+    color: "text-risk-low",
+    border: "border-risk-low/20",
+    bg: "bg-risk-low/5",
     icon: CheckCircle,
   },
   moderate: {
     label: "MIXED",
     subtitle: "Some privacy considerations",
-    color: "text-[#B58D2D]",
-    border: "border-[#B58D2D]/20",
-    bg: "bg-[#B58D2D]/5",
+    color: "text-risk-medium",
+    border: "border-risk-medium/20",
+    bg: "bg-risk-medium/5",
     icon: Shield,
   },
   pervasive: {
     label: "PERVASIVE",
     subtitle: "Significant privacy concerns",
-    color: "text-[#BD452D]",
-    border: "border-[#BD452D]/20",
-    bg: "bg-[#BD452D]/5",
+    color: "text-risk-high",
+    border: "border-risk-high/20",
+    bg: "bg-risk-high/5",
     icon: ShieldAlert,
   },
   very_pervasive: {
     label: "CRITICAL",
     subtitle: "Major privacy risks identified",
-    color: "text-[#BD452D]",
-    border: "border-[#BD452D]/20",
-    bg: "bg-[#BD452D]/5",
+    color: "text-risk-high",
+    border: "border-risk-high/20",
+    bg: "bg-risk-high/5",
     icon: AlertTriangle,
   },
 };
@@ -95,9 +95,9 @@ export function VerdictHero({
   };
 
   const getRiskColor = () => {
-    if (riskScore <= 3) return "text-[#2B7A5C]";
-    if (riskScore <= 6) return "text-[#B58D2D]";
-    return "text-[#BD452D]";
+    if (riskScore <= 3) return "text-risk-low";
+    if (riskScore <= 6) return "text-risk-medium";
+    return "text-risk-high";
   };
 
   const handleShare = async () => {

@@ -254,7 +254,6 @@ class PromotionManager:
             "products",
             "documents",
             "users",
-            "conversations",
             "product_overviews",
         ]
         stats = {}

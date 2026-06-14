@@ -10,7 +10,12 @@ from __future__ import annotations
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
-from src.models.document import CORE_DOC_TYPES, Document, DocumentAnalysis
+from src.models.document import (
+    CORE_DOC_TYPES,
+    ConsumerExplainer,
+    Document,
+    DocumentAnalysis,
+)
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 
@@ -47,18 +52,6 @@ class DocumentService:
     # ============================================================================
     # Document Query Operations
     # ============================================================================
-
-    async def get_all_documents(self, db: AgnosticDatabase) -> list[Document]:
-        """Get all documents from the database.
-
-        Args:
-            db: Database instance
-
-        Returns:
-            List of all documents
-        """
-        documents: list[Document] = await self._document_repo.find_all(db)
-        return documents
 
     async def get_document_by_id(self, db: AgnosticDatabase, document_id: str) -> Document | None:
         """Get a document by its ID.
@@ -120,19 +113,6 @@ class DocumentService:
         documents: list[Document] = await self._document_repo.find_by_product_id_full(
             db, product.id
         )
-        return documents
-
-    async def get_documents_by_type(self, db: AgnosticDatabase, doc_type: str) -> list[Document]:
-        """Get all documents of a specific type.
-
-        Args:
-            db: Database instance
-            doc_type: Document type
-
-        Returns:
-            List of documents of the specified type
-        """
-        documents: list[Document] = await self._document_repo.find_by_type(db, doc_type)
         return documents
 
     async def get_documents_with_analysis(
@@ -301,4 +281,22 @@ class DocumentService:
             Exception: If update fails
         """
         updated: bool = await self._document_repo.update_analysis(db, document_id, analysis)
+        return updated
+
+    async def update_document_consumer_explainer(
+        self, db: AgnosticDatabase, document_id: str, explainer: ConsumerExplainer
+    ) -> bool:
+        """Persist the plain-English consumer explainer for one document.
+
+        Args:
+            db: Database instance
+            document_id: Document ID
+            explainer: ConsumerExplainer object (post-validation/grade-clamp)
+
+        Returns:
+            True if a document was matched and updated, False otherwise.
+        """
+        updated: bool = await self._document_repo.update_consumer_explainer(
+            db, document_id, explainer
+        )
         return updated

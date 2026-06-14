@@ -44,16 +44,16 @@ type NotFoundPhase =
 
 const verdictPalette: Record<string, { badge: string; bar: string }> = {
   safe: {
-    badge: "border-green-600/30 bg-green-500/15 text-green-600",
-    bar: "bg-green-700",
+    badge: "border-risk-low/30 bg-risk-low/10 text-risk-low",
+    bar: "bg-risk-low",
   },
   caution: {
-    badge: "border-amber-600/30 bg-amber-500/15 text-amber-600",
-    bar: "bg-amber-600",
+    badge: "border-risk-medium/30 bg-risk-medium/10 text-risk-medium",
+    bar: "bg-risk-medium",
   },
   danger: {
-    badge: "border-red-600/30 bg-red-500/15 text-red-600",
-    bar: "bg-red-600",
+    badge: "border-risk-high/30 bg-risk-high/10 text-risk-high",
+    bar: "bg-risk-high",
   },
   gray: {
     badge: "border-border bg-muted text-muted-foreground",
@@ -282,7 +282,7 @@ export default function App() {
             <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
               Privacy Pulse
             </p>
-            <h1 className="text-sm font-semibold text-foreground">
+            <h1 className="font-display text-sm font-semibold text-foreground">
               Trust what you sign in seconds
             </h1>
           </div>
@@ -383,7 +383,7 @@ export default function App() {
               {/* ── Phase: trigger-error ── */}
               {notFoundPhase === "trigger-error" && (
                 <div className="flex w-full flex-col items-center gap-3">
-                  <div className="flex w-full flex-col items-center gap-2 border border-red-600/30 bg-red-500/10 p-4 text-red-600">
+                  <div className="flex w-full flex-col items-center gap-2 border border-risk-high/30 bg-risk-high/10 p-4 text-risk-high">
                     <AlertTriangle className="h-4 w-4" strokeWidth={1.5} />
                     <p className="text-xs">
                       {phaseError || "Failed to start analysis."}
@@ -430,7 +430,7 @@ export default function App() {
                     </button>
                   </form>
                   {notFoundPhase === "subscribe-error" && (
-                    <p className="text-xs text-red-600">
+                    <p className="text-xs text-risk-high">
                       {phaseError || "Failed to subscribe. Please try again."}
                     </p>
                   )}
@@ -450,10 +450,10 @@ export default function App() {
 
               {/* ── Phase: subscribed — success ── */}
               {notFoundPhase === "subscribed" && (
-                <div className="flex w-full flex-col items-center gap-2 border border-green-600/30 bg-green-500/10 p-4 text-green-600">
+                <div className="flex w-full flex-col items-center gap-2 border border-risk-low/30 bg-risk-low/10 p-4 text-risk-low">
                   <CheckCircle2 className="h-5 w-5" strokeWidth={1.5} />
                   <p className="text-xs font-medium">You&apos;re subscribed</p>
-                  <p className="text-[10px] text-green-600/70">
+                  <p className="text-[10px] text-risk-low/70">
                     We&apos;ll email{" "}
                     <span className="font-medium">{email}</span> when the
                     analysis is ready.
@@ -468,7 +468,7 @@ export default function App() {
         {view === "crawl-failed" && data && (
           <section className="border-b border-border bg-card px-5 py-6">
             <div className="flex flex-col items-center gap-4 text-center">
-              <div className="border border-amber-600/30 bg-amber-500/10 p-4 text-amber-600">
+              <div className="border border-risk-medium/30 bg-risk-medium/10 p-4 text-risk-medium">
                 <ShieldBan className="h-6 w-6" strokeWidth={1.5} />
               </div>
 
@@ -495,7 +495,7 @@ export default function App() {
                       className="flex items-start gap-2 text-xs text-muted-foreground"
                     >
                       <ShieldBan
-                        className="mt-0.5 h-3 w-3 shrink-0 text-amber-500"
+                        className="mt-0.5 h-3 w-3 shrink-0 text-risk-medium"
                         strokeWidth={1.5}
                       />
                       <span className="break-all font-mono text-[10px]">
@@ -539,7 +539,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => chrome.tabs.create({ url: loginUrl })}
-                className="w-full rounded-sm bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 transition-opacity"
+                className="w-full bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 transition-opacity"
               >
                 Sign in to Clausea
               </button>
@@ -567,12 +567,12 @@ export default function App() {
               <div className="px-5 py-4">
                 <div className="flex flex-col gap-4">
                   <div className="flex items-start justify-between gap-3">
-                    <h2 className="text-lg font-semibold">
+                    <h2 className="font-display text-lg font-semibold">
                       {data.product_name}
                     </h2>
                     <span
                       className={cn(
-                        "shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+                        "shrink-0 border px-2.5 py-0.5 text-xs font-semibold",
                         tone.badge,
                       )}
                     >
@@ -625,7 +625,7 @@ export default function App() {
                         className="flex gap-2.5 text-xs leading-relaxed text-muted-foreground"
                       >
                         <TriangleAlert
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500"
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-risk-medium"
                           strokeWidth={1.5}
                         />
                         <span>{concern}</span>
@@ -642,7 +642,7 @@ export default function App() {
                 <p className="text-[10px] uppercase tracking-[0.3em] text-background/50">
                   Deep dive
                 </p>
-                <p className="text-base font-semibold">
+                <p className="font-display text-base font-semibold">
                   See the clause-by-clause analysis
                 </p>
                 <p className="text-xs leading-relaxed text-background/60">

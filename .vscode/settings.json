@@ -98,5 +98,6 @@
     "reportUntypedFunctionDecorator": "error",
     "reportUntypedClassDecorator": "error"
   },
-  "cursorpyright.analysis.typeCheckingMode": "strict"
+  "cursorpyright.analysis.typeCheckingMode": "strict",
+  "python-envs.pythonProjects": []
 }

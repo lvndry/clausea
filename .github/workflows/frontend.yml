@@ -42,6 +42,12 @@ jobs:
       - name: Run TypeScript type checking
         run: bun run type-check
 
+      - name: Run tests
+        run: bun run test
+
+      - name: Check for dead code and dependencies
+        run: bun run knip
+
       - name: Build application
         run: bun run build
         env:
@@ -84,4 +90,4 @@ jobs:
         run: bun install
 
       - name: Audit dependencies
-        run: bun audit || exit 0
+        run: bun audit

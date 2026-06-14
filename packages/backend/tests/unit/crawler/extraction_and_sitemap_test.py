@@ -275,6 +275,81 @@ def test_extract_main_content_preserves_cookie_policy_wrapper():
     assert "Accept cookies" not in text
 
 
+def test_extract_main_content_combines_split_blocks_over_small_sidebar():
+    """Airbnb help/legal pages split the body across many sibling
+    ``data-testid="CEPHtmlSection"`` blocks while a small "Related articles"
+    widget (``data-testid="...article..."``) appears earlier in the DOM.
+
+    The extractor must pick the rich combined body, not the tiny sidebar.
+    """
+    body_para = (
+        "This Terms of Service section explains the legal agreement between you and "
+        "the company. It describes your rights, obligations, liability, dispute "
+        "resolution, governing law, and the conditions under which the service is "
+        "provided. "
+    )
+    sections = "".join(
+        f'<div data-testid="CEPHtmlSection"><h2>Section {i}</h2><p>{body_para}</p></div>'
+        for i in range(8)
+    )
+    html = f"""
+    <!doctype html>
+    <html>
+      <body>
+        <div data-testid="related-articles-card">
+          <h3>Related articles</h3>
+          <a href="/help/article/1">About the updates to our Terms</a>
+          <a href="/help/article/2">Terms of Service</a>
+        </div>
+        <div data-testid="article-body-container">
+          {sections}
+        </div>
+      </body>
+    </html>
+    """
+    crawler = ClauseaCrawler()
+    soup = BeautifulSoup(html, "html.parser")
+    cleaned = crawler._extract_main_content_soup(soup)
+    text = cleaned.get_text(" ", strip=True)
+
+    # All 8 body sections must survive, not just the first.
+    assert text.count("This Terms of Service section explains") == 8
+    assert "Section 7" in text
+    # The richer body must dominate over the tiny related-articles sidebar.
+    assert len(text) > 1000
+
+
+def test_decode_sitemap_bytes_inflates_gzip():
+    """``.xml.gz`` sitemap indexes arrive as gzip file bodies; aiohttp does not
+    transparently inflate them, so a naive .text() decode raised
+    'utf-8 codec can't decode byte 0x8b'. The decoder must gunzip first.
+    """
+    import gzip
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        "<url><loc>https://example.com/privacy</loc></url>"
+        "</urlset>"
+    )
+    gz = gzip.compress(xml.encode("utf-8"))
+    # Magic bytes present so the gzip body never reaches a utf-8 decode.
+    assert gz[:2] == b"\x1f\x8b"
+
+    crawler = ClauseaCrawler()
+    decoded = crawler._decode_sitemap_bytes(gz, "https://example.com/sitemap-index.xml.gz")
+    assert "<loc>https://example.com/privacy</loc>" in decoded
+    assert crawler._parse_sitemap_xml(decoded) == ["https://example.com/privacy"]
+
+
+def test_decode_sitemap_bytes_passes_through_plain_xml():
+    crawler = ClauseaCrawler()
+    xml = b'<?xml version="1.0"?><urlset><url><loc>https://example.com/a</loc></url></urlset>'
+    decoded = crawler._decode_sitemap_bytes(xml, "https://example.com/sitemap.xml")
+    assert decoded.startswith("<?xml")
+    assert "https://example.com/a" in decoded
+
+
 @pytest.mark.asyncio
 async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
     html = """

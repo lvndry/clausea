@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from src.core.database import get_db
 from src.core.logging import get_logger
-from src.models.pipeline_job import PipelineJob
+from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES, PipelineJob
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.pipeline_scheduler import schedule_pipeline_run
 from src.services.service_factory import create_pipeline_service
@@ -165,7 +165,7 @@ async def cancel_job(
     job = await pipeline_svc.get_job(db, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Pipeline job not found")
-    if job.status in ("completed", "failed"):
+    if job.status in TERMINAL_PIPELINE_STATUSES:
         raise HTTPException(status_code=409, detail=f"Job already {job.status}")
 
     repo = PipelineRepository()

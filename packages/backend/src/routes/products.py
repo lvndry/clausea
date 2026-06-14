@@ -18,6 +18,7 @@ from src.core.logging import get_logger
 from src.core.tier_deps import check_usage_limit, get_user_tier, increment_usage, require_pro
 from src.models.document import (
     CORE_DOC_TYPES,
+    ConsumerExplainer,
     DocumentDeepAnalysis,
     DocumentExtraction,
     DocumentSummary,
@@ -117,6 +118,40 @@ async def get_product_overview(
         detail={
             "message": "Overview not available yet. Indexation may be in progress.",
             "code": "overview_not_ready",
+            "product_slug": slug,
+        },
+    )
+
+
+@router.get("/{slug}/explainer", response_model=ConsumerExplainer)
+async def get_product_explainer(
+    slug: str,
+    _request: Request,
+    _usage: None = Depends(check_usage_limit),
+    _increment: None = Depends(increment_usage),
+    db: AgnosticDatabase = Depends(get_db),
+    service: ProductService = Depends(create_product_service),
+) -> ConsumerExplainer:
+    """Get the plain-English consumer TOS-explainer for a product (the consumer-facing
+    output). Does NOT trigger generation — produced by the indexation pipeline.
+
+    Status codes:
+        404: No product with this slug.
+        425: Product exists but the explainer is not available yet.
+    """
+    product = await service.get_product_by_slug(db, slug)
+    if not product:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+
+    data = await service.get_product_explainer(db, slug)
+    if data:
+        return ConsumerExplainer.model_validate(data)
+
+    raise HTTPException(
+        status_code=HTTP_425_TOO_EARLY,
+        detail={
+            "message": "Explainer not available yet. Indexation may be in progress.",
+            "code": "explainer_not_ready",
             "product_slug": slug,
         },
     )

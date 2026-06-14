@@ -16,6 +16,8 @@ from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
 from src.models.document import (
+    ComplianceBreakdown,
+    ConsumerExplainer,
     DocumentSummary,
     MetaSummary,
     ProductAnalysis,
@@ -254,6 +256,37 @@ class ProductService:
         await self._product_repo.save_product_overview(db, product_slug, meta_summary)
 
     # ============================================================================
+    # Consumer Explainer Storage (product-level, consumer-facing)
+    # ============================================================================
+
+    async def get_product_explainer(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> dict[str, Any] | None:
+        """Get the stored product-level consumer explainer, or None."""
+        return await self._product_repo.get_product_explainer(db, product_slug)
+
+    async def save_product_explainer(
+        self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer
+    ) -> bool:
+        """Persist the product-level consumer explainer; True when it landed."""
+        return await self._product_repo.save_product_explainer(db, product_slug, explainer)
+
+    async def get_product_compliance(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> dict[str, Any] | None:
+        """Get the stored per-regime compliance breakdown ({regime: {...}}), or None."""
+        return await self._product_repo.get_product_compliance(db, product_slug)
+
+    async def save_product_compliance(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        compliance: dict[str, ComplianceBreakdown],
+    ) -> bool:
+        """Persist the per-regime compliance breakdown; True when it landed."""
+        return await self._product_repo.save_product_compliance(db, product_slug, compliance)
+
+    # ============================================================================
     # Deep Analysis Storage Operations
     # ============================================================================
 
@@ -407,10 +440,15 @@ class ProductService:
             docs = await self._document_repo.find_by_product_id_full(db, product.id)
             documents = [DocumentSummary.from_document(doc) for doc in docs]
 
+        # Justified per-regime compliance (score + status + strengths/gaps), produced by
+        # the pipeline's compliance step. Pydantic coerces the stored {regime: {...}} dicts
+        # into ComplianceBreakdown objects.
+        compliance = await self._product_repo.get_product_compliance(db, slug)
+
         return ProductAnalysis(
             overview=overview,
             detailed_scores=meta_summary.scores,
-            compliance=None,  # TODO: Store compliance in DB or calculate it
+            compliance=compliance,
             all_keypoints=meta_summary.keypoints,
             documents=documents,
         )

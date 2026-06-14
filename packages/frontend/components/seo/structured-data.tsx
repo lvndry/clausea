@@ -99,11 +99,6 @@ export function SoftwareApplicationStructuredData({
       "Risk assessment and compliance checking",
       "API access for developers",
     ],
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: "4.8",
-      ratingCount: "150",
-    },
   };
 
   return (

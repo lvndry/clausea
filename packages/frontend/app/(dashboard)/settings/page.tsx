@@ -6,7 +6,6 @@ import {
   Loader2,
   Settings,
   Shield,
-  Sparkles,
 } from "lucide-react";
 
 import { useCallback, useEffect, useState } from "react";
@@ -180,14 +179,7 @@ export default function SettingsPage() {
                   variant={isPro ? "default" : "secondary"}
                   className="gap-1"
                 >
-                  {isPro ? (
-                    <>
-                      <Sparkles className="w-3 h-3" />
-                      Pro
-                    </>
-                  ) : (
-                    "Free"
-                  )}
+                  {isPro ? "Pro" : "Free"}
                 </Badge>
               )}
             </div>
@@ -305,10 +297,8 @@ export default function SettingsPage() {
                 disabled={checkoutLoading || !PRO_PRICE_ID}
                 className="gap-2"
               >
-                {checkoutLoading ? (
+                {checkoutLoading && (
                   <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Sparkles className="w-4 h-4" />
                 )}
                 Upgrade to Pro - $9/month
               </Button>

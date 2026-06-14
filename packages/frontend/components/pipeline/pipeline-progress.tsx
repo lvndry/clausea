@@ -18,7 +18,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { resolvePipelineErrorMessage } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
+import type { CrawlError } from "@/types";
 
 interface PipelineStep {
   name: string;
@@ -29,26 +31,14 @@ interface PipelineStep {
   progress_percent?: number | null;
 }
 
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type:
-    | "robots_txt_blocked"
-    | "http_error"
-    | "timeout"
-    | "network_error"
-    | "content_error"
-    | "unknown";
-}
-
 type PipelineJobStatus =
   | "pending"
   | "crawling"
   | "summarizing"
   | "generating_overview"
   | "completed"
-  | "failed";
+  | "failed"
+  | "no_documents";
 
 interface PipelineJobData {
   id: string;
@@ -58,6 +48,7 @@ interface PipelineJobData {
   status: PipelineJobStatus;
   steps: PipelineStep[];
   error: string | null;
+  error_detail?: string | null;
   documents_found: number;
   documents_stored: number;
   crawl_errors: CrawlError[];
@@ -146,21 +137,30 @@ function StepIndicator({ step }: { step: PipelineStep }) {
           </p>
         )}
         {step.progress_percent !== undefined &&
-          step.progress_percent !== null &&
-          step.status === "running" && (
-            <div className="mt-2 space-y-1">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Progress</span>
-                <span>{step.progress_percent}%</span>
-              </div>
-              <div className="w-full bg-muted rounded-full h-1.5">
-                <div
-                  className="bg-primary h-1.5 rounded-full transition-all duration-300 ease-in-out"
-                  style={{ width: `${Math.min(step.progress_percent, 100)}%` }}
-                />
-              </div>
+        step.progress_percent !== null &&
+        step.status === "running" ? (
+          <div className="mt-2 space-y-1">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Progress</span>
+              <span>{step.progress_percent}%</span>
             </div>
-          )}
+            <div className="w-full bg-muted rounded-full h-1.5">
+              <div
+                className="bg-primary h-1.5 rounded-full transition-all duration-300 ease-in-out"
+                style={{ width: `${Math.min(step.progress_percent, 100)}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          // No meaningful total (e.g. crawling — the frontier is a moving target
+          // inflated by speculative probes). Show an indeterminate bar instead of
+          // a fabricated percentage.
+          step.status === "running" && (
+            <div className="mt-2 w-full bg-muted rounded-full h-1.5 overflow-hidden">
+              <div className="h-1.5 w-1/3 rounded-full bg-primary animate-pulse" />
+            </div>
+          )
+        )}
         {step.status === "pending" && (
           <p className="text-xs text-muted-foreground/50 mt-0.5">
             {config.description}
@@ -262,7 +262,10 @@ export function PipelineProgress({
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
 
-  const isTerminal = job?.status === "completed" || job?.status === "failed";
+  const isTerminal =
+    job?.status === "completed" ||
+    job?.status === "failed" ||
+    job?.status === "no_documents";
 
   const clearScheduledPoll = useCallback(() => {
     if (timeoutRef.current) {
@@ -312,7 +315,11 @@ export function PipelineProgress({
       const data: PipelineJobData = await res.json();
       setJob(data);
 
-      if (data.status === "completed" || data.status === "failed") {
+      if (
+        data.status === "completed" ||
+        data.status === "failed" ||
+        data.status === "no_documents"
+      ) {
         clearScheduledPoll();
         if (data.status === "completed" && onComplete) {
           onComplete(data.product_slug);
@@ -430,6 +437,7 @@ export function PipelineProgress({
             "transition-all duration-300",
             job.status === "completed" && "border-green-500/50",
             job.status === "failed" && "border-destructive/50",
+            job.status === "no_documents" && "border-amber-500/50",
           )}
         >
           <CardContent className="p-5 space-y-4">
@@ -439,9 +447,11 @@ export function PipelineProgress({
                 <h3 className="text-sm font-bold font-display text-foreground">
                   {job.status === "completed"
                     ? `${job.product_name} is ready`
-                    : job.status === "failed"
-                      ? `Analysis failed for ${job.product_name}`
-                      : `Analyzing ${job.product_name}...`}
+                    : job.status === "no_documents"
+                      ? `No policy documents found for ${job.product_name}`
+                      : job.status === "failed"
+                        ? `Analysis failed for ${job.product_name}`
+                        : `Analyzing ${job.product_name}...`}
                 </h3>
                 <p className="text-xs text-muted-foreground truncate max-w-xs">
                   {job.url}
@@ -469,9 +479,11 @@ export function PipelineProgress({
                   "h-full rounded-full",
                   job.status === "failed"
                     ? "bg-destructive"
-                    : job.status === "completed"
-                      ? "bg-green-500"
-                      : "bg-primary",
+                    : job.status === "no_documents"
+                      ? "bg-amber-500"
+                      : job.status === "completed"
+                        ? "bg-green-500"
+                        : "bg-primary",
                 )}
               />
             </div>
@@ -492,7 +504,7 @@ export function PipelineProgress({
             {job.error &&
               !(job.crawl_errors && job.crawl_errors.length > 0) && (
                 <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
-                  {job.error}
+                  {resolvePipelineErrorMessage(job.error, job.error_detail)}
                 </p>
               )}
 

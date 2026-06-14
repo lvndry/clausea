@@ -306,25 +306,6 @@ async def get_product_documents_by_id_isolated(product_id: str) -> list[Document
         return []
 
 
-async def get_all_documents_isolated() -> list[Document]:
-    """Get all documents with an isolated database connection."""
-    db = await get_dashboard_db()
-    try:
-        documents = await db.db.documents.find().to_list(length=None)
-        result = []
-        for doc in documents:
-            try:
-                doc_dict = _normalize_mongo_doc(doc)
-                result.append(Document(**doc_dict))
-            except Exception as e:
-                logger.error(f"Error converting document to Document object: {e}")
-                continue
-        return result
-    except Exception as e:
-        logger.error(f"Error getting all documents: {e}")
-        return []
-
-
 async def get_document_counts_by_product() -> dict[str, int]:
     """Get document counts for all products with an isolated database connection.
 

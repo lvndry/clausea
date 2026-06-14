@@ -10,7 +10,7 @@ export async function GET(_request: NextRequest) {
   } catch (error) {
     console.error("Error fetching current user:", error);
     return NextResponse.json(
-      { error: `Failed to fetch current user: ${error}` },
+      { error: `Failed to fetch current user` },
       { status: 500 },
     );
   }

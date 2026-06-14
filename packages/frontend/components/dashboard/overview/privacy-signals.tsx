@@ -16,14 +16,7 @@ import type { ReactNode } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-
-interface PrivacySignalsData {
-  sells_data: "yes" | "no" | "unclear";
-  cross_site_tracking: "yes" | "no" | "unclear";
-  account_deletion: "self_service" | "request_required" | "not_specified";
-  data_retention_summary?: string | null;
-  consent_model: "opt_in" | "opt_out" | "mixed" | "not_specified";
-}
+import type { PrivacySignalsData } from "@/types";
 
 interface PrivacySignalsProps {
   signals: PrivacySignalsData;
@@ -38,9 +31,9 @@ interface SignalDisplay {
 
 function getSignalIcon(sentiment: "positive" | "negative" | "neutral") {
   if (sentiment === "positive")
-    return <CheckCircle className="h-4 w-4 text-[#2B7A5C]" strokeWidth={1.5} />;
+    return <CheckCircle className="h-4 w-4 text-risk-low" strokeWidth={1.5} />;
   if (sentiment === "negative")
-    return <Ban className="h-4 w-4 text-[#BD452D]" strokeWidth={1.5} />;
+    return <Ban className="h-4 w-4 text-risk-high" strokeWidth={1.5} />;
   return (
     <HelpCircle className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
   );
@@ -48,9 +41,9 @@ function getSignalIcon(sentiment: "positive" | "negative" | "neutral") {
 
 function getSentimentStyles(sentiment: "positive" | "negative" | "neutral") {
   if (sentiment === "positive")
-    return "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]";
+    return "border-risk-low/20 bg-risk-low/5 text-risk-low";
   if (sentiment === "negative")
-    return "border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D]";
+    return "border-risk-high/20 bg-risk-high/5 text-risk-high";
   return "border-border bg-muted/5 text-muted-foreground";
 }
 

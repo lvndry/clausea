@@ -31,9 +31,9 @@ from pydantic import BaseModel, Field
 
 from src.core.logging import get_logger
 from src.llm import (
+    MODEL_PRIORITY,
     EscalationValidator,
     SupportedModel,
-    acompletion_with_escalation,
     acompletion_with_fallback,
 )
 from src.models.document import (
@@ -59,19 +59,15 @@ from src.models.document import (
     PrivacySignals,
 )
 from src.utils.cancellation import CancellationToken
+from src.utils.coercion import LenientBool
+from src.utils.quotes import resolve_quote_offsets
 
 logger = get_logger(__name__)
 
-_EXTRACTION_RESILIENCE: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
-_EXTRACTION_PRIMARY: list[SupportedModel] = [
-    "openrouter/gpt-oss-120b-nitro"
-] + _EXTRACTION_RESILIENCE
-_EXTRACTION_ESCALATION: list[SupportedModel] = ["openrouter/deepseek-v4-flash"]
-
-_COMPLEX_DOC_LENGTH_THRESHOLD: int = 50_000
-_COMPLEX_DOC_TYPES: frozenset[str] = frozenset(
-    {"terms_of_service", "data_processing_agreement", "terms_and_conditions"}
-)
+# FREE-FIRST cascade. Extraction is the biggest token sink (4 parallel cluster calls per
+# chunk), so leading with the free tiers saves the most; a 429/failure auto-falls-through
+# to the cheap paid tail (cross-provider for resilience).
+_EXTRACTION_PRIMARY: list[SupportedModel] = MODEL_PRIORITY
 
 _CLUSTER_REQUIRED_KEYS: dict[str, list[str]] = {
     "data_practices": [
@@ -87,21 +83,24 @@ _CLUSTER_REQUIRED_KEYS: dict[str, list[str]] = {
 
 
 def _extraction_validator(cluster_name: str) -> EscalationValidator:
+    """A cluster response is valid when it is well-formed, even if empty.
+
+    A chunk often has no content for a given cluster (e.g. a cookie page has nothing for
+    legal_scope), and the model correctly returns empty lists. That is NOT a failure, so
+    it must not escalate through the whole model cascade — only malformed/unparseable
+    output, a non-dict, or output with no list-shaped expected key escalates.
+    """
     required = _CLUSTER_REQUIRED_KEYS.get(cluster_name, [])
 
     def validate(content: str) -> bool:
         try:
             data = json.loads(content)
-            if not isinstance(data, dict):
-                return False
-            if required and not all(k in data for k in required):
-                return False
-            return any(
-                isinstance(data.get(k), list) and len(data[k]) > 0
-                for k in (required if required else data)
-            )
-        except (json.JSONDecodeError, AttributeError):
+        except (json.JSONDecodeError, ValueError):
             return False
+        if not isinstance(data, dict):
+            return False
+        expected_keys = required or list(data.keys())
+        return any(isinstance(data.get(key), list) for key in expected_keys)
 
     return validate
 
@@ -182,53 +181,8 @@ def _chunk_text(text: str, *, chunk_size: int = 8000, overlap: int = 800) -> lis
     return final_chunks
 
 
-def _collapse_ws(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def _normalize_quotes(s: str) -> str:
-    return (
-        s.replace("\u201c", '"')
-        .replace("\u201d", '"')
-        .replace("\u2018", "'")
-        .replace("\u2019", "'")
-        .replace("\u2013", "-")
-        .replace("\u2014", "-")
-    )
-
-
-def _resolve_quote_offsets(haystack: str, quote: str) -> tuple[int | None, int | None, bool]:
-    if not haystack or not quote:
-        return None, None, False
-
-    idx = haystack.find(quote)
-    if idx != -1:
-        return idx, idx + len(quote), True
-
-    collapsed_h = _collapse_ws(haystack)
-    collapsed_q = _collapse_ws(quote)
-    if collapsed_q and collapsed_q in collapsed_h:
-        return None, None, True
-
-    norm_h = _normalize_quotes(collapsed_h)
-    norm_q = _normalize_quotes(collapsed_q)
-    if norm_q and norm_q in norm_h:
-        return None, None, True
-
-    if len(quote) >= 40:
-        target = _collapse_ws(quote)
-        window = len(target) * 3 // 4
-        if window >= 30:
-            for i in range(len(target) - window + 1):
-                fragment = target[i : i + window]
-                if fragment in collapsed_h:
-                    return None, None, True
-
-    return None, None, False
-
-
 def _make_evidence(document: Document, content_hash: str, quote: str) -> EvidenceSpan:
-    start_char, end_char, verified = _resolve_quote_offsets(document.text, quote)
+    start_char, end_char, verified = resolve_quote_offsets(document.text, quote)
     return EvidenceSpan(
         document_id=document.id,
         url=document.url,
@@ -276,7 +230,7 @@ class _CookieTracker(BaseModel):
     name_or_type: str
     category: str = "other"
     duration: str | None = None
-    third_party: bool = False
+    third_party: LenientBool = False
     opt_out_mechanism: str | None = None
     quote: str
 
@@ -329,7 +283,7 @@ class _AIUsage(BaseModel):
 
 class _ChildrenPolicy(BaseModel):
     minimum_age: int | None = None
-    parental_consent_required: bool = False
+    parental_consent_required: LenientBool = False
     special_protections: str | None = None
     quote: str | None = None
 
@@ -338,14 +292,14 @@ class _Liability(BaseModel):
     scope: str
     limitation_type: str
     description: str
-    extends_beyond_product: bool = False
+    extends_beyond_product: LenientBool = False
     quote: str
 
 
 class _DisputeResolution(BaseModel):
     mechanism: str
-    class_action_waiver: bool = False
-    jury_trial_waiver: bool = False
+    class_action_waiver: LenientBool = False
+    jury_trial_waiver: LenientBool = False
     venue: str | None = None
     governing_law: str | None = None
     description: str | None = None
@@ -1489,16 +1443,10 @@ async def extract_document_facts(
 
     accumulated_signals = PrivacySignals()
 
-    _is_complex = (
-        len(document.text or "") > _COMPLEX_DOC_LENGTH_THRESHOLD
-        or document.doc_type in _COMPLEX_DOC_TYPES
-    )
-
     async def _run_cluster(cluster_name: str, chunk_text: str, chunk_idx: int) -> dict[str, Any]:
         logger.debug(
             f"Running cluster '{cluster_name}' for {document.id} chunk {chunk_idx}/{len(chunks)}"
         )
-        is_complex = _is_complex
         messages = [
             {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
             {
@@ -1506,22 +1454,12 @@ async def extract_document_facts(
                 "content": _get_extraction_prompt(document, chunk_text, cluster_name),
             },
         ]
-        if is_complex:
-            # Complex docs go straight to the escalation model. No validation step:
-            # there is no higher-tier model to escalate to, so we accept the response.
-            response = await acompletion_with_fallback(
-                messages,
-                model_priority=_EXTRACTION_ESCALATION,
-                response_format={"type": "json_object"},
-            )
-        else:
-            response = await acompletion_with_escalation(
-                messages=messages,
-                primary=_EXTRACTION_PRIMARY,
-                escalation=_EXTRACTION_ESCALATION,
-                validator=_extraction_validator(cluster_name),
-                response_format={"type": "json_object"},
-            )
+        response = await acompletion_with_fallback(
+            messages,
+            model_priority=_EXTRACTION_PRIMARY,
+            validator=_extraction_validator(cluster_name),
+            response_format={"type": "json_object"},
+        )
         logger.info(
             "Cluster '%s' for %s chunk %d completed with model %s",
             cluster_name,

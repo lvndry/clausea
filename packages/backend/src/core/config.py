@@ -1,5 +1,4 @@
 import os
-from enum import Enum
 from functools import lru_cache
 
 import structlog
@@ -27,13 +26,6 @@ def discovery_crawl_limits(max_pages: int, max_depth: int) -> tuple[int, int]:
         min(max_pages, _DISCOVERY_PAGE_CAP),
         min(max_depth, _DISCOVERY_DEPTH_CAP),
     )
-
-
-class StorageType(Enum):
-    """Storage type enumeration"""
-
-    LOCAL = "local"
-    REMOTE = "remote"
 
 
 class AppConfig:
@@ -118,20 +110,6 @@ class ApiConfig:
         self.rate_limit_default: str = os.getenv("API_RATE_LIMIT", "120/minute")
 
 
-class EmbeddingConfig:
-    """Embedding configuration"""
-
-    def __init__(self) -> None:
-        # Batch size for processing chunks
-        self.batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", 50))
-        # Pinecone upsert batch size
-        self.upsert_batch_size: int = int(os.getenv("EMBEDDING_UPSERT_BATCH_SIZE", 100))
-        # Chunk size for text splitting (characters not tokens)
-        self.chunk_size: int = int(os.getenv("EMBEDDING_CHUNK_SIZE", 4000))
-        # Chunk overlap for text splitting (characters not tokens)
-        self.chunk_overlap: int = int(os.getenv("EMBEDDING_CHUNK_OVERLAP", 500))
-
-
 class TrackingConfig:
     """Tracking configuration"""
 
@@ -173,10 +151,6 @@ class CrawlerConfig:
 
         # --- Concurrency & politeness ---
         self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", "20"))
-        # Browser (Camoufox) renders share a single browser instance per crawler, so a
-        # handful of concurrent JS-heavy page loads can starve each other (every goto
-        # then hits the navigation timeout). Throttle browser renders well below the
-        # static-fetch concurrency.
         self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "2"))
         self.delay_between_requests: float = float(
             os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.0")
@@ -222,7 +196,6 @@ class Config:
         self.security = SecurityConfig()
         self.cors = CorsConfig()
         self.api = ApiConfig()
-        self.embedding = EmbeddingConfig()
         self.tracking = TrackingConfig()
         self.paddle = PaddleConfig()
         self.crawler = CrawlerConfig()

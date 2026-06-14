@@ -2,13 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getBackendUrl } from "@lib/config";
 import { httpJson } from "@lib/http";
-
-interface CrawlError {
-  url: string;
-  status_code: number;
-  error_message: string | null;
-  error_type: string;
-}
+import type { CrawlError } from "@/types";
 
 interface PipelineStep {
   name: string;
@@ -26,6 +20,7 @@ interface PipelineJob {
   status: string;
   steps: PipelineStep[];
   error: string | null;
+  error_detail: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -57,7 +52,7 @@ export async function GET(request: NextRequest) {
     }
     console.error("Error fetching latest pipeline job:", error);
     return NextResponse.json(
-      { error: `Failed to fetch latest pipeline job: ${error}` },
+      { error: `Failed to fetch latest pipeline job` },
       { status: 500 },
     );
   }

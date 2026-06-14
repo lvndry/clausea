@@ -1,10 +1,31 @@
 """Pipeline job model for tracking background crawl/analysis pipeline execution."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 import shortuuid
 from pydantic import BaseModel, Field
+
+
+class PipelineErrorCode(StrEnum):
+    """Stable machine codes for pipeline job failures.
+
+    The API stores one of these in `PipelineJob.error`; the human-readable
+    phrasing lives in the frontend (mapped from the code) and, for debugging,
+    in `PipelineJob.error_detail`.
+    """
+
+    product_not_found = "product_not_found"
+    crawl_robots_blocked = "crawl_robots_blocked"
+    crawl_failed = "crawl_failed"
+    no_documents_found = "no_documents_found"
+    all_analysis_failed = "all_analysis_failed"
+    core_docs_unanalyzed = "core_docs_unanalyzed"
+    overview_not_persisted = "overview_not_persisted"
+    internal_error = "internal_error"
+    timed_out = "timed_out"
+
 
 PipelineJobStatus = Literal[
     "pending",
@@ -13,7 +34,21 @@ PipelineJobStatus = Literal[
     "generating_overview",
     "completed",
     "failed",
+    "no_documents",
 ]
+
+# Statuses a job can never leave. A job in any of these is "done" and must not be
+# treated as active, reused, or retriggered automatically:
+#   - completed:    ran to the end, overview generated
+#   - no_documents: crawl ran to completion but found 0 policy documents (a valid,
+#                   deterministic result — retrying yields the same outcome)
+#   - failed:       interrupted (orphaned/timeout) or errored — eligible for a
+#                   user-initiated retry, but never auto-retriggered
+TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
+    "completed",
+    "failed",
+    "no_documents",
+)
 
 CrawlErrorType = Literal[
     "robots_txt_blocked",
@@ -97,6 +132,10 @@ class PipelineJob(BaseModel):
     product_name: str
     url: str
     status: PipelineJobStatus = "pending"
+    # Discriminator backing the partial unique index that enforces at-most-one active
+    # job per product. Kept in sync with `status` by PipelineRepository on every write
+    # (assignment to `status` does not re-derive it, so the repo is the source of truth).
+    active: bool = True
     steps: list[PipelineStep] = Field(
         default_factory=lambda: [
             PipelineStep(name="crawling"),
@@ -104,7 +143,12 @@ class PipelineJob(BaseModel):
             PipelineStep(name="generating_overview"),
         ]
     )
+    # Stable machine error code (a `PipelineErrorCode` value). The frontend maps
+    # this to user-facing copy; never store a human string here.
     error: str | None = None
+    # Human/debug detail for the error (logs + optional tooltip). May embed
+    # counts, exception text, or a per-URL breakdown.
+    error_detail: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     started_at: datetime | None = None
