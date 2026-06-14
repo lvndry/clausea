@@ -9,8 +9,6 @@ export type ConsumerSeverity = "critical" | "high" | "medium" | "low";
 
 export type ConsumerConfidence = "high" | "medium" | "low";
 
-export type QuoteStatus = "from_extraction" | "none";
-
 // One model backs watch_out_for and who_gets_your_data on the backend, so the
 // shape is shared: `title` is the risk label or recipient name, `what_they_get`
 // is set for recipients, `why` is the purpose for collected data.
@@ -24,8 +22,6 @@ export interface ConsumerCase {
   quote?: string | null;
   quote_status?: string | null;
 }
-
-export type LinkageTier = "linked_to_you" | "linked_to_device" | "not_linked";
 
 export interface ConsumerDataItem extends ConsumerCase {
   // How tied the data is to the reader's real identity, and whether the policy
@@ -121,7 +117,7 @@ const SEVERITY_RANK: Record<ConsumerSeverity, number> = {
   low: 3,
 };
 
-export function severityRank(raw: string | null | undefined): number {
+function severityRank(raw: string | null | undefined): number {
   return SEVERITY_RANK[normalizeSeverity(raw)];
 }
 
@@ -175,7 +171,7 @@ const REGION_LABELS: Record<string, string> = {
   au: "Australia",
 };
 
-export function regionLabel(code: string): string {
+function regionLabel(code: string): string {
   const key = code.trim().toLowerCase();
   return REGION_LABELS[key] ?? code.trim().toUpperCase();
 }

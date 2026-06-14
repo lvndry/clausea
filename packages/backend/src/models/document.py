@@ -87,17 +87,6 @@ class ExtractedThirdPartyRecipient(BaseModel):
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
-ContractClauseType = Literal["liability", "arbitration", "governing_law", "jurisdiction"]
-
-
-class ExtractedContractClause(BaseModel):
-    """Evidence-backed contract clause (v3 legacy, kept for aggregation compat)."""
-
-    clause_type: ContractClauseType
-    value: str
-    evidence: list[EvidenceSpan] = Field(default_factory=list)
-
-
 # ---------------------------------------------------------------------------
 # v4 extraction models — richer, purpose-built types
 # ---------------------------------------------------------------------------

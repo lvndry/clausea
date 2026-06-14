@@ -54,7 +54,6 @@ from src.models.document import (
     SecurityPosture,
     WorkforceDataAssessment,
 )
-from src.models.finding import Aggregation
 from src.prompts.analysis_prompts import (
     COMPLIANCE_ASSESSMENT_SYSTEM_PROMPT,
     COMPLIANCE_ASSESSMENT_USER_TEMPLATE,
@@ -462,23 +461,6 @@ def _attach_keypoint_evidence(
 
     if keypoints_with_evidence:
         analysis.keypoints_with_evidence = keypoints_with_evidence
-
-
-def _format_aggregation_payload(aggregation: Aggregation) -> dict[str, Any]:
-    by_category: dict[str, list[dict[str, Any]]] = {}
-    for finding in aggregation.findings:
-        by_category.setdefault(finding.category, []).append(
-            {
-                "value": finding.value,
-                "documents": finding.documents,
-                "attributes": finding.attributes,
-            }
-        )
-    return {
-        "findings": by_category,
-        "conflicts": [c.model_dump() for c in aggregation.conflicts],
-        "coverage": [c.model_dump() for c in (aggregation.coverage or [])],
-    }
 
 
 def _extract_last_updated_from_metadata(metadata: dict[str, Any] | None) -> datetime | None:
