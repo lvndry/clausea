@@ -145,31 +145,31 @@ function deriveEvidenceForKeypoint(
 const RISK_LEVEL_CONFIG = {
   critical: {
     label: "Critical",
-    className: "bg-[#BD452D]/10 border-[#BD452D]/30",
+    className: "bg-risk-high/10 border-risk-high/30",
     badgeVariant: "danger" as const,
     icon: ShieldAlert,
-    iconClass: "text-[#BD452D]",
+    iconClass: "text-risk-high",
   },
   high: {
     label: "High",
-    className: "bg-[#BD452D]/5 border-[#BD452D]/20",
+    className: "bg-risk-high/5 border-risk-high/20",
     badgeVariant: "warning" as const,
     icon: AlertTriangle,
-    iconClass: "text-[#BD452D]",
+    iconClass: "text-risk-high",
   },
   medium: {
     label: "Medium",
-    className: "bg-[#B58D2D]/5 border-[#B58D2D]/20",
+    className: "bg-risk-medium/5 border-risk-medium/20",
     badgeVariant: "warning" as const,
     icon: AlertTriangle,
-    iconClass: "text-[#B58D2D]",
+    iconClass: "text-risk-medium",
   },
   low: {
     label: "Low",
-    className: "bg-[#2B7A5C]/5 border-[#2B7A5C]/20",
+    className: "bg-risk-low/5 border-risk-low/20",
     badgeVariant: "success" as const,
     icon: CheckCircle,
-    iconClass: "text-[#2B7A5C]",
+    iconClass: "text-risk-low",
   },
 };
 
@@ -472,8 +472,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                 0) && (
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 {riskBreakdown.top_concerns?.length > 0 && (
-                                  <div className="rounded-none bg-[#BD452D]/5 border border-[#BD452D]/20 p-3">
-                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-[#BD452D] mb-2">
+                                  <div className="rounded-none bg-risk-high/5 border border-risk-high/20 p-3">
+                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-risk-high mb-2">
                                       Top Concerns
                                     </h6>
                                     <ul className="space-y-1">
@@ -484,7 +484,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                             key={i}
                                             className="text-xs text-foreground/80 flex items-start gap-1.5"
                                           >
-                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-[#BD452D] shrink-0" />
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-risk-high shrink-0" />
                                             {c}
                                           </li>
                                         ))}
@@ -493,8 +493,8 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                 )}
                                 {riskBreakdown.positive_protections?.length >
                                   0 && (
-                                  <div className="rounded-none bg-[#2B7A5C]/5 border border-[#2B7A5C]/20 p-3">
-                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-[#2B7A5C] mb-2">
+                                  <div className="rounded-none bg-risk-low/5 border border-risk-low/20 p-3">
+                                    <h6 className="text-[10px] font-bold uppercase tracking-widest text-risk-low mb-2">
                                       Protections
                                     </h6>
                                     <ul className="space-y-1">
@@ -505,7 +505,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                             key={i}
                                             className="text-xs text-foreground/80 flex items-start gap-1.5"
                                           >
-                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-[#2B7A5C] shrink-0" />
+                                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-risk-low shrink-0" />
                                             {p}
                                           </li>
                                         ))}
@@ -590,15 +590,15 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                               <div className="space-y-2">
                                 {displayKeySections.slice(0, 5).map((section, i) => {
                                   const importanceColors = {
-                                    critical: "border-[#BD452D]/20 bg-[#BD452D]/5",
-                                    high: "border-[#BD452D]/20 bg-[#BD452D]/5",
-                                    medium: "border-[#B58D2D]/20 bg-[#B58D2D]/5",
+                                    critical: "border-risk-high/20 bg-risk-high/5",
+                                    high: "border-risk-high/20 bg-risk-high/5",
+                                    medium: "border-risk-medium/20 bg-risk-medium/5",
                                     low: "border-border bg-card/50",
                                   };
                                   const importanceDotColors = {
-                                    critical: "bg-[#BD452D]",
-                                    high: "bg-[#BD452D]",
-                                    medium: "bg-[#B58D2D]",
+                                    critical: "bg-risk-high",
+                                    high: "bg-risk-high",
+                                    medium: "bg-risk-medium",
                                     low: "bg-muted-foreground",
                                   };
                                   return (

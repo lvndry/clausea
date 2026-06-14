@@ -481,16 +481,16 @@ class MetaSummaryScores(BaseModel):
 class DataPurposeLink(BaseModel):
     """Links a specific data type to its collection purposes."""
 
-    data_type: str  # e.g., "Email address"
-    purposes: list[str]  # e.g., ["Account creation", "Marketing emails"]
+    data_type: str = Field(examples=["Email address"])
+    purposes: list[str] = Field(examples=[["Account creation", "Marketing emails"]])
 
 
 class ThirdPartyRecipient(BaseModel):
     """Details about a third party that receives user data."""
 
-    recipient: str  # e.g., "Advertisers", "Analytics providers"
-    data_shared: list[str]  # e.g., ["email", "browsing history"]
-    purpose: str | None = None  # e.g., "Targeted advertising"
+    recipient: str = Field(examples=["Advertisers", "Analytics providers"])
+    data_shared: list[str] = Field(examples=[["email", "browsing history"]])
+    purpose: str | None = Field(default=None, examples=["Targeted advertising"])
     risk_level: Literal["low", "medium", "high"] = "medium"
 
 
@@ -606,9 +606,23 @@ class ActionStep(BaseModel):
     """A step the reader can take to protect themselves (e.g. opt out, delete data)."""
 
     action: str
-    # Who the step is available to: "Everyone", or the regions/conditions it is
-    # gated behind, e.g. "EU and UK only".
-    applies_to: str = "Everyone"
+    applies_to: list[str] = Field(
+        default_factory=lambda: ["global"],
+        description="Lowercase region codes the step applies to, e.g. ['eu', 'uk']; ['global'] means everyone.",
+    )
+
+    @field_validator("applies_to", mode="before")
+    @classmethod
+    def _normalize_regions(cls, value: Any) -> list[str]:
+        items = value if isinstance(value, list) else [value]
+        codes: list[str] = []
+        for item in items:
+            code = str(item).strip().lower()
+            if code in {"", "everyone", "all", "worldwide", "anyone"}:
+                code = "global"
+            if code and code not in codes:
+                codes.append(code)
+        return codes or ["global"]
 
 
 class ConsumerCase(BaseModel):
@@ -632,8 +646,12 @@ class ConsumerCase(BaseModel):
     means_for_you: str = ""
     severity: ConsumerSeverity = "medium"
     classification: str | None = None
-    what_they_get: str | None = None  # who_gets_your_data
-    why: str | None = None  # what_they_collect (purpose)
+    what_they_get: str | None = Field(
+        default=None, description="What the recipient receives, for the who_gets_your_data list."
+    )
+    why: str | None = Field(
+        default=None, description="The collection purpose, for the what_they_collect list."
+    )
     quote: str | None = None
     quote_status: str = "none"
 
@@ -824,8 +842,8 @@ class ComplianceBreakdown(BaseModel):
 
     score: int = Field(ge=0, le=10)
     status: Literal["Compliant", "Partially Compliant", "Non-Compliant", "Unknown"]
-    strengths: list[str]  # What they do well
-    gaps: list[str]  # What's missing or unclear
+    strengths: list[str] = Field(description="What they do well.")
+    gaps: list[str] = Field(description="What is missing or unclear.")
 
 
 class ProductOverview(BaseModel):
@@ -845,20 +863,34 @@ class ProductOverview(BaseModel):
         "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
     ]
     risk_score: int = Field(ge=0, le=10)
-    one_line_summary: str  # "Spotify collects extensive data for ads but offers strong user rights"
+    one_line_summary: str = Field(
+        examples=["Spotify collects extensive data for ads but offers strong user rights"]
+    )
 
     # Core Insights (what users most want to know)
-    data_collected: list[str] | None = None  # ["Email", "Listening history", "Location"]
-    data_purposes: list[str] | None = None  # ["Core service", "Advertising", "Analytics"]
-    third_party_sharing: str | None = None  # "Shared with advertisers and analytics partners"
+    data_collected: list[str] | None = Field(
+        default=None, examples=[["Email", "Listening history", "Location"]]
+    )
+    data_purposes: list[str] | None = Field(
+        default=None, examples=[["Core service", "Advertising", "Analytics"]]
+    )
+    third_party_sharing: str | None = Field(
+        default=None, examples=["Shared with advertisers and analytics partners"]
+    )
 
     # Structured data for Overview redesign
-    data_collection_details: list[DataPurposeLink] | None = None  # Data type → purposes
-    third_party_details: list[ThirdPartyRecipient] | None = None  # Recipients with specifics
+    data_collection_details: list[DataPurposeLink] | None = Field(
+        default=None, description="Each data type mapped to its collection purposes."
+    )
+    third_party_details: list[ThirdPartyRecipient] | None = Field(
+        default=None, description="Recipients with their specific sharing details."
+    )
 
     # Top keypoints and document metadata for quick UI
     keypoints: list[str] | None = None
-    document_counts: dict[str, int] | None = None  # { total: n, analyzed: n, pending: n }
+    document_counts: dict[str, int] | None = Field(
+        default=None, description="Document counts keyed by total, analyzed, and pending."
+    )
     document_types: dict[str, int] | None = None
 
     # Detailed scoring breakdown (surfaced from MetaSummaryScores)
@@ -871,14 +903,22 @@ class ProductOverview(BaseModel):
     privacy_signals: PrivacySignals | None = None
 
     # User Empowerment
-    your_rights: list[str] | None = (
-        None  # 8-12 rights with explicit instructions: ["Access your data (email, profile) via account.organization.com/privacy", ...]
+    your_rights: list[str] | None = Field(
+        default=None,
+        description="8-12 rights with explicit instructions.",
+        examples=[["Access your data (email, profile) via account.organization.com/privacy"]],
     )
-    dangers: list[str] | None = None  # 5-7 specific concerns with details
-    benefits: list[str] | None = None  # 5-7 specific positive privacy protections
+    dangers: list[str] | None = Field(
+        default=None, description="5-7 specific concerns with details."
+    )
+    benefits: list[str] | None = Field(
+        default=None, description="5-7 specific positive privacy protections."
+    )
 
     # Actions
-    recommended_actions: list[str] | None = None  # 5-8 actionable steps with specific instructions
+    recommended_actions: list[str] | None = Field(
+        default=None, description="5-8 actionable steps with specific instructions."
+    )
     coverage: list[CoverageItem] | None = None
     contract_clauses: list[str] | None = None
 
@@ -910,10 +950,16 @@ class DocumentSummary(BaseModel):
         | None
     ) = None
     risk_score: int | None = Field(default=None, ge=0, le=10)
-    top_concerns: list[str] | None = None  # Top 3
-    summary: str | None = None  # User-oriented explanation from analysis
-    keypoints: list[str] | None = None  # Key bullet points from analysis
-    keypoints_with_evidence: list[KeypointWithEvidence] | None = None  # Optional citations
+    top_concerns: list[str] | None = Field(default=None, description="Top 3 concerns.")
+    summary: str | None = Field(
+        default=None, description="User-oriented explanation from analysis."
+    )
+    keypoints: list[str] | None = Field(
+        default=None, description="Key bullet points from analysis."
+    )
+    keypoints_with_evidence: list[KeypointWithEvidence] | None = Field(
+        default=None, description="Optional evidence citations."
+    )
     critical_clauses: "list[CriticalClause] | None" = None
     document_risk_breakdown: "DocumentRiskBreakdown | None" = None
     key_sections: "list[DocumentSection] | None" = None
@@ -961,7 +1007,9 @@ class ProductAnalysis(BaseModel):
     detailed_scores: MetaSummaryScores
 
     # Compliance breakdown (per regulation)
-    compliance: dict[str, ComplianceBreakdown] | None = None  # {"GDPR": {...}, "CCPA": {...}}
+    compliance: dict[str, ComplianceBreakdown] | None = Field(
+        default=None, description="Compliance breakdown keyed by regulation, e.g. GDPR or CCPA."
+    )
 
     # Complete keypoints (not just top 5)
     all_keypoints: list[str]
@@ -979,7 +1027,7 @@ class CriticalClause(BaseModel):
     # specific string preserves the signal (arbitration/biometric/etc. drive consumer risk).
     clause_type: str
     section_title: str | None = None
-    quote: str  # Exact text from document
+    quote: str = Field(description="Exact text from the document.")
     risk_level: Literal["low", "medium", "high", "critical"] = "medium"
 
     @field_validator("risk_level", mode="before")
@@ -994,8 +1042,8 @@ class CriticalClause(BaseModel):
                 return mapping[normalized]
         return "medium"
 
-    plain_english: str = ""  # What this means to a non-lawyer
-    why_notable: str = ""  # Why this clause is significant
+    plain_english: str = Field(default="", description="What this means to a non-lawyer.")
+    why_notable: str = Field(default="", description="Why this clause is significant.")
     # Legacy alias — kept for backward compatibility, maps to plain_english
     analysis: str = ""
     compliance_impact: list[str] = Field(default_factory=list)
@@ -1005,12 +1053,13 @@ class DocumentSection(BaseModel):
     """Important section of a document with analysis."""
 
     section_title: str
-    content: str  # Full text of section
+    content: str = Field(description="Full text of the section.")
     importance: Literal["low", "medium", "high", "critical"]
-    analysis: str  # What this section means
+    analysis: str = Field(description="What this section means.")
     related_clauses: list[str] = Field(
-        default_factory=list
-    )  # IDs or indices of related critical clauses
+        default_factory=list,
+        description="IDs or indices of related critical clauses.",
+    )
 
 
 class DocumentRiskBreakdown(BaseModel):
@@ -1018,8 +1067,9 @@ class DocumentRiskBreakdown(BaseModel):
 
     overall_risk: int = Field(ge=0, le=10)
     risk_by_category: dict[str, int] = Field(
-        default_factory=dict
-    )  # {"data_sharing": 8, "retention": 5}
+        default_factory=dict,
+        examples=[{"data_sharing": 8, "retention": 5}],
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1036,9 +1086,11 @@ class DocumentRiskBreakdown(BaseModel):
             data["overall_risk"] = round(sum(values) / len(values)) if values else 5
         return data
 
-    top_concerns: list[str] = Field(default_factory=list)  # Specific concerns
-    positive_protections: list[str] = Field(default_factory=list)  # Good practices
-    missing_information: list[str] = Field(default_factory=list)  # What's not mentioned
+    top_concerns: list[str] = Field(default_factory=list, description="Specific concerns.")
+    positive_protections: list[str] = Field(default_factory=list, description="Good practices.")
+    missing_information: list[str] = Field(
+        default_factory=list, description="What is not mentioned."
+    )
     applicability: str | None = Field(
         default=None,
         validation_alias=AliasChoices("applicability", "scope"),
@@ -1070,21 +1122,22 @@ class DocumentDeepAnalysis(BaseModel):
     critical_clauses: list[CriticalClause] = Field(default_factory=list)
     document_risk_breakdown: DocumentRiskBreakdown
     key_sections: list[DocumentSection] = Field(
-        default_factory=list
-    )  # Important sections with quotes
+        default_factory=list,
+        description="Important sections with quotes.",
+    )
 
 
 class DocumentContradiction(BaseModel):
     """Identified contradiction between documents."""
 
-    document_a: str  # Document ID or name
+    document_a: str = Field(description="Document ID or name.")
     document_b: str
-    contradiction_type: str  # "data_sharing", "retention", etc.
-    description: str  # What contradicts
-    document_a_statement: str  # What document A says
-    document_b_statement: str  # What document B says
-    impact: str  # Risk/legal impact
-    recommendation: str  # How to resolve
+    contradiction_type: str = Field(examples=["data_sharing", "retention"])
+    description: str
+    document_a_statement: str = Field(description="What document A says.")
+    document_b_statement: str = Field(description="What document B says.")
+    impact: str = Field(description="Risk or legal impact.")
+    recommendation: str = Field(description="How to resolve.")
 
 
 class DocumentRelationship(BaseModel):
@@ -1094,7 +1147,7 @@ class DocumentRelationship(BaseModel):
     document_b: str
     relationship_type: Literal["references", "supersedes", "complements", "conflicts"]
     description: str
-    evidence: str  # Quote or reference supporting the relationship
+    evidence: str = Field(description="Quote or reference supporting the relationship.")
 
 
 class InformationGap(BaseModel):
@@ -1131,24 +1184,26 @@ class CrossDocumentAnalysis(BaseModel):
 class ComplianceViolation(BaseModel):
     """Specific compliance violation."""
 
-    requirement: str  # "GDPR Article 15 - Right of access"
+    requirement: str = Field(examples=["GDPR Article 15 - Right of access"])
     violation_type: Literal["missing", "unclear", "non_compliant"]
-    description: str  # What's wrong
+    description: str = Field(description="What is wrong.")
     severity: Literal["low", "medium", "high", "critical"]
-    remediation: str  # How to fix
+    remediation: str = Field(description="How to fix.")
 
 
 class EnhancedComplianceBreakdown(BaseModel):
     """Enhanced compliance analysis per regulation."""
 
-    regulation: str  # "GDPR", "CCPA", etc.
+    regulation: str = Field(examples=["GDPR", "CCPA"])
     score: int = Field(ge=0, le=10)
     status: Literal["Compliant", "Partially Compliant", "Non-Compliant", "Unknown"]
     strengths: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
-    violations: list[ComplianceViolation] = Field(default_factory=list)  # Specific violations
+    violations: list[ComplianceViolation] = Field(
+        default_factory=list, description="Specific violations."
+    )
     remediation_recommendations: list[str] = Field(default_factory=list)
-    detailed_analysis: str  # Comprehensive explanation
+    detailed_analysis: str = Field(description="Comprehensive explanation.")
 
 
 class PrioritizedAction(BaseModel):
@@ -1157,7 +1212,7 @@ class PrioritizedAction(BaseModel):
     action: str
     priority: Literal["critical", "high", "medium", "low"]
     rationale: str
-    deadline: str | None = None  # "Immediate", "Within 30 days", etc.
+    deadline: str | None = Field(default=None, examples=["Immediate", "Within 30 days"])
 
 
 class IndividualImpact(BaseModel):
@@ -1174,9 +1229,9 @@ class BusinessImpact(BaseModel):
     liability_exposure: int = Field(ge=0, le=10)
     contract_risk_score: int = Field(ge=0, le=10)
     vendor_risk_score: int = Field(ge=0, le=10)
-    financial_impact: str  # Potential financial consequences
-    reputational_risk: str  # Reputational implications
-    operational_risk: str  # Operational implications
+    financial_impact: str = Field(description="Potential financial consequences.")
+    reputational_risk: str = Field(description="Reputational implications.")
+    operational_risk: str = Field(description="Operational implications.")
     recommended_actions: list[PrioritizedAction] = Field(default_factory=list)
 
 

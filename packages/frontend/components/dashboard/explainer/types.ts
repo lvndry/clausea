@@ -36,7 +36,7 @@ export interface ConsumerDataItem extends ConsumerCase {
 
 export interface ActionStep {
   action?: string | null;
-  applies_to?: string | null;
+  applies_to?: string[] | null;
 }
 
 export interface ConsumerContradiction {
@@ -162,6 +162,29 @@ export function asActionStep(
 ): ActionStep {
   if (!item) return {};
   return typeof item === "string" ? { action: item } : item;
+}
+
+// Only codes whose label isn't just the upper-cased code need an entry — the single
+// place to localize them later. Anything else (eu, us, ae, sg, br, ...) falls back to
+// its upper-cased form, so any region works without being listed.
+const REGION_LABELS: Record<string, string> = {
+  global: "Everyone",
+  ca: "Canada",
+  latam: "Latin America",
+  apac: "Asia-Pacific",
+  au: "Australia",
+};
+
+export function regionLabel(code: string): string {
+  const key = code.trim().toLowerCase();
+  return REGION_LABELS[key] ?? code.trim().toUpperCase();
+}
+
+// Labels to show as scope badges: nothing when the step applies to everyone.
+export function scopeLabels(codes: string[] | null | undefined): string[] {
+  if (!codes || codes.length === 0) return [];
+  const meaningful = codes.filter((code) => code.trim().toLowerCase() !== "global");
+  return meaningful.map(regionLabel);
 }
 
 // `watch_out_for` is the canonical key; `biggest_risks` is an accepted alias.

@@ -1,7 +1,5 @@
-from src.services.extraction_service import (
-    _chunk_text,
-    _resolve_quote_offsets,
-)
+from src.services.extraction_service import _chunk_text
+from src.utils.quotes import resolve_quote_offsets
 
 
 def test_chunk_text_single_chunk_when_short() -> None:
@@ -20,7 +18,7 @@ def test_chunk_text_produces_overlap() -> None:
 def test_resolve_quote_offsets_exact_match() -> None:
     haystack = "A quick brown fox jumps over the lazy dog."
     quote = "brown fox jumps"
-    start, end, verified = _resolve_quote_offsets(haystack, quote)
+    start, end, verified = resolve_quote_offsets(haystack, quote)
     assert start is not None and end is not None
     assert haystack[start:end] == quote
     assert verified is True
@@ -29,7 +27,7 @@ def test_resolve_quote_offsets_exact_match() -> None:
 def test_resolve_quote_offsets_not_found() -> None:
     haystack = "A quick brown fox"
     quote = "missing quote"
-    start, end, verified = _resolve_quote_offsets(haystack, quote)
+    start, end, verified = resolve_quote_offsets(haystack, quote)
     assert start is None
     assert end is None
     assert verified is False

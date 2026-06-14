@@ -26,21 +26,21 @@ interface SharingMapProps {
 
 const riskConfig = {
   low: {
-    color: "text-[#2B7A5C]",
-    bg: "bg-[#2B7A5C]/5",
-    border: "border-[#2B7A5C]/20",
+    color: "text-risk-low",
+    bg: "bg-risk-low/5",
+    border: "border-risk-low/20",
     label: "LOW RISK",
   },
   medium: {
-    color: "text-[#B58D2D]",
-    bg: "bg-[#B58D2D]/5",
-    border: "border-[#B58D2D]/20",
+    color: "text-risk-medium",
+    bg: "bg-risk-medium/5",
+    border: "border-risk-medium/20",
     label: "MEDIUM",
   },
   high: {
-    color: "text-[#BD452D]",
-    bg: "bg-[#BD452D]/5",
-    border: "border-[#BD452D]/20",
+    color: "text-risk-high",
+    bg: "bg-risk-high/5",
+    border: "border-risk-high/20",
     label: "HIGH RISK",
   },
 };
@@ -76,7 +76,7 @@ export function SharingMap({
               {thirdPartyDetails?.length} Recipients
             </div>
             {highRiskCount > 0 && (
-              <div className="px-3 py-1 border border-[#BD452D]/20 text-[10px] uppercase tracking-widest font-bold bg-[#BD452D]/5 text-[#BD452D]">
+              <div className="px-3 py-1 border border-risk-high/20 text-[10px] uppercase tracking-widest font-bold bg-risk-high/5 text-risk-high">
                 {highRiskCount} High Risk
               </div>
             )}

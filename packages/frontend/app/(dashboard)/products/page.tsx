@@ -380,13 +380,13 @@ function ProductsPageContent() {
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          <div className="border border-[#2B7A5C]/20 bg-[#2B7A5C]/5 p-4 flex items-center justify-between gap-6">
+          <div className="border border-risk-low/20 bg-risk-low/5 p-4 flex items-center justify-between gap-6">
             <div className="flex items-center gap-3">
               <CheckCircle2
-                className="h-4 w-4 text-[#2B7A5C]"
+                className="h-4 w-4 text-risk-low"
                 strokeWidth={2}
               />
-              <p className="text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C]">
+              <p className="text-[10px] uppercase tracking-widest font-bold text-risk-low">
                 Analysis available: {alreadyIndexed.name}
               </p>
             </div>
@@ -395,7 +395,7 @@ function ProductsPageContent() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="rounded-none h-8 px-0 text-[10px] uppercase tracking-widest font-bold text-[#2B7A5C] hover:bg-transparent hover:text-[#2B7A5C]/70"
+                  className="rounded-none h-8 px-0 text-[10px] uppercase tracking-widest font-bold text-risk-low hover:bg-transparent hover:text-risk-low/70"
                 >
                   View analysis
                 </Button>

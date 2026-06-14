@@ -17,6 +17,7 @@ import {
   type ConsumerRegionVerdict,
   type ConsumerSilentTopic,
   asActionStep,
+  scopeLabels,
 } from "./types";
 
 export function WhatYouCanDo({ items }: { items: Array<ActionStep | string> }) {
@@ -51,13 +52,15 @@ export function WhatYouCanDo({ items }: { items: Array<ActionStep | string> }) {
                 <span className="text-sm font-medium text-foreground leading-relaxed">
                   {step.action}
                 </span>
-                {step.applies_to &&
-                  step.applies_to.trim().toLowerCase() !== "everyone" && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 border border-border text-[8px] uppercase tracking-widest font-bold text-muted-foreground">
-                      <Globe className="h-2.5 w-2.5" aria-hidden="true" />
-                      {step.applies_to}
-                    </span>
-                  )}
+                {scopeLabels(step.applies_to).map((label) => (
+                  <span
+                    key={label}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 border border-border text-[8px] uppercase tracking-widest font-bold text-muted-foreground"
+                  >
+                    <Globe className="h-2.5 w-2.5" aria-hidden="true" />
+                    {label}
+                  </span>
+                ))}
               </div>
             </div>
             <ArrowRight
@@ -93,7 +96,7 @@ export function GoodToKnow({ items }: { items: string[] }) {
             className="p-6 flex items-start gap-4 hover:bg-muted/5 transition-colors"
           >
             <span
-              className="mt-1.5 h-1.5 w-1.5 bg-[#2B7A5C] shrink-0"
+              className="mt-1.5 h-1.5 w-1.5 bg-risk-low shrink-0"
               aria-hidden="true"
             />
             <p className="text-sm text-foreground/90 leading-relaxed">{item}</p>
@@ -207,7 +210,7 @@ export function Conflicts({ items }: { items: ConsumerContradiction[] }) {
               </div>
             )}
             {item.assume && (
-              <p className="text-xs text-muted-foreground leading-relaxed border-l-2 border-[#B58D2D]/40 pl-4">
+              <p className="text-xs text-muted-foreground leading-relaxed border-l-2 border-risk-medium/40 pl-4">
                 Assume the worst case: {item.assume}
               </p>
             )}
@@ -258,7 +261,7 @@ export function RightsByRegion({
             </span>
             {verdict.you_can && verdict.you_can.length > 0 && (
               <div className="space-y-2">
-                <span className="text-[10px] uppercase tracking-widest text-[#2B7A5C] font-medium block">
+                <span className="text-[10px] uppercase tracking-widest text-risk-low font-medium block">
                   You can
                 </span>
                 <ul className="space-y-2">
@@ -268,7 +271,7 @@ export function RightsByRegion({
                       className="flex items-start gap-3 text-sm text-foreground/80 leading-relaxed"
                     >
                       <span
-                        className="mt-1.5 h-1.5 w-1.5 bg-[#2B7A5C] shrink-0"
+                        className="mt-1.5 h-1.5 w-1.5 bg-risk-low shrink-0"
                         aria-hidden="true"
                       />
                       {right}
@@ -279,7 +282,7 @@ export function RightsByRegion({
             )}
             {verdict.you_cannot && verdict.you_cannot.length > 0 && (
               <div className="space-y-2">
-                <span className="text-[10px] uppercase tracking-widest text-[#BD452D] font-medium block">
+                <span className="text-[10px] uppercase tracking-widest text-risk-high font-medium block">
                   You cannot
                 </span>
                 <ul className="space-y-2">
@@ -289,7 +292,7 @@ export function RightsByRegion({
                       className="flex items-start gap-3 text-sm text-foreground/80 leading-relaxed"
                     >
                       <span
-                        className="mt-1.5 h-1.5 w-1.5 bg-[#BD452D] shrink-0"
+                        className="mt-1.5 h-1.5 w-1.5 bg-risk-high shrink-0"
                         aria-hidden="true"
                       />
                       {right}

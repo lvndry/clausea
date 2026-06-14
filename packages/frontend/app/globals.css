@@ -47,6 +47,10 @@
   --color-chart-4: hsl(var(--chart-4));
   --color-chart-5: hsl(var(--chart-5));
 
+  --color-risk-low: #2b7a5c;
+  --color-risk-medium: #b58d2d;
+  --color-risk-high: #bd452d;
+
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
   --animate-fade-in: fade-in 0.6s cubic-bezier(0.16, 1, 0.3, 1);

@@ -350,7 +350,9 @@ class PipelineService:
 
                         # Build a descriptive error based on crawl error types
                         robots_blocked = [
-                            e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
+                            err
+                            for err in job.crawl_errors
+                            if err.error_type == "robots_txt_blocked"
                         ]
                         if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
                             job.error = (
@@ -475,11 +477,11 @@ class PipelineService:
                     # fail here truthfully instead of reporting "completed" and letting the
                     # next step blow up. (Non-core partial loss is reported, not failed.)
                     core_docs = [
-                        d
-                        for d in analysed_docs
-                        if getattr(d, "doc_type", None) in OVERVIEW_CORE_DOC_TYPES
+                        doc
+                        for doc in analysed_docs
+                        if getattr(doc, "doc_type", None) in OVERVIEW_CORE_DOC_TYPES
                     ]
-                    core_analysed = sum(1 for d in core_docs if d.analysis)
+                    core_analysed = sum(1 for doc in core_docs if doc.analysis)
                     no_analysis = bool(analysed_docs) and analysed_count == 0
                     core_wipeout = bool(core_docs) and core_analysed == 0
                     if no_analysis or core_wipeout:

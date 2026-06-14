@@ -21,9 +21,9 @@ from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
 from src.llm import (
+    MODEL_PRIORITY,
     SupportedModel,
     _extract_json_from_response,
-    acompletion_with_escalation,
     acompletion_with_fallback,
 )
 from src.models.document import (
@@ -79,35 +79,8 @@ from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 load_dotenv()
 logger = get_logger(__name__)
 
-# Cheap, fast, reliable structured-output models spanning four providers. Policy
-# analysis is structured extraction, not frontier reasoning, so small models suffice.
-# Spanning providers means a single model deprecation or provider outage (as happened
-# when openrouter/grok-4.1-fast was deprecated) can no longer break analysis.
-# Mid-tier, cross-provider models. Structured policy extraction needs real capability:
-# tiny models (gemini-flash-lite, gpt-5-nano) run fast/cheap but produce wrong analyses
-# (e.g. "data collection not specified" on a detailed policy). These three are capable
-# enough for reliable extraction while still cheap, and span three providers so a single
-# model deprecation or provider outage cannot break analysis.
-# FREE-FIRST cascade (PM decision): a 429/failure auto-falls-through to the next model,
-# so the free tiers are used until exhausted/rate-limited, then a cheap paid tail. The
-# paid tail is cross-provider (gpt-oss + deepseek) so one outage can't break analysis.
-_ANALYSIS_RESILIENCE: list[SupportedModel] = [
-    "openrouter/gpt-oss-120b-nitro",  # cheap paid, OpenRouter (120B, capable)
-    "openrouter/deepseek-v4-flash",  # cheap paid, OpenRouter (different family)
-]
-_ANALYSIS_PRIMARY: list[SupportedModel] = [
-    "gemini-2.5-flash",  # slot 1: Google free tier (native)
-    "openrouter/kimi-k2.6-free",  # slot 2: OpenRouter free
-    "openrouter/gemma-free",  # slot 3: OpenRouter free
-] + _ANALYSIS_RESILIENCE
-# Escalation leads with the cheap-paid capable models for harder documents.
-_ANALYSIS_ESCALATION: list[SupportedModel] = _ANALYSIS_RESILIENCE
-_OVERVIEW_PRIORITY: list[SupportedModel] = [
-    "gemini-2.5-flash",
-    "openrouter/kimi-k2.6-free",
-    "openrouter/gemma-free",
-    "openrouter/gpt-oss-120b-nitro",
-]
+_ANALYSIS_PRIMARY: list[SupportedModel] = MODEL_PRIORITY
+_OVERVIEW_PRIORITY: list[SupportedModel] = MODEL_PRIORITY
 
 
 def _analysis_validator(content: str) -> bool:
@@ -508,21 +481,6 @@ def _format_aggregation_payload(aggregation: Aggregation) -> dict[str, Any]:
     }
 
 
-def should_use_reasoning_model(document: Document) -> bool:
-    """
-    Determine if a reasoning/complex model should be used for legal analysis.
-
-    This function is provider-agnostic and helps select appropriate model complexity
-    based on document characteristics, making it resilient to provider or model changes.
-    """
-    # Use reasoning models for complex documents or high-stakes document types
-    doc_length = len(document.text)
-    complex_doc_types = ["terms_of_service", "data_processing_agreement", "terms_and_conditions"]
-
-    # Use reasoning model if document is large (>50K chars) or is a complex type
-    return doc_length > 50000 or document.doc_type in complex_doc_types
-
-
 def _extract_last_updated_from_metadata(metadata: dict[str, Any] | None) -> datetime | None:
     """
     Extract and parse last_updated datetime from document metadata.
@@ -755,35 +713,18 @@ Document content:
 
             async with usage_tracking(tracker_callback):
                 # Wrap the LLM call in a cancellable task
-                is_complex = should_use_reasoning_model(document)
-
-                if is_complex:
-                    # Complex docs go straight to the escalation model — no cheaper tier to try first.
-                    llm_task = asyncio.create_task(
-                        acompletion_with_fallback(
-                            messages=[
-                                {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
-                                {"role": "user", "content": prompt},
-                            ],
-                            model_priority=_ANALYSIS_ESCALATION,
-                            response_format={"type": "json_object"},
-                            temperature=0,
-                        )
+                llm_task = asyncio.create_task(
+                    acompletion_with_fallback(
+                        messages=[
+                            {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
+                            {"role": "user", "content": prompt},
+                        ],
+                        model_priority=_ANALYSIS_PRIMARY,
+                        validator=_analysis_validator,
+                        response_format={"type": "json_object"},
+                        temperature=0,
                     )
-                else:
-                    llm_task = asyncio.create_task(
-                        acompletion_with_escalation(
-                            messages=[
-                                {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
-                                {"role": "user", "content": prompt},
-                            ],
-                            primary=_ANALYSIS_PRIMARY,
-                            escalation=_ANALYSIS_ESCALATION,
-                            validator=_analysis_validator,
-                            response_format={"type": "json_object"},
-                            temperature=0,
-                        )
-                    )
+                )
 
                 # Wait for either completion or cancellation
                 cancellation_task = asyncio.create_task(token.cancelled.wait())

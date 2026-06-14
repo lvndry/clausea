@@ -31,9 +31,9 @@ const regulationLabels: Record<string, string> = {
 };
 
 const statusStyles: Record<ComplianceStatus, string> = {
-  Compliant: "border-[#2B7A5C]/20 bg-[#2B7A5C]/5 text-[#2B7A5C]",
-  "Partially Compliant": "border-[#B58D2D]/20 bg-[#B58D2D]/5 text-[#B58D2D]",
-  "Non-Compliant": "border-[#BD452D]/20 bg-[#BD452D]/5 text-[#BD452D]",
+  Compliant: "border-risk-low/20 bg-risk-low/5 text-risk-low",
+  "Partially Compliant": "border-risk-medium/20 bg-risk-medium/5 text-risk-medium",
+  "Non-Compliant": "border-risk-high/20 bg-risk-high/5 text-risk-high",
   Unknown: "border-border bg-muted/5 text-muted-foreground",
 };
 
@@ -138,7 +138,7 @@ export function ComplianceBadges({
                 {breakdown.strengths.map((strength) => (
                   <div key={strength} className="flex items-start gap-3">
                     <Check
-                      className="h-4 w-4 text-[#2B7A5C] mt-0.5 shrink-0"
+                      className="h-4 w-4 text-risk-low mt-0.5 shrink-0"
                       strokeWidth={1.5}
                     />
                     <p className="text-sm text-foreground/80 leading-relaxed">
@@ -149,7 +149,7 @@ export function ComplianceBadges({
                 {breakdown.gaps.map((gap) => (
                   <div key={gap} className="flex items-start gap-3">
                     <X
-                      className="h-4 w-4 text-[#BD452D] mt-0.5 shrink-0"
+                      className="h-4 w-4 text-risk-high mt-0.5 shrink-0"
                       strokeWidth={1.5}
                     />
                     <p className="text-sm text-foreground/80 leading-relaxed">

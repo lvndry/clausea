@@ -632,7 +632,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
     {"topic": "what a reader expects but the evidence doesn't show", "why_it_matters": "what you can't assume because of the gap"}
   ],
   "what_you_can_do": [
-    {"action": "concrete step with exact path/URL/email IF the extraction gives one, else 'The document doesn't give a way to do this.'", "applies_to": "'Everyone' or the regions/conditions, e.g. 'EU and UK only'"}
+    {"action": "concrete step with exact path/URL/email IF the extraction gives one, else 'The document doesn't give a way to do this.'", "applies_to": ["global"] or lowercase region codes e.g. ["eu","uk"]}
   ]
 }
 
@@ -666,7 +666,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "silent_on": [{"topic": "string", "why_it_matters": "string"}],
   "conflicts": [{"topic": "string", "what_one_doc_says": "string", "what_another_says": "string", "assume": "worst-case reading"}],
   "rights_by_region": [{"region": "string", "you_can": ["string"], "you_cannot": ["string"]}],
-  "what_you_can_do": [{"action": "string", "applies_to": "string"}]
+  "what_you_can_do": [{"action": "string", "applies_to": ["global"] or lowercase region codes e.g. ["eu","uk"]}]
 }
 
 Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on; for each what_they_collect item set linkage_tier (how tied the data is to the person's real identity) and sold=true ONLY when the evidence says the data is sold or shared for value, else sold=false and assume linked_to_you when unclear; report cross-document conflicts in conflicts; set critical_findings_count and honor the grade cap."""

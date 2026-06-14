@@ -13,16 +13,13 @@ from pydantic import BaseModel
 
 from src.analyser import analyse_document
 from src.core.logging import get_logger
-from src.llm import SupportedModel, acompletion_with_fallback
+from src.llm import MODEL_PRIORITY, SupportedModel, acompletion_with_fallback
 from src.models.document import Document, DocumentAnalysis, coerce_doc_type_from_classifier
 
 load_dotenv()
 logger = get_logger(__name__)
 
-_CLASSIFICATION_PRIORITY: list[SupportedModel] = [
-    "openrouter/gpt-oss-120b-nitro",
-    "openrouter/deepseek-v4-flash",
-]
+_CLASSIFICATION_PRIORITY: list[SupportedModel] = MODEL_PRIORITY
 
 
 class DocumentProcessingResult(BaseModel):

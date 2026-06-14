@@ -13,9 +13,9 @@ import {
 } from "./types";
 
 const severityStyle: Record<string, { color: string; border: string }> = {
-  critical: { color: "text-[#BD452D]", border: "border-[#BD452D]/30" },
-  high: { color: "text-[#BD452D]", border: "border-[#BD452D]/30" },
-  medium: { color: "text-[#B58D2D]", border: "border-[#B58D2D]/30" },
+  critical: { color: "text-risk-high", border: "border-risk-high/30" },
+  high: { color: "text-risk-high", border: "border-risk-high/30" },
+  medium: { color: "text-risk-medium", border: "border-risk-medium/30" },
   low: { color: "text-muted-foreground", border: "border-border" },
 };
 
@@ -101,7 +101,7 @@ export function WhatTheyCollect({
                     </span>
                   )}
                   {item.sold && (
-                    <span className="px-2 py-0.5 border border-[#BD452D]/30 text-[8px] uppercase tracking-widest font-bold text-[#BD452D]">
+                    <span className="px-2 py-0.5 border border-risk-high/30 text-[8px] uppercase tracking-widest font-bold text-risk-high">
                       Sold / shared for value
                     </span>
                   )}

@@ -30,6 +30,11 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        risk: {
+          low: "#2B7A5C",
+          medium: "#B58D2D",
+          high: "#BD452D",
+        },
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],

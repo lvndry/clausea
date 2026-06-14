@@ -44,16 +44,16 @@ type NotFoundPhase =
 
 const verdictPalette: Record<string, { badge: string; bar: string }> = {
   safe: {
-    badge: "border-[#2B7A5C]/30 bg-[#2B7A5C]/10 text-[#2B7A5C]",
-    bar: "bg-[#2B7A5C]",
+    badge: "border-risk-low/30 bg-risk-low/10 text-risk-low",
+    bar: "bg-risk-low",
   },
   caution: {
-    badge: "border-[#B58D2D]/30 bg-[#B58D2D]/10 text-[#B58D2D]",
-    bar: "bg-[#B58D2D]",
+    badge: "border-risk-medium/30 bg-risk-medium/10 text-risk-medium",
+    bar: "bg-risk-medium",
   },
   danger: {
-    badge: "border-[#BD452D]/30 bg-[#BD452D]/10 text-[#BD452D]",
-    bar: "bg-[#BD452D]",
+    badge: "border-risk-high/30 bg-risk-high/10 text-risk-high",
+    bar: "bg-risk-high",
   },
   gray: {
     badge: "border-border bg-muted text-muted-foreground",
@@ -383,7 +383,7 @@ export default function App() {
               {/* ── Phase: trigger-error ── */}
               {notFoundPhase === "trigger-error" && (
                 <div className="flex w-full flex-col items-center gap-3">
-                  <div className="flex w-full flex-col items-center gap-2 border border-[#BD452D]/30 bg-[#BD452D]/10 p-4 text-[#BD452D]">
+                  <div className="flex w-full flex-col items-center gap-2 border border-risk-high/30 bg-risk-high/10 p-4 text-risk-high">
                     <AlertTriangle className="h-4 w-4" strokeWidth={1.5} />
                     <p className="text-xs">
                       {phaseError || "Failed to start analysis."}
@@ -430,7 +430,7 @@ export default function App() {
                     </button>
                   </form>
                   {notFoundPhase === "subscribe-error" && (
-                    <p className="text-xs text-[#BD452D]">
+                    <p className="text-xs text-risk-high">
                       {phaseError || "Failed to subscribe. Please try again."}
                     </p>
                   )}
@@ -450,10 +450,10 @@ export default function App() {
 
               {/* ── Phase: subscribed — success ── */}
               {notFoundPhase === "subscribed" && (
-                <div className="flex w-full flex-col items-center gap-2 border border-[#2B7A5C]/30 bg-[#2B7A5C]/10 p-4 text-[#2B7A5C]">
+                <div className="flex w-full flex-col items-center gap-2 border border-risk-low/30 bg-risk-low/10 p-4 text-risk-low">
                   <CheckCircle2 className="h-5 w-5" strokeWidth={1.5} />
                   <p className="text-xs font-medium">You&apos;re subscribed</p>
-                  <p className="text-[10px] text-[#2B7A5C]/70">
+                  <p className="text-[10px] text-risk-low/70">
                     We&apos;ll email{" "}
                     <span className="font-medium">{email}</span> when the
                     analysis is ready.
@@ -468,7 +468,7 @@ export default function App() {
         {view === "crawl-failed" && data && (
           <section className="border-b border-border bg-card px-5 py-6">
             <div className="flex flex-col items-center gap-4 text-center">
-              <div className="border border-[#B58D2D]/30 bg-[#B58D2D]/10 p-4 text-[#B58D2D]">
+              <div className="border border-risk-medium/30 bg-risk-medium/10 p-4 text-risk-medium">
                 <ShieldBan className="h-6 w-6" strokeWidth={1.5} />
               </div>
 
@@ -495,7 +495,7 @@ export default function App() {
                       className="flex items-start gap-2 text-xs text-muted-foreground"
                     >
                       <ShieldBan
-                        className="mt-0.5 h-3 w-3 shrink-0 text-[#B58D2D]"
+                        className="mt-0.5 h-3 w-3 shrink-0 text-risk-medium"
                         strokeWidth={1.5}
                       />
                       <span className="break-all font-mono text-[10px]">
@@ -625,7 +625,7 @@ export default function App() {
                         className="flex gap-2.5 text-xs leading-relaxed text-muted-foreground"
                       >
                         <TriangleAlert
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#B58D2D]"
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-risk-medium"
                           strokeWidth={1.5}
                         />
                         <span>{concern}</span>

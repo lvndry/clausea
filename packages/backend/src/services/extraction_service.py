@@ -25,15 +25,15 @@ import hashlib
 import json
 import re
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import Any, cast
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, Field
 
 from src.core.logging import get_logger
 from src.llm import (
+    MODEL_PRIORITY,
     EscalationValidator,
     SupportedModel,
-    acompletion_with_escalation,
     acompletion_with_fallback,
 )
 from src.models.document import (
@@ -59,27 +59,15 @@ from src.models.document import (
     PrivacySignals,
 )
 from src.utils.cancellation import CancellationToken
+from src.utils.coercion import LenientBool
+from src.utils.quotes import resolve_quote_offsets
 
 logger = get_logger(__name__)
 
 # FREE-FIRST cascade. Extraction is the biggest token sink (4 parallel cluster calls per
 # chunk), so leading with the free tiers saves the most; a 429/failure auto-falls-through
 # to the cheap paid tail (cross-provider for resilience).
-_EXTRACTION_RESILIENCE: list[SupportedModel] = [
-    "openrouter/gpt-oss-120b-nitro",
-    "openrouter/deepseek-v4-flash",
-]
-_EXTRACTION_PRIMARY: list[SupportedModel] = [
-    "gemini-2.5-flash",  # slot 1: Google free tier (native)
-    "openrouter/kimi-k2.6-free",  # slot 2: OpenRouter free
-    "openrouter/gemma-free",  # slot 3: OpenRouter free
-] + _EXTRACTION_RESILIENCE
-_EXTRACTION_ESCALATION: list[SupportedModel] = _EXTRACTION_RESILIENCE
-
-_COMPLEX_DOC_LENGTH_THRESHOLD: int = 50_000
-_COMPLEX_DOC_TYPES: frozenset[str] = frozenset(
-    {"terms_of_service", "data_processing_agreement", "terms_and_conditions"}
-)
+_EXTRACTION_PRIMARY: list[SupportedModel] = MODEL_PRIORITY
 
 _CLUSTER_REQUIRED_KEYS: dict[str, list[str]] = {
     "data_practices": [
@@ -190,89 +178,8 @@ def _chunk_text(text: str, *, chunk_size: int = 8000, overlap: int = 800) -> lis
     return final_chunks
 
 
-def _coerce_bool(value: object) -> bool:
-    """Lenient bool for LLM cluster output. Cheaper/free models emit strings like
-    "yes"/"required"/"unclear" where the schema expects a bool; pydantic's default
-    bool coercion rejects those, which previously dropped the whole cluster's data.
-    Map the common representations; unknown/None -> False (the conservative default).
-    """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token in {"true", "yes", "y", "required", "1"}:
-            return True
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        return value != 0
-    return False
-
-
-LenientBool = Annotated[bool, BeforeValidator(_coerce_bool)]
-
-
-def _collapse_ws(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def _flexible_quote_regex(quote: str) -> re.Pattern[str] | None:
-    """Compile a regex matching ``quote`` in the ORIGINAL text while tolerating
-    whitespace runs and smart-quote/dash variants \u2014 so a hit yields REAL offsets.
-
-    This replaces the old collapse/normalize "in" checks, which confirmed presence
-    but returned no offsets (and so could not back a "show me where it says that" UI).
-    """
-    tokens = [token for token in re.split(r"\s+", quote.strip()) if token]
-    if not tokens:
-        return None
-
-    def char_class(ch: str) -> str:
-        if ch in "'\u2018\u2019`":
-            return r"['\u2018\u2019`]"
-        if ch in '"\u201c\u201d':
-            return r"[\"\u201c\u201d]"
-        if ch in "-\u2013\u2014":
-            return r"[-\u2013\u2014]"
-        return re.escape(ch)
-
-    body = r"\s+".join("".join(char_class(ch) for ch in token) for token in tokens)
-    try:
-        return re.compile(body)
-    except re.error:
-        return None
-
-
-def _resolve_quote_offsets(haystack: str, quote: str) -> tuple[int | None, int | None, bool]:
-    if not haystack or not quote:
-        return None, None, False
-
-    idx = haystack.find(quote)
-    if idx != -1:
-        return idx, idx + len(quote), True
-
-    # Whitespace- and smart-quote-tolerant match against the ORIGINAL text. A hit
-    # yields real offsets, so a "verified" span always backs a usable highlight.
-    pattern = _flexible_quote_regex(quote)
-    if pattern is not None:
-        match = pattern.search(haystack)
-        if match is not None:
-            return match.start(), match.end(), True
-
-    # Fuzzy fragment match confirms the gist is present but NOT a byte-exact span:
-    # report it unverified with no offsets rather than a false "verified" badge.
-    if len(quote) >= 40:
-        collapsed_h = _collapse_ws(haystack)
-        target = _collapse_ws(quote)
-        window = len(target) * 3 // 4
-        if window >= 30:
-            for i in range(len(target) - window + 1):
-                if target[i : i + window] in collapsed_h:
-                    return None, None, False
-
-    return None, None, False
-
-
 def _make_evidence(document: Document, content_hash: str, quote: str) -> EvidenceSpan:
-    start_char, end_char, verified = _resolve_quote_offsets(document.text, quote)
+    start_char, end_char, verified = resolve_quote_offsets(document.text, quote)
     return EvidenceSpan(
         document_id=document.id,
         url=document.url,
@@ -1533,16 +1440,10 @@ async def extract_document_facts(
 
     accumulated_signals = PrivacySignals()
 
-    _is_complex = (
-        len(document.text or "") > _COMPLEX_DOC_LENGTH_THRESHOLD
-        or document.doc_type in _COMPLEX_DOC_TYPES
-    )
-
     async def _run_cluster(cluster_name: str, chunk_text: str, chunk_idx: int) -> dict[str, Any]:
         logger.debug(
             f"Running cluster '{cluster_name}' for {document.id} chunk {chunk_idx}/{len(chunks)}"
         )
-        is_complex = _is_complex
         messages = [
             {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
             {
@@ -1550,22 +1451,12 @@ async def extract_document_facts(
                 "content": _get_extraction_prompt(document, chunk_text, cluster_name),
             },
         ]
-        if is_complex:
-            # Complex docs go straight to the escalation model. No validation step:
-            # there is no higher-tier model to escalate to, so we accept the response.
-            response = await acompletion_with_fallback(
-                messages,
-                model_priority=_EXTRACTION_ESCALATION,
-                response_format={"type": "json_object"},
-            )
-        else:
-            response = await acompletion_with_escalation(
-                messages=messages,
-                primary=_EXTRACTION_PRIMARY,
-                escalation=_EXTRACTION_ESCALATION,
-                validator=_extraction_validator(cluster_name),
-                response_format={"type": "json_object"},
-            )
+        response = await acompletion_with_fallback(
+            messages,
+            model_priority=_EXTRACTION_PRIMARY,
+            validator=_extraction_validator(cluster_name),
+            response_format={"type": "json_object"},
+        )
         logger.info(
             "Cluster '%s' for %s chunk %d completed with model %s",
             cluster_name,

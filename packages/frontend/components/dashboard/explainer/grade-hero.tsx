@@ -38,46 +38,46 @@ const gradeStyles: Record<ConsumerGrade, GradeStyle> = {
   A: {
     word: "Reassuring",
     worry: "Not much to worry about here.",
-    color: "text-[#2B7A5C]",
-    bg: "bg-[#2B7A5C]/5",
-    border: "border-[#2B7A5C]/20",
-    rule: "bg-[#2B7A5C]",
+    color: "text-risk-low",
+    bg: "bg-risk-low/5",
+    border: "border-risk-low/20",
+    rule: "bg-risk-low",
     icon: ShieldCheck,
   },
   B: {
     word: "Mostly fair",
     worry: "A few things to keep an eye on.",
-    color: "text-[#2B7A5C]",
-    bg: "bg-[#2B7A5C]/5",
-    border: "border-[#2B7A5C]/20",
-    rule: "bg-[#2B7A5C]",
+    color: "text-risk-low",
+    bg: "bg-risk-low/5",
+    border: "border-risk-low/20",
+    rule: "bg-risk-low",
     icon: CheckCircle2,
   },
   C: {
     word: "Mixed",
     worry: "Worth reading before you agree.",
-    color: "text-[#B58D2D]",
-    bg: "bg-[#B58D2D]/5",
-    border: "border-[#B58D2D]/20",
-    rule: "bg-[#B58D2D]",
+    color: "text-risk-medium",
+    bg: "bg-risk-medium/5",
+    border: "border-risk-medium/20",
+    rule: "bg-risk-medium",
     icon: Shield,
   },
   D: {
     word: "Concerning",
     worry: "There are real reasons to be cautious.",
-    color: "text-[#BD452D]",
-    bg: "bg-[#BD452D]/5",
-    border: "border-[#BD452D]/20",
-    rule: "bg-[#BD452D]",
+    color: "text-risk-high",
+    bg: "bg-risk-high/5",
+    border: "border-risk-high/20",
+    rule: "bg-risk-high",
     icon: ShieldAlert,
   },
   E: {
     word: "Alarming",
     worry: "You should think hard before agreeing to this.",
-    color: "text-[#BD452D]",
-    bg: "bg-[#BD452D]/5",
-    border: "border-[#BD452D]/20",
-    rule: "bg-[#BD452D]",
+    color: "text-risk-high",
+    bg: "bg-risk-high/5",
+    border: "border-risk-high/20",
+    rule: "bg-risk-high",
     icon: AlertTriangle,
   },
 };
@@ -192,15 +192,15 @@ export function GradeHero({ explainer, tlDr }: GradeHeroProps) {
 
         {/* Critical-finding banner — must read as serious */}
         {hasCritical && (
-          <div className="p-8 md:p-10 border-t border-[#BD452D]/20 bg-[#BD452D]/5">
+          <div className="p-8 md:p-10 border-t border-risk-high/20 bg-risk-high/5">
             <div className="flex items-start gap-4">
               <AlertTriangle
-                className="h-5 w-5 shrink-0 text-[#BD452D] mt-0.5"
+                className="h-5 w-5 shrink-0 text-risk-high mt-0.5"
                 strokeWidth={2}
                 aria-hidden="true"
               />
               <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-[#BD452D] mb-2">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-risk-high mb-2">
                   {criticalCount} critical{" "}
                   {criticalCount === 1 ? "finding" : "findings"}
                 </p>
