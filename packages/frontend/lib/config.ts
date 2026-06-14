@@ -12,9 +12,7 @@ export const apiEndpoints = {
   tierLimits: () => getBackendUrl("/users/tier-limits"),
   documents: () => getBackendUrl("/documents"),
   analysis: () => getBackendUrl("/analysis"),
-  conversations: () => getBackendUrl("/conversations"),
   products: () => getBackendUrl("/products"),
-  q: () => getBackendUrl("/q"),
   users: () => getBackendUrl("/users"),
   metaSummary: (slug: string) => getBackendUrl(`/products/${slug}/overview`),
 } as const;

@@ -22,8 +22,7 @@ const routes = [
     label: "Products",
     icon: Building2,
     href: "/products",
-    match: (pathname: string) =>
-      pathname.startsWith("/products") || pathname.startsWith("/c/"),
+    match: (pathname: string) => pathname.startsWith("/products"),
   },
   {
     label: "Settings",

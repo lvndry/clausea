@@ -16,13 +16,11 @@ from src.core.middleware import AuthMiddleware
 from src.repositories.pipeline_repository import PipelineRepository
 from src.routes import (
     contact,
-    conversations,
     extension,
     paddle,
     pipeline,
     products,
     promotion,
-    q,
     subscription,
     users,
 )
@@ -78,9 +76,7 @@ async def healthcheck() -> dict[str, str]:
 
 
 routes = [
-    q.router,
     products.router,
-    conversations.router,
     promotion.router,
     users.router,
     paddle.router,

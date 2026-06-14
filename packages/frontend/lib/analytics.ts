@@ -101,19 +101,6 @@ export const trackUserJourney = {
     });
   },
 
-  // Conversation tracking
-  conversationStarted(
-    conversationId: string,
-    productName: string,
-    isNewConversation: boolean,
-  ) {
-    posthog.capture("conversation_started", {
-      conversation_id: conversationId,
-      product_name: productName,
-      is_new_conversation: isNewConversation,
-    });
-  },
-
   // Question tracking
   questionAsked(
     question: string,
@@ -128,27 +115,6 @@ export const trackUserJourney = {
       // Don't capture the full question for privacy, but track patterns
       question_category: categorizeQuestion(question),
       has_legal_terms: containsLegalTerms(question),
-    });
-  },
-
-  questionAnswered(
-    questionLength: number,
-    answerLength: number,
-    responseTime: number,
-    conversationId?: string,
-  ) {
-    posthog.capture("question_answered", {
-      question_length: questionLength,
-      answer_length: answerLength,
-      response_time_ms: responseTime,
-      conversation_id: conversationId,
-    });
-  },
-
-  questionFailed(error: string, conversationId?: string) {
-    posthog.capture("question_failed", {
-      error: error,
-      conversation_id: conversationId,
     });
   },
 

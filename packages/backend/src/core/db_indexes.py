@@ -146,37 +146,6 @@ async def ensure_user_indexes(db: AgnosticDatabase) -> None:
             logger.warning(f"Could not create index on users.email: {e}")
 
 
-async def ensure_conversation_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the conversations collection."""
-    try:
-        await db.conversations.create_index(
-            "id", unique=True, name="idx_conversation_id", background=True
-        )
-        logger.info("Created unique index on conversations.id")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg or "duplicate key" in error_msg:
-            logger.debug("Index on conversations.id already exists or has duplicate values")
-        else:
-            logger.warning(f"Could not create index on conversations.id: {e}")
-
-    try:
-        await db.conversations.create_index(
-            [("user_id", 1), ("last_message_at", -1)],
-            name="idx_conversation_user_recent",
-            background=True,
-        )
-        logger.info("Created index on conversations.(user_id, last_message_at)")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg:
-            logger.debug("Index on conversations.(user_id, last_message_at) already exists")
-        else:
-            logger.warning(
-                f"Could not create index on conversations.(user_id, last_message_at): {e}"
-            )
-
-
 async def ensure_finding_indexes(db: AgnosticDatabase) -> None:
     """Ensure indexes exist on the findings collection."""
     try:
@@ -357,7 +326,6 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     """
     logger.info("Ensuring database indexes are created...")
     await ensure_user_indexes(db)
-    await ensure_conversation_indexes(db)
     await ensure_product_indexes(db)
     await ensure_document_indexes(db)
     await ensure_finding_indexes(db)

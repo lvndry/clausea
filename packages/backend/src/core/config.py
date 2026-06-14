@@ -110,20 +110,6 @@ class ApiConfig:
         self.rate_limit_default: str = os.getenv("API_RATE_LIMIT", "120/minute")
 
 
-class EmbeddingConfig:
-    """Embedding configuration"""
-
-    def __init__(self) -> None:
-        # Batch size for processing chunks
-        self.batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", 50))
-        # Pinecone upsert batch size
-        self.upsert_batch_size: int = int(os.getenv("EMBEDDING_UPSERT_BATCH_SIZE", 100))
-        # Chunk size for text splitting (characters not tokens)
-        self.chunk_size: int = int(os.getenv("EMBEDDING_CHUNK_SIZE", 4000))
-        # Chunk overlap for text splitting (characters not tokens)
-        self.chunk_overlap: int = int(os.getenv("EMBEDDING_CHUNK_OVERLAP", 500))
-
-
 class TrackingConfig:
     """Tracking configuration"""
 
@@ -210,7 +196,6 @@ class Config:
         self.security = SecurityConfig()
         self.cors = CorsConfig()
         self.api = ApiConfig()
-        self.embedding = EmbeddingConfig()
         self.tracking = TrackingConfig()
         self.paddle = PaddleConfig()
         self.crawler = CrawlerConfig()

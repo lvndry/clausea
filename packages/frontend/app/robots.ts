@@ -10,7 +10,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/api/", "/dashboard/", "/c/", "/checkout/", "/onboarding/"],
+        disallow: ["/api/", "/dashboard/", "/checkout/", "/onboarding/"],
       },
       // Explicitly allow AI crawlers used by LLMs / answer engines (GEO)
       {

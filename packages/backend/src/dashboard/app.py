@@ -9,11 +9,9 @@ from src.dashboard.components.complete_workflow import show_complete_workflow
 from src.dashboard.components.crawling import show_crawling
 from src.dashboard.components.deep_analysis import show_deep_analysis
 from src.dashboard.components.documents_view import show_documents_view
-from src.dashboard.components.embedding import show_embedding
 from src.dashboard.components.product_creation import show_product_creation
 from src.dashboard.components.product_view import show_product_view
 from src.dashboard.components.promotion import show_promotion
-from src.dashboard.components.rag import show_rag
 from src.dashboard.components.summarization import show_analysis
 
 # Suppress Streamlit ScriptRunContext warnings globally
@@ -41,10 +39,8 @@ def main() -> None:
         {"id": "view_documents", "display_name": "View Documents"},
         {"id": "complete_workflow", "display_name": "Complete Workflow"},
         {"id": "start_crawling", "display_name": "Start Crawling"},
-        {"id": "generate_embeddings", "display_name": "Generate & Store Embeddings"},
         {"id": "analysis", "display_name": "Analysis"},
         {"id": "deep_analysis", "display_name": "Deep Analysis & Overview"},
-        {"id": "rag", "display_name": "RAG"},
     ]
 
     # Only show Promotion page in development/localhost
@@ -62,11 +58,8 @@ def main() -> None:
         "View Documents": "view_documents",
         "Complete Workflow": "complete_workflow",
         "Start Crawling": "start_crawling",
-        "Generate Embeddings": "generate_embeddings",
-        "Generate & Store Embeddings": "generate_embeddings",
         "Analysis": "analysis",
         "Deep Analysis & Overview": "deep_analysis",
-        "RAG": "rag",
         "Promotion": "promotion",
         "Promotion & Download": "promotion",
     }
@@ -115,14 +108,10 @@ def main() -> None:
         show_complete_workflow()
     elif page_id == "start_crawling":
         show_crawling()
-    elif page_id == "generate_embeddings":
-        show_embedding()
     elif page_id == "analysis":
         show_analysis()
     elif page_id == "deep_analysis":
         show_deep_analysis()
-    elif page_id == "rag":
-        show_rag()
     elif page_id == "promotion":
         # Double-check we're in development (shouldn't reach here in production due to redirect above)
         if config.app.is_development:

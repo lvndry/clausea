@@ -6,8 +6,6 @@ Flow:
   2. DOCUMENT_ANALYSIS_PROMPT              — unified deep analysis per document (one call).
   3. PRODUCT_OVERVIEW_PROMPT               — product-level synthesis from core documents only;
                                              output is **cached** and shown on `/products/{slug}`.
-                                             This is **not** the same as chat embedding search
-                                             (`policy_understanding_prompts` + Pinecone).
 
 Core documents included in product overview:
   privacy_policy, terms_of_service, terms_of_use, terms_and_conditions, cookie_policy,
