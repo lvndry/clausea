@@ -19,8 +19,6 @@ from src.models.document import Document, DocumentAnalysis, coerce_doc_type_from
 load_dotenv()
 logger = get_logger(__name__)
 
-_CLASSIFICATION_PRIORITY: list[SupportedModel] = MODEL_PRIORITY
-
 
 class DocumentProcessingResult(BaseModel):
     """Result of document processing."""
@@ -313,7 +311,7 @@ Use caution: If the content appears incomplete, vague, or primarily promotional,
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                model_priority=_CLASSIFICATION_PRIORITY,
+                model_priority=MODEL_PRIORITY,
                 response_format={"type": "json_object"},
             )
 

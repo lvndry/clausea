@@ -6,18 +6,12 @@ the paid tail of the same list.
 """
 
 from src.analyser import _ANALYSIS_PRIMARY, _OVERVIEW_PRIORITY
-from src.document_processor import _CLASSIFICATION_PRIORITY
 from src.llm import _OPENROUTER_ALIASES, MODEL_PRIORITY
 from src.services.extraction_service import _EXTRACTION_PRIMARY
 
 
 def test_every_stage_uses_the_one_shared_cascade():
-    for stage in (
-        _ANALYSIS_PRIMARY,
-        _EXTRACTION_PRIMARY,
-        _OVERVIEW_PRIORITY,
-        _CLASSIFICATION_PRIORITY,
-    ):
+    for stage in (_ANALYSIS_PRIMARY, _EXTRACTION_PRIMARY, _OVERVIEW_PRIORITY):
         assert stage is MODEL_PRIORITY
 
 
