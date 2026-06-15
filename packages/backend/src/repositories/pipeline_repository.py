@@ -15,6 +15,11 @@ from src.repositories.base_repository import BaseRepository
 
 _TERMINAL_STATUSES = list(TERMINAL_PIPELINE_STATUSES)
 
+# Statuses for a job that was actively executing and can be left orphaned by a worker
+# crash. A "pending" job is only queued — never started — so a restart must leave it
+# pending for the worker to pick up, not fail it. Only these can be marked stale.
+_ORPHANABLE_STATUSES = ["crawling", "summarizing", "generating_overview"]
+
 logger = get_logger(__name__)
 
 
@@ -176,10 +181,14 @@ class PipelineRepository(BaseRepository):
     async def mark_stale_as_failed(
         self, db: AgnosticDatabase, stale_threshold_minutes: int = 30
     ) -> int:
-        """Mark all non-terminal jobs older than the threshold as failed.
+        """Mark stale in-progress jobs older than the threshold as failed.
 
         Used on startup to recover from server crashes that left jobs orphaned.
         Uses last_heartbeat if available, otherwise falls back to updated_at.
+
+        Only jobs that were actively executing are eligible — "pending" jobs are queued,
+        not orphaned, so a restart leaves them for the worker to pick up rather than
+        failing the whole backlog.
 
         Returns the number of jobs marked as failed.
         """
@@ -188,7 +197,7 @@ class PipelineRepository(BaseRepository):
         cutoff = datetime.now() - timedelta(minutes=stale_threshold_minutes)
         result = await db[self.COLLECTION].update_many(
             {
-                "status": {"$nin": _TERMINAL_STATUSES},
+                "status": {"$in": _ORPHANABLE_STATUSES},
                 "$or": [
                     {"last_heartbeat": {"$lt": cutoff}},
                     {"last_heartbeat": None, "updated_at": {"$lt": cutoff}},

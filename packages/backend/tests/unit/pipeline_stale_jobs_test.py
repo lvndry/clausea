@@ -1,0 +1,28 @@
+"""A worker restart must not fail queued (pending) jobs.
+
+mark_stale_as_failed recovers jobs orphaned by a crash. A "pending" job is only queued —
+never started — so a restart must leave it pending for the worker to pick up. Failing the
+whole backlog on every restart would be fatal for a large re-run.
+"""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from src.repositories.pipeline_repository import PipelineRepository
+
+
+@pytest.mark.asyncio
+async def test_mark_stale_targets_only_in_progress_not_pending():
+    collection = MagicMock()
+    collection.update_many = AsyncMock(return_value=MagicMock(modified_count=0))
+    db = MagicMock()
+    db.__getitem__.return_value = collection
+
+    await PipelineRepository().mark_stale_as_failed(db)
+
+    eligible = collection.update_many.call_args.args[0]["status"]["$in"]
+    # A queued job was never started, so a restart must not fail it.
+    assert "pending" not in eligible
+    # Only actively-executing statuses can be orphaned by a crash.
+    assert set(eligible) == {"crawling", "summarizing", "generating_overview"}
