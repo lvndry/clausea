@@ -84,11 +84,7 @@ def setup_logging() -> None:
     logging.getLogger("pymongo.server").setLevel(logging.INFO)
     logging.getLogger("httpx").setLevel(logging.INFO)
     logging.getLogger("httpcore").setLevel(logging.INFO)
-    # litellm logs every completion at INFO ("LiteLLM completion() model=..."). During an
-    # analysis burst that floods to hundreds of lines/sec (hitting Railway's 500/sec cap and
-    # dropping real errors), so keep it at WARNING. No litellm import needed: the named logger
-    # is configured here and litellm uses it when it logs.
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.INFO)
 
 
 def get_logger(name: str = __name__, component: str | None = None) -> Any:

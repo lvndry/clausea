@@ -90,9 +90,7 @@ COPY --from=builder /opt/camoufox-cache /opt/camoufox-cache
 
 COPY . .
 
-# Cap glibc per-thread arenas. The crawler uses thread pools, and glibc otherwise
-# spins up many arenas that hoard freed memory, inflating idle RSS (and the Railway
-# memory bill). 2 arenas keeps memory returning to the OS with negligible perf cost.
+# Cap glibc arenas so freed memory returns to the OS instead of being hoarded per thread.
 ENV MALLOC_ARENA_MAX=2
 
 EXPOSE 8000

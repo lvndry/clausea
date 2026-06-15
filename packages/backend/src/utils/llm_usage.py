@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from src.core.config import config
 from src.core.logging import get_logger
 
-# ModelResponse is only used in annotations; defer the heavy litellm import (see src/llm.py).
+# litellm is heavy to import; defer it (annotation-only here).
 if TYPE_CHECKING:
     from litellm import ModelResponse
 

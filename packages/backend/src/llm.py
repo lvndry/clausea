@@ -8,9 +8,7 @@ from typing import TYPE_CHECKING, Any
 from src.core.logging import get_logger
 from src.utils.llm_usage import track_usage
 
-# litellm is heavy to import (provider SDKs, tokenizers; hundreds of MB resident). Defer it
-# to first use so a process that only serves reads never loads it. Annotations are strings
-# via `from __future__ import annotations`, so the types below are needed only for checking.
+# litellm is heavy to import; defer it to first use.
 if TYPE_CHECKING:
     from litellm import EmbeddingResponse, ModelResponse
 
