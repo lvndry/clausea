@@ -39,7 +39,7 @@ export const viewport: Viewport = {
 
 export const metadata = {
   metadataBase: new URL(siteUrl),
-  title: "Clausea AI - Legal documents were not written for you... until now",
+  title: "Clausea AI - Privacy Policies & Terms, Made Easy",
   description:
     "Navigate legal complexities with AI precision. Understand privacy policies, terms of service, cookie policies, and other legal agreements instantly.",
   keywords: [
@@ -68,8 +68,7 @@ export const metadata = {
     locale: "en_US",
     url: siteUrl,
     siteName: "Clausea AI",
-    title:
-      "Clausea AI - Legal documents were not written for you... until now",
+    title: "Clausea AI - Privacy Policies & Terms, Made Easy",
     description:
       "Navigate legal complexities with ease. Understand privacy policies, terms of service, cookie policies, and other legal agreements instantly.",
     images: [
@@ -83,8 +82,7 @@ export const metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title:
-      "Clausea AI - Legal documents were not written for you... until now",
+    title: "Clausea AI - Privacy Policies & Terms, Made Easy",
     description:
       "Navigate legal complexities with AI precision. Understand privacy policies, terms of service, cookie policies, and other legal agreements instantly.",
     images: [`${siteUrl}/og`],
