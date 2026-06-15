@@ -5,6 +5,8 @@ execution of the full crawl -> summarize -> overview pipeline.
 """
 
 import asyncio
+import contextlib
+import os
 from datetime import datetime
 from typing import Any
 
@@ -20,7 +22,13 @@ from src.analyser import (
 from src.core.database import db_session
 from src.core.logging import get_logger
 from src.models.document import Document
-from src.models.pipeline_job import CrawlError, CrawlSkip, PipelineErrorCode, PipelineJob
+from src.models.pipeline_job import (
+    TERMINAL_PIPELINE_STATUSES,
+    CrawlError,
+    CrawlSkip,
+    PipelineErrorCode,
+    PipelineJob,
+)
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
@@ -30,7 +38,15 @@ from src.utils.domain import extract_domain as _extract_domain
 
 logger = get_logger(__name__)
 
-MAX_PIPELINE_DURATION_SECONDS = 7200  # 2 hours
+MAX_PIPELINE_DURATION_SECONDS = 7200  # 2 hours — hard ceiling backstop
+# Abort a job that makes no forward progress (no page/document/step update bumps updated_at)
+# for this long. Bounds *inactivity*, not total runtime: a slow-but-advancing pipeline runs to
+# the hard ceiling, while a wedged one frees its worker slot fast instead of clogging it.
+STALL_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_STALL_TIMEOUT_SECONDS", "900"))  # 15 min
+
+
+class _PipelineStalled(Exception):
+    """Raised internally when a job makes no progress within STALL_TIMEOUT_SECONDS."""
 
 
 def _domain_to_product_name(domain: str) -> str:
@@ -140,6 +156,51 @@ class PipelineService:
             logger.info(f"Active pipeline job already exists for {product.slug}: {job.id}")
 
         return {"already_indexed": False, "job": job}
+
+    async def _await_with_stall_guard(
+        self, core_task: asyncio.Task[None], job_id: str, started_at: datetime
+    ) -> None:
+        """Await the pipeline core, cancelling it if the job stalls (no progress for the timeout).
+
+        Progress is any step/page/document update, each of which bumps the job's updated_at. A
+        pipeline that is still advancing — even slowly through the model cascade — is never
+        cancelled; only one wedged with zero forward progress is, freeing the worker slot rather
+        than holding it to the 2h ceiling.
+        """
+        poll = min(60.0, STALL_TIMEOUT_SECONDS)
+        while True:
+            done, _ = await asyncio.wait({core_task}, timeout=poll)
+            if core_task in done:
+                await core_task  # propagate any error the core didn't handle internally
+                return
+
+            async with db_session() as watchdog_db:
+                fresh = await self._pipeline_repo.find_by_id(watchdog_db, job_id)
+            if fresh is None or fresh.status in TERMINAL_PIPELINE_STATUSES:
+                await core_task
+                return
+
+            last_progress = fresh.updated_at or started_at
+            if (datetime.now() - last_progress).total_seconds() > STALL_TIMEOUT_SECONDS:
+                core_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await core_task
+                raise _PipelineStalled
+
+    async def _mark_aborted(
+        self, db: AgnosticDatabase, job: PipelineJob, code: PipelineErrorCode, detail: str
+    ) -> None:
+        """Mark a job failed after a stall/timeout abort, flagging any running steps."""
+        job.status = "failed"
+        job.error = code
+        job.error_detail = detail
+        job.completed_at = datetime.now()
+        for step in job.steps:
+            if step.status == "running":
+                step.status = "failed"
+                step.message = detail
+                step.completed_at = datetime.now()
+        await self._pipeline_repo.update(db, job)
 
     async def _update_step(
         self,
@@ -707,24 +768,33 @@ class PipelineService:
 
                     await self._pipeline_repo.update(db, job)
 
+            core_task = asyncio.create_task(_run_pipeline_core())
+            started_at = job.started_at or datetime.now()
             try:
                 await asyncio.wait_for(
-                    _run_pipeline_core(),
+                    self._await_with_stall_guard(core_task, job_id, started_at),
                     timeout=MAX_PIPELINE_DURATION_SECONDS,
                 )
+            except _PipelineStalled:
+                stall_minutes = int(STALL_TIMEOUT_SECONDS // 60)
+                logger.error("Pipeline job %s stalled (no progress for %dm)", job_id, stall_minutes)
+                await self._mark_aborted(
+                    db,
+                    job,
+                    PipelineErrorCode.stalled,
+                    f"Stalled — no progress for {stall_minutes} minutes. Usually a site that's "
+                    "hard to crawl/render or a temporary model issue; try again.",
+                )
             except TimeoutError:
+                # Hard ceiling: the guard's wait_for fired but core_task is a separate task.
+                core_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await core_task
                 logger.error(
                     "Pipeline job %s timed out after %s seconds",
                     job_id,
                     MAX_PIPELINE_DURATION_SECONDS,
                 )
-                job.status = "failed"
-                job.error = PipelineErrorCode.timed_out
-                job.error_detail = "Pipeline timed out after 2 hours"
-                job.completed_at = datetime.now()
-                for step in job.steps:
-                    if step.status == "running":
-                        step.status = "failed"
-                        step.message = "Pipeline timed out after 2 hours"
-                        step.completed_at = datetime.now()
-                await self._pipeline_repo.update(db, job)
+                await self._mark_aborted(
+                    db, job, PipelineErrorCode.timed_out, "Pipeline timed out after 2 hours"
+                )

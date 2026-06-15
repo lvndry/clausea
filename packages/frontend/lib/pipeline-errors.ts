@@ -20,6 +20,8 @@ export const PIPELINE_ERROR_CODE_MESSAGES: Record<string, string> = {
   internal_error: "Something went wrong while analyzing this site.",
   timed_out:
     "Analysis took too long and timed out. Please try again, as large sites may need another attempt.",
+  stalled:
+    "Analysis stalled with no progress, usually on a site that's hard to crawl or a temporary issue. Please try again.",
 };
 
 export function resolvePipelineErrorMessage(
