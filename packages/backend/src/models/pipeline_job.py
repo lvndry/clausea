@@ -25,6 +25,7 @@ class PipelineErrorCode(StrEnum):
     overview_not_persisted = "overview_not_persisted"
     internal_error = "internal_error"
     timed_out = "timed_out"
+    stalled = "stalled"
 
 
 PipelineJobStatus = Literal[
