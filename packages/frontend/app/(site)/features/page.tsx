@@ -1,4 +1,4 @@
-import { Lock, Shield, Zap } from "lucide-react";
+import { Bell, FileText, Gauge, Globe, Lock, Shield, Zap } from "lucide-react";
 import type { Metadata } from "next";
 
 import AsymmetricGrid from "@/components/clausea/AsymmetricGrid";
@@ -74,6 +74,54 @@ export default function FeaturesPage() {
         {/* Technical Specs */}
         <section className="py-24 px-4 md:px-8 max-w-7xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12">
+            <div className="space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                <Globe className="w-6 h-6" />
+              </div>
+              <h4 className="text-xl font-bold font-display">
+                Whole-Site Coverage
+              </h4>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                We crawl a vendor&apos;s entire policy surface — privacy, terms,
+                cookies, DPA, subprocessors — not just the one page you paste.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-accent/20 text-accent-foreground flex items-center justify-center">
+                <FileText className="w-6 h-6" />
+              </div>
+              <h4 className="text-xl font-bold font-display">
+                Plain-English Summaries
+              </h4>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Dense legalese turned into clear, decision-ready answers anyone
+                on your team can act on.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                <Gauge className="w-6 h-6" />
+              </div>
+              <h4 className="text-xl font-bold font-display">
+                Risk &amp; Compliance Signals
+              </h4>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Every document is analyzed for GDPR/CCPA-relevant clauses and
+                the risk areas that matter to you.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-accent/20 text-accent-foreground flex items-center justify-center">
+                <Bell className="w-6 h-6" />
+              </div>
+              <h4 className="text-xl font-bold font-display">
+                Change Monitoring
+              </h4>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                We re-check policies on a schedule and surface exactly what
+                changed, so a quiet update never catches you off guard.
+              </p>
+            </div>
             <div className="space-y-4">
               <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
                 <Shield className="w-6 h-6" />
