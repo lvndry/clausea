@@ -1,4 +1,4 @@
-import { Cpu, Lock, Shield, Zap } from "lucide-react";
+import { Lock, Shield, Zap } from "lucide-react";
 import type { Metadata } from "next";
 
 import AsymmetricGrid from "@/components/clausea/AsymmetricGrid";
@@ -12,7 +12,7 @@ const siteUrl = (
 export const metadata: Metadata = {
   title: "Features - Advanced Legal Infrastructure | Clausea AI",
   description:
-    "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, SOC2 Type II security, and model-agnostic architecture. Built for enterprise legal and compliance.",
+    "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, and SOC2 Type II security. Built for enterprise legal and compliance.",
   keywords: [
     "legal document analysis features",
     "AI legal agents",
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Features - Advanced Legal Infrastructure | Clausea AI",
     description:
-      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, SOC2 Type II security, and model-agnostic architecture.",
+      "Discover Clausea's advanced legal document intelligence features: zero-train policy, sub-second retrieval, and SOC2 Type II security.",
     url: `${siteUrl}/features`,
     siteName: "Clausea AI",
     images: [
@@ -73,9 +73,9 @@ export default function FeaturesPage() {
 
         {/* Technical Specs */}
         <section className="py-24 px-4 md:px-8 max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12">
             <div className="space-y-4">
-              <div className="w-12 h-12 rounded-2xl bg-primary text-secondary flex items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
                 <Shield className="w-6 h-6" />
               </div>
               <h4 className="text-xl font-bold font-display">
@@ -87,7 +87,7 @@ export default function FeaturesPage() {
               </p>
             </div>
             <div className="space-y-4">
-              <div className="w-12 h-12 rounded-2xl bg-secondary text-primary flex items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-accent/20 text-accent-foreground flex items-center justify-center">
                 <Zap className="w-6 h-6" />
               </div>
               <h4 className="text-xl font-bold font-display">
@@ -106,16 +106,6 @@ export default function FeaturesPage() {
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Enterprise security built-in. Data encryption at rest and in
                 transit with strict role-based access.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
-                <Cpu className="w-6 h-6" />
-              </div>
-              <h4 className="text-xl font-bold font-display">Model Agnostic</h4>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Switch between specialized models for different document types:
-                from contracts to compliance policies.
               </p>
             </div>
           </div>
