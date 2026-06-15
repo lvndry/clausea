@@ -39,8 +39,12 @@ async def test_requeue_failed_only_retries_under_attempt_cap():
 
     query = collection.update_many.call_args.args[0]
     update = collection.update_many.call_args.args[1]
-    # Only failed jobs under the attempt cap are retried; no_documents stays terminal.
+    # Only failed jobs are retried; no_documents stays terminal.
     assert query["status"] == "failed"
-    assert query["attempts"] == {"$lt": 4}
+    # Under the cap OR missing the field (pre-existing jobs) — $lt alone skips missing fields.
+    assert {"attempts": {"$lt": 4}} in query["$or"]
+    assert {"attempts": {"$exists": False}} in query["$or"]
     assert update["$set"]["status"] == "pending"
+    # Steps reset so a retry doesn't carry stale terminal step state.
+    assert all(s["status"] == "pending" for s in update["$set"]["steps"])
     assert requeued == 2

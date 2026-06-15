@@ -187,12 +187,32 @@ class PipelineRepository(BaseRepository):
         Makes the worker self-healing: orphaned jobs (failed by mark_stale_as_failed) and
         transient failures retry. ``no_documents`` is terminal and deliberately not retried.
         """
+        fresh_steps = [
+            {
+                "name": name,
+                "status": "pending",
+                "message": None,
+                "progress_current": None,
+                "progress_total": None,
+                "progress_percent": None,
+                "started_at": None,
+                "completed_at": None,
+            }
+            for name in ("crawling", "summarizing", "generating_overview")
+        ]
         result = await db[self.COLLECTION].update_many(
-            {"status": "failed", "attempts": {"$lt": max_attempts}},
+            # A missing "attempts" field does not match $lt in MongoDB, so pre-existing
+            # jobs (written before the field existed) are matched via $exists and get
+            # attempts=1 on the next claim's $inc.
+            {
+                "status": "failed",
+                "$or": [{"attempts": {"$lt": max_attempts}}, {"attempts": {"$exists": False}}],
+            },
             {
                 "$set": {
                     "status": "pending",
                     "active": True,
+                    "steps": fresh_steps,
                     "error": None,
                     "error_detail": None,
                     "started_at": None,
@@ -210,7 +230,7 @@ class PipelineRepository(BaseRepository):
         return count
 
     async def mark_stale_as_failed(
-        self, db: AgnosticDatabase, stale_threshold_minutes: int = 20
+        self, db: AgnosticDatabase, stale_threshold_minutes: int = 30
     ) -> int:
         """Mark stale in-progress jobs older than the threshold as failed.
 
