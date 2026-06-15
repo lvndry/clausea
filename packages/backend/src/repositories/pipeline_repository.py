@@ -97,7 +97,10 @@ class PipelineRepository(BaseRepository):
         """
         data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
             {"status": "pending"},
-            {"$set": {"status": "crawling", "started_at": datetime.now()}},
+            {
+                "$set": {"status": "crawling", "started_at": datetime.now()},
+                "$inc": {"attempts": 1},
+            },
             sort=[("created_at", 1)],
             return_document=ReturnDocument.AFTER,
         )
@@ -178,8 +181,36 @@ class PipelineRepository(BaseRepository):
         )
         logger.debug(f"Partially updated pipeline job {job_id}: {list(fields.keys())}")
 
+    async def requeue_failed_jobs(self, db: AgnosticDatabase, max_attempts: int) -> int:
+        """Re-queue failed jobs for another attempt, bounded by max_attempts.
+
+        Makes the worker self-healing: orphaned jobs (failed by mark_stale_as_failed) and
+        transient failures retry. ``no_documents`` is terminal and deliberately not retried.
+        """
+        result = await db[self.COLLECTION].update_many(
+            {"status": "failed", "attempts": {"$lt": max_attempts}},
+            {
+                "$set": {
+                    "status": "pending",
+                    "active": True,
+                    "error": None,
+                    "error_detail": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "last_heartbeat": None,
+                    "updated_at": datetime.now(),
+                }
+            },
+        )
+        count = result.modified_count
+        if count:
+            logger.info(
+                "Re-queued %d failed job(s) for retry (max_attempts=%d)", count, max_attempts
+            )
+        return count
+
     async def mark_stale_as_failed(
-        self, db: AgnosticDatabase, stale_threshold_minutes: int = 30
+        self, db: AgnosticDatabase, stale_threshold_minutes: int = 20
     ) -> int:
         """Mark stale in-progress jobs older than the threshold as failed.
 

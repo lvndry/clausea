@@ -156,6 +156,8 @@ class PipelineJob(BaseModel):
     completed_at: datetime | None = None
     last_heartbeat: datetime | None = None
 
+    attempts: int = 0  # claims so far; bounds auto-retry of failed/orphaned jobs
+
     # Stats from the crawl phase
     documents_found: int = 0
     documents_stored: int = 0
