@@ -141,13 +141,14 @@ class ProductRepository(BaseRepository):
         limit: int,
         search: str = "",
     ) -> tuple[list[Product], int]:
-        """Get a paginated list of products with optional name/description/category search.
+        """Get a paginated list of products with optional name/description/category/domain search.
 
         Args:
             db: Database instance
             skip: Number of documents to skip
             limit: Maximum number of documents to return
-            search: Case-insensitive search string matched against name, description, categories
+            search: Case-insensitive search string matched against name, description,
+                categories, and domains
 
         Returns:
             Tuple of (products, total_count)
@@ -162,6 +163,7 @@ class ProductRepository(BaseRepository):
                     {"name": {"$regex": escaped_search, "$options": "i"}},
                     {"description": {"$regex": escaped_search, "$options": "i"}},
                     {"categories": {"$regex": escaped_search, "$options": "i"}},
+                    {"domains": {"$regex": escaped_search, "$options": "i"}},
                 ]
             }
             total, items_data = await asyncio.gather(
