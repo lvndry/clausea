@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models.pipeline_job import PipelineJob
+from src.models.pipeline_job import PipelineJob, PipelineJobStatus
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services import pipeline_service as ps
 from src.services.pipeline_service import PipelineService, _PipelineStalled
 
 
-def _job(status: str, updated_at: datetime) -> PipelineJob:
+def _job(status: PipelineJobStatus, updated_at: datetime) -> PipelineJob:
     job = PipelineJob(product_slug="x", product_name="X", url="https://x.com", status=status)
     job.updated_at = updated_at
     return job
