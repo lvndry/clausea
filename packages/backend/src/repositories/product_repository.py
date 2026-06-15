@@ -195,6 +195,14 @@ class ProductRepository(BaseRepository):
     # Product Overview Storage Operations
     # ============================================================================
 
+    async def count_product_overviews(self, db: AgnosticDatabase) -> int:
+        """Count products that have a completed analysis (a stored overview).
+
+        Uses estimated_document_count() — an O(1) metadata read — since this counts
+        the whole collection with no filter (consistent with get_products_paginated).
+        """
+        return await db.product_overviews.estimated_document_count()
+
     async def get_product_overview(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:

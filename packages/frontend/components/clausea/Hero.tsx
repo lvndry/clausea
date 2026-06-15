@@ -9,7 +9,7 @@ import { useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 
-export default function Hero() {
+export default function Hero({ analyzedCount }: { analyzedCount?: number | null }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(containerRef, { once: true, amount: 0.3 });
 
@@ -68,8 +68,15 @@ export default function Hero() {
         </div>
         <div className="flex items-center gap-4 text-[10px] md:text-[11px] uppercase tracking-[0.15em] font-medium">
           <span className="text-foreground">Active Monitoring</span>
-          <span className="text-muted-foreground">●</span>
-          <span className="text-muted-foreground">24 Services Analyzed</span>
+          {typeof analyzedCount === "number" && analyzedCount > 0 && (
+            <>
+              <span className="text-muted-foreground">●</span>
+              <span className="text-muted-foreground">
+                {analyzedCount} {analyzedCount === 1 ? "Service" : "Services"}{" "}
+                Analyzed
+              </span>
+            </>
+          )}
         </div>
       </motion.div>
     </section>

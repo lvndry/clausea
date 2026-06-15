@@ -13,6 +13,7 @@ export const apiEndpoints = {
   documents: () => getBackendUrl("/documents"),
   analysis: () => getBackendUrl("/analysis"),
   products: () => getBackendUrl("/products"),
+  productStats: () => getBackendUrl("/products/stats"),
   users: () => getBackendUrl("/users"),
   metaSummary: (slug: string) => getBackendUrl(`/products/${slug}/overview`),
 } as const;

@@ -223,6 +223,10 @@ class ProductService:
         """
         await self._product_repo.delete_product_overview(db, slug)
 
+    async def count_analyzed_products(self, db: AgnosticDatabase) -> int:
+        """Count products with a completed analysis (a stored overview)."""
+        return await self._product_repo.count_product_overviews(db)
+
     async def get_product_overview_data(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:

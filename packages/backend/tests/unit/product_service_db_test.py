@@ -221,3 +221,15 @@ async def test_get_product_documents(
     assert documents[0].id == "doc1"
     assert documents[0].summary == "JSON SUMMARY"
     mock_document_repo.find_by_product_id_with_analysis.assert_called_once_with(mock_db, "123")
+
+
+@pytest.mark.asyncio
+async def test_count_analyzed_products(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    mock_product_repo.count_product_overviews = AsyncMock(return_value=7)
+
+    count = await product_service.count_analyzed_products(mock_db)
+
+    assert count == 7
+    mock_product_repo.count_product_overviews.assert_awaited_once_with(mock_db)
