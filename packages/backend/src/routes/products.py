@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -98,6 +99,25 @@ async def get_product_stats(
 ) -> ProductStats:
     """Public catalog stats for the landing page (count of analyzed products)."""
     return ProductStats(analyzed_count=await service.count_analyzed_products(db))
+
+
+class SitemapEntry(BaseModel):
+    slug: str
+    last_modified: datetime | None = None
+
+
+@router.get("/sitemap", response_model=list[SitemapEntry])
+async def get_products_sitemap(
+    db: AgnosticDatabase = Depends(get_db),
+    service: ProductService = Depends(create_product_service),
+) -> list[SitemapEntry]:
+    """Analyzed products (slug + last update) for the public sitemap."""
+    rows = await service.list_analyzed_products_for_sitemap(db)
+    return [
+        SitemapEntry(slug=row["product_slug"], last_modified=row.get("updated_at"))
+        for row in rows
+        if row.get("product_slug")
+    ]
 
 
 @router.get("/{slug}/overview", response_model=ProductOverview)

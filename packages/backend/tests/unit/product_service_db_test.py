@@ -233,3 +233,16 @@ async def test_count_analyzed_products(
 
     assert count == 7
     mock_product_repo.count_product_overviews.assert_awaited_once_with(mock_db)
+
+
+@pytest.mark.asyncio
+async def test_list_analyzed_products_for_sitemap(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    rows = [{"product_slug": "notion", "updated_at": None}]
+    mock_product_repo.list_analyzed_overviews = AsyncMock(return_value=rows)
+
+    result = await product_service.list_analyzed_products_for_sitemap(mock_db)
+
+    assert result == rows
+    mock_product_repo.list_analyzed_overviews.assert_awaited_once_with(mock_db)
