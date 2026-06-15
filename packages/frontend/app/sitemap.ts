@@ -83,14 +83,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const products = await getAnalyzedProducts();
   const productPages: MetadataRoute.Sitemap = products
     .filter((product) => product.slug)
-    .map((product) => ({
-      url: `${baseUrl}/products/${product.slug}`,
-      lastModified: product.last_modified
+    .map((product) => {
+      // Guard against a malformed date: an Invalid Date would throw during
+      // sitemap serialization and take down the whole sitemap with a 500.
+      const parsed = product.last_modified
         ? new Date(product.last_modified)
-        : now,
-      changeFrequency: "weekly" as const,
-      priority: 0.7,
-    }));
+        : null;
+      const lastModified =
+        parsed && !Number.isNaN(parsed.getTime()) ? parsed : now;
+      return {
+        url: `${baseUrl}/products/${product.slug}`,
+        lastModified,
+        changeFrequency: "weekly" as const,
+        priority: 0.7,
+      };
+    });
 
   return [...staticPages, ...productPages];
 }
