@@ -146,7 +146,8 @@ class CrawlerConfig:
     """Crawler and policy-pipeline crawl settings (env-tunable)."""
 
     def __init__(self) -> None:
-        self.max_pages: int = int(os.getenv("CRAWLER_MAX_PAGES", "2000"))
+        # Hard backstop; the crawler's convergence budget normally stops well before this.
+        self.max_pages: int = int(os.getenv("CRAWLER_MAX_PAGES", "400"))
         self.max_depth: int = int(os.getenv("CRAWLER_MAX_DEPTH", "5"))
 
         # --- Concurrency & politeness ---

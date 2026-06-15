@@ -185,6 +185,15 @@ ACCEPT_HEADER = (
     "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
 )
 
+# Convergence budget: once we've found policy content, stop discovery after this many
+# consecutive pages with no policy-relevant content. Bounds the "wander the whole
+# marketing site" failure mode (BFS + min_legal_score=0 crawls every same-domain link)
+# without capping recall on genuinely inter-linked legal pages.
+DEFAULT_NO_POLICY_PAGE_BUDGET = int(os.getenv("CRAWLER_NO_POLICY_PAGE_BUDGET", "50"))
+# A crawled page counts as a policy hit at/above this normalized legal_score; matches the
+# pipeline's MIN_LEGAL_SCORE_THRESHOLD for accepting a page into analysis.
+CONVERGENCE_LEGAL_SCORE = 0.2
+
 # Minimum extracted body text length to treat static fetch as sufficient (low URL score) and
 # to skip SPA hydration waits in the browser fetch path.
 MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
@@ -1373,6 +1382,7 @@ class ClauseaCrawler:
         self,
         max_depth: int = 5,
         max_pages: int = 1000,
+        no_policy_page_budget: int = DEFAULT_NO_POLICY_PAGE_BUDGET,
         max_concurrent: int = 10,
         delay_between_requests: float = 1.0,
         timeout: int = 60,
@@ -1423,6 +1433,7 @@ class ClauseaCrawler:
         """
         self.max_depth = max_depth
         self.max_pages = max_pages
+        self.no_policy_page_budget = no_policy_page_budget
         self.max_concurrent = max_concurrent
         self.delay_between_requests = delay_between_requests
         self.delay_jitter = delay_jitter
@@ -3720,6 +3731,19 @@ class ClauseaCrawler:
             return len(self.url_priority_queue)
         return 0
 
+    def _has_converged(self, found_policy: bool, pages_since_policy_hit: int) -> bool:
+        """True once policy content was found and then `budget` pages passed with none more.
+
+        Bounds the breadth-first wander on large sites (every same-domain link is followed
+        when min_legal_score=0) without ever stopping before a policy page is seen. A
+        budget <= 0 disables convergence (crawl runs to max_pages / frontier exhaustion).
+        """
+        return (
+            self.no_policy_page_budget > 0
+            and found_policy
+            and pages_since_policy_hit >= self.no_policy_page_budget
+        )
+
     async def crawl(self, base_url: str, *, cleanup: bool = True) -> list[CrawlResult]:
         """
         Crawl starting from base URL.
@@ -3808,7 +3832,10 @@ class ClauseaCrawler:
                     async with semaphore:
                         return await self.fetch_page(session, url)
 
-                # Main crawl loop
+                # Main crawl loop. Convergence tracking: count consecutive pages with no
+                # policy content once we've found some, to stop wandering the marketing site.
+                pages_since_policy_hit = 0
+                found_policy = False
                 while len(self.visited_urls) < self.max_pages:
                     # Get batch of URLs to process
                     batch = []
@@ -3838,6 +3865,15 @@ class ClauseaCrawler:
                             self.stats.crawled_urls += 1
                             self.results.append(result)
 
+                            if (
+                                result.legal_score is not None
+                                and result.legal_score >= CONVERGENCE_LEGAL_SCORE
+                            ):
+                                found_policy = True
+                                pages_since_policy_hit = 0
+                            else:
+                                pages_since_policy_hit += 1
+
                             # Add discovered URLs to queue
                             if depth < self.max_depth:
                                 self.add_urls_to_queue(
@@ -3853,6 +3889,7 @@ class ClauseaCrawler:
                         else:
                             self.stats.failed_urls += 1
                             self.failed_urls.add(url)
+                            pages_since_policy_hit += 1
                             logger.warning(f"❌ Failed: {url} - {result.error_message}")
                             # Surface robots.txt blocks so the pipeline can tell the user
                             # the SITE blocked us (not that we failed). Other failures stay
@@ -3863,6 +3900,14 @@ class ClauseaCrawler:
                     # Progress update — emitted on a threshold crossing so it
                     # survives batched jumps in total_urls (see helper docstring).
                     self._report_crawl_progress()
+
+                    if self._has_converged(found_policy, pages_since_policy_hit):
+                        logger.info(
+                            f"🧭 Crawl converged: {pages_since_policy_hit} consecutive pages "
+                            f"with no policy content (budget {self.no_policy_page_budget}); "
+                            f"stopping discovery at {len(self.visited_urls)} pages."
+                        )
+                        break
 
                 # Ensure the UI gets a final progress update even if the last
                 # batch didn't cross the reporting threshold.
