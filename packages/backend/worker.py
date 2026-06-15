@@ -5,8 +5,9 @@ The web service only creates pending pipeline_jobs; this process executes them, 
 service on the same image:  uv run python worker.py
 
 Concurrency and poll interval are env-tunable:
-  PIPELINE_WORKER_CONCURRENCY  (default 2)  max jobs running at once
-  PIPELINE_WORKER_POLL_SECONDS (default 3)  idle poll interval
+  PIPELINE_WORKER_CONCURRENCY         (default 2)    max jobs running at once
+  PIPELINE_WORKER_POLL_SECONDS        (default 3)    idle poll interval
+  PIPELINE_WORKER_STALE_SWEEP_SECONDS (default 300)  how often to reap orphaned jobs
 """
 
 from __future__ import annotations
@@ -24,6 +25,18 @@ logger = get_logger(__name__)
 
 _CONCURRENCY = max(1, int(os.getenv("PIPELINE_WORKER_CONCURRENCY", "2")))
 _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
+_STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
+
+
+async def _sweep_stale(repo: PipelineRepository) -> None:
+    """Reap jobs orphaned by a crash. Runs at startup and periodically: mark_stale only
+    catches jobs already past the staleness threshold, so a one-shot boot sweep leaves jobs
+    orphaned shortly before the restart stuck until the next boot. Active jobs refresh their
+    timestamp well within the threshold, so a running job is never reaped."""
+    async with db_session() as db:
+        reaped = await repo.mark_stale_as_failed(db)
+    if reaped:
+        logger.info("Reaped %d stale job(s) as failed", reaped)
 
 
 async def _run_job(job_id: str) -> None:
@@ -55,15 +68,17 @@ async def main() -> None:
             pass  # add_signal_handler is unavailable on Windows; signals are a Unix/prod concern
 
     # Reap jobs orphaned by a previous crash before claiming new work.
-    async with db_session() as db:
-        reaped = await repo.mark_stale_as_failed(db)
-        if reaped:
-            logger.info("Worker startup: marked %d stale job(s) as failed", reaped)
+    await _sweep_stale(repo)
+    last_sweep = loop.time()
 
     logger.info("Pipeline worker started (concurrency=%d, poll=%.1fs)", _CONCURRENCY, _POLL_SECONDS)
     running: set[asyncio.Task[None]] = set()
 
     while not stop.is_set():
+        if loop.time() - last_sweep >= _STALE_SWEEP_SECONDS:
+            await _sweep_stale(repo)
+            last_sweep = loop.time()
+
         if len(running) >= _CONCURRENCY:
             await _sleep_or_stop(stop, _POLL_SECONDS)
             continue
