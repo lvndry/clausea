@@ -144,6 +144,7 @@ class StaticFetchResult:
             status_code=self.status_code,
             success=False,
             error_message=self.error_message or f"HTTP {self.status_code}",
+            blocked_by_robots_txt=self.blocked_by_robots_txt,
         )
 
 
@@ -184,6 +185,9 @@ class CrawlResult(BaseModel):
     )
     discovered_links: list[dict[str, str]] = Field(
         default_factory=list, description="List of links with both URL and original anchor text"
+    )
+    blocked_by_robots_txt: bool = Field(
+        default=False, description="True if the fetch was refused by the site's robots.txt"
     )
 
 
@@ -3642,10 +3646,7 @@ class ClauseaCrawler:
                             # Surface robots.txt blocks so the pipeline can tell the user
                             # the SITE blocked us (not that we failed). Other failures stay
                             # a count to avoid recording large volumes of probe 404s.
-                            if (
-                                result.error_message
-                                and "robots.txt" in result.error_message.lower()
-                            ):
+                            if result.blocked_by_robots_txt:
                                 self.results.append(result)
 
                     # Progress update — emitted on a threshold crossing so it
