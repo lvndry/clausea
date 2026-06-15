@@ -34,7 +34,16 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ logo });
+    // Logos are effectively static — cache so navigation doesn't refetch / re-hit the backend.
+    return NextResponse.json(
+      { logo },
+      {
+        headers: {
+          "Cache-Control":
+            "public, max-age=86400, stale-while-revalidate=604800",
+        },
+      },
+    );
   } catch (error) {
     console.error("Error fetching logo:", error);
     return NextResponse.json(

@@ -28,6 +28,9 @@ import { useUser } from "@clerk/nextjs";
 import { useAnalytics } from "@hooks/useAnalytics";
 import { usePipelineJob } from "@hooks/usePipelineJob";
 
+// Survives client-side navigation/pagination so we never refetch a resolved logo.
+const logoCache = new Map<string, string | null>();
+
 function ProductCard({
   product,
   index,
@@ -37,49 +40,48 @@ function ProductCard({
   index: number;
   onClick: () => void;
 }) {
-  const [logo, setLogo] = useState<string | null>(product.logo || null);
+  const [logo, setLogo] = useState<string | null>(
+    () => product.logo || logoCache.get(product.slug) || null,
+  );
   const [isLoadingLogo, setIsLoadingLogo] = useState(false);
   const [hasTriedLoading, setHasTriedLoading] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
 
-  // Lazy load logo
+  // Eager + staggered (batches of 5) so logos load ahead of scroll, not on intersection.
   useEffect(() => {
-    if (hasTriedLoading || logo || !cardRef.current) return;
+    if (hasTriedLoading || logo) return;
+    // Hit is already applied via the useState initializer; this skips a known miss too.
+    if (logoCache.has(product.slug)) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && !hasTriedLoading && !logo) {
-            setHasTriedLoading(true);
-            setIsLoadingLogo(true);
+    const BATCH_SIZE = 5;
+    const BATCH_DELAY_MS = 250;
+    const delay = Math.floor(index / BATCH_SIZE) * BATCH_DELAY_MS;
 
-            const params = new URLSearchParams();
-            params.append("slug", product.slug);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setHasTriedLoading(true);
+      setIsLoadingLogo(true);
 
-            fetch(`/api/products/logos?${params.toString()}`)
-              .then((res) => {
-                if (res.ok) return res.json();
-                return null;
-              })
-              .then((data) => {
-                if (data?.logo) setLogo(data.logo);
-              })
-              .catch((err) => {
-                console.warn(`Failed to fetch logo for ${product.name}:`, err);
-              })
-              .finally(() => {
-                setIsLoadingLogo(false);
-              });
-            observer.disconnect();
-          }
+      const params = new URLSearchParams({ slug: product.slug });
+      fetch(`/api/products/logos?${params.toString()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const resolved: string | null = data?.logo ?? null;
+          logoCache.set(product.slug, resolved);
+          if (!cancelled && resolved) setLogo(resolved);
+        })
+        .catch((err) => {
+          console.warn(`Failed to fetch logo for ${product.name}:`, err);
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoadingLogo(false);
         });
-      },
-      { rootMargin: "50px" },
-    );
+    }, delay);
 
-    observer.observe(cardRef.current);
-    return () => observer.disconnect();
-  }, [product.slug, product.name, logo, hasTriedLoading]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [product.slug, product.name, logo, hasTriedLoading, index]);
 
   return (
     <motion.div
@@ -99,7 +101,6 @@ function ProductCard({
       }}
     >
       <div
-        ref={cardRef}
         className="border border-border bg-background p-6 sm:p-8 relative overflow-hidden transition-colors hover:border-foreground/30 cursor-pointer h-full flex flex-col gap-6"
       >
         <div className="flex items-start justify-between">
@@ -111,7 +112,7 @@ function ProductCard({
                 src={logo}
                 alt={`${product.name} logo`}
                 className="w-full h-full object-contain p-2"
-                loading="lazy"
+                loading="eager"
               />
             ) : (
               <span className="text-[10px] font-bold text-muted-foreground">
