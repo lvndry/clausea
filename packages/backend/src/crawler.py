@@ -40,6 +40,142 @@ logger_proxy = get_logger(__name__, component="crawler:proxy")
 
 _TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
 
+# Query keys that toggle only the UI/translation language of an otherwise identical
+# document. A value carrying a region qualifier (e.g. "en-GB", "pt_BR") is treated as
+# jurisdiction-distinct and never stripped.
+_LOCALE_QUERY_KEYS = frozenset(
+    {"l", "lang", "hl", "locale", "lr", "language", "setlang", "uselang", "ui_locale"}
+)
+# Bare ISO 639-1 language codes (no region) used as path segments or query values.
+# "hr" (Croatian) and "uk" (Ukrainian) are deliberately excluded: as path segments they
+# collide with /hr/ (HR/employee policies) and /uk/ (UK-GDPR region), both legally
+# distinct documents we must not collapse. Ukrainian still dedups via its full name.
+_LANGUAGE_CODES = frozenset(
+    {
+        "ar",
+        "bg",
+        "cs",
+        "da",
+        "de",
+        "el",
+        "en",
+        "es",
+        "et",
+        "fa",
+        "fi",
+        "fr",
+        "he",
+        "hi",
+        "hu",
+        "id",
+        "it",
+        "ja",
+        "ko",
+        "lt",
+        "lv",
+        "ms",
+        "nl",
+        "no",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sk",
+        "sl",
+        "sv",
+        "th",
+        "tr",
+        "vi",
+        "zh",
+    }
+)
+# Full language names some sites use as path segments / query values (e.g. Steam's
+# ``?l=ukrainian``). Region-flavored names (brazilian, latam) are deliberately omitted
+# so regionally-distinct policies survive.
+_LANGUAGE_NAMES = frozenset(
+    {
+        "arabic",
+        "bulgarian",
+        "czech",
+        "danish",
+        "dutch",
+        "english",
+        "finnish",
+        "french",
+        "german",
+        "greek",
+        "hungarian",
+        "indonesian",
+        "italian",
+        "japanese",
+        "koreana",
+        "korean",
+        "norwegian",
+        "polish",
+        "portuguese",
+        "romanian",
+        "russian",
+        "schinese",
+        "tchinese",
+        "spanish",
+        "swedish",
+        "thai",
+        "turkish",
+        "ukrainian",
+        "vietnamese",
+    }
+)
+_ENGLISH_TOKENS = frozenset({"en", "english"})
+
+
+def _is_bare_language(token: str) -> bool:
+    """True if ``token`` names a language with no region qualifier.
+
+    Region-qualified locales (``en-GB``, ``pt_BR``) and region words return False so
+    that jurisdiction-distinct documents are never collapsed as mere translations.
+    """
+    lowered = token.lower()
+    if "-" in lowered or "_" in lowered:
+        return False
+    return lowered in _LANGUAGE_CODES or lowered in _LANGUAGE_NAMES
+
+
+def locale_canonical_key(parsed: ParseResult) -> tuple[str, bool, bool]:
+    """Reduce a URL to a key shared by all pure-translation variants of one document.
+
+    Returns ``(key, had_language_signal, is_english)``. ``key`` strips bare-language
+    path segments and locale query params; ``had_language_signal`` is True when the URL
+    carried any such translation marker; ``is_english`` is True when that marker was the
+    English variant (kept in preference to other translations).
+    """
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    kept_segments: list[str] = []
+    had_signal = False
+    is_english = False
+    for seg in segments:
+        if _is_bare_language(seg):
+            had_signal = True
+            if seg.lower() in _ENGLISH_TOKENS:
+                is_english = True
+            continue
+        kept_segments.append(seg)
+
+    kept_query: list[tuple[str, str]] = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.lower() in _LOCALE_QUERY_KEYS and _is_bare_language(value):
+            had_signal = True
+            if value.lower() in _ENGLISH_TOKENS:
+                is_english = True
+            continue
+        kept_query.append((key, value))
+
+    canonical_path = "/" + "/".join(kept_segments)
+    canonical = urlunparse(
+        (parsed.scheme, parsed.netloc, canonical_path, "", urlencode(kept_query), "")
+    )
+    return canonical, had_signal, is_english
+
+
 # Standard user agent string following RFC 7231 format
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; ClauseaBot/2.0; +https://www.clausea.co/bot.html; lvndry@proton.me)"
@@ -1345,6 +1481,10 @@ class ClauseaCrawler:
         self.visited_urls: set[str] = set()
         self.failed_urls: set[str] = set()
         self.queued_urls: set[str] = set()  # Prevents duplicate queue entries
+        # Maps a language-stripped "canonical key" to the variant we kept, so pure
+        # translation duplicates of an already-seen document are skipped while
+        # region-qualified locales (jurisdiction-distinct) are always preserved.
+        self._locale_seen_keys: set[str] = set()
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
         self.url_stack: list[tuple[str, int]] = []  # For DFS
         self.url_priority_queue: list[tuple[float, str, int]] = []  # For best-first (scored URLs)
@@ -2679,6 +2819,19 @@ class ClauseaCrawler:
                 logger.debug(f"❌ URL {url} rejected: matches skip pattern {pattern.pattern}")
                 return False
 
+        # Skip pure-translation duplicates of a document we've already admitted. The
+        # canonical key strips only bare-language markers, so region-qualified locales
+        # (jurisdiction-distinct, e.g. en-GB vs en-US, /eu vs /us) keep separate keys
+        # and are always crawled. We keep the language-less or English variant when one
+        # exists; otherwise the first translation seen.
+        canonical_key, had_language_signal, is_english = locale_canonical_key(
+            self._parse_url(self.normalize_url(url))
+        )
+        if had_language_signal and not is_english and canonical_key in self._locale_seen_keys:
+            logger.debug(f"❌ URL {url} rejected: translation duplicate of {canonical_key}")
+            return False
+        self._locale_seen_keys.add(canonical_key)
+
         logger.debug(f"✅ URL {url} accepted for crawling at depth {depth}")
         return True
 
@@ -3762,6 +3915,7 @@ class ClauseaCrawler:
                 self.visited_urls.clear()
                 self.failed_urls.clear()
                 self.queued_urls.clear()
+                self._locale_seen_keys.clear()
                 self._sitemap_seeded = False
                 self.url_queue.clear()
                 self.url_stack.clear()
