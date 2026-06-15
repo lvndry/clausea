@@ -4,24 +4,21 @@ import { getBackendUrl } from "@lib/config";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co";
 
-interface Product {
+interface SitemapProduct {
   slug: string;
-  name: string;
-  updated_at?: string;
+  last_modified?: string | null;
 }
 
-async function getProducts(): Promise<Product[]> {
+// Analyzed products only — unanalyzed pages are placeholder content, not worth indexing.
+async function getAnalyzedProducts(): Promise<SitemapProduct[]> {
   try {
-    const backendUrl = getBackendUrl("/products");
-    const response = await fetch(backendUrl, {
-      next: { revalidate: 3600 }, // Revalidate every hour
+    const response = await fetch(getBackendUrl("/products/sitemap"), {
+      next: { revalidate: 3600 },
     });
-
     if (!response.ok) {
       console.warn("Failed to fetch products for sitemap");
       return [];
     }
-
     const products = await response.json();
     return Array.isArray(products) ? products : [];
   } catch (error) {
@@ -55,6 +52,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.8,
     },
     {
+      url: `${baseUrl}/products`,
+      lastModified: now,
+      changeFrequency: "daily",
+      priority: 0.9,
+    },
+    {
       url: `${baseUrl}/contact`,
       lastModified: now,
       changeFrequency: "monthly",
@@ -74,16 +77,24 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
-  // Dynamic product pages
-  const products = await getProducts();
-  const productPages: MetadataRoute.Sitemap = products.map((product) => ({
-    url: `${baseUrl}/products/${product.slug}`,
-    lastModified: product.updated_at
-      ? new Date(product.updated_at)
-      : new Date(),
-    changeFrequency: "weekly" as const,
-    priority: 0.7,
-  }));
+  // Dynamic product pages (analyzed products only)
+  const products = await getAnalyzedProducts();
+  const productPages: MetadataRoute.Sitemap = products
+    .filter((product) => product.slug)
+    .map((product) => {
+      // An Invalid Date would throw during serialization and 500 the whole sitemap.
+      const parsed = product.last_modified
+        ? new Date(product.last_modified)
+        : null;
+      const lastModified =
+        parsed && !Number.isNaN(parsed.getTime()) ? parsed : now;
+      return {
+        url: `${baseUrl}/products/${product.slug}`,
+        lastModified,
+        changeFrequency: "weekly" as const,
+        priority: 0.7,
+      };
+    });
 
   return [...staticPages, ...productPages];
 }

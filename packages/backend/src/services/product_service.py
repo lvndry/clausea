@@ -227,6 +227,12 @@ class ProductService:
         """Count products with a completed analysis (a stored overview)."""
         return await self._product_repo.count_product_overviews(db)
 
+    async def list_analyzed_products_for_sitemap(
+        self, db: AgnosticDatabase
+    ) -> list[dict[str, Any]]:
+        """Slug + last-updated for every product with a completed overview (sitemap)."""
+        return await self._product_repo.list_analyzed_overviews(db)
+
     async def get_product_overview_data(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:

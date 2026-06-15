@@ -195,6 +195,15 @@ class ProductRepository(BaseRepository):
     # Product Overview Storage Operations
     # ============================================================================
 
+    async def list_analyzed_overviews(self, db: AgnosticDatabase) -> list[dict[str, Any]]:
+        """Slug + last-updated for every product that has a completed overview.
+
+        Used to build the sitemap: only analyzed products carry real content worth
+        indexing (the rest render an 'indexation in progress' placeholder).
+        """
+        cursor = db.product_overviews.find({}, {"_id": 0, "product_slug": 1, "updated_at": 1})
+        return await cursor.to_list(length=None)
+
     async def count_product_overviews(self, db: AgnosticDatabase) -> int:
         """Count products that have a completed analysis (a stored overview).
 
