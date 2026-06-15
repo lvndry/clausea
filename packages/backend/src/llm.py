@@ -1,13 +1,18 @@
+from __future__ import annotations
+
+import asyncio
+import importlib
 import os
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
-
-import litellm
-from litellm import EmbeddingResponse, ModelResponse, acompletion
+from typing import TYPE_CHECKING, Any
 
 from src.core.logging import get_logger
 from src.utils.llm_usage import track_usage
+
+# litellm is heavy to import; defer it to first use.
+if TYPE_CHECKING:
+    from litellm import EmbeddingResponse, ModelResponse
 
 logger = get_logger(__name__)
 
@@ -191,6 +196,10 @@ async def acompletion_with_fallback(
     if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
 
+    # Load the heavy litellm import off the event loop on first use; cached afterward.
+    await asyncio.to_thread(importlib.import_module, "litellm")
+    from litellm import acompletion
+
     try:
         result = await _completion_with_fallback_impl(
             messages=messages,
@@ -217,6 +226,9 @@ async def get_embeddings(
     model_name: SupportedModel = "voyage-law-2",
 ) -> EmbeddingResponse:
     """Generate embeddings using the specified model."""
+    await asyncio.to_thread(importlib.import_module, "litellm")
+    import litellm
+
     model = get_model(model_name)
     try:
         kwargs: dict[str, Any] = {

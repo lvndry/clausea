@@ -90,6 +90,9 @@ COPY --from=builder /opt/camoufox-cache /opt/camoufox-cache
 
 COPY . .
 
+# Cap glibc arenas so freed memory returns to the OS instead of being hoarded per thread.
+ENV MALLOC_ARENA_MAX=2
+
 EXPOSE 8000
 
 # Exec form: uvicorn runs as PID 1 so Railway's SIGTERM is delivered directly.
