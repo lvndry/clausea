@@ -34,9 +34,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Logos are effectively static; let the browser/CDN cache them so we don't
-    // refetch (and re-hit the backend) on every navigation. Stale-while-revalidate
-    // keeps it fresh in the background.
+    // Logos are effectively static — cache so navigation doesn't refetch / re-hit the backend.
     return NextResponse.json(
       { logo },
       {

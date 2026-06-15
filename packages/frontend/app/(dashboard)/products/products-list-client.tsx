@@ -28,9 +28,7 @@ import { useUser } from "@clerk/nextjs";
 import { useAnalytics } from "@hooks/useAnalytics";
 import { usePipelineJob } from "@hooks/usePipelineJob";
 
-// Session-level logo cache: resolved logo URL (or null when none) keyed by slug.
-// Persists across client-side navigations and pagination so we never refetch a
-// logo we've already resolved this session.
+// Survives client-side navigation/pagination so we never refetch a resolved logo.
 const logoCache = new Map<string, string | null>();
 
 function ProductCard({
@@ -48,15 +46,10 @@ function ProductCard({
   const [isLoadingLogo, setIsLoadingLogo] = useState(false);
   const [hasTriedLoading, setHasTriedLoading] = useState(false);
 
-  // Eagerly load every logo on the page, staggered in batches so we don't fire
-  // all requests at once. Batch N starts BATCH_DELAY_MS * N after mount, so logos
-  // are ready ahead of scrolling instead of popping in on intersection.
+  // Eager + staggered (batches of 5) so logos load ahead of scroll, not on intersection.
   useEffect(() => {
     if (hasTriedLoading || logo) return;
-
-    // Already resolved this slug this session — a hit is applied via the useState
-    // initializer above (so `logo` is already set); here we just skip refetching a
-    // known result (including a known "no logo" miss).
+    // Hit is already applied via the useState initializer; this skips a known miss too.
     if (logoCache.has(product.slug)) return;
 
     const BATCH_SIZE = 5;
@@ -73,7 +66,7 @@ function ProductCard({
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           const resolved: string | null = data?.logo ?? null;
-          logoCache.set(product.slug, resolved); // cache hits and misses alike
+          logoCache.set(product.slug, resolved);
           if (!cancelled && resolved) setLogo(resolved);
         })
         .catch((err) => {
