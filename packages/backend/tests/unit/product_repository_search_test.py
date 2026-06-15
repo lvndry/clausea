@@ -62,6 +62,48 @@ async def test_find_paginated_escapes_regex_metacharacters() -> None:
             re.compile(pattern)  # must be a valid (literal) pattern
 
 
+def _domains_pattern(query: dict[str, Any]) -> str:
+    for clause in query["$or"]:
+        if "domains" in clause:
+            return clause["domains"]["$regex"]
+    raise AssertionError("expected a domains clause in the query")
+
+
+@pytest.mark.parametrize(
+    "search",
+    [
+        "https://www.anthropic.com/",
+        "www.anthropic.com",
+        "http://anthropic.com",
+        "anthropic.com",
+    ],
+)
+@pytest.mark.asyncio
+async def test_find_paginated_normalizes_pasted_urls_for_domain_match(search: str) -> None:
+    repo = ProductRepository()
+    db, captured_queries = _fake_db_capturing_queries()
+
+    await repo.find_paginated(db, skip=0, limit=10, search=search)
+
+    assert captured_queries, "expected the search query to reach the collection"
+    for query in captured_queries:
+        assert _domains_pattern(query) == re.escape("anthropic.com")
+
+
+@pytest.mark.asyncio
+async def test_find_paginated_domain_falls_back_when_normalization_is_empty() -> None:
+    repo = ProductRepository()
+    db, captured_queries = _fake_db_capturing_queries()
+    scheme_only = "https://"
+
+    await repo.find_paginated(db, skip=0, limit=10, search=scheme_only)
+
+    # Normalization strips everything, so the domains clause must fall back to the
+    # raw escaped term rather than an empty pattern that matches every product.
+    for query in captured_queries:
+        assert _domains_pattern(query) == re.escape(scheme_only)
+
+
 @pytest.mark.asyncio
 async def test_find_paginated_without_search_uses_empty_query() -> None:
     repo = ProductRepository()
