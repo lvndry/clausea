@@ -195,6 +195,10 @@ class ProductRepository(BaseRepository):
     # Product Overview Storage Operations
     # ============================================================================
 
+    async def count_product_overviews(self, db: AgnosticDatabase) -> int:
+        """Count products that have a completed analysis (a stored overview)."""
+        return await db.product_overviews.count_documents({})
+
     async def get_product_overview(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:

@@ -87,6 +87,19 @@ async def get_all_products(
     return ProductsPage(items=products, total=total, page=page, pages=pages)
 
 
+class ProductStats(BaseModel):
+    analyzed_count: int
+
+
+@router.get("/stats", response_model=ProductStats)
+async def get_product_stats(
+    db: AgnosticDatabase = Depends(get_db),
+    service: ProductService = Depends(create_product_service),
+) -> ProductStats:
+    """Public catalog stats for the landing page (count of analyzed products)."""
+    return ProductStats(analyzed_count=await service.count_analyzed_products(db))
+
+
 @router.get("/{slug}/overview", response_model=ProductOverview)
 async def get_product_overview(
     slug: str,
