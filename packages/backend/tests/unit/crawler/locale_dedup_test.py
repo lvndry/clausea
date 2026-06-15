@@ -58,6 +58,14 @@ def test_region_variants_are_each_crawled() -> None:
     assert crawler.should_crawl_url(base + "/en-GB", base, 1) is True
 
 
+def test_hr_and_uk_path_segments_are_not_treated_as_languages() -> None:
+    # /hr/ = HR/employee policy, /uk/ = UK-GDPR region — legally distinct, never collapse.
+    for region in ("hr", "uk"):
+        key, had_signal, _ = locale_canonical_key(urlparse(f"https://example.com/{region}/privacy"))
+        assert key == f"https://example.com/{region}/privacy"
+        assert had_signal is False
+
+
 def test_english_variant_kept_over_other_translations() -> None:
     crawler = _crawler()
     base = "https://legal.epicgames.com/parental-consent"

@@ -47,6 +47,9 @@ _LOCALE_QUERY_KEYS = frozenset(
     {"l", "lang", "hl", "locale", "lr", "language", "setlang", "uselang", "ui_locale"}
 )
 # Bare ISO 639-1 language codes (no region) used as path segments or query values.
+# "hr" (Croatian) and "uk" (Ukrainian) are deliberately excluded: as path segments they
+# collide with /hr/ (HR/employee policies) and /uk/ (UK-GDPR region), both legally
+# distinct documents we must not collapse. Ukrainian still dedups via its full name.
 _LANGUAGE_CODES = frozenset(
     {
         "ar",
@@ -63,7 +66,6 @@ _LANGUAGE_CODES = frozenset(
         "fr",
         "he",
         "hi",
-        "hr",
         "hu",
         "id",
         "it",
@@ -83,7 +85,6 @@ _LANGUAGE_CODES = frozenset(
         "sv",
         "th",
         "tr",
-        "uk",
         "vi",
         "zh",
     }
@@ -3914,6 +3915,7 @@ class ClauseaCrawler:
                 self.visited_urls.clear()
                 self.failed_urls.clear()
                 self.queued_urls.clear()
+                self._locale_seen_keys.clear()
                 self._sitemap_seeded = False
                 self.url_queue.clear()
                 self.url_stack.clear()
