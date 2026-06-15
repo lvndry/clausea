@@ -5,9 +5,10 @@ The web service only creates pending pipeline_jobs; this process executes them, 
 service on the same image:  uv run python worker.py
 
 Concurrency and poll interval are env-tunable:
-  PIPELINE_WORKER_CONCURRENCY         (default 2)    max jobs running at once
+  PIPELINE_WORKER_CONCURRENCY         (default 3)    max jobs running at once
   PIPELINE_WORKER_POLL_SECONDS        (default 3)    idle poll interval
   PIPELINE_WORKER_STALE_SWEEP_SECONDS (default 300)  how often to reap orphaned jobs
+  PIPELINE_MAX_ATTEMPTS               (default 4)    max claims before a job stays failed
 """
 
 from __future__ import annotations
@@ -23,20 +24,22 @@ from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
 
-_CONCURRENCY = max(1, int(os.getenv("PIPELINE_WORKER_CONCURRENCY", "2")))
+_CONCURRENCY = max(1, int(os.getenv("PIPELINE_WORKER_CONCURRENCY", "3")))
 _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
+_MAX_ATTEMPTS = max(1, int(os.getenv("PIPELINE_MAX_ATTEMPTS", "4")))
 
 
 async def _sweep_stale(repo: PipelineRepository) -> None:
-    """Reap jobs orphaned by a crash. Runs at startup and periodically: mark_stale only
-    catches jobs already past the staleness threshold, so a one-shot boot sweep leaves jobs
-    orphaned shortly before the restart stuck until the next boot. Active jobs refresh their
-    timestamp well within the threshold, so a running job is never reaped."""
+    """Self-heal the queue (boot + periodic): reap crash-orphaned in-progress jobs, then
+    re-queue failed ones (orphans + transient failures) up to _MAX_ATTEMPTS."""
     async with db_session() as db:
         reaped = await repo.mark_stale_as_failed(db)
+        requeued = await repo.requeue_failed_jobs(db, _MAX_ATTEMPTS)
     if reaped:
         logger.info("Reaped %d stale job(s) as failed", reaped)
+    if requeued:
+        logger.info("Re-queued %d failed job(s) for retry", requeued)
 
 
 async def _run_job(job_id: str) -> None:

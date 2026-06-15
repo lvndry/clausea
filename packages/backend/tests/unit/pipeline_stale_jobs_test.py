@@ -26,3 +26,25 @@ async def test_mark_stale_targets_only_in_progress_not_pending():
     assert "pending" not in eligible
     # Only actively-executing statuses can be orphaned by a crash.
     assert set(eligible) == {"crawling", "summarizing", "generating_overview"}
+
+
+@pytest.mark.asyncio
+async def test_requeue_failed_only_retries_under_attempt_cap():
+    collection = MagicMock()
+    collection.update_many = AsyncMock(return_value=MagicMock(modified_count=2))
+    db = MagicMock()
+    db.__getitem__.return_value = collection
+
+    requeued = await PipelineRepository().requeue_failed_jobs(db, max_attempts=4)
+
+    query = collection.update_many.call_args.args[0]
+    update = collection.update_many.call_args.args[1]
+    # Only failed jobs are retried; no_documents stays terminal.
+    assert query["status"] == "failed"
+    # Under the cap OR missing the field (pre-existing jobs) — $lt alone skips missing fields.
+    assert {"attempts": {"$lt": 4}} in query["$or"]
+    assert {"attempts": {"$exists": False}} in query["$or"]
+    assert update["$set"]["status"] == "pending"
+    # Steps reset so a retry doesn't carry stale terminal step state.
+    assert all(s["status"] == "pending" for s in update["$set"]["steps"])
+    assert requeued == 2

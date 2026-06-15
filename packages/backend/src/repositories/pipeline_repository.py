@@ -97,7 +97,10 @@ class PipelineRepository(BaseRepository):
         """
         data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
             {"status": "pending"},
-            {"$set": {"status": "crawling", "started_at": datetime.now()}},
+            {
+                "$set": {"status": "crawling", "started_at": datetime.now()},
+                "$inc": {"attempts": 1},
+            },
             sort=[("created_at", 1)],
             return_document=ReturnDocument.AFTER,
         )
@@ -177,6 +180,54 @@ class PipelineRepository(BaseRepository):
             {"$set": fields},
         )
         logger.debug(f"Partially updated pipeline job {job_id}: {list(fields.keys())}")
+
+    async def requeue_failed_jobs(self, db: AgnosticDatabase, max_attempts: int) -> int:
+        """Re-queue failed jobs for another attempt, bounded by max_attempts.
+
+        Makes the worker self-healing: orphaned jobs (failed by mark_stale_as_failed) and
+        transient failures retry. ``no_documents`` is terminal and deliberately not retried.
+        """
+        fresh_steps = [
+            {
+                "name": name,
+                "status": "pending",
+                "message": None,
+                "progress_current": None,
+                "progress_total": None,
+                "progress_percent": None,
+                "started_at": None,
+                "completed_at": None,
+            }
+            for name in ("crawling", "summarizing", "generating_overview")
+        ]
+        result = await db[self.COLLECTION].update_many(
+            # A missing "attempts" field does not match $lt in MongoDB, so pre-existing
+            # jobs (written before the field existed) are matched via $exists and get
+            # attempts=1 on the next claim's $inc.
+            {
+                "status": "failed",
+                "$or": [{"attempts": {"$lt": max_attempts}}, {"attempts": {"$exists": False}}],
+            },
+            {
+                "$set": {
+                    "status": "pending",
+                    "active": True,
+                    "steps": fresh_steps,
+                    "error": None,
+                    "error_detail": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "last_heartbeat": None,
+                    "updated_at": datetime.now(),
+                }
+            },
+        )
+        count = result.modified_count
+        if count:
+            logger.info(
+                "Re-queued %d failed job(s) for retry (max_attempts=%d)", count, max_attempts
+            )
+        return count
 
     async def mark_stale_as_failed(
         self, db: AgnosticDatabase, stale_threshold_minutes: int = 30
