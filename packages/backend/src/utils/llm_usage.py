@@ -4,18 +4,22 @@ LLM Usage Tracking Utilities
 Shared utilities for tracking, aggregating, and logging LLM token usage across the codebase.
 """
 
+from __future__ import annotations
+
 import contextvars
 import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-from litellm import ModelResponse
+from typing import TYPE_CHECKING, Any
 
 from src.core.config import config
 from src.core.logging import get_logger
+
+# ModelResponse is only used in annotations; defer the heavy litellm import (see src/llm.py).
+if TYPE_CHECKING:
+    from litellm import ModelResponse
 
 logger = get_logger(__name__)
 

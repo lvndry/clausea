@@ -90,6 +90,11 @@ COPY --from=builder /opt/camoufox-cache /opt/camoufox-cache
 
 COPY . .
 
+# Cap glibc per-thread arenas. The crawler uses thread pools, and glibc otherwise
+# spins up many arenas that hoard freed memory, inflating idle RSS (and the Railway
+# memory bill). 2 arenas keeps memory returning to the OS with negligible perf cost.
+ENV MALLOC_ARENA_MAX=2
+
 EXPOSE 8000
 
 # Exec form: uvicorn runs as PID 1 so Railway's SIGTERM is delivered directly.

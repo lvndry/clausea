@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import os
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
-
-import litellm
-from litellm import EmbeddingResponse, ModelResponse, acompletion
+from typing import TYPE_CHECKING, Any
 
 from src.core.logging import get_logger
 from src.utils.llm_usage import track_usage
+
+# litellm is heavy to import (provider SDKs, tokenizers; hundreds of MB resident). Defer it
+# to first use so a process that only serves reads never loads it. Annotations are strings
+# via `from __future__ import annotations`, so the types below are needed only for checking.
+if TYPE_CHECKING:
+    from litellm import EmbeddingResponse, ModelResponse
 
 logger = get_logger(__name__)
 
@@ -191,6 +196,8 @@ async def acompletion_with_fallback(
     if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
 
+    from litellm import acompletion
+
     try:
         result = await _completion_with_fallback_impl(
             messages=messages,
@@ -217,6 +224,8 @@ async def get_embeddings(
     model_name: SupportedModel = "voyage-law-2",
 ) -> EmbeddingResponse:
     """Generate embeddings using the specified model."""
+    import litellm
+
     model = get_model(model_name)
     try:
         kwargs: dict[str, Any] = {
