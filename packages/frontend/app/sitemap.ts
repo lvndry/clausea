@@ -9,9 +9,7 @@ interface SitemapProduct {
   last_modified?: string | null;
 }
 
-// Only products with a completed analysis are listed — the rest render an
-// "indexation in progress" placeholder not worth indexing. The /products/sitemap
-// endpoint returns every analyzed product (not just one page), with a real lastmod.
+// Analyzed products only — unanalyzed pages are placeholder content, not worth indexing.
 async function getAnalyzedProducts(): Promise<SitemapProduct[]> {
   try {
     const response = await fetch(getBackendUrl("/products/sitemap"), {
@@ -84,8 +82,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const productPages: MetadataRoute.Sitemap = products
     .filter((product) => product.slug)
     .map((product) => {
-      // Guard against a malformed date: an Invalid Date would throw during
-      // sitemap serialization and take down the whole sitemap with a 500.
+      // An Invalid Date would throw during serialization and 500 the whole sitemap.
       const parsed = product.last_modified
         ? new Date(product.last_modified)
         : null;
