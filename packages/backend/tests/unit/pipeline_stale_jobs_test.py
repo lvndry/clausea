@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.repositories.pipeline_repository import _ORPHANABLE_STATUSES, PipelineRepository
+from src.repositories.pipeline_repository import PipelineRepository
 
 
 @pytest.mark.asyncio
@@ -21,8 +21,8 @@ async def test_mark_stale_targets_only_in_progress_not_pending():
 
     await PipelineRepository().mark_stale_as_failed(db)
 
-    query = collection.update_many.call_args.args[0]
-    assert query["status"] == {"$in": _ORPHANABLE_STATUSES}
-    assert "pending" not in _ORPHANABLE_STATUSES
-    # The orphanable set is exactly the actively-executing statuses.
-    assert set(_ORPHANABLE_STATUSES) == {"crawling", "summarizing", "generating_overview"}
+    eligible = collection.update_many.call_args.args[0]["status"]["$in"]
+    # A queued job was never started, so a restart must not fail it.
+    assert "pending" not in eligible
+    # Only actively-executing statuses can be orphaned by a crash.
+    assert set(eligible) == {"crawling", "summarizing", "generating_overview"}
