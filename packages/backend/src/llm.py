@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import importlib
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -194,6 +196,8 @@ async def acompletion_with_fallback(
     if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
 
+    # Load the heavy litellm import off the event loop on first use; cached afterward.
+    await asyncio.to_thread(importlib.import_module, "litellm")
     from litellm import acompletion
 
     try:
@@ -222,6 +226,7 @@ async def get_embeddings(
     model_name: SupportedModel = "voyage-law-2",
 ) -> EmbeddingResponse:
     """Generate embeddings using the specified model."""
+    await asyncio.to_thread(importlib.import_module, "litellm")
     import litellm
 
     model = get_model(model_name)
