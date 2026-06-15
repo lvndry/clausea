@@ -61,6 +61,12 @@ cleanup() {
         kill_process_tree $BACKEND_PID
     fi
 
+    # Kill pipeline worker process tree
+    if [ ! -z "$WORKER_PID" ]; then
+        print_status "Stopping pipeline worker (PID: $WORKER_PID)..."
+        kill_process_tree $WORKER_PID
+    fi
+
     # Kill frontend process tree
     if [ ! -z "$FRONTEND_PID" ]; then
         print_status "Stopping frontend server (PID: $FRONTEND_PID)..."
@@ -89,7 +95,7 @@ cleanup() {
     fi
 
     # Remove temporary files
-    rm -f /tmp/clausea_backend.pid /tmp/clausea_frontend.pid
+    rm -f /tmp/clausea_backend.pid /tmp/clausea_worker.pid /tmp/clausea_frontend.pid
 
     print_success "Development environment cleaned up"
     exit 0
@@ -167,6 +173,17 @@ start_backend() {
     print_success "Backend server started on http://localhost:8000 (PID: $BACKEND_PID)"
 }
 
+# Start pipeline worker (claims and runs pending pipeline jobs; mirrors the prod worker service)
+start_worker() {
+    print_status "Starting pipeline worker..."
+    cd packages/backend
+    (uv run python worker.py) &
+    WORKER_PID=$!
+    echo $WORKER_PID > /tmp/clausea_worker.pid
+    cd ../..
+    print_success "Pipeline worker started (PID: $WORKER_PID)"
+}
+
 # Start frontend server
 start_frontend() {
     print_status "Starting frontend server..."
@@ -228,6 +245,7 @@ main() {
 
     # Start servers
     start_backend
+    start_worker
     start_frontend
 
     # Wait for servers to be ready

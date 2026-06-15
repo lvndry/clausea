@@ -84,6 +84,22 @@ class PipelineRepository(BaseRepository):
             return None
         return PipelineJob(**data)
 
+    async def claim_next_pending_job(self, db: AgnosticDatabase) -> PipelineJob | None:
+        """Atomically claim the oldest pending job for execution by a worker.
+
+        Flips status pending -> crawling in one step so two workers (or concurrent claim
+        loops) never pick up the same job. Returns the claimed job, or None if none pending.
+        """
+        data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
+            {"status": "pending"},
+            {"$set": {"status": "crawling", "started_at": datetime.now()}},
+            sort=[("created_at", 1)],
+            return_document=ReturnDocument.AFTER,
+        )
+        if not data:
+            return None
+        return PipelineJob(**data)
+
     async def find_by_product_slug(
         self, db: AgnosticDatabase, product_slug: str
     ) -> list[PipelineJob]:

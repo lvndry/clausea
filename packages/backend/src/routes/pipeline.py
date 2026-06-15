@@ -5,7 +5,7 @@ Provides a DeepWiki-style API: submit a URL, get a job ID, poll for status.
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
@@ -13,7 +13,6 @@ from src.core.database import get_db
 from src.core.logging import get_logger
 from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES, PipelineJob
 from src.repositories.pipeline_repository import PipelineRepository
-from src.services.pipeline_scheduler import schedule_pipeline_run
 from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
@@ -41,7 +40,6 @@ class CrawlResponse(BaseModel):
 @router.post("/crawl", response_model=CrawlResponse, status_code=202)
 async def start_crawl(
     request: CrawlRequest,
-    background_tasks: BackgroundTasks,
     db: AgnosticDatabase = Depends(get_db),
 ) -> CrawlResponse:
     """Start a background crawl + analysis pipeline for a URL.
@@ -77,13 +75,8 @@ async def start_crawl(
 
     job = result["job"]
 
-    # Best-effort: (re)kick background execution for any active job.
-    scheduled = await schedule_pipeline_run(job.id, background_tasks)
-    message = (
-        f"Pipeline started for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
-        if scheduled
-        else f"Pipeline already running for {job.product_name}."
-    )
+    # The job is created pending; the pipeline worker process claims and runs it.
+    message = f"Pipeline queued for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
     return CrawlResponse(
         job_id=job.id,
         product_slug=job.product_slug,
