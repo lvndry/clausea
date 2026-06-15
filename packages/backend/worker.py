@@ -34,6 +34,14 @@ async def _run_job(job_id: str) -> None:
         logger.error("Worker job %s failed: %s", job_id, exc, exc_info=True)
 
 
+async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:
+    """Wait up to `seconds`, returning early if shutdown was signalled."""
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=seconds)
+    except TimeoutError:
+        pass
+
+
 async def main() -> None:
     setup_logging()
     repo = PipelineRepository()
@@ -41,7 +49,10 @@ async def main() -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop.set)
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:
+            pass  # add_signal_handler is unavailable on Windows; signals are a Unix/prod concern
 
     # Reap jobs orphaned by a previous crash before claiming new work.
     async with db_session() as db:
@@ -54,17 +65,14 @@ async def main() -> None:
 
     while not stop.is_set():
         if len(running) >= _CONCURRENCY:
-            await asyncio.sleep(_POLL_SECONDS)
+            await _sleep_or_stop(stop, _POLL_SECONDS)
             continue
 
         async with db_session() as db:
             job = await repo.claim_next_pending_job(db)
 
         if job is None:
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=_POLL_SECONDS)
-            except TimeoutError:
-                pass
+            await _sleep_or_stop(stop, _POLL_SECONDS)
             continue
 
         logger.info("Claimed job %s for %s", job.id, job.product_slug)

@@ -75,8 +75,13 @@ async def start_crawl(
 
     job = result["job"]
 
-    # The job is created pending; the pipeline worker process claims and runs it.
-    message = f"Pipeline queued for {job.product_name}. Poll /pipeline/jobs/{job.id} for status."
+    # The job is created pending; the worker process claims and runs it. A non-pending
+    # status means an existing job is already in flight for this product.
+    poll = f"Poll /pipeline/jobs/{job.id} for status."
+    if job.status == "pending":
+        message = f"Pipeline queued for {job.product_name}. {poll}"
+    else:
+        message = f"Pipeline already running for {job.product_name}. {poll}"
     return CrawlResponse(
         job_id=job.id,
         product_slug=job.product_slug,
