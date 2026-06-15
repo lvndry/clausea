@@ -71,29 +71,50 @@ BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
 # worker — would hang until the 2h pipeline cap. Time it out so the render fails fast.
 BROWSER_LAUNCH_TIMEOUT_S = float(os.getenv("CRAWLER_BROWSER_LAUNCH_TIMEOUT_S", "60"))
 
-_global_browser_semaphore: asyncio.Semaphore | None = None
+# A single Camoufox/Firefox shared by every crawler in the process. Each pipeline builds its
+# own ClauseaCrawler, but they all render through this one browser — launching one Firefox per
+# pipeline made two memory-heavy instances coexist in the worker and deadlock. Launched on
+# first render, reused for the worker's lifetime, and relaunched only after a crash.
+#
+# Keyed by the running event loop: asyncio primitives bind to the loop they're first used in,
+# so a single module-level Lock/Semaphore would raise "bound to a different event loop" once a
+# second loop appears (pytest runs one loop per test). In the worker there is exactly one loop,
+# so these hold one entry; tests get an isolated browser/slot per loop. None keys the no-loop
+# case (sync callers like _browser_render_slot in a unit test).
+_LoopKey = asyncio.AbstractEventLoop | None
+_global_browser_semaphores: dict[_LoopKey, asyncio.Semaphore] = {}
+_shared_browser_locks: dict[_LoopKey, asyncio.Lock] = {}
+_shared_browser_instances: dict[_LoopKey, AsyncCamoufox] = {}
+_shared_browser_contexts: dict[_LoopKey, "Browser | BrowserContext"] = {}
+
+
+def _running_loop() -> _LoopKey:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 def _get_global_browser_slot(concurrency: int) -> asyncio.Semaphore:
     """Bounds concurrent renders on the shared browser, created on first use to bind the loop.
 
-    Sized once (by the first crawler to render) from CRAWLER_BROWSER_CONCURRENCY. Shared by
-    every crawler in the process so concurrent pipelines can't open more than this many pages
-    on the single shared Camoufox at once.
+    Sized once per loop (by the first crawler to render) from CRAWLER_BROWSER_CONCURRENCY.
+    Shared by every crawler on that loop so concurrent pipelines can't open more than this
+    many pages on the single shared Camoufox at once.
     """
-    global _global_browser_semaphore
-    if _global_browser_semaphore is None:
-        _global_browser_semaphore = asyncio.Semaphore(max(1, concurrency))
-    return _global_browser_semaphore
+    loop = _running_loop()
+    if loop not in _global_browser_semaphores:
+        _global_browser_semaphores[loop] = asyncio.Semaphore(max(1, concurrency))
+    return _global_browser_semaphores[loop]
 
 
-# A single Camoufox/Firefox shared by every crawler in the process. Each pipeline builds its
-# own ClauseaCrawler, but they all render through this one browser — launching one Firefox per
-# pipeline made two memory-heavy instances coexist in the worker and deadlock. Launched on
-# first render, reused for the worker's lifetime, and relaunched only after a crash.
-_shared_browser_lock = asyncio.Lock()
-_shared_browser_instance: AsyncCamoufox | None = None
-_shared_browser_context: "Browser | BrowserContext | None" = None
+def _get_shared_browser_lock() -> asyncio.Lock:
+    """Per-loop lock guarding shared-browser launch/teardown."""
+    loop = _running_loop()
+    if loop not in _shared_browser_locks:
+        _shared_browser_locks[loop] = asyncio.Lock()
+    return _shared_browser_locks[loop]
+
 
 # Query parameters that are pure tracking/attribution and NEVER change the
 # document content, so they can be dropped during URL normalization to avoid
@@ -1453,10 +1474,10 @@ class ClauseaCrawler:
             await asyncio.to_thread(self._log_executor.shutdown, wait=True)
 
     async def _setup_browser(self) -> tuple[AsyncCamoufox, Browser | BrowserContext]:
-        """Launch (once) and return the process-shared Camoufox browser and context."""
-        global _shared_browser_instance, _shared_browser_context
-        async with _shared_browser_lock:
-            if _shared_browser_instance is None:
+        """Launch (once per loop) and return the process-shared Camoufox browser and context."""
+        loop = _running_loop()
+        async with _get_shared_browser_lock():
+            if loop not in _shared_browser_instances:
                 init_kwargs: dict[str, Any] = {"headless": True}
                 if self.proxy:
                     # Camoufox supports proxy configuration directly
@@ -1483,16 +1504,11 @@ class ClauseaCrawler:
                     except Exception:
                         pass
                     raise
-                _shared_browser_instance = instance
-                _shared_browser_context = context
-                logger.debug("Shared Camoufox launched: context=%r", _shared_browser_context)
+                _shared_browser_instances[loop] = instance
+                _shared_browser_contexts[loop] = context
+                logger.debug("Shared Camoufox launched: context=%r", context)
 
-            if _shared_browser_context is None:
-                raise RuntimeError(
-                    "Camoufox browser failed to initialize: __aenter__ returned None"
-                )
-
-            return _shared_browser_instance, _shared_browser_context
+            return _shared_browser_instances[loop], _shared_browser_contexts[loop]
 
     async def _cleanup_browser(self) -> None:
         """Tear down the shared Camoufox (crash recovery / shutdown), so it relaunches next use.
@@ -1501,16 +1517,17 @@ class ClauseaCrawler:
         Invoked only when a render detects the Firefox process died, so the next render
         reinitialises instead of reusing a dead instance.
         """
-        global _shared_browser_instance, _shared_browser_context
-        async with _shared_browser_lock:
-            if _shared_browser_instance is not None:
+        loop = _running_loop()
+        async with _get_shared_browser_lock():
+            instance = _shared_browser_instances.get(loop)
+            if instance is not None:
                 try:
-                    await _shared_browser_instance.__aexit__(None, None, None)
+                    await instance.__aexit__(None, None, None)
                 except Exception:
                     logger.warning("Error while closing Camoufox browser", exc_info=True)
                 finally:
-                    _shared_browser_instance = None
-                    _shared_browser_context = None
+                    _shared_browser_instances.pop(loop, None)
+                    _shared_browser_contexts.pop(loop, None)
                 logger.debug("Shared Camoufox browser closed")
 
     @staticmethod

@@ -15,7 +15,7 @@ from src.crawler import ClauseaCrawler, _get_global_browser_slot
 
 
 def test_render_slot_is_shared_across_crawler_instances():
-    crawler_module._global_browser_semaphore = None
+    crawler_module._global_browser_semaphores.clear()
     slot_a = ClauseaCrawler(browser_concurrency=2)._browser_render_slot()
     slot_b = ClauseaCrawler(browser_concurrency=2)._browser_render_slot()
     # Same object → concurrent pipelines share one cap, not one-per-crawler.
