@@ -51,7 +51,7 @@ class TestCrawlerConfig:
         monkeypatch.setenv("CRAWLER_MAX_DEPTH", "9")
         c = CrawlerConfig()
         d_pages, d_depth = discovery_crawl_limits(c.max_pages, c.max_depth)
-        assert d_pages == 1000
+        assert d_pages == 150
         assert d_depth == 3
 
         monkeypatch.setenv("CRAWLER_MAX_PAGES", "50")
@@ -63,7 +63,7 @@ class TestCrawlerConfig:
 
     def test_crawler_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CRAWLER_DISCOVERY_MIN_LEGAL_SCORE", "3.1")
-        monkeypatch.setenv("CRAWLER_DISCOVERY_STRATEGY", "DFS")
+        monkeypatch.setenv("CRAWLER_DISCOVERY_STRATEGY", "Best_First")
         monkeypatch.setenv("CRAWLER_REQUIRED_DOC_TYPES", "privacy_policy,cookie_policy")
         monkeypatch.setenv("CRAWLER_USE_BROWSER", "false")
         monkeypatch.setenv("CRAWLER_RESPECT_ROBOTS_TXT", "0")
@@ -72,7 +72,7 @@ class TestCrawlerConfig:
 
         c = CrawlerConfig()
         assert c.discovery_min_legal_score == pytest.approx(3.1)
-        assert c.discovery_strategy == "dfs"
+        assert c.discovery_strategy == "best_first"
         assert c.required_doc_types == ["privacy_policy", "cookie_policy"]
         assert c.use_browser is False
         assert c.respect_robots_txt is False

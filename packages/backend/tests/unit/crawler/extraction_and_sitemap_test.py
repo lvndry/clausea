@@ -96,21 +96,13 @@ def test_add_urls_to_queue_respects_rel_nofollow_and_meta():
 
     # By default follow_nofollow=False -> the specific nofollow link should be skipped
     crawler.add_urls_to_queue(links, "https://example.com", depth=0, page_metadata=None)
-    all_urls = (
-        {u for u, _ in crawler.url_queue}
-        | {u for u, _ in crawler.url_stack}
-        | {u for _, u, _ in crawler.url_priority_queue}
-    )
+    all_urls = {u for u, _ in crawler.url_queue} | {u for _, u, _ in crawler.url_priority_queue}
     assert "https://example.com/privacy" not in all_urls
 
     # If follow_nofollow enabled, the specific link should be added
     crawler2 = ClauseaCrawler(follow_nofollow=True)
     crawler2.add_urls_to_queue(links, "https://example.com", depth=0, page_metadata=None)
-    all_urls2 = (
-        {u for u, _ in crawler2.url_queue}
-        | {u for u, _ in crawler2.url_stack}
-        | {u for _, u, _ in crawler2.url_priority_queue}
-    )
+    all_urls2 = {u for u, _ in crawler2.url_queue} | {u for _, u, _ in crawler2.url_priority_queue}
     assert "https://example.com/privacy" in all_urls2
 
     # Verify queued_urls tracking works with follow_nofollow
@@ -191,15 +183,15 @@ def test_sitemap_seeded_skips_speculative_legal_urls():
     crawler = ClauseaCrawler()
     crawler._sitemap_seeded = True
 
-    links = [{"url": "https://example.com/page", "text": "Page"}]
+    links = [{"url": "https://example.com/privacy-policy", "text": "Privacy Policy"}]
     crawler.add_urls_to_queue(links, "https://example.com", depth=0)
 
-    # Only the explicitly discovered link should be queued — no speculative
-    # legal paths like /privacy, /legal, /terms.
+    # The discovered policy link is queued, but no speculative paths like
+    # /legal or /terms are generated because sitemaps already seeded the crawl.
     queued = {u for u, _ in crawler.url_queue}
-    assert "https://example.com/page" in queued
-    assert "https://example.com/privacy" not in queued
+    assert "https://example.com/privacy-policy" in queued
     assert "https://example.com/legal" not in queued
+    assert "https://example.com/terms" not in queued
 
 
 def test_no_sitemap_falls_back_to_speculative_legal_urls():
@@ -207,11 +199,13 @@ def test_no_sitemap_falls_back_to_speculative_legal_urls():
     crawler = ClauseaCrawler()
     assert crawler._sitemap_seeded is False
 
+    # An off-topic discovered link is filtered by the relevance gate, so it alone
+    # is not a policy lead — which is exactly what triggers speculative probing.
     links = [{"url": "https://example.com/page", "text": "Page"}]
     crawler.add_urls_to_queue(links, "https://example.com", depth=0)
 
     queued = {u for u, _ in crawler.url_queue}
-    assert "https://example.com/page" in queued
+    assert "https://example.com/page" not in queued
     # Fallback speculative URLs should be present
     assert "https://example.com/privacy" in queued
     assert "https://example.com/legal" in queued

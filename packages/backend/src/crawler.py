@@ -189,7 +189,7 @@ ACCEPT_HEADER = (
 # consecutive pages with no policy-relevant content. Bounds the "wander the whole
 # marketing site" failure mode (BFS + min_legal_score=0 crawls every same-domain link)
 # without capping recall on genuinely inter-linked legal pages.
-DEFAULT_NO_POLICY_PAGE_BUDGET = int(os.getenv("CRAWLER_NO_POLICY_PAGE_BUDGET", "50"))
+DEFAULT_NO_POLICY_PAGE_BUDGET = int(os.getenv("CRAWLER_NO_POLICY_PAGE_BUDGET", "15"))
 # A crawled page counts as a policy hit at/above this normalized legal_score; matches the
 # pipeline's MIN_LEGAL_SCORE_THRESHOLD for accepting a page into analysis.
 CONVERGENCE_LEGAL_SCORE = 0.2
@@ -1393,7 +1393,7 @@ class ClauseaCrawler:
         follow_nofollow: bool = False,  # Whether to follow links marked rel="nofollow"
         respect_meta_robots: bool = True,  # Respect <meta name="robots" content="nofollow"> on pages
         min_legal_score: float = 2.0,
-        strategy: str = "bfs",  # "bfs", "dfs", "best_first"
+        strategy: str = "bfs",  # "bfs", "best_first"
         ignore_robots_for_domains: list[str]
         | None = None,  # List of domains to ignore robots.txt for
         max_retries: int = 3,  # Maximum retry attempts for transient errors
@@ -1424,7 +1424,7 @@ class ClauseaCrawler:
             user_agent: User agent string
             follow_external_links: Whether to follow external links
             min_legal_score: Minimum score to consider a URL legal-relevant
-            strategy: Crawling strategy ("bfs", "dfs", "best_first")
+            strategy: Crawling strategy ("bfs", "best_first")
             ignore_robots_for_domains: List of domains to ignore robots.txt for
             max_retries: Maximum retry attempts for transient network errors (default: 3)
             log_file_path: Optional path to log file for crawl session (e.g., "logs/20240101_123456_companyid_crawl.log")
@@ -1497,7 +1497,6 @@ class ClauseaCrawler:
         # region-qualified locales (jurisdiction-distinct) are always preserved.
         self._locale_seen_keys: set[str] = set()
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
-        self.url_stack: list[tuple[str, int]] = []  # For DFS
         self.url_priority_queue: list[tuple[float, str, int]] = []  # For best-first (scored URLs)
         self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
         # Best policy-relevance score assigned to each queued URL (anchor-aware).
@@ -3581,20 +3580,21 @@ class ClauseaCrawler:
             if score >= self.min_legal_score:
                 policy_lead_found = True
 
+            # Gate every strategy on relevance, not just best_first. A link scoring below
+            # the threshold is off-topic (marketing, help, product pages) and must never
+            # enter the frontier — otherwise BFS follows every same-domain link and wanders
+            # the whole site. min_legal_score=0 means "crawl everything" and is preserved.
+            if self.min_legal_score > 0 and score < self.min_legal_score:
+                logger.debug(
+                    f"Skipping URL below min_legal_score ({score:.2f} < {self.min_legal_score}): {url}"
+                )
+                continue
+
             self.queued_urls.add(url)
             if self.strategy == "bfs":
                 self.url_queue.append((url, depth + 1))
                 logger.debug(f"Added to BFS queue: {url} (depth: {depth + 1})")
-            elif self.strategy == "dfs":
-                self.url_stack.append((url, depth + 1))
-                logger.debug(f"Added to DFS stack: {url} (depth: {depth + 1})")
             elif self.strategy == "best_first":
-                if score < self.min_legal_score:
-                    logger.debug(
-                        f"Skipping URL below min_legal_score ({score:.2f} < {self.min_legal_score}): {url}"
-                    )
-                    self.queued_urls.discard(url)
-                    continue
                 heapq.heappush(self.url_priority_queue, (-score, url, depth + 1))
                 logger.debug(
                     f"Added to Best-First queue: {url} (score: {score:.2f}, anchor: {anchor_text})"
@@ -3636,9 +3636,6 @@ class ClauseaCrawler:
                 if self.strategy == "bfs":
                     self.url_queue.append((url, 1))
                     logger.debug(f"Added potential legal URL to BFS queue: {url}")
-                elif self.strategy == "dfs":
-                    self.url_stack.append((url, 1))
-                    logger.debug(f"Added potential legal URL to DFS stack: {url}")
                 elif self.strategy == "best_first":
                     heapq.heappush(self.url_priority_queue, (-score, url, 1))
                     logger.debug(
@@ -3649,8 +3646,6 @@ class ClauseaCrawler:
         """Get next URL from queue based on strategy."""
         if self.strategy == "bfs" and self.url_queue:
             return self.url_queue.popleft()
-        elif self.strategy == "dfs" and self.url_stack:
-            return self.url_stack.pop()
         elif self.strategy == "best_first" and self.url_priority_queue:
             _, url, depth = heapq.heappop(self.url_priority_queue)
             return url, depth
@@ -3725,8 +3720,6 @@ class ClauseaCrawler:
         """Return the number of URLs waiting in the active queue/stack."""
         if self.strategy == "bfs":
             return len(self.url_queue)
-        elif self.strategy == "dfs":
-            return len(self.url_stack)
         elif self.strategy == "best_first":
             return len(self.url_priority_queue)
         return 0
@@ -3774,9 +3767,6 @@ class ClauseaCrawler:
             if self.strategy == "bfs":
                 self.url_queue.append((base_url, 0))
                 logger.debug(f"Added base URL to BFS queue: {base_url} (depth: 0)")
-            elif self.strategy == "dfs":
-                self.url_stack.append((base_url, 0))
-                logger.debug(f"Added base URL to DFS stack: {base_url} (depth: 0)")
             elif self.strategy == "best_first":
                 score = self.url_scorer.score_url(base_url)
                 heapq.heappush(self.url_priority_queue, (-score, base_url, 0))
@@ -3811,8 +3801,6 @@ class ClauseaCrawler:
                         self.queued_urls.add(url)
                         if self.strategy == "bfs":
                             self.url_queue.append((url, 0))
-                        elif self.strategy == "dfs":
-                            self.url_stack.append((url, 0))
                         elif self.strategy == "best_first":
                             heapq.heappush(self.url_priority_queue, (-score, url, 0))
                         seeded += 1
@@ -3963,7 +3951,6 @@ class ClauseaCrawler:
                 self._locale_seen_keys.clear()
                 self._sitemap_seeded = False
                 self.url_queue.clear()
-                self.url_stack.clear()
                 self.url_priority_queue.clear()
                 self.results.clear()
                 # Clear caches between different base URLs

@@ -32,7 +32,8 @@ class TestCrawlerState:
 
     def test_add_urls_to_queue_does_not_enqueue_duplicates(self) -> None:
         """Test that the same URL is not added to the BFS queue twice."""
-        crawler = ClauseaCrawler(strategy="bfs")
+        # min_legal_score=0 keeps this focused on dedup, not the relevance gate.
+        crawler = ClauseaCrawler(strategy="bfs", min_legal_score=0)
         base_url = "https://example.com"
 
         links = [
@@ -47,6 +48,25 @@ class TestCrawlerState:
         # Try to add the same URL again — should be deduplicated
         crawler.add_urls_to_queue(links, base_url, depth=1)
         assert len(crawler.url_queue) == 1
+
+    def test_bfs_queue_rejects_urls_below_min_legal_score(self) -> None:
+        """BFS must drop off-topic links, not just best_first.
+
+        Regression: the relevance gate previously only applied to best_first, so the
+        BFS fallback pass followed every same-domain link and wandered large sites.
+        """
+        crawler = ClauseaCrawler(strategy="bfs", min_legal_score=2.0)
+        base_url = "https://example.com"
+
+        links = [
+            {"url": "https://example.com/privacy", "text": "Privacy Policy"},
+            {"url": "https://example.com/blog/how-to-cook-pasta", "text": "Pasta"},
+        ]
+        crawler.add_urls_to_queue(links, base_url, depth=0)
+
+        queued = {u for u, _ in crawler.url_queue}
+        assert "https://example.com/privacy" in queued
+        assert "https://example.com/blog/how-to-cook-pasta" not in queued
 
     def test_state_cleared_between_crawl_multiple_runs(self) -> None:
         """Test that queued_urls and _sitemap_seeded are cleared between runs."""
@@ -74,12 +94,6 @@ class TestCrawlerState:
         crawler.url_queue.append(("https://example.com/a", 1))
         crawler.url_queue.append(("https://example.com/b", 1))
         assert crawler._get_pending_url_count() == 2
-
-    def test_get_pending_url_count_dfs(self) -> None:
-        """Test _get_pending_url_count returns DFS stack length."""
-        crawler = ClauseaCrawler(strategy="dfs")
-        crawler.url_stack.append(("https://example.com/a", 1))
-        assert crawler._get_pending_url_count() == 1
 
     def test_get_pending_url_count_best_first(self) -> None:
         """Test _get_pending_url_count returns priority queue length."""

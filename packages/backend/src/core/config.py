@@ -16,7 +16,10 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-_DISCOVERY_PAGE_CAP = 1000
+# With the relevance gate applied to every strategy, only policy-scoring URLs enter the
+# frontier, so the discovery pass exhausts long before this cap on a normal site. It is a
+# backstop against pathological sites with hundreds of legal sub-pages, not a recall limit.
+_DISCOVERY_PAGE_CAP = 150
 _DISCOVERY_DEPTH_CAP = 3
 
 
@@ -176,7 +179,6 @@ class CrawlerConfig:
         self.fallback_min_legal_score: float = float(
             os.getenv("CRAWLER_FALLBACK_MIN_LEGAL_SCORE", "1.5")
         )
-        self.crawler_strategy: str = os.getenv("CRAWLER_STRATEGY", "bfs").strip().lower()
 
         self.min_docs_before_fallback: int = int(os.getenv("CRAWLER_MIN_DOCS_BEFORE_FALLBACK", "2"))
         _req = os.getenv("CRAWLER_REQUIRED_DOC_TYPES", "privacy_policy,terms_of_service")

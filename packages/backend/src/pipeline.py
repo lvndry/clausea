@@ -689,7 +689,6 @@ class PolicyDocumentPipeline:
         self,
         max_depth: int | None = None,
         max_pages: int | None = None,
-        crawler_strategy: str | None = None,
         concurrent_limit: int | None = None,
         delay_between_requests: float | None = None,
         timeout: int | None = None,
@@ -714,7 +713,6 @@ class PolicyDocumentPipeline:
         Args:
             max_depth: Maximum crawl depth per product (default: ``CrawlerConfig`` / env)
             max_pages: Maximum pages to crawl per product
-            crawler_strategy: Default ClauseaCrawler strategy when not overridden per pass
             concurrent_limit: Maximum concurrent requests
             delay_between_requests: Delay between requests in seconds
             timeout: Request timeout in seconds
@@ -738,9 +736,6 @@ class PolicyDocumentPipeline:
         self.max_pages = max_pages if max_pages is not None else c.max_pages
         self.discovery_max_pages, self.discovery_max_depth = discovery_crawl_limits(
             self.max_pages, self.max_depth
-        )
-        self.crawler_strategy = (
-            crawler_strategy if crawler_strategy is not None else c.crawler_strategy
         )
         self.concurrent_limit = (
             concurrent_limit if concurrent_limit is not None else c.concurrent_limit
@@ -812,7 +807,7 @@ class PolicyDocumentPipeline:
         max_depth: int | None = None,
         max_pages: int | None = None,
         min_legal_score: float | None = None,
-        strategy: str | None = None,
+        strategy: str,
         progress_phase: str | None = None,
     ) -> ClauseaCrawler:
         """Create a configured crawler instance for a specific product."""
@@ -852,7 +847,7 @@ class PolicyDocumentPipeline:
             user_agent=self.user_agent,
             follow_external_links=False,
             min_legal_score=min_legal_score if min_legal_score is not None else 0.0,
-            strategy=strategy or self.crawler_strategy,
+            strategy=strategy,
             log_file_path=log_file_path,
             use_browser=self.use_browser,
             browser_concurrency=self.browser_concurrency,
@@ -1234,7 +1229,6 @@ class PolicyDocumentPipeline:
                 "discovery_strategy": self.discovery_strategy,
                 "discovery_min_legal_score": self.discovery_min_legal_score,
                 "fallback_strategy": self.fallback_strategy,
-                "default_strategy": self.crawler_strategy,
             },
             stats={"mode": "hybrid"},
         )
