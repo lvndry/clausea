@@ -158,12 +158,20 @@ class ProductRepository(BaseRepository):
             # Escape so user input is matched literally — raw regex metacharacters
             # would 500 on invalid patterns or open a ReDoS vector.
             escaped_search = re.escape(search)
+            # Stored domains are bare hosts (e.g. "anthropic.com"), but users often
+            # paste a full URL. Strip scheme/www and any path so "https://www.anthropic.com/"
+            # still matches. Fall back to the raw term if normalization empties it
+            # (e.g. the user typed only "https://") so we don't match every product.
+            normalized_domain = re.sub(
+                r"^(https?://)?(www\.)?", "", search.strip(), flags=re.IGNORECASE
+            ).split("/")[0]
+            domain_search = re.escape(normalized_domain) or escaped_search
             query = {
                 "$or": [
                     {"name": {"$regex": escaped_search, "$options": "i"}},
                     {"description": {"$regex": escaped_search, "$options": "i"}},
                     {"categories": {"$regex": escaped_search, "$options": "i"}},
-                    {"domains": {"$regex": escaped_search, "$options": "i"}},
+                    {"domains": {"$regex": domain_search, "$options": "i"}},
                 ]
             }
             total, items_data = await asyncio.gather(
