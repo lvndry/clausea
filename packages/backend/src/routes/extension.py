@@ -5,7 +5,7 @@ Provides lightweight endpoints optimized for the browser extension popup.
 
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
 
@@ -16,7 +16,6 @@ from src.models.clerkUser import ClerkUser
 from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.extension_usage import ExtensionUsageService
-from src.services.pipeline_scheduler import schedule_pipeline_run
 from src.services.service_factory import (
     create_indexation_notification_service,
     create_pipeline_service,
@@ -280,7 +279,6 @@ async def get_supported_domains(
 async def analyze_url(
     request: Request,
     payload: ExtensionAnalyzeRequest,
-    background_tasks: BackgroundTasks,
     db: AgnosticDatabase = Depends(get_db),
     user: ClerkUser | None = Depends(get_optional_user),
 ) -> ExtensionAnalyzeResponse:
@@ -335,10 +333,9 @@ async def analyze_url(
         )
 
     job = result["job"]
-    scheduled = await schedule_pipeline_run(job.id, background_tasks)
-
+    # The job is created pending; the pipeline worker process claims and runs it.
     return ExtensionAnalyzeResponse(
-        status="started" if scheduled else "already_running",
+        status="started",
         product_slug=job.product_slug,
         product_name=job.product_name,
         job_id=job.id,
