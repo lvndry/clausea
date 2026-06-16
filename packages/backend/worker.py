@@ -8,7 +8,6 @@ Concurrency and poll interval are env-tunable:
   PIPELINE_WORKER_CONCURRENCY         (default 3)    max jobs running at once
   PIPELINE_WORKER_POLL_SECONDS        (default 3)    idle poll interval
   PIPELINE_WORKER_STALE_SWEEP_SECONDS (default 300)  how often to reap orphaned jobs
-  PIPELINE_MAX_ATTEMPTS               (default 4)    max claims before a job stays failed
 """
 
 from __future__ import annotations
@@ -27,12 +26,11 @@ logger = get_logger(__name__)
 _CONCURRENCY = max(1, int(os.getenv("PIPELINE_WORKER_CONCURRENCY", "3")))
 _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
-_MAX_ATTEMPTS = max(1, int(os.getenv("PIPELINE_MAX_ATTEMPTS", "4")))
 
 
 async def _sweep_stale(repo: PipelineRepository) -> None:
     """Self-heal the queue (boot + periodic): reap crash-orphaned in-progress jobs, then
-    re-queue failed ones (orphans + transient failures) up to _MAX_ATTEMPTS.
+    re-queue failed ones (orphans + transient failures) — retries are unlimited.
 
     Best-effort: a sweep error must never stop the worker from claiming jobs (a single
     failure here previously crashlooped the whole worker), so failures are logged, not raised.
@@ -40,7 +38,7 @@ async def _sweep_stale(repo: PipelineRepository) -> None:
     try:
         async with db_session() as db:
             reaped = await repo.mark_stale_as_failed(db)
-            requeued = await repo.requeue_failed_jobs(db, _MAX_ATTEMPTS)
+            requeued = await repo.requeue_failed_jobs(db)
         if reaped:
             logger.info("Reaped %d stale job(s) as failed", reaped)
         if requeued:

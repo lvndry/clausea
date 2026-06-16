@@ -40,26 +40,33 @@ def _failed_jobs_collection(active_slugs, candidates):
 
 
 @pytest.mark.asyncio
-async def test_requeue_failed_only_retries_under_attempt_cap():
+async def test_requeue_failed_retries_unlimited_regardless_of_attempts():
+    # Retries are unlimited: a job mostly accrues attempts from redeploys orphaning long
+    # crawls, not real defects, so there is no attempt ceiling. Even a high-attempt job
+    # must be requeued.
     collection = _failed_jobs_collection(
         active_slugs=[],
-        candidates=[{"id": "a", "product_slug": "alpha"}, {"id": "b", "product_slug": "beta"}],
+        candidates=[
+            {"id": "a", "product_slug": "alpha", "attempts": 1},
+            {"id": "b", "product_slug": "beta", "attempts": 99},
+        ],
     )
     db = MagicMock()
     db.__getitem__.return_value = collection
 
-    requeued = await PipelineRepository().requeue_failed_jobs(db, max_attempts=4)
+    requeued = await PipelineRepository().requeue_failed_jobs(db)
 
     query = collection.find.call_args.args[0]
     # Only failed jobs are retried; no_documents stays terminal.
     assert query["status"] == "failed"
-    # Under the cap OR missing the field (pre-existing jobs) — $lt alone skips missing fields.
-    assert {"attempts": {"$lt": 4}} in query["$or"]
-    assert {"attempts": {"$exists": False}} in query["$or"]
+    # No attempt cap: the query must not filter on attempts at all.
+    assert "$or" not in query
+    assert "attempts" not in query
     update = collection.update_one.call_args.args[1]
     assert update["$set"]["status"] == "pending"
     # Steps reset so a retry doesn't carry stale terminal step state.
     assert all(s["status"] == "pending" for s in update["$set"]["steps"])
+    # The 99-attempt job is requeued too.
     assert requeued == 2
 
 
@@ -80,7 +87,7 @@ async def test_requeue_never_creates_second_active_job_per_product():
     db = MagicMock()
     db.__getitem__.return_value = collection
 
-    requeued = await PipelineRepository().requeue_failed_jobs(db, max_attempts=4)
+    requeued = await PipelineRepository().requeue_failed_jobs(db)
 
     assert requeued == 2
     revived_ids = {call.args[0]["id"] for call in collection.update_one.call_args_list}
