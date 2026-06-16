@@ -247,6 +247,35 @@ class TestMetadataClassification:
             metadata={"title": "Signal >> Blog >> Research on your terms"},
         )
         assert result["classification"] != "terms_of_service"
+        assert result["is_policy_document"] is False
+
+    @pytest.mark.asyncio
+    async def test_tos_token_still_matches_as_whole_word(
+        self, classifier: DocumentClassifier
+    ) -> None:
+        """Word-boundary matching keeps 'ToS' working for genuine terms pages."""
+        result = await classifier.classify_document(
+            url="https://example.com/legal/doc789",
+            text="By using our services you agree to these terms. " * 20,
+            metadata={"title": "ToS"},
+        )
+        assert result["classification"] == "terms_of_service"
+
+    @pytest.mark.asyncio
+    async def test_short_tokens_do_not_substring_match(
+        self, classifier: DocumentClassifier
+    ) -> None:
+        """'photos' must not match 'tos'; 'grandpa' must not match 'dpa'."""
+        for title in ("My Photos Gallery", "Grandpa's recipes"):
+            result = await classifier.classify_document(
+                url="https://example.com/gallery/page",
+                text="Home About menu. A collection of nice things to look at. " * 4,
+                metadata={"title": title},
+            )
+            assert result["classification"] not in (
+                "terms_of_service",
+                "data_processing_agreement",
+            ), title
 
     @pytest.mark.asyncio
     async def test_metadata_short_content_rejected(self, classifier: DocumentClassifier) -> None:

@@ -242,6 +242,12 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         self.nav_indicators = ["home", "about", "contact", "menu", "navigation", "search"]
 
     @staticmethod
+    def _meta_has_keyword(meta_text: str, keyword: str) -> bool:
+        """Whole-word/phrase match so short tokens ('tos', 'dpa', 'gdpr') don't match
+        substrings ('photos', 'grandpa', 'sandpaper')."""
+        return re.search(rf"\b{re.escape(keyword)}\b", meta_text) is not None
+
+    @staticmethod
     def _content_supports_substantive_policy_claim(text: str) -> bool:
         """True if the body matches the same keyword model used for non-LLM content routing.
 
@@ -418,6 +424,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                     "user agreement",
                     "service agreement",
                     "terms & conditions",
+                    "tos",
                     "conditions of use",
                     "nutzungsbedingungen",  # German
                     "conditions d'utilisation",  # French
@@ -501,7 +508,7 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             }
 
             for doc_type, keywords in meta_keywords.items():
-                if any(keyword in combined_meta for keyword in keywords):
+                if any(self._meta_has_keyword(combined_meta, kw) for kw in keywords):
                     # Check if content is substantial (not just a navigation page)
                     if len(text) > 300:
                         logger.debug(f"found metadata keyword matches: classified as {doc_type}")
