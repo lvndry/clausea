@@ -411,3 +411,144 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
 
     assert result.success is False
     assert "browser rendering failed" in (result.error_message or "").lower()
+
+
+def _index_xml(child_urls: list[str]) -> str:
+    entries = "".join(f"<sitemap><loc>{u}</loc></sitemap>" for u in child_urls)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{entries}</sitemapindex>"
+    )
+
+
+def _urlset_xml(page_urls: list[str]) -> str:
+    entries = "".join(f"<url><loc>{u}</loc></url>" for u in page_urls)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{entries}</urlset>"
+    )
+
+
+class _MappedResponse:
+    """aiohttp-style response whose body is looked up by URL; 404 if unknown."""
+
+    def __init__(self, bodies: dict[str, str], url: str) -> None:
+        self._body = bodies.get(url)
+        self.url = url
+        self.status = 200 if self._body is not None else 404
+        self.headers: dict[str, str] = {}
+
+    async def text(self) -> str:
+        return self._body or ""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    @property
+    def content(self) -> _FakeContent:
+        return _FakeContent((self._body or "").encode())
+
+
+class _MappedSession:
+    """Fake session that serves sitemap XML by URL and records every fetched URL."""
+
+    def __init__(self, bodies: dict[str, str]) -> None:
+        self._bodies = bodies
+        self.fetched: list[str] = []
+
+    def get(self, url, **kwargs):
+        self.fetched.append(url)
+        return _MappedResponse(self._bodies, url)
+
+
+@pytest.mark.asyncio
+async def test_policy_child_sitemap_past_cap_is_still_followed():
+    """A policy-named child sitemap sitting far beyond the truncation cap in index
+    order must still be fetched, because children are sorted policy-first before
+    the cap is applied."""
+    from src.crawler import MAX_CHILD_SITEMAPS
+
+    origin = "https://example.com"
+    cap = MAX_CHILD_SITEMAPS
+
+    # Build an index with more children than the cap. The legal sitemap is placed
+    # last in index order — well past position 50 and past the cap — so a naive
+    # index-order truncation would drop it.
+    product_children = [f"{origin}/sitemap-products-{i}.xml" for i in range(cap + 20)]
+    legal_child = f"{origin}/sitemap-legal.xml"
+    children = product_children + [legal_child]
+
+    bodies = {
+        f"{origin}/sitemap.xml": _index_xml(children),
+        legal_child: _urlset_xml([f"{origin}/legal/privacy-policy"]),
+    }
+    for child in product_children:
+        bodies[child] = _urlset_xml([child.replace("sitemap-", "page-").replace(".xml", "")])
+
+    session = _MappedSession(bodies)
+    crawler = ClauseaCrawler(respect_robots_txt=False)
+
+    discovered = await crawler._discover_sitemap_urls(cast(aiohttp.ClientSession, session), origin)
+
+    assert legal_child in session.fetched
+    assert f"{origin}/legal/privacy-policy" in discovered
+
+
+@pytest.mark.asyncio
+async def test_child_sitemap_truncation_past_cap_logs(caplog):
+    """When an index lists more children than the cap, truncation must be logged
+    so recall loss is never silent."""
+    import logging
+
+    from src.crawler import MAX_CHILD_SITEMAPS
+
+    origin = "https://example.com"
+    children = [f"{origin}/sitemap-{i}.xml" for i in range(MAX_CHILD_SITEMAPS + 5)]
+    bodies = {f"{origin}/sitemap.xml": _index_xml(children)}
+    for child in children:
+        bodies[child] = _urlset_xml([child.replace(".xml", "/page")])
+
+    session = _MappedSession(bodies)
+    crawler = ClauseaCrawler(respect_robots_txt=False)
+
+    with caplog.at_level(logging.INFO):
+        await crawler._discover_sitemap_urls(cast(aiohttp.ClientSession, session), origin)
+
+    assert any(
+        f"lists {len(children)} children" in record.getMessage() for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_all_children_followed_when_under_cap_no_truncation_log(caplog):
+    """With fewer children than the cap, every child is followed, every page URL is
+    discovered, and no truncation is logged."""
+    import logging
+
+    origin = "https://example.com"
+    children = [f"{origin}/sitemap-{i}.xml" for i in range(5)]
+    bodies = {f"{origin}/sitemap.xml": _index_xml(children)}
+    expected_pages = []
+    for index, child in enumerate(children):
+        page = f"{origin}/page-{index}"
+        expected_pages.append(page)
+        bodies[child] = _urlset_xml([page])
+
+    session = _MappedSession(bodies)
+    crawler = ClauseaCrawler(respect_robots_txt=False)
+
+    with caplog.at_level(logging.INFO):
+        discovered = await crawler._discover_sitemap_urls(
+            cast(aiohttp.ClientSession, session), origin
+        )
+
+    for page in expected_pages:
+        assert page in discovered
+    for child in children:
+        assert child in session.fetched
+    assert not any("children; following the first" in r.getMessage() for r in caplog.records)

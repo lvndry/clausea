@@ -205,6 +205,12 @@ MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
 # Browser fetch: short polling attempts when initial DOM text is below MIN_CONTENT_LENGTH_FOR_SPA_CHECK.
 SPA_HYDRATION_RETRIES = 3
 
+# Max child sitemaps to follow from a single sitemap index. Real indexes list hundreds
+# (Notion's lists 211), and a hard cut in index order silently drops policy sitemaps that
+# sit past the cut. We sort children policy-first before truncating, so a generous cap keeps
+# every plausible policy sitemap while still bounding the multi-MB content-sitemap tail.
+MAX_CHILD_SITEMAPS = int(os.getenv("CRAWLER_MAX_CHILD_SITEMAPS", "200"))
+
 # aiohttp's default 8190-byte header cap rejects sites with large headers (e.g. Notion's CSP)
 # with HTTP 400, failing every fetch for that domain. Raise it so we don't lose those sites.
 MAX_HEADER_BYTES = 65_536
@@ -2668,7 +2674,7 @@ class ClauseaCrawler:
         # discovery. Policy pages live in small sitemaps and are also reachable via the link
         # crawl, so skipping oversized/excess sitemaps is recall-safe for policy docs.
         max_sitemap_bytes = 5_000_000
-        max_child_sitemaps = 50
+        max_child_sitemaps = MAX_CHILD_SITEMAPS
         fetch_timeout = aiohttp.ClientTimeout(total=15)
 
         async def _fetch_and_parse_sitemap(sitemap_url: str) -> list[str]:
@@ -2716,10 +2722,15 @@ class ClauseaCrawler:
                     discovered_urls.append(url)
 
             # Follow child sitemaps one level deep (bounded — an index may list hundreds).
+            # Sort policy-first before truncating: the scorer ranks a child like
+            # ``.../sitemap-legal.xml`` above ``.../sitemap-products-7.xml``, so when the cap
+            # is hit the children we drop are the non-policy content/product sitemaps, not the
+            # legal ones. Stable sort preserves index order among equally scored children.
+            child_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
             if len(child_sitemaps) > max_child_sitemaps:
                 logger.info(
                     f"Sitemap index {sitemap_url} lists {len(child_sitemaps)} children; "
-                    f"following the first {max_child_sitemaps}."
+                    f"following the first {max_child_sitemaps} (policy-relevant sorted first)."
                 )
             for child_url in child_sitemaps[:max_child_sitemaps]:
                 nested_urls = await _fetch_and_parse_sitemap(child_url)
