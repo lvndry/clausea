@@ -552,3 +552,37 @@ async def test_all_children_followed_when_under_cap_no_truncation_log(caplog):
     for child in children:
         assert child in session.fetched
     assert not any("children; following the first" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_extract_markdown_content_type_kept_and_links_followed():
+    """Servers honouring Accept: text/markdown (e.g. GitHub Docs) must be parsed as
+    text, not discarded as binary — the prior bug forced a wasted browser render."""
+    from src.crawler import StaticFetchResult
+
+    crawler = ClauseaCrawler(allowed_domains=["docs.github.com"])
+    body = (
+        "# GitHub Terms of Service\n\n"
+        "Please read this Terms of Service agreement carefully. By using GitHub you agree "
+        "to these terms, including limitation of liability and governing law.\n\n"
+        "See also [Privacy Statement](/en/site-policy/privacy-policies/github-privacy-statement) "
+        "and <https://docs.github.com/en/site-policy/github-terms/github-corporate-terms-of-service>.\n"
+    ) * 8
+    raw = StaticFetchResult(
+        url="https://docs.github.com/en/site-policy/github-terms/github-terms-of-service",
+        status_code=200,
+        content_type="text/markdown; charset=utf-8",
+        body=body,
+    )
+    page = await crawler._extract_page_content(
+        raw, "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service"
+    )
+    assert page is not None
+    assert page.markdown == body  # clean markdown kept verbatim
+    assert "terms of service" in page.text.lower()
+    assert crawler._content_is_sufficient(
+        page, "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service"
+    )
+    urls = {link["url"] for link in page.discovered_links}
+    assert any("github-privacy-statement" in u for u in urls)  # relative link resolved
+    assert any("github-corporate-terms-of-service" in u for u in urls)  # autolink captured

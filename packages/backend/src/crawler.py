@@ -1919,6 +1919,8 @@ class ClauseaCrawler:
                 ct in content_type
                 for ct in (
                     "text/html",
+                    "text/markdown",
+                    "text/x-markdown",
                     "text/plain",
                     "text/xml",
                     "application/xml",
@@ -1998,6 +2000,8 @@ class ClauseaCrawler:
             t in ct
             for t in (
                 "text/html",
+                "text/markdown",
+                "text/x-markdown",
                 "text/plain",
                 "text/xml",
                 "application/xml",
@@ -2008,6 +2012,8 @@ class ClauseaCrawler:
         if not is_text_type:
             return await self._extract_binary_content(raw, url)
 
+        if "markdown" in ct:
+            return self._extract_markdown_content(raw, url)
         if "text/html" in ct:
             # BeautifulSoup parsing + markdownify conversion are CPU-bound and can
             # block the event loop for hundreds of ms on large pages.  Offload to a
@@ -2047,6 +2053,63 @@ class ClauseaCrawler:
             markdown=markdown_content,
             title=title,
             metadata=metadata,
+            discovered_links=discovered_links,
+            status_code=raw.status_code,
+        )
+
+    _MD_INLINE_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+    _MD_AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
+
+    def _resolve_md_link(self, base_url: str, href: str) -> str | None:
+        href = href.strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
+            return None
+        resolved = urljoin(base_url, href)
+        if not resolved.startswith(("http://", "https://")):
+            return None
+        return self.normalize_url(resolved)
+
+    @staticmethod
+    def _markdown_to_text(md: str) -> str:
+        """Render markdown to readable plain text for length/classification gates."""
+        text = re.sub(r"<!--.*?-->", " ", md, flags=re.DOTALL)
+        text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)
+        text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+        text = re.sub(r"`{1,3}[^`]*`{1,3}", " ", text)
+        text = re.sub(r"^\s{0,3}[>#\-\*\+]+\s*", "", text, flags=re.MULTILINE)
+        text = re.sub(r"[*_~]{1,3}", "", text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    def _extract_markdown_content(self, raw: StaticFetchResult, url: str) -> PageContent:
+        """Handle servers that honour ``Accept: text/markdown`` (e.g. GitHub Docs).
+
+        The body is already clean markdown — keep it verbatim, derive plain text for the
+        gates, and pull links so discovery can follow the policy index.
+        """
+        body = raw.body or ""
+        discovered_links: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for href in self._MD_INLINE_LINK_RE.findall(body) + self._MD_AUTOLINK_RE.findall(body):
+            resolved = self._resolve_md_link(url, href)
+            if resolved and resolved not in seen:
+                seen.add(resolved)
+                discovered_links.append({"url": resolved, "text": ""})
+
+        title = ""
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                title = stripped.lstrip("#").strip()
+                break
+        if not title:
+            title = url.rstrip("/").split("/")[-1].replace("-", " ").replace("_", " ").title()
+
+        return PageContent(
+            text=self._markdown_to_text(body),
+            markdown=body,
+            title=title,
+            metadata={"content-type": raw.content_type, "estimated_title": title},
             discovered_links=discovered_links,
             status_code=raw.status_code,
         )
