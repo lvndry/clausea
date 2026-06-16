@@ -350,3 +350,30 @@ class TestURLScorerAuthAndRedirectParams:
             )
             >= 5.0
         )
+
+
+class TestMirrorSubdomainExclusion:
+    """Non-production mirror subdomains duplicate prod pages and must not be crawled."""
+
+    def _crawler(self):
+        return ClauseaCrawler(allowed_domains=["github.com"], follow_external_links=False)
+
+    def test_internal_mirror_rejected(self) -> None:
+        c = self._crawler()
+        assert not c.should_crawl_url(
+            "https://docs-internal.github.com/en/site-policy/github-terms/github-terms-of-service",
+            "https://docs.github.com/en/site-policy",
+            1,
+        )
+        assert not c.should_crawl_url("https://staging.github.com/legal", "https://github.com", 1)
+        assert not c.should_crawl_url("https://preview.github.com/legal", "https://github.com", 1)
+
+    def test_real_subdomains_still_allowed(self) -> None:
+        c = self._crawler()
+        # docs.github.com (the canonical surface) and a "developer" subdomain must NOT be
+        # caught by the mirror filter.
+        assert c.should_crawl_url(
+            "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service",
+            "https://docs.github.com/en/site-policy",
+            1,
+        )
