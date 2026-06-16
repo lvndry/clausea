@@ -1,13 +1,5 @@
-import type { Metadata } from "next";
-
 import { Header } from "@/components/clausea/Header";
 import { Footer } from "@/components/clausea/PricingAndFooter";
-
-export const metadata: Metadata = {
-  title: "Cookie Policy | Clausea AI",
-  description:
-    "How Clausea AI uses cookies and similar technologies, and how you can control them.",
-};
 
 export default function CookiePolicyPage() {
   return (
