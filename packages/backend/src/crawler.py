@@ -194,10 +194,8 @@ DEFAULT_NO_POLICY_PAGE_BUDGET = int(os.getenv("CRAWLER_NO_POLICY_PAGE_BUDGET", "
 # pipeline's MIN_LEGAL_SCORE_THRESHOLD for accepting a page into analysis.
 CONVERGENCE_LEGAL_SCORE = 0.2
 
-# Grace window for best_first relevance-exhaustion: once no own-score policy lead remains in
-# the frontier, keep crawling boost-only links for this many pages before giving up, so a
-# policy reachable only via a non-policy page is still discovered. Any newly-found real lead
-# resets the window. Small because real policies sit ≤1-2 hops from the homepage/footer.
+# Boost-only pages to keep crawling after the own-score frontier empties, in case one links a
+# policy reachable no other way. A new real lead resets it. See _relevance_exhausted.
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
 
 # Minimum extracted body text length to treat static fetch as sufficient (low URL score) and
@@ -1504,19 +1502,10 @@ class ClauseaCrawler:
         self._locale_seen_keys: set[str] = set()
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
         self.url_stack: list[tuple[str, int]] = []  # For DFS
-        # best-first frontier: (-score, url, depth, base_score). `score` orders the queue and
-        # may include a policy-hub parent boost; `base_score` is the URL's own relevance.
+        # best-first frontier: (-score, url, depth, base_score). base_score excludes parent boost.
         self.url_priority_queue: list[tuple[float, str, int, float]] = []
-        # Queued-but-not-yet-crawled best_first URLs whose OWN score clears the gate. When this
-        # reaches zero, every genuinely policy-relevant lead has been crawled and only boost-only
-        # links remain — the signal to stop discovery rather than grind through boosted noise.
-        self._frontier_real_leads: int = 0
-        # Crawled pages with policy-grade content; gates the relevance-exhaustion stop.
+        self._frontier_real_leads: int = 0  # queued URLs whose own score clears the gate
         self._policy_pages_found: int = 0
-        # Crawled pages since the frontier last gained a real lead. Once no real lead remains,
-        # we keep crawling boost-only links for a grace window (CRAWL_EXHAUSTION_GRACE) so a
-        # policy reachable only via a non-policy page is still discovered; any new real lead
-        # resets this. Guards against stopping the instant real leads hit zero.
         self._crawls_since_new_lead: int = 0
         self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
         # Best policy-relevance score assigned to each queued URL (anchor-aware).
@@ -3535,27 +3524,14 @@ class ClauseaCrawler:
             self._url_scores[key] = score
 
     def _enqueue_best_first(self, url: str, depth: int, score: float, base_score: float) -> None:
-        """Push a URL onto the best-first frontier, counting real (un-boosted) leads.
-
-        `score` orders the queue (may include a policy-hub parent boost); `base_score` is the
-        URL's own relevance and is the only thing that counts toward _frontier_real_leads, so a
-        link that only clears the gate via a parent boost never keeps the crawl alive.
-        """
+        """Push to the frontier; only an own-score lead (not a boost-only link) counts as real."""
         heapq.heappush(self.url_priority_queue, (-score, url, depth, base_score))
         if base_score >= self.min_legal_score:
             self._frontier_real_leads += 1
-            # A fresh real lead resets the grace window so discovery follows it.
             self._crawls_since_new_lead = 0
 
     def _relevance_exhausted(self) -> bool:
-        """True for best_first once the own-score policy frontier is exhausted past the grace window.
-
-        Stops when we have captured policy content, no URL whose own score clears the gate
-        remains queued, AND a grace window of boost-only crawls has passed without surfacing a
-        new real lead — so a policy reachable only via a non-policy page is still found, but we
-        don't grind through boosted noise (the dominant timeout cause on large sites). BFS has
-        no per-URL priority, so this never applies there.
-        """
+        """True once policy content is found and only boost-only links remain past the grace window."""
         return (
             self.strategy == "best_first"
             and self._policy_pages_found >= 1
@@ -3913,9 +3889,9 @@ class ClauseaCrawler:
                     # Process results
                     for result, (url, depth) in zip(batch_results, batch, strict=True):
                         self.stats.total_urls += 1
-                        # Counts toward the relevance-exhaustion grace window; add_urls_to_queue
-                        # resets it to 0 if this page surfaces a new own-score policy lead.
-                        self._crawls_since_new_lead += 1
+                        self._crawls_since_new_lead += (
+                            1  # reset in _enqueue_best_first on a new lead
+                        )
 
                         if result.success:
                             self.stats.crawled_urls += 1

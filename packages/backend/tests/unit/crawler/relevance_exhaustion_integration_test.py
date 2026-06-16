@@ -1,12 +1,7 @@
-"""End-to-end test of the best_first relevance-exhaustion stop over a controlled link graph.
+"""Relevance-exhaustion stop over a controlled link graph (only the fetch layer is mocked).
 
-Mocks only the fetch layer (network + content scoring); the real crawl loop, URL scoring,
-parent-boost, real-lead counting, grace window, and stop condition all run for real. Proves
-the two properties that matter under a quality-first crawl:
-
-1. Every policy page is found — including one reachable ONLY through a non-policy (boost-only)
-   page (the "/privacy then /random then /legal" case).
-2. The crawl still terminates early instead of grinding through a long tail of boost-only junk.
+Asserts both quality and termination: every policy is found — including one reachable only
+via a boost-only junk page — while the long junk tail is skipped after the grace window.
 """
 
 import pytest
