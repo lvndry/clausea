@@ -2057,7 +2057,9 @@ class ClauseaCrawler:
             status_code=raw.status_code,
         )
 
-    _MD_INLINE_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[\"'][^\"']*[\"'])?\s*\)")
+    _MD_INLINE_LINK_RE = re.compile(
+        r"""\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)"""
+    )
     _MD_AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
 
     def _resolve_md_link(self, base_url: str, href: str) -> str | None:
