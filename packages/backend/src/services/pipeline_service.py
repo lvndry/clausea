@@ -38,10 +38,14 @@ from src.utils.domain import extract_domain as _extract_domain
 
 logger = get_logger(__name__)
 
-MAX_PIPELINE_DURATION_SECONDS = 7200  # 2 hours — hard ceiling backstop
+# Optional absolute wall-clock backstop, OFF by default (0 / unset → no cap). Liveness comes from
+# the stall guard (below) plus the crawler's max_pages work bound, so a legitimately long crawl of
+# a large/multi-jurisdiction site runs to completion. Set PIPELINE_MAX_DURATION_SECONDS > 0 only if
+# you want a hard ceiling regardless of forward progress.
+MAX_PIPELINE_DURATION_SECONDS = float(os.getenv("PIPELINE_MAX_DURATION_SECONDS", "0"))
 # Abort a job that makes no forward progress (no page/document/step update bumps updated_at)
-# for this long. Bounds *inactivity*, not total runtime: a slow-but-advancing pipeline runs to
-# the hard ceiling, while a wedged one frees its worker slot fast instead of clogging it.
+# for this long. Bounds *inactivity*, not total runtime: a slow-but-advancing pipeline runs
+# indefinitely, while a wedged one frees its worker slot fast instead of clogging it.
 STALL_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_STALL_TIMEOUT_SECONDS", "900"))  # 15 min
 
 
@@ -165,7 +169,8 @@ class PipelineService:
         Progress is any step/page/document update, each of which bumps the job's updated_at. A
         pipeline that is still advancing — even slowly through the model cascade — is never
         cancelled; only one wedged with zero forward progress is, freeing the worker slot rather
-        than holding it to the 2h ceiling.
+        than holding it indefinitely. This is the primary liveness bound now that the absolute
+        wall-clock cap is off by default.
         """
         poll = min(60.0, STALL_TIMEOUT_SECONDS)
         while True:
@@ -781,10 +786,16 @@ class PipelineService:
             core_task = asyncio.create_task(_run_pipeline_core())
             started_at = job.started_at or datetime.now()
             try:
-                await asyncio.wait_for(
-                    self._await_with_stall_guard(core_task, job_id, started_at),
-                    timeout=MAX_PIPELINE_DURATION_SECONDS,
-                )
+                # Liveness is the stall guard (no-progress) + the crawler's max_pages bound. The
+                # absolute wall-clock cap is an opt-in backstop: only wrap when explicitly enabled
+                # (PIPELINE_MAX_DURATION_SECONDS > 0), so long legitimate crawls run to completion.
+                if MAX_PIPELINE_DURATION_SECONDS > 0:
+                    await asyncio.wait_for(
+                        self._await_with_stall_guard(core_task, job_id, started_at),
+                        timeout=MAX_PIPELINE_DURATION_SECONDS,
+                    )
+                else:
+                    await self._await_with_stall_guard(core_task, job_id, started_at)
             except _PipelineStalled:
                 stall_minutes = int(STALL_TIMEOUT_SECONDS // 60)
                 logger.error("Pipeline job %s stalled (no progress for %dm)", job_id, stall_minutes)
@@ -796,15 +807,20 @@ class PipelineService:
                     "hard to crawl/render or a temporary model issue; try again.",
                 )
             except TimeoutError:
-                # Hard ceiling: the guard's wait_for fired but core_task is a separate task.
+                # Opt-in hard ceiling fired (PIPELINE_MAX_DURATION_SECONDS > 0). The guard's
+                # wait_for timed out but core_task is a separate task, so cancel it explicitly.
                 core_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await core_task
+                cap_seconds = int(MAX_PIPELINE_DURATION_SECONDS)
                 logger.error(
                     "Pipeline job %s timed out after %s seconds",
                     job_id,
-                    MAX_PIPELINE_DURATION_SECONDS,
+                    cap_seconds,
                 )
                 await self._mark_aborted(
-                    db, job, PipelineErrorCode.timed_out, "Pipeline timed out after 2 hours"
+                    db,
+                    job,
+                    PipelineErrorCode.timed_out,
+                    f"Pipeline timed out after {cap_seconds} seconds",
                 )

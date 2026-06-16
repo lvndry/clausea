@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,6 +7,7 @@ import pytest
 
 from src.models.pipeline_job import PipelineErrorCode, PipelineJob, PipelineStep
 from src.repositories.pipeline_repository import PipelineRepository
+from src.services import pipeline_service as ps
 from src.services.pipeline_service import PipelineService
 
 
@@ -280,3 +282,113 @@ async def test_update_step_progress_is_monotonic(pipeline_service, mock_repo, mo
     # Genuine forward progress advances the bar.
     await pipeline_service._update_step_progress(mock_db, job, "crawling", current=30, total=40)
     assert job.steps[0].progress_percent == 75.0
+
+
+def _pipeline_run_patches(mock_db, fake_pipeline, product_svc):
+    """The patch set that lets run_pipeline reach the stall-guard wiring deterministically."""
+
+    @asynccontextmanager
+    async def fake_db_session():
+        yield mock_db
+
+    return (
+        patch("src.services.pipeline_service.db_session", fake_db_session),
+        patch("src.services.pipeline_service.create_product_service", return_value=product_svc),
+        patch("src.services.pipeline_service.PolicyDocumentPipeline", return_value=fake_pipeline),
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_no_wall_clock_cap_by_default(mock_db, monkeypatch):
+    """With the cap disabled (default), the core is never wrapped in a wall-clock wait_for.
+
+    A legitimately long crawl (e.g. a multi-jurisdiction site running for hours) must not be
+    guillotined; liveness is the stall guard + max_pages, not total runtime.
+    """
+    monkeypatch.setattr(ps, "MAX_PIPELINE_DURATION_SECONDS", 0.0)
+
+    job = PipelineJob(
+        id="job-long",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="pending",
+    )
+    repo = MagicMock(spec=PipelineRepository)
+    repo.find_by_id = AsyncMock(return_value=job)
+    repo.update = AsyncMock()
+    repo.update_fields = AsyncMock()
+    service = PipelineService(pipeline_repo=repo)
+
+    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product_svc = MagicMock()
+    product_svc.get_product_by_slug = AsyncMock(return_value=product)
+
+    crawl_stats = SimpleNamespace(
+        total_documents_found=0,
+        policy_documents_stored=0,
+        crawl_errors=[],
+        crawl_skip_reasons=[],
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.run = AsyncMock(return_value=crawl_stats)
+
+    wait_for_calls: list[float | None] = []
+    real_wait_for = asyncio.wait_for
+
+    async def recording_wait_for(awaitable, timeout):
+        wait_for_calls.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    patches = _pipeline_run_patches(mock_db, fake_pipeline, product_svc)
+    with patches[0], patches[1], patches[2]:
+        monkeypatch.setattr(ps.asyncio, "wait_for", recording_wait_for)
+        await service.run_pipeline("job-long")
+
+    # The stall guard was awaited directly — no finite wall-clock timeout wrapped the core.
+    assert not wait_for_calls
+    assert job.error != PipelineErrorCode.timed_out
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_opt_in_cap_marks_timed_out(mock_db, monkeypatch):
+    """When PIPELINE_MAX_DURATION_SECONDS is set > 0, the wall-clock backstop still fires."""
+    monkeypatch.setattr(ps, "MAX_PIPELINE_DURATION_SECONDS", 0.05)
+
+    job = PipelineJob(
+        id="job-capped",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="pending",
+    )
+    repo = MagicMock(spec=PipelineRepository)
+    repo.find_by_id = AsyncMock(return_value=job)
+    repo.update = AsyncMock()
+    repo.update_fields = AsyncMock()
+    service = PipelineService(pipeline_repo=repo)
+
+    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product_svc = MagicMock()
+    product_svc.get_product_by_slug = AsyncMock(return_value=product)
+
+    # A crawl that outlives the opt-in cap (but is making progress, so the stall guard wouldn't
+    # touch it) must still be aborted by the wall-clock backstop.
+    async def slow_run(*args, **kwargs):
+        await asyncio.sleep(5)
+        return SimpleNamespace(
+            total_documents_found=0,
+            policy_documents_stored=0,
+            crawl_errors=[],
+            crawl_skip_reasons=[],
+        )
+
+    fake_pipeline = MagicMock()
+    fake_pipeline.run = AsyncMock(side_effect=slow_run)
+
+    patches = _pipeline_run_patches(mock_db, fake_pipeline, product_svc)
+    with patches[0], patches[1], patches[2]:
+        await service.run_pipeline("job-capped")
+
+    assert job.error == PipelineErrorCode.timed_out
+    assert job.status == "failed"
