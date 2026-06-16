@@ -23,9 +23,17 @@ from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
 
-_CONCURRENCY = max(1, int(os.getenv("PIPELINE_WORKER_CONCURRENCY", "3")))
+# One replica shares a single Camoufox/Firefox; each concurrent crawl can render heavy
+# SPA DOMs into memory. Above a handful of concurrent jobs the container OOM-kills (it died
+# at ~13). Cap the effective concurrency to a memory-safe ceiling regardless of the env so a
+# too-high setting can't crashloop the worker. Raise only with more RAM or more replicas.
+_SAFE_CONCURRENCY_CEILING = 4
+_CONCURRENCY = max(
+    1, min(int(os.getenv("PIPELINE_WORKER_CONCURRENCY", "3")), _SAFE_CONCURRENCY_CEILING)
+)
 _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
+_SHUTDOWN_GRACE_SECONDS = float(os.getenv("PIPELINE_WORKER_SHUTDOWN_GRACE", "20"))
 
 
 async def _sweep_stale(repo: PipelineRepository) -> None:
@@ -104,8 +112,23 @@ async def main() -> None:
         task.add_done_callback(running.discard)
 
     if running:
-        logger.info("Shutdown: waiting for %d in-flight job(s) to finish", len(running))
-        await asyncio.gather(*running, return_exceptions=True)
+        logger.info(
+            "Shutdown: waiting up to %.0fs for %d in-flight job(s) to finish",
+            _SHUTDOWN_GRACE_SECONDS,
+            len(running),
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*running, return_exceptions=True),
+                timeout=_SHUTDOWN_GRACE_SECONDS,
+            )
+        except TimeoutError:
+            # Don't get SIGKILLed mid-crawl (which leaks the browser and leaves zombie
+            # `crawling` jobs). Cancel now; the stale-sweep reclaims them on next boot.
+            logger.warning("Shutdown grace exceeded; cancelling %d in-flight job(s)", len(running))
+            for task in running:
+                task.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
     close_motor_client()
     logger.info("Pipeline worker stopped")
 
