@@ -46,6 +46,30 @@ _TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
 _LOCALE_QUERY_KEYS = frozenset(
     {"l", "lang", "hl", "locale", "lr", "language", "setlang", "uselang", "ui_locale"}
 )
+# Redirect-target params (post-auth destination), excluded from URL scoring so a login
+# wall doesn't inherit the relevance of the policy URL embedded in its return_to.
+_REDIRECT_QUERY_KEYS = frozenset(
+    {
+        "return_to",
+        "returnto",
+        "return",
+        "redirect",
+        "redirect_to",
+        "redirect_uri",
+        "redir",
+        "next",
+        "url",
+        "continue",
+        "dest",
+        "destination",
+        "goto",
+        "go",
+        "ref_url",
+        "callback",
+        "came_from",
+        "origin",
+    }
+)
 # Bare ISO 639-1 language codes (no region) used as path segments or query values.
 # "hr" (Croatian) and "uk" (Ukrainian) are deliberately excluded: as path segments they
 # collide with /hr/ (HR/employee policies) and /uk/ (UK-GDPR region), both legally
@@ -534,6 +558,12 @@ class URLScorer:
             r"^/(?:templates?|universe|marketplace|gallery|showcase|examples?)(?:/|$)",
             re.IGNORECASE,
         )
+        # Auth/account flows never host policy text; hard-excluded from scoring.
+        self._auth_path_re = re.compile(
+            r"(?:^|/)(?:log[-_]?in|log[-_]?out|sign[-_]?in|sign[-_]?out|sign[-_]?up|"
+            r"signon|register|oauth2?|openid|sso|saml|authorize|authentication)(?:/|$)",
+            re.IGNORECASE,
+        )
 
         self.legal_keywords = {
             # Generic legal terms
@@ -609,11 +639,21 @@ class URLScorer:
         parsed = urlparse(url_lower)
         path = parsed.path
 
+        if self._auth_path_re.search(path):
+            return 0.0
+
+        scoring_query = " ".join(
+            f"{key} {value}"
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key not in _REDIRECT_QUERY_KEYS
+        )
+        scoring_url = f"{path} {scoring_query}".strip()
+
         score = 0.0
 
         # Check high-value patterns in URL using compiled regex
         for pattern, weight in self.compiled_high_value_patterns.items():
-            if pattern.search(url_lower):
+            if pattern.search(scoring_url):
                 score += weight
 
         # Score based on anchor text if provided.
@@ -639,9 +679,8 @@ class URLScorer:
             if pattern.search(path):
                 score += weight
 
-        # Score based on keywords in URL
         url_text = (
-            f"{path} {parsed.query} {parsed.fragment}".replace("/", " ")
+            f"{path} {scoring_query} {parsed.fragment}".replace("/", " ")
             .replace("-", " ")
             .replace("_", " ")
         )
