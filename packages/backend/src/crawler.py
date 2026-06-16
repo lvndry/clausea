@@ -2013,7 +2013,7 @@ class ClauseaCrawler:
             return await self._extract_binary_content(raw, url)
 
         if "markdown" in ct:
-            return self._extract_markdown_content(raw, url)
+            return await asyncio.to_thread(self._extract_markdown_content, raw, url)
         if "text/html" in ct:
             # BeautifulSoup parsing + markdownify conversion are CPU-bound and can
             # block the event loop for hundreds of ms on large pages.  Offload to a
@@ -2057,7 +2057,7 @@ class ClauseaCrawler:
             status_code=raw.status_code,
         )
 
-    _MD_INLINE_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+    _MD_INLINE_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[\"'][^\"']*[\"'])?\s*\)")
     _MD_AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
 
     def _resolve_md_link(self, base_url: str, href: str) -> str | None:
@@ -2097,9 +2097,13 @@ class ClauseaCrawler:
                 discovered_links.append({"url": resolved, "text": ""})
 
         title = ""
+        in_fence = False
         for line in body.splitlines():
             stripped = line.strip()
-            if stripped.startswith("#"):
+            if stripped.startswith(("```", "~~~")):
+                in_fence = not in_fence
+                continue
+            if not in_fence and stripped.startswith("#"):
                 title = stripped.lstrip("#").strip()
                 break
         if not title:

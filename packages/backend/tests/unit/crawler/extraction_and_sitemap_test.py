@@ -586,3 +586,28 @@ async def test_extract_markdown_content_type_kept_and_links_followed():
     urls = {link["url"] for link in page.discovered_links}
     assert any("github-privacy-statement" in u for u in urls)  # relative link resolved
     assert any("github-corporate-terms-of-service" in u for u in urls)  # autolink captured
+
+
+@pytest.mark.asyncio
+async def test_markdown_title_skips_code_fence_and_single_quoted_link():
+    from src.crawler import StaticFetchResult
+
+    crawler = ClauseaCrawler(allowed_domains=["example.com"])
+    body = (
+        "```bash\n# this is a shell comment, not the title\n```\n\n"
+        "# Real Privacy Policy\n\n"
+        "We collect personal data and respect your rights. "
+        * 10
+        + "See [details](https://example.com/legal/data 'Data details').\n"
+    )
+    raw = StaticFetchResult(
+        url="https://example.com/legal/privacy",
+        status_code=200,
+        content_type="text/markdown",
+        body=body,
+    )
+    page = await crawler._extract_page_content(raw, "https://example.com/legal/privacy")
+    assert page is not None
+    assert page.title == "Real Privacy Policy"  # not the code-fence comment
+    urls = {link["url"] for link in page.discovered_links}
+    assert any(u.endswith("/legal/data") for u in urls)  # single-quoted title parsed
