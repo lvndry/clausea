@@ -186,6 +186,12 @@ class PipelineRepository(BaseRepository):
 
         Makes the worker self-healing: orphaned jobs (failed by mark_stale_as_failed) and
         transient failures retry. ``no_documents`` is terminal and deliberately not retried.
+
+        At most one active job per product (enforced by the uniq_active_job_per_product
+        partial index): products that already have an active job are skipped, and only one
+        failed job per remaining product is revived — reactivating a second would raise a
+        DuplicateKeyError. A missing "attempts" field doesn't match ``$lt`` in MongoDB, so
+        pre-existing jobs are matched via ``$exists`` and get attempts=1 on the next claim.
         """
         fresh_steps = [
             {
@@ -200,29 +206,43 @@ class PipelineRepository(BaseRepository):
             }
             for name in ("crawling", "summarizing", "generating_overview")
         ]
-        result = await db[self.COLLECTION].update_many(
-            # A missing "attempts" field does not match $lt in MongoDB, so pre-existing
-            # jobs (written before the field existed) are matched via $exists and get
-            # attempts=1 on the next claim's $inc.
-            {
-                "status": "failed",
-                "$or": [{"attempts": {"$lt": max_attempts}}, {"attempts": {"$exists": False}}],
-            },
-            {
-                "$set": {
-                    "status": "pending",
-                    "active": True,
-                    "steps": fresh_steps,
-                    "error": None,
-                    "error_detail": None,
-                    "started_at": None,
-                    "completed_at": None,
-                    "last_heartbeat": None,
-                    "updated_at": datetime.now(),
-                }
-            },
+        claimed_slugs: set[str] = set(
+            await db[self.COLLECTION].distinct("product_slug", {"active": True})
         )
-        count = result.modified_count
+        candidates: list[dict[str, Any]] = (
+            await db[self.COLLECTION]
+            .find(
+                {
+                    "status": "failed",
+                    "$or": [{"attempts": {"$lt": max_attempts}}, {"attempts": {"$exists": False}}],
+                }
+            )
+            .to_list(length=None)
+        )
+
+        count = 0
+        for job in candidates:
+            slug = job["product_slug"]
+            if slug in claimed_slugs:  # product already has (or just got) an active job
+                continue
+            claimed_slugs.add(slug)
+            await db[self.COLLECTION].update_one(
+                {"id": job["id"]},
+                {
+                    "$set": {
+                        "status": "pending",
+                        "active": True,
+                        "steps": fresh_steps,
+                        "error": None,
+                        "error_detail": None,
+                        "started_at": None,
+                        "completed_at": None,
+                        "last_heartbeat": None,
+                        "updated_at": datetime.now(),
+                    }
+                },
+            )
+            count += 1
         if count:
             logger.info(
                 "Re-queued %d failed job(s) for retry (max_attempts=%d)", count, max_attempts

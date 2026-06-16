@@ -32,14 +32,21 @@ _MAX_ATTEMPTS = max(1, int(os.getenv("PIPELINE_MAX_ATTEMPTS", "4")))
 
 async def _sweep_stale(repo: PipelineRepository) -> None:
     """Self-heal the queue (boot + periodic): reap crash-orphaned in-progress jobs, then
-    re-queue failed ones (orphans + transient failures) up to _MAX_ATTEMPTS."""
-    async with db_session() as db:
-        reaped = await repo.mark_stale_as_failed(db)
-        requeued = await repo.requeue_failed_jobs(db, _MAX_ATTEMPTS)
-    if reaped:
-        logger.info("Reaped %d stale job(s) as failed", reaped)
-    if requeued:
-        logger.info("Re-queued %d failed job(s) for retry", requeued)
+    re-queue failed ones (orphans + transient failures) up to _MAX_ATTEMPTS.
+
+    Best-effort: a sweep error must never stop the worker from claiming jobs (a single
+    failure here previously crashlooped the whole worker), so failures are logged, not raised.
+    """
+    try:
+        async with db_session() as db:
+            reaped = await repo.mark_stale_as_failed(db)
+            requeued = await repo.requeue_failed_jobs(db, _MAX_ATTEMPTS)
+        if reaped:
+            logger.info("Reaped %d stale job(s) as failed", reaped)
+        if requeued:
+            logger.info("Re-queued %d failed job(s) for retry", requeued)
+    except Exception as exc:  # noqa: BLE001 - the queue self-heal must not kill the worker
+        logger.error("Stale sweep failed (continuing): %s", exc, exc_info=True)
 
 
 async def _run_job(job_id: str) -> None:
