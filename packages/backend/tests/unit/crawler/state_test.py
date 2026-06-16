@@ -143,3 +143,79 @@ class TestCrawlerState:
         crawler = ClauseaCrawler(strategy="best_first")
         heapq.heappush(crawler.url_priority_queue, (-5.0, "https://example.com/a", 1, 5.0))
         assert crawler._get_pending_url_count() == 1
+
+
+class TestResumeSkipSet:
+    """A retried crawl skips re-fetching docs stored within the resume freshness
+    window (recently_stored_urls), while leaving every other crawl decision intact."""
+
+    def test_recently_stored_url_is_rejected(self) -> None:
+        crawler = ClauseaCrawler(recently_stored_urls=["https://anthropic.com/privacy"])
+        assert (
+            crawler.should_crawl_url("https://anthropic.com/privacy", "https://anthropic.com", 1)
+            is False
+        )
+
+    def test_skip_matches_after_normalization(self) -> None:
+        # Stored without trailing slash; crawled with one — normalize_url collapses both,
+        # so the membership test still matches. A mismatch here would silently disable
+        # the skip, so this guards normalization parity between stored and crawled URLs.
+        crawler = ClauseaCrawler(recently_stored_urls=["https://anthropic.com/legal"])
+        assert (
+            crawler.should_crawl_url("https://anthropic.com/legal/", "https://anthropic.com", 1)
+            is False
+        )
+
+    def test_skip_matches_when_crawled_url_carries_tracking_params(self) -> None:
+        # normalize_url strips trackers on both sides, so a tracked crawl URL still
+        # resolves to the stored canonical URL and is skipped.
+        crawler = ClauseaCrawler(recently_stored_urls=["https://anthropic.com/privacy"])
+        assert (
+            crawler.should_crawl_url(
+                "https://anthropic.com/privacy?utm_source=email",
+                "https://anthropic.com",
+                1,
+            )
+            is False
+        )
+
+    def test_non_stored_url_is_not_skipped(self) -> None:
+        crawler = ClauseaCrawler(recently_stored_urls=["https://anthropic.com/privacy"])
+        assert (
+            crawler.should_crawl_url("https://anthropic.com/terms", "https://anthropic.com", 1)
+            is True
+        )
+
+    def test_empty_set_causes_no_skips(self) -> None:
+        crawler = ClauseaCrawler(recently_stored_urls=[])
+        assert (
+            crawler.should_crawl_url("https://anthropic.com/privacy", "https://anthropic.com", 1)
+            is True
+        )
+
+    def test_none_causes_no_skips(self) -> None:
+        crawler = ClauseaCrawler(recently_stored_urls=None)
+        assert (
+            crawler.should_crawl_url("https://anthropic.com/privacy", "https://anthropic.com", 1)
+            is True
+        )
+
+    def test_skip_set_survives_per_seed_reset(self) -> None:
+        # crawl_multiple clears per-seed state (visited/queued/etc.) between base URLs,
+        # but the resume skip-set must span every seed in the batch — otherwise the 2nd
+        # seed would re-fetch docs already stored. Assert it still skips after a reset.
+        crawler = ClauseaCrawler(recently_stored_urls=["https://anthropic.com/privacy"])
+
+        # Simulate the per-seed reset block in crawl_multiple.
+        crawler.visited_urls.clear()
+        crawler.failed_urls.clear()
+        crawler.queued_urls.clear()
+        crawler._locale_seen_keys.clear()
+        crawler._sitemap_seeded = False
+        crawler.url_queue.clear()
+
+        assert crawler._recently_stored_urls == {"https://anthropic.com/privacy"}
+        assert (
+            crawler.should_crawl_url("https://anthropic.com/privacy", "https://anthropic.com", 1)
+            is False
+        )

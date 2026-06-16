@@ -231,6 +231,29 @@ class DocumentRepository(BaseRepository):
         documents: list[dict[str, Any]] = await db.documents.find(query).to_list(length=None)
         return [Document(**_normalize_document_record(document)) for document in documents]
 
+    async def find_recent_urls_by_product(
+        self, db: AgnosticDatabase, product_id: str, cutoff: datetime
+    ) -> list[str]:
+        """Return URLs of a product's documents written at or after ``cutoff``.
+
+        Backs crawl resume: a retried crawl skips re-fetching docs stored within the
+        freshness window. Matches on ``updated_at`` (stamped on every store/update) and
+        falls back to ``created_at`` so legacy rows written before ``updated_at`` existed
+        are still recognised. Projects only the URL so this stays a cheap, one-per-crawl
+        query rather than streaming full document bodies.
+        """
+        query: dict[str, Any] = {
+            "product_id": product_id,
+            "$or": [
+                {"updated_at": {"$gte": cutoff}},
+                {"created_at": {"$gte": cutoff}},
+            ],
+        }
+        rows: list[dict[str, Any]] = await db.documents.find(query, {"_id": 0, "url": 1}).to_list(
+            length=None
+        )
+        return [row["url"] for row in rows if row.get("url")]
+
     # ============================================================================
     # Document Persistence Operations
     # ============================================================================
