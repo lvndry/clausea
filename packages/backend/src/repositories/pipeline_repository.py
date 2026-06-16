@@ -181,17 +181,20 @@ class PipelineRepository(BaseRepository):
         )
         logger.debug(f"Partially updated pipeline job {job_id}: {list(fields.keys())}")
 
-    async def requeue_failed_jobs(self, db: AgnosticDatabase, max_attempts: int) -> int:
-        """Re-queue failed jobs for another attempt, bounded by max_attempts.
+    async def requeue_failed_jobs(self, db: AgnosticDatabase) -> int:
+        """Re-queue every failed job for another attempt — retries are unlimited.
 
         Makes the worker self-healing: orphaned jobs (failed by mark_stale_as_failed) and
         transient failures retry. ``no_documents`` is terminal and deliberately not retried.
+        There is no attempt ceiling: a job mostly accrues attempts from redeploys orphaning
+        long in-flight crawls, not from real defects, so capping it would permanently kill
+        legitimate work. The 5-minute stale-sweep cadence is the natural backoff between
+        retries, so a genuinely poison job retries slowly rather than tight-looping.
 
         At most one active job per product (enforced by the uniq_active_job_per_product
         partial index): products that already have an active job are skipped, and only one
         failed job per remaining product is revived — reactivating a second would raise a
-        DuplicateKeyError. A missing "attempts" field doesn't match ``$lt`` in MongoDB, so
-        pre-existing jobs are matched via ``$exists`` and get attempts=1 on the next claim.
+        DuplicateKeyError.
         """
         fresh_steps = [
             {
@@ -210,14 +213,7 @@ class PipelineRepository(BaseRepository):
             await db[self.COLLECTION].distinct("product_slug", {"active": True})
         )
         candidates: list[dict[str, Any]] = (
-            await db[self.COLLECTION]
-            .find(
-                {
-                    "status": "failed",
-                    "$or": [{"attempts": {"$lt": max_attempts}}, {"attempts": {"$exists": False}}],
-                }
-            )
-            .to_list(length=None)
+            await db[self.COLLECTION].find({"status": "failed"}).to_list(length=None)
         )
 
         count = 0
@@ -244,9 +240,7 @@ class PipelineRepository(BaseRepository):
             )
             count += 1
         if count:
-            logger.info(
-                "Re-queued %d failed job(s) for retry (max_attempts=%d)", count, max_attempts
-            )
+            logger.info("Re-queued %d failed job(s) for retry", count)
         return count
 
     async def mark_stale_as_failed(
