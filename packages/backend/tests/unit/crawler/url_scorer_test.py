@@ -228,7 +228,7 @@ class TestParentPageBoost:
         )
 
         assert len(crawler.url_priority_queue) == 1
-        neg_score, url, _depth = crawler.url_priority_queue[0]
+        neg_score, url, _depth, _base = crawler.url_priority_queue[0]
         actual_score = -neg_score
 
         # Score should exceed the base URL score thanks to the parent boost
@@ -258,7 +258,7 @@ class TestParentPageBoost:
             page_metadata={"title": "Legal Resources"},
         )
 
-        queued = {url for _neg, url, _depth in crawler.url_priority_queue}
+        queued = {url for _neg, url, _depth, _base in crawler.url_priority_queue}
         assert "https://example.com/template/holiday" not in queued
         assert "https://example.com/templates/legal-case/exp9" not in queued
         # The boost still works for non-excluded opaque policy URLs.

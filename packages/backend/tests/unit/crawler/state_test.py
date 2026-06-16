@@ -1,6 +1,61 @@
 """Unit tests for ClauseaCrawler depth and state management."""
 
-from src.crawler import ClauseaCrawler
+from src.crawler import CRAWL_EXHAUSTION_GRACE, ClauseaCrawler
+
+
+class TestRelevanceExhaustion:
+    """The best_first relevance-exhaustion stop: stop once every own-score policy lead is
+    crawled and a grace window of boost-only crawls surfaced nothing new."""
+
+    def test_boost_only_link_is_not_a_real_lead(self) -> None:
+        crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
+        # Boosted score clears the gate, but the URL's own score does not.
+        crawler._enqueue_best_first("https://x.com/random", 1, 3.0, 0.0)
+        assert crawler._frontier_real_leads == 0
+
+    def test_own_score_link_is_a_real_lead_and_pop_decrements(self) -> None:
+        crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
+        crawler._enqueue_best_first("https://x.com/privacy", 1, 8.0, 8.0)
+        assert crawler._frontier_real_leads == 1
+        crawler.get_next_url()  # popping the lead decrements the counter
+        assert crawler._frontier_real_leads == 0
+
+    def test_new_real_lead_resets_grace_window(self) -> None:
+        crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
+        crawler._crawls_since_new_lead = 5
+        crawler._enqueue_best_first("https://x.com/legal", 1, 4.0, 4.0)
+        assert crawler._crawls_since_new_lead == 0
+
+    def test_does_not_stop_while_a_real_lead_is_queued(self) -> None:
+        # The /privacy -> /random -> /legal case: /legal is a real lead, so we never give up
+        # while it is queued, regardless of intervening boost-only pages.
+        crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
+        crawler._policy_pages_found = 1
+        crawler._enqueue_best_first("https://x.com/legal", 1, 4.0, 4.0)
+        crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE + 5
+        assert crawler._relevance_exhausted() is False
+
+    def test_stops_only_after_grace_once_leads_exhausted(self) -> None:
+        crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
+        crawler._policy_pages_found = 1
+        crawler._frontier_real_leads = 0
+        crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE - 1
+        assert crawler._relevance_exhausted() is False  # grace not yet elapsed
+        crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE
+        assert crawler._relevance_exhausted() is True
+
+    def test_never_stops_before_any_policy_found(self) -> None:
+        crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
+        crawler._frontier_real_leads = 0
+        crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE * 2
+        assert crawler._relevance_exhausted() is False  # no policy page found yet
+
+    def test_does_not_apply_to_bfs(self) -> None:
+        crawler = ClauseaCrawler(strategy="bfs", min_legal_score=2.5)
+        crawler._policy_pages_found = 5
+        crawler._frontier_real_leads = 0
+        crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE * 2
+        assert crawler._relevance_exhausted() is False
 
 
 class TestCrawlerState:
@@ -86,5 +141,5 @@ class TestCrawlerState:
         import heapq
 
         crawler = ClauseaCrawler(strategy="best_first")
-        heapq.heappush(crawler.url_priority_queue, (-5.0, "https://example.com/a", 1))
+        heapq.heappush(crawler.url_priority_queue, (-5.0, "https://example.com/a", 1, 5.0))
         assert crawler._get_pending_url_count() == 1
