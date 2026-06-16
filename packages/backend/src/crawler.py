@@ -12,7 +12,7 @@ import random
 import re
 import time
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -1417,6 +1417,10 @@ class ClauseaCrawler:
         use_tika_for_binaries: bool = False,
         use_pdfminer_for_pdf: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,  # Optional progress callback
+        # Optional per-result hook fired for every processed CrawlResult (success and
+        # failure). Lets callers stream each page to classification/storage as it is
+        # produced instead of batching at the end of a multi-hour crawl.
+        result_callback: Callable[[CrawlResult], Awaitable[None]] | None = None,
     ):
         """
         Initialize the ClauseaCrawler.
@@ -1472,6 +1476,7 @@ class ClauseaCrawler:
 
         # Progress callback for external monitoring
         self.progress_callback = progress_callback
+        self.result_callback = result_callback
         # Number of processed URLs at the last progress report (for cadence).
         self._last_progress_report = 0
 
@@ -3725,6 +3730,16 @@ class ClauseaCrawler:
         )
         self.progress_callback(self.stats.crawled_urls, total_known)
 
+    async def _emit_result(self, result: CrawlResult) -> None:
+        """Forward a processed result to the streaming callback, if one is set.
+
+        Fired for every result (success and failure) so the callback can both store
+        documents (on success) and bump a job heartbeat (always). A None callback is
+        a no-op, preserving the original batch-at-end behavior.
+        """
+        if self.result_callback is not None:
+            await self.result_callback(result)
+
     async def _drain_render_retries(self, session: aiohttp.ClientSession) -> None:
         """Serially re-attempt renders that failed during the concurrent crawl.
 
@@ -3750,6 +3765,8 @@ class ClauseaCrawler:
                     self.failed_urls.discard(url)
                     self.results.append(result)
                     logger.info(f"✅ Recovered on serial retry: {url}")
+                    # Stream recovered pages so they are stored like any other result.
+                    await self._emit_result(result)
                 else:
                     logger.warning(f"❌ Still failed after serial retry: {url}")
         finally:
@@ -3942,6 +3959,11 @@ class ClauseaCrawler:
                             # a count to avoid recording large volumes of probe 404s.
                             if result.blocked_by_robots_txt:
                                 self.results.append(result)
+
+                        # Stream every processed result (success and failure) so the
+                        # pipeline can classify+store as pages arrive and keep the job
+                        # heartbeat fresh during long crawls.
+                        await self._emit_result(result)
 
                     # Progress update — emitted on a threshold crossing so it
                     # survives batched jumps in total_urls (see helper docstring).
