@@ -299,6 +299,16 @@ class PipelineService:
                 if message is not None:
                     step.message = message
                     update_data[f"steps.{i}.message"] = message
+
+                # Steady crawl progress must keep the job alive. The in-process stall
+                # guard checks updated_at (bumped by update_fields) and the cross-process
+                # stale-job sweeper prefers last_heartbeat; set the latter here so both
+                # see forward progress even when the monotonic clamp leaves no other
+                # field changed. The crawler reports every PROGRESS_REPORT_INTERVAL pages,
+                # which stays well inside the stall window even at slow speeds.
+                now = datetime.now()
+                job.last_heartbeat = now
+                update_data["last_heartbeat"] = now
                 break
 
         if not update_data:

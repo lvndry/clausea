@@ -814,6 +814,7 @@ class PolicyDocumentPipeline:
         min_legal_score: float | None = None,
         strategy: str | None = None,
         progress_phase: str | None = None,
+        result_callback: Callable[[CrawlResult], Awaitable[None]] | None = None,
     ) -> ClauseaCrawler:
         """Create a configured crawler instance for a specific product."""
         from datetime import datetime
@@ -860,6 +861,7 @@ class PolicyDocumentPipeline:
             allowed_paths=product.crawl_allowed_paths,
             denied_paths=product.crawl_denied_paths,
             progress_callback=progress_callback,
+            result_callback=result_callback,
         )
 
     async def _store_documents(self, documents: list[Document]) -> int:
@@ -1354,9 +1356,25 @@ class PolicyDocumentPipeline:
             processed_urls: set[str] = set()
             seen_fingerprints: set[str] = set()
             total_results = 0
+            processed_documents: list[Document] = []
+
+            # Stream each crawled result through classification + storage as it is
+            # produced, so a crawl killed at the time ceiling or by a stall keeps the
+            # work done so far instead of losing everything in an end-of-crawl batch.
+            # The shared *processed_urls* / *seen_fingerprints* sets dedupe across the
+            # per-result calls exactly as the old batch call did. _store_documents is
+            # idempotent (dedupes by URL/fingerprint), so re-arrivals are safe.
+            async def result_callback(result: CrawlResult) -> None:
+                docs = await self._classify_results(
+                    [result], product, processed_urls, seen_fingerprints
+                )
+                if docs:
+                    stored = await self._store_documents(docs)
+                    self.stats.policy_documents_stored += stored
+                    processed_documents.extend(docs)
 
             # ----------------------------------------------------------
-            # Stage 1: Crawl (pure fetching, no classification)
+            # Stage 1: Crawl (streams classify + store per page)
             # ----------------------------------------------------------
 
             # Discovery pass (precision-first)
@@ -1370,6 +1388,7 @@ class PolicyDocumentPipeline:
                 min_legal_score=self.discovery_min_legal_score,
                 strategy=self.discovery_strategy,
                 progress_phase="discovery",
+                result_callback=result_callback,
             )
             discovery_results = await self._crawl_base_urls(discovery_crawler, crawl_urls)
             logger_discovery.info(
@@ -1377,15 +1396,8 @@ class PolicyDocumentPipeline:
             )
             total_results += len(discovery_results)
 
-            # ----------------------------------------------------------
-            # Stage 2: Classify + Score
-            # ----------------------------------------------------------
-
-            processed_documents = await self._classify_results(
-                discovery_results, product, processed_urls, seen_fingerprints
-            )
-
-            # Fallback deep crawl (recall-first) if coverage is low
+            # Fallback deep crawl (recall-first) if coverage is low. The decision runs
+            # on the documents already streamed+stored during the discovery pass.
             if self._should_fallback_crawl(processed_documents):
                 logger_discovery.info(
                     f"discovery coverage insufficient for '{product.name}'; starting fallback deep crawl (max_depth={self.max_depth}, max_pages={self.max_pages})"
@@ -1397,6 +1409,7 @@ class PolicyDocumentPipeline:
                     min_legal_score=self.fallback_min_legal_score,
                     strategy=self.fallback_strategy,
                     progress_phase="fallback",
+                    result_callback=result_callback,
                 )
                 fallback_results = await self._crawl_base_urls(fallback_crawler, crawl_urls)
                 logger_discovery.info(
@@ -1404,23 +1417,14 @@ class PolicyDocumentPipeline:
                 )
                 total_results += len(fallback_results)
 
-                fallback_docs = await self._classify_results(
-                    fallback_results, product, processed_urls, seen_fingerprints
-                )
-                processed_documents.extend(fallback_docs)
-
             self.stats.total_urls_crawled += total_results
             self.stats.total_documents_found += total_results
 
             logger.info(f"📄 Found {total_results} pages for {product.name}")
 
-            # Store processed documents
             if processed_documents:
-                stored_count = await self._store_documents(processed_documents)
-                self.stats.policy_documents_stored += stored_count
                 logger.info(
-                    f"💾 Stored {stored_count}/{len(processed_documents)} "
-                    f"policy documents for {product.name}"
+                    f"💾 Stored {len(processed_documents)} policy documents for {product.name}"
                 )
             else:
                 logger.info(f"No policy documents found for {product.name}")
