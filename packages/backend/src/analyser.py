@@ -104,6 +104,10 @@ def _analysis_validator(content: str) -> bool:
 
 ProgressCallback = Callable[[int, int, Document], Awaitable[None] | None]
 
+# A no-argument liveness ping fired at sub-step boundaries during long synthesis so the
+# pipeline can bump the job heartbeat. Carries no payload — its only job is "still alive".
+HeartbeatCallback = Callable[[], Awaitable[None] | None]
+
 
 async def _maybe_await(result: Awaitable[None] | None) -> None:
     if asyncio.iscoroutine(result):
@@ -1311,6 +1315,7 @@ async def generate_product_overview(
     product_svc: ProductService | None = None,
     document_svc: DocumentService | None = None,
     cancellation_token: CancellationToken | None = None,
+    on_progress: HeartbeatCallback | None = None,
 ) -> MetaSummary:
     """
     Generate a cached product overview from analyzed core policy documents.
@@ -1330,6 +1335,9 @@ async def generate_product_overview(
         product_svc: Optional ProductService instance (for dependency injection)
         document_svc: Optional DocumentService instance (for dependency injection)
         cancellation_token: Optional cancellation token for interrupting the operation
+        on_progress: Optional liveness ping fired before each long sub-step (aggregation
+            rebuild, LLM synthesis) so a caller can keep the job heartbeat fresh. A None
+            callback is a no-op, leaving behaviour outside the pipeline unchanged.
 
     Returns:
         MetaSummary: The generated overview payload
@@ -1370,6 +1378,8 @@ async def generate_product_overview(
     logger.info(f"Generating new product overview for {product_slug}")
 
     await token.check_cancellation()
+    if on_progress is not None:
+        await _maybe_await(on_progress())
     aggregation_service = AggregationService(
         DocumentRepository(), FindingRepository(), AggregationRepository()
     )
@@ -1509,6 +1519,8 @@ Per-document analyses and extractions:
 
     # Check for cancellation before making LLM call
     await token.check_cancellation()
+    if on_progress is not None:
+        await _maybe_await(on_progress())
 
     try:
         async with usage_tracking(tracker_callback):

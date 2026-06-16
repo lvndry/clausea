@@ -392,3 +392,91 @@ async def test_run_pipeline_opt_in_cap_marks_timed_out(mock_db, monkeypatch):
 
     assert job.error == PipelineErrorCode.timed_out
     assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_overview_stage_heartbeats_during_synthesis(mock_db):
+    """The overview stage bumps the job heartbeat at each synthesis sub-step.
+
+    Overview synthesis (aggregation rebuild + LLM calls + explainer + compliance) does no DB
+    write of its own and can outlast the stall window on a large core-doc set. The stage must
+    thread a heartbeat callback into generate_product_overview so updated_at/last_heartbeat are
+    refreshed before a healthy-but-slow synthesis trips the no-progress stall guard.
+    """
+    job = PipelineJob(
+        id="job-overview",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="pending",
+    )
+
+    repo = MagicMock(spec=PipelineRepository)
+    repo.find_by_id = AsyncMock(return_value=job)
+    repo.update = AsyncMock()
+    repo.update_fields = AsyncMock()
+    service = PipelineService(pipeline_repo=repo)
+
+    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product_svc = MagicMock()
+    product_svc.get_product_by_slug = AsyncMock(return_value=product)
+    product_svc.get_product_overview_data = AsyncMock(return_value={"overview": {"summary": "ok"}})
+    product_svc.save_product_explainer = AsyncMock(return_value=True)
+    product_svc.save_product_compliance = AsyncMock(return_value=True)
+
+    crawl_stats = SimpleNamespace(
+        total_documents_found=1,
+        policy_documents_stored=1,
+        crawl_errors=[],
+        crawl_skip_reasons=[],
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.run = AsyncMock(return_value=crawl_stats)
+
+    analysed_docs = [SimpleNamespace(analysis=object(), doc_type="privacy_policy")]
+    analyse_mock = AsyncMock(return_value=analysed_docs)
+
+    # Stand in for the real generator: fire the threaded heartbeat callback the same number of
+    # times the real one does (once per long sub-step) so the assertion exercises the wiring.
+    async def fake_generate_overview(*_args, on_progress=None, **_kwargs):
+        assert on_progress is not None, "overview stage must thread a heartbeat callback"
+        await on_progress()
+        await on_progress()
+
+    overview_mock = AsyncMock(side_effect=fake_generate_overview)
+
+    @asynccontextmanager
+    async def fake_db_session():
+        yield mock_db
+
+    with (
+        patch("src.services.pipeline_service.db_session", fake_db_session),
+        patch("src.services.pipeline_service.create_product_service", return_value=product_svc),
+        patch("src.services.pipeline_service.create_document_service", return_value=MagicMock()),
+        patch("src.services.pipeline_service.PolicyDocumentPipeline", return_value=fake_pipeline),
+        patch("src.services.pipeline_service.analyse_product_documents", analyse_mock),
+        patch("src.services.pipeline_service.generate_product_overview", overview_mock),
+        patch(
+            "src.services.pipeline_service.generate_product_consumer_explainer",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.services.pipeline_service.generate_product_compliance",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        await service.run_pipeline("job-overview")
+
+    assert job.status == "completed"
+
+    # The generating_overview step is index 2 in the default step list. Find every progress
+    # write the stage emitted for it and confirm each carried the liveness heartbeat — both the
+    # in-synthesis pings and the pre-explainer / pre-compliance pings.
+    overview_heartbeats = [
+        call.args[2]
+        for call in repo.update_fields.await_args_list
+        if "steps.2.message" in call.args[2] and "last_heartbeat" in call.args[2]
+    ]
+    # 2 in-synthesis pings + 1 before explainer + 1 before compliance.
+    assert len(overview_heartbeats) >= 4
+    assert all(fields["last_heartbeat"] is not None for fields in overview_heartbeats)
