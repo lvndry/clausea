@@ -7,6 +7,8 @@ accepts database instances as parameters.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
@@ -130,6 +132,19 @@ class DocumentService:
         documents: list[Document] = await self._document_repo.find_with_analysis(db, product_id)
         return documents
 
+    async def get_recent_document_urls(
+        self, db: AgnosticDatabase, product_id: str, cutoff: datetime
+    ) -> list[str]:
+        """Return URLs of a product's documents written at or after ``cutoff``.
+
+        Used by the pipeline to tell the crawler which freshly stored docs to skip
+        re-fetching when resuming a retried crawl.
+        """
+        urls: list[str] = await self._document_repo.find_recent_urls_by_product(
+            db, product_id, cutoff
+        )
+        return urls
+
     # ============================================================================
     # Document Persistence Operations (with cache invalidation)
     # ============================================================================
@@ -151,6 +166,9 @@ class DocumentService:
         """
         try:
             self._assign_tier_relevance(document)
+            # Stamp the write time so a retried crawl can recognise freshly stored
+            # docs and skip re-fetching them (see Document.updated_at).
+            document.updated_at = datetime.now()
             result = await self._document_repo.save(db, document)
 
             # Business logic: Invalidate product overview cache for this product
@@ -200,6 +218,7 @@ class DocumentService:
         """
         try:
             self._assign_tier_relevance(document)
+            document.updated_at = datetime.now()
             success = await self._document_repo.update(db, document)
 
             if success and invalidate_product_overview:

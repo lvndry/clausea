@@ -1468,6 +1468,10 @@ class Document(BaseModel):
     regions: list[Region] = Field(default_factory=list)
     effective_date: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.now)
+    # Last time this document row was written (stored or updated). Drives crawl
+    # resume: a retried crawl skips re-fetching docs written within the resume
+    # freshness window, while older docs are still re-fetched for change detection.
+    updated_at: datetime = Field(default_factory=datetime.now)
     tier_relevance: TierRelevance = "extended"
 
 

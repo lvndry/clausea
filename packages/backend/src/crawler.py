@@ -1427,6 +1427,10 @@ class ClauseaCrawler:
         # failure). Lets callers stream each page to classification/storage as it is
         # produced instead of batching at the end of a multi-hour crawl.
         result_callback: Callable[[CrawlResult], Awaitable[None]] | None = None,
+        # URLs of docs stored within the resume freshness window. Skipped during
+        # should_crawl_url so a retried long crawl resumes (keeps already-stored
+        # pages) instead of re-fetching and re-rendering them from scratch.
+        recently_stored_urls: list[str] | set[str] | None = None,
     ):
         """
         Initialize the ClauseaCrawler.
@@ -1511,6 +1515,13 @@ class ClauseaCrawler:
         self.visited_urls: set[str] = set()
         self.failed_urls: set[str] = set()
         self.queued_urls: set[str] = set()  # Prevents duplicate queue entries
+        # Docs stored within the resume freshness window; skip re-fetching them so a
+        # retried long crawl resumes instead of re-rendering. Normalized with the same
+        # normalize_url used on crawled URLs so the membership test in should_crawl_url
+        # matches. Persists across all seeds in crawl_multiple (never reset per-seed).
+        self._recently_stored_urls: set[str] = {
+            self.normalize_url(url) for url in (recently_stored_urls or [])
+        }
         # Maps a language-stripped "canonical key" to the variant we kept, so pure
         # translation duplicates of an already-seen document are skipped while
         # region-qualified locales (jurisdiction-distinct) are always preserved.
@@ -2803,6 +2814,10 @@ class ClauseaCrawler:
             logger.debug(f"❌ URL {url} rejected: already visited, failed, or queued")
             return False
 
+        if self.normalize_url(url) in self._recently_stored_urls:
+            logger.debug(f"❌ URL {url} skipped: already stored recently (resume)")
+            return False
+
         # Parse URL once and reuse for multiple checks
         parsed_url = self._parse_url(url)
 
@@ -4057,6 +4072,8 @@ class ClauseaCrawler:
                 self._policy_pages_found = 0
                 self._crawls_since_new_lead = 0
                 self.results.clear()
+                # NB: _recently_stored_urls is intentionally NOT reset here — the resume
+                # skip-set spans every seed in the batch, not just the first.
                 # Clear caches between different base URLs
                 if self.robots_checker:
                     self.robots_checker.clear_cache()

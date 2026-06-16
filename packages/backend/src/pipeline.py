@@ -46,11 +46,12 @@ Usage:
 import asyncio
 import hashlib
 import json
+import os
 import re
 import time
 import tracemalloc
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -85,6 +86,13 @@ logger_storage = get_logger(__name__, component="pipeline:storage")
 
 # Minimum normalized legal_score (0.0–1.0) to accept a crawled page into analysis.
 MIN_LEGAL_SCORE_THRESHOLD = 0.2
+
+# Resume freshness window (hours). A retried crawl skips re-fetching docs stored
+# within this window so it resumes instead of re-rendering hours of work. Stored
+# older than this -> still re-fetched, so scheduled monitoring re-crawls days later
+# continue to detect policy changes. Recency is the signal that tells a retry
+# (minutes/hours later) apart from a monitoring run (days later).
+RESUME_FRESH_HOURS = float(os.getenv("PIPELINE_RESUME_FRESH_HOURS", "24"))
 
 
 def _content_fingerprint(text: str) -> str:
@@ -805,6 +813,27 @@ class PolicyDocumentPipeline:
             self.fallback_strategy,
         )
 
+    async def _get_recently_stored_urls(self, product: Product) -> list[str]:
+        """URLs of this product's docs stored within the resume freshness window.
+
+        Drives crawl resume: passed to the crawler so a retried long crawl skips
+        re-fetching pages it already stored minutes/hours ago. Docs older than
+        ``RESUME_FRESH_HOURS`` are excluded, so a scheduled monitoring re-crawl days
+        later still re-fetches them and detects policy changes. One query per crawl.
+        Failures are non-fatal — the crawl simply runs without the skip-set.
+        """
+        cutoff = datetime.now() - timedelta(hours=RESUME_FRESH_HOURS)
+        try:
+            async with db_session() as db:
+                document_service = create_document_service()
+                return await document_service.get_recent_document_urls(db, product.id, cutoff)
+        except Exception as error:
+            logger.warning(
+                f"Could not load recently stored URLs for {product.name} "
+                f"(resume skip disabled this run): {error}"
+            )
+            return []
+
     def _create_crawler_for_product(
         self,
         product: Product,
@@ -815,6 +844,7 @@ class PolicyDocumentPipeline:
         strategy: str | None = None,
         progress_phase: str | None = None,
         result_callback: Callable[[CrawlResult], Awaitable[None]] | None = None,
+        recently_stored_urls: list[str] | None = None,
     ) -> ClauseaCrawler:
         """Create a configured crawler instance for a specific product."""
         from datetime import datetime
@@ -862,6 +892,7 @@ class PolicyDocumentPipeline:
             denied_paths=product.crawl_denied_paths,
             progress_callback=progress_callback,
             result_callback=result_callback,
+            recently_stored_urls=recently_stored_urls,
         )
 
     async def _store_documents(self, documents: list[Document]) -> int:
@@ -1373,6 +1404,18 @@ class PolicyDocumentPipeline:
                     self.stats.policy_documents_stored += stored
                     processed_documents.extend(docs)
 
+            # Docs stored within the resume freshness window. A retried crawl skips
+            # re-fetching these so it resumes instead of re-rendering hours of work;
+            # docs older than the window are still re-fetched so scheduled monitoring
+            # re-crawls days later keep detecting policy changes. One query per crawl.
+            recently_stored_urls = await self._get_recently_stored_urls(product)
+            if recently_stored_urls:
+                logger.info(
+                    f"♻️ Resume: skipping re-fetch of {len(recently_stored_urls)} "
+                    f"recently stored docs for {product.name} "
+                    f"(within {RESUME_FRESH_HOURS}h window)"
+                )
+
             # ----------------------------------------------------------
             # Stage 1: Crawl (streams classify + store per page)
             # ----------------------------------------------------------
@@ -1389,6 +1432,7 @@ class PolicyDocumentPipeline:
                 strategy=self.discovery_strategy,
                 progress_phase="discovery",
                 result_callback=result_callback,
+                recently_stored_urls=recently_stored_urls,
             )
             discovery_results = await self._crawl_base_urls(discovery_crawler, crawl_urls)
             logger_discovery.info(
@@ -1410,6 +1454,7 @@ class PolicyDocumentPipeline:
                     strategy=self.fallback_strategy,
                     progress_phase="fallback",
                     result_callback=result_callback,
+                    recently_stored_urls=recently_stored_urls,
                 )
                 fallback_results = await self._crawl_base_urls(fallback_crawler, crawl_urls)
                 logger_discovery.info(
