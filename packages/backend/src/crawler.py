@@ -194,6 +194,12 @@ DEFAULT_NO_POLICY_PAGE_BUDGET = int(os.getenv("CRAWLER_NO_POLICY_PAGE_BUDGET", "
 # pipeline's MIN_LEGAL_SCORE_THRESHOLD for accepting a page into analysis.
 CONVERGENCE_LEGAL_SCORE = 0.2
 
+# Grace window for best_first relevance-exhaustion: once no own-score policy lead remains in
+# the frontier, keep crawling boost-only links for this many pages before giving up, so a
+# policy reachable only via a non-policy page is still discovered. Any newly-found real lead
+# resets the window. Small because real policies sit ≤1-2 hops from the homepage/footer.
+CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
+
 # Minimum extracted body text length to treat static fetch as sufficient (low URL score) and
 # to skip SPA hydration waits in the browser fetch path.
 MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
@@ -1498,7 +1504,20 @@ class ClauseaCrawler:
         self._locale_seen_keys: set[str] = set()
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
         self.url_stack: list[tuple[str, int]] = []  # For DFS
-        self.url_priority_queue: list[tuple[float, str, int]] = []  # For best-first (scored URLs)
+        # best-first frontier: (-score, url, depth, base_score). `score` orders the queue and
+        # may include a policy-hub parent boost; `base_score` is the URL's own relevance.
+        self.url_priority_queue: list[tuple[float, str, int, float]] = []
+        # Queued-but-not-yet-crawled best_first URLs whose OWN score clears the gate. When this
+        # reaches zero, every genuinely policy-relevant lead has been crawled and only boost-only
+        # links remain — the signal to stop discovery rather than grind through boosted noise.
+        self._frontier_real_leads: int = 0
+        # Crawled pages with policy-grade content; gates the relevance-exhaustion stop.
+        self._policy_pages_found: int = 0
+        # Crawled pages since the frontier last gained a real lead. Once no real lead remains,
+        # we keep crawling boost-only links for a grace window (CRAWL_EXHAUSTION_GRACE) so a
+        # policy reachable only via a non-policy page is still discovered; any new real lead
+        # resets this. Guards against stopping the instant real leads hit zero.
+        self._crawls_since_new_lead: int = 0
         self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
         # Best policy-relevance score assigned to each queued URL (anchor-aware).
         # Consulted by the browser-fetch gate so opaque policy URLs discovered via
@@ -3515,6 +3534,35 @@ class ClauseaCrawler:
         if prev is None or score > prev:
             self._url_scores[key] = score
 
+    def _enqueue_best_first(self, url: str, depth: int, score: float, base_score: float) -> None:
+        """Push a URL onto the best-first frontier, counting real (un-boosted) leads.
+
+        `score` orders the queue (may include a policy-hub parent boost); `base_score` is the
+        URL's own relevance and is the only thing that counts toward _frontier_real_leads, so a
+        link that only clears the gate via a parent boost never keeps the crawl alive.
+        """
+        heapq.heappush(self.url_priority_queue, (-score, url, depth, base_score))
+        if base_score >= self.min_legal_score:
+            self._frontier_real_leads += 1
+            # A fresh real lead resets the grace window so discovery follows it.
+            self._crawls_since_new_lead = 0
+
+    def _relevance_exhausted(self) -> bool:
+        """True for best_first once the own-score policy frontier is exhausted past the grace window.
+
+        Stops when we have captured policy content, no URL whose own score clears the gate
+        remains queued, AND a grace window of boost-only crawls has passed without surfacing a
+        new real lead — so a policy reachable only via a non-policy page is still found, but we
+        don't grind through boosted noise (the dominant timeout cause on large sites). BFS has
+        no per-URL priority, so this never applies there.
+        """
+        return (
+            self.strategy == "best_first"
+            and self._policy_pages_found >= 1
+            and self._frontier_real_leads <= 0
+            and self._crawls_since_new_lead >= CRAWL_EXHAUSTION_GRACE
+        )
+
     def add_urls_to_queue(
         self,
         links: list[dict[str, str]],
@@ -3595,7 +3643,7 @@ class ClauseaCrawler:
                     )
                     self.queued_urls.discard(url)
                     continue
-                heapq.heappush(self.url_priority_queue, (-score, url, depth + 1))
+                self._enqueue_best_first(url, depth + 1, score, base_score)
                 logger.debug(
                     f"Added to Best-First queue: {url} (score: {score:.2f}, anchor: {anchor_text})"
                 )
@@ -3640,7 +3688,7 @@ class ClauseaCrawler:
                     self.url_stack.append((url, 1))
                     logger.debug(f"Added potential legal URL to DFS stack: {url}")
                 elif self.strategy == "best_first":
-                    heapq.heappush(self.url_priority_queue, (-score, url, 1))
+                    self._enqueue_best_first(url, 1, score, score)
                     logger.debug(
                         f"Added potential legal URL to Best-First queue: {url} (score: {score:.2f})"
                     )
@@ -3652,7 +3700,9 @@ class ClauseaCrawler:
         elif self.strategy == "dfs" and self.url_stack:
             return self.url_stack.pop()
         elif self.strategy == "best_first" and self.url_priority_queue:
-            _, url, depth = heapq.heappop(self.url_priority_queue)
+            _, url, depth, base_score = heapq.heappop(self.url_priority_queue)
+            if base_score >= self.min_legal_score:
+                self._frontier_real_leads -= 1
             return url, depth
         return None
 
@@ -3763,6 +3813,9 @@ class ClauseaCrawler:
             # Initialize
             base_url = self.normalize_url(base_url)
             self.stats = CrawlStats()
+            self._frontier_real_leads = 0
+            self._policy_pages_found = 0
+            self._crawls_since_new_lead = 0
 
             # Add base URL to queue. Base URLs are explicit seeds (crawl_base_urls) and
             # are always crawled regardless of score; record a generous score so the
@@ -3779,7 +3832,7 @@ class ClauseaCrawler:
                 logger.debug(f"Added base URL to DFS stack: {base_url} (depth: 0)")
             elif self.strategy == "best_first":
                 score = self.url_scorer.score_url(base_url)
-                heapq.heappush(self.url_priority_queue, (-score, base_url, 0))
+                self._enqueue_best_first(base_url, 0, score, score)
                 logger.debug(f"Added base URL to Best-First queue: {base_url} (score: {score:.2f})")
 
             # Create session with connection pooling
@@ -3814,7 +3867,7 @@ class ClauseaCrawler:
                         elif self.strategy == "dfs":
                             self.url_stack.append((url, 0))
                         elif self.strategy == "best_first":
-                            heapq.heappush(self.url_priority_queue, (-score, url, 0))
+                            self._enqueue_best_first(url, 0, score, score)
                         seeded += 1
                     if seeded:
                         self._sitemap_seeded = True
@@ -3860,6 +3913,9 @@ class ClauseaCrawler:
                     # Process results
                     for result, (url, depth) in zip(batch_results, batch, strict=True):
                         self.stats.total_urls += 1
+                        # Counts toward the relevance-exhaustion grace window; add_urls_to_queue
+                        # resets it to 0 if this page surfaces a new own-score policy lead.
+                        self._crawls_since_new_lead += 1
 
                         if result.success:
                             self.stats.crawled_urls += 1
@@ -3871,6 +3927,7 @@ class ClauseaCrawler:
                             ):
                                 found_policy = True
                                 pages_since_policy_hit = 0
+                                self._policy_pages_found += 1
                             else:
                                 pages_since_policy_hit += 1
 
@@ -3906,6 +3963,15 @@ class ClauseaCrawler:
                             f"🧭 Crawl converged: {pages_since_policy_hit} consecutive pages "
                             f"with no policy content (budget {self.no_policy_page_budget}); "
                             f"stopping discovery at {len(self.visited_urls)} pages."
+                        )
+                        break
+
+                    if self._relevance_exhausted():
+                        logger.info(
+                            f"🧭 Crawl relevance-exhausted: {self._policy_pages_found} policy "
+                            f"page(s) found and no own-score lead left after a "
+                            f"{CRAWL_EXHAUSTION_GRACE}-page grace; stopping discovery at "
+                            f"{len(self.visited_urls)} pages (only boost-only links remained)."
                         )
                         break
 
@@ -3965,6 +4031,9 @@ class ClauseaCrawler:
                 self.url_queue.clear()
                 self.url_stack.clear()
                 self.url_priority_queue.clear()
+                self._frontier_real_leads = 0
+                self._policy_pages_found = 0
+                self._crawls_since_new_lead = 0
                 self.results.clear()
                 # Clear caches between different base URLs
                 if self.robots_checker:
