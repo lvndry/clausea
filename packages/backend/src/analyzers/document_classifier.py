@@ -418,8 +418,6 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                     "user agreement",
                     "service agreement",
                     "terms & conditions",
-                    "tos",
-                    "terms",
                     "conditions of use",
                     "nutzungsbedingungen",  # German
                     "conditions d'utilisation",  # French
