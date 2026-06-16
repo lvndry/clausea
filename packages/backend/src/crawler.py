@@ -252,6 +252,10 @@ BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
 # Resource types aborted during render — bytes we don't need, and the main renderer-memory driver.
 _BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
 
+# Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
+# copies of prod pages — crawling them just duplicates documents. Matched on the subdomain only.
+_MIRROR_SUBDOMAIN_RE = re.compile(r"(?:^|[.-])(?:internal|staging|preview)(?:$|[.-])")
+
 # Hard cap on a Camoufox launch. The launch (__aenter__ spawns Firefox) has no internal
 # timeout, so a stuck launch — common when two instances start at once in a constrained
 # worker — would hang until the 2h pipeline cap. Time it out so the render fails fast.
@@ -2274,10 +2278,13 @@ class ClauseaCrawler:
         try:
             # Abort images/media/fonts (we only need DOM text); keep CSS/JS for SPA hydration.
             async def _abort_heavy(route: Route) -> None:
-                if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
-                    await route.abort()
-                else:
-                    await route.continue_()
+                try:
+                    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+                        await route.abort()
+                    else:
+                        await route.continue_()
+                except Exception:
+                    pass  # route/page already closed mid-flight
 
             await page.route("**/*", _abort_heavy)
 
@@ -2934,6 +2941,11 @@ class ClauseaCrawler:
         # Enforce HTTPS
         if parsed_url.scheme != "https":
             logger.debug(f"❌ URL {url} rejected: non-HTTPS scheme '{parsed_url.scheme}'")
+            return False
+
+        subdomain = _TLD_EXTRACT(url).subdomain.lower()
+        if subdomain and _MIRROR_SUBDOMAIN_RE.search(subdomain):
+            logger.debug(f"❌ URL {url} rejected: non-production mirror subdomain '{subdomain}'")
             return False
 
         url_domain = self._normalize_domain(parsed_url.netloc)
