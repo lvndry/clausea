@@ -214,6 +214,7 @@ Explicitly surface, when the inputs support it: children's or teens' data, sale 
 - When documents conflict, report the conflict in `contradictions` and use the more conservative interpretation for factual claims — not for tone (stay measured, not alarmist).
 - If a field cannot be filled from the evidence, use "Not specified in documents" — never invent.
 - Be honest: if the company collects a lot of data, do not soften it; but do not invent or exaggerate risks beyond what the documents support.
+- Distinguish *absent* from *vague*. "Mentioned but unspecified" and "not mentioned at all" are different findings — never collapse the former into the latter. If a document addresses a topic only with boilerplate or without naming a concrete mechanism (e.g. "we apply appropriate safeguards" for international transfers, with no Standard Contractual Clauses / adequacy decision / BCRs named), describe it as **vague or unspecified** (e.g. "transfer safeguards are claimed but unspecified — no mechanism named"), not as missing or non-existent. Flagging vague boilerplate as a weakness is correct; stating that none exists when the document claims otherwise is not.
 
 ## SUMMARY
 1. Up to 5 sentences: who this company is, what data they collect overall, the most important privacy risk, and the most important protection (if any). Start directly with the company or service name.
