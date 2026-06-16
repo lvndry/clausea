@@ -628,12 +628,27 @@ class PipelineService:
 
                     product_svc_for_overview = create_product_service()
                     doc_svc_for_overview = create_document_service()
+
+                    # Overview synthesis runs several long LLM/aggregation sub-steps with no
+                    # DB write of its own. On a large core-doc set it can outlast the stall
+                    # window, so bump the job heartbeat at each sub-step boundary the same way
+                    # the summarize stage does — keeping a healthy synthesis from being killed
+                    # at the finish line while a truly wedged one still trips the guard.
+                    async def _on_overview_progress() -> None:
+                        await self._update_step_progress(
+                            db,
+                            job,
+                            "generating_overview",
+                            message="Generating privacy overview...",
+                        )
+
                     await generate_product_overview(
                         db,
                         job.product_slug,
                         force_regenerate=True,
                         product_svc=product_svc_for_overview,
                         document_svc=doc_svc_for_overview,
+                        on_progress=_on_overview_progress,
                     )
 
                     # Verify the overview actually persisted — same truthfulness lesson as
@@ -664,6 +679,7 @@ class PipelineService:
                     # Best-effort: a failure here must NOT fail a job whose overview already
                     # succeeded — the product page degrades gracefully when it is absent.
                     try:
+                        await _on_overview_progress()
                         explainer = await generate_product_consumer_explainer(
                             db,
                             job.product_slug,
@@ -697,6 +713,7 @@ class PipelineService:
                     # Justified compliance assessment (per-regime score + strengths/gaps).
                     # Also best-effort — secondary to the consumer-facing outputs above.
                     try:
+                        await _on_overview_progress()
                         compliance = await generate_product_compliance(
                             db,
                             job.product_slug,
