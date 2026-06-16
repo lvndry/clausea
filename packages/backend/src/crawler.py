@@ -2133,6 +2133,10 @@ class ClauseaCrawler:
             logger.warning("Browser setup failed for %s: %s", url, e)
             return None
         page: Page = await context.new_page()
+        # Camoufox/Firefox fails to decompress Brotli ("br") response bodies, leaving the DOM
+        # full of compressed garbage — common on Cloudflare-fronted sites (OpenAI, etc.), which
+        # serve br by default. Request gzip only so the browser decodes content correctly.
+        await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
             # Only block heavy media. CSS and fonts are often required for SPA rendering
