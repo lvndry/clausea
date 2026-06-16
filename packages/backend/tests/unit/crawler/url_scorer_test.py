@@ -305,3 +305,48 @@ class TestMinLegalScoreFilter:
         assert len(crawler.url_priority_queue) == 1, (
             "URL with legal anchor text should pass min_legal_score filter"
         )
+
+
+class TestURLScorerAuthAndRedirectParams:
+    """Login walls fronting policy URLs must not inherit the policy's relevance."""
+
+    def test_login_with_policy_return_to_scores_zero(self) -> None:
+        scorer = URLScorer()
+        # Real case from the github crawl: a login wall whose return_to embeds the policy
+        # URL must not score as if it were the policy (it would burn a browser render).
+        url = (
+            "https://github.com/login?return_to=https://github.com/github/docs/blob/"
+            "main/content/site-policy/github-terms/github-terms-of-service.md"
+        )
+        assert scorer.score_url(url) == 0.0
+
+    def test_bare_auth_paths_score_zero(self) -> None:
+        scorer = URLScorer()
+        for url in (
+            "https://example.com/login",
+            "https://example.com/sign-in",
+            "https://example.com/account/signup",
+            "https://example.com/logout",
+            "https://example.com/oauth/authorize",
+            "https://example.com/sso",
+        ):
+            assert scorer.score_url(url) == 0.0, url
+
+    def test_redirect_param_does_not_inflate_non_auth_page(self) -> None:
+        scorer = URLScorer()
+        # A non-auth page carrying a policy URL in a redirect param should be scored on
+        # its own path, not on the redirect target.
+        with_param = scorer.score_url("https://example.com/home?next=/privacy-policy")
+        bare = scorer.score_url("https://example.com/home")
+        assert with_param == bare
+
+    def test_real_policy_pages_still_score_high(self) -> None:
+        scorer = URLScorer()
+        # Regression guard: the fix must not depress genuine policy URLs.
+        assert scorer.score_url("https://example.com/privacy-policy") >= 5.0
+        assert (
+            scorer.score_url(
+                "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service"
+            )
+            >= 5.0
+        )
