@@ -205,6 +205,10 @@ MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
 # Browser fetch: short polling attempts when initial DOM text is below MIN_CONTENT_LENGTH_FOR_SPA_CHECK.
 SPA_HYDRATION_RETRIES = 3
 
+# aiohttp's default 8190-byte header cap rejects sites with large headers (e.g. Notion's CSP)
+# with HTTP 400, failing every fetch for that domain. Raise it so we don't lose those sites.
+MAX_HEADER_BYTES = 65_536
+
 # Browser navigation budget. A render is a fallback for pages the static fetch couldn't
 # use, so it gets a tight cap: a page that hasn't reached domcontentloaded in this long is
 # almost always hung or bot-walled, not a slow policy page. Bounded by the static timeout.
@@ -2129,6 +2133,10 @@ class ClauseaCrawler:
             logger.warning("Browser setup failed for %s: %s", url, e)
             return None
         page: Page = await context.new_page()
+        # Camoufox/Firefox fails to decompress Brotli ("br") response bodies, leaving the DOM
+        # full of compressed garbage — common on Cloudflare-fronted sites (OpenAI, etc.), which
+        # serve br by default. Request gzip only so the browser decodes content correctly.
+        await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
             # Only block heavy media. CSS and fonts are often required for SPA rendering
@@ -3815,7 +3823,12 @@ class ClauseaCrawler:
             connector = aiohttp.TCPConnector(limit=self.max_concurrent)
             timeout = aiohttp.ClientTimeout(total=self.timeout)
 
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                max_line_size=MAX_HEADER_BYTES,
+                max_field_size=MAX_HEADER_BYTES,
+            ) as session:
                 # Discover sitemaps and use their URLs as depth-0 seeds.
                 # This gives every sitemap URL the full max_depth of crawling
                 # and avoids wasting requests on speculative path guessing.
@@ -4068,7 +4081,12 @@ async def test_specific_url(url: str) -> CrawlResult:
     connector = aiohttp.TCPConnector(limit=1)
     timeout = aiohttp.ClientTimeout(total=30)
 
-    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=timeout,
+        max_line_size=MAX_HEADER_BYTES,
+        max_field_size=MAX_HEADER_BYTES,
+    ) as session:
         result = await crawler.fetch_page(session, url)
 
         if result.success:
