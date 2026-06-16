@@ -227,6 +227,28 @@ class TestMetadataClassification:
         assert result["classification"] == "cookie_policy"
 
     @pytest.mark.asyncio
+    async def test_blog_titled_on_your_terms_not_classified_as_terms(
+        self, classifier: DocumentClassifier
+    ) -> None:
+        """A blog whose title merely contains the word "terms" must not become a ToS.
+
+        Regression: signal.org/blog/signal-research ("Research on your terms") was
+        classified as terms_of_service because the bare token "terms" was a metadata
+        keyword. Text kept short with a nav word so it resolves statically (no LLM).
+        """
+        result = await classifier.classify_document(
+            url="https://signal.org/blog/signal-research",
+            text=(
+                "Home About Blog. Signal has always benefitted from our engagement with "
+                "the research community. This post describes our research program and how "
+                "academics can collaborate with us on privacy-preserving technologies. "
+            )
+            * 2,
+            metadata={"title": "Signal >> Blog >> Research on your terms"},
+        )
+        assert result["classification"] != "terms_of_service"
+
+    @pytest.mark.asyncio
     async def test_metadata_short_content_rejected(self, classifier: DocumentClassifier) -> None:
         """Metadata match should be rejected if content is < 300 chars."""
         result = await classifier.classify_document(
