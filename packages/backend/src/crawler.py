@@ -249,6 +249,9 @@ BROWSER_NAV_TIMEOUT_MS = 20_000
 # content is still captured by the SPA_HYDRATION_RETRIES polling below.
 BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
 
+# Resource types aborted during render — bytes we don't need, and the main renderer-memory driver.
+_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+
 # Hard cap on a Camoufox launch. The launch (__aenter__ spawns Firefox) has no internal
 # timeout, so a stuck launch — common when two instances start at once in a constrained
 # worker — would hang until the 2h pipeline cap. Time it out so the render fails fast.
@@ -2269,15 +2272,14 @@ class ClauseaCrawler:
         await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
-            # Only block heavy media. CSS and fonts are often required for SPA rendering
-            # or for bot-detection scripts to verify "visibility".
-            # Route handler MUST be async — a sync lambda returning a coroutine would
-            # produce an unawaited coroutine object that Playwright silently discards,
-            # meaning requests would never actually be aborted.
-            async def _abort_media(route: Route) -> None:
-                await route.abort()
+            # Abort images/media/fonts (we only need DOM text); keep CSS/JS for SPA hydration.
+            async def _abort_heavy(route: Route) -> None:
+                if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+                    await route.abort()
+                else:
+                    await route.continue_()
 
-            await page.route("**/*.{png,jpg,jpeg,gif,svg}", _abort_media)
+            await page.route("**/*", _abort_heavy)
 
             # Tight navigation budget: a page that hasn't reached domcontentloaded within
             # BROWSER_NAV_TIMEOUT_MS is hung or bot-walled, not slow — don't burn the full
