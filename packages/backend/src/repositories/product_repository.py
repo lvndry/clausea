@@ -18,6 +18,7 @@ from src.models.document import (
 )
 from src.models.product import Product
 from src.repositories.base_repository import BaseRepository
+from src.repositories.product_overview_history_repository import ProductOverviewHistoryRepository
 
 logger = get_logger(__name__)
 
@@ -239,6 +240,7 @@ class ProductRepository(BaseRepository):
         db: AgnosticDatabase,
         product_slug: str,
         meta_summary: MetaSummary,
+        job_id: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -246,10 +248,20 @@ class ProductRepository(BaseRepository):
             db: Database instance
             product_slug: Product slug
             meta_summary: Overview payload (MetaSummary shape)
+            job_id: Optional pipeline job that produced this overview
         """
         summary_data = meta_summary.model_dump()
         summary_data["product_slug"] = product_slug
         summary_data["updated_at"] = datetime.now()
+
+        existing = await db.product_overviews.find_one({"product_slug": product_slug})
+        await ProductOverviewHistoryRepository().save_snapshot(
+            db,
+            product_slug=product_slug,
+            overview_data=summary_data,
+            prev_overview_data=existing,
+            job_id=job_id,
+        )
 
         result = await db.product_overviews.update_one(
             {"product_slug": product_slug},

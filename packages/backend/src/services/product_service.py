@@ -255,6 +255,7 @@ class ProductService:
         db: AgnosticDatabase,
         product_slug: str,
         meta_summary: MetaSummary,
+        job_id: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -262,8 +263,11 @@ class ProductService:
             db: Database instance
             product_slug: Product slug
             meta_summary: Overview payload (MetaSummary shape)
+            job_id: Optional pipeline job that produced this overview
         """
-        await self._product_repo.save_product_overview(db, product_slug, meta_summary)
+        await self._product_repo.save_product_overview(
+            db, product_slug, meta_summary, job_id=job_id
+        )
 
     # ============================================================================
     # Consumer Explainer Storage (product-level, consumer-facing)

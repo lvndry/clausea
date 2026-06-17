@@ -254,6 +254,60 @@ async def ensure_document_version_indexes(db: AgnosticDatabase) -> None:
                 f"Could not create index on document_versions.(document_id, created_at): {e}"
             )
 
+    try:
+        await db.document_versions.create_index(
+            [("product_slug", 1), ("created_at", -1)],
+            name="idx_docversion_product_recent",
+            background=True,
+        )
+        logger.info("Created index on document_versions.(product_slug, created_at)")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.debug("Index on document_versions.(product_slug, created_at) already exists")
+        else:
+            logger.warning(f"Could not create index on document_versions.(product_slug): {e}")
+
+
+async def ensure_monitoring_schedule_indexes(db: AgnosticDatabase) -> None:
+    try:
+        await db.monitoring_schedules.create_index(
+            "product_slug", unique=True, name="idx_monitoring_product_slug", background=True
+        )
+        logger.info("Created unique index on monitoring_schedules.product_slug")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.debug("Index on monitoring_schedules.product_slug already exists")
+        else:
+            logger.warning(f"Could not create index on monitoring_schedules.product_slug: {e}")
+
+    try:
+        await db.monitoring_schedules.create_index(
+            [("next_crawl_due_at", 1)],
+            name="idx_monitoring_next_due",
+            background=True,
+        )
+        logger.info("Created index on monitoring_schedules.next_crawl_due_at")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.debug("Index on monitoring_schedules.next_crawl_due_at already exists")
+        else:
+            logger.warning(f"Could not create index on monitoring_schedules.next_crawl_due_at: {e}")
+
+
+async def ensure_overview_history_indexes(db: AgnosticDatabase) -> None:
+    try:
+        await db.product_overview_history.create_index(
+            [("product_slug", 1), ("snapshot_at", -1)],
+            name="idx_overview_history_product_recent",
+            background=True,
+        )
+        logger.info("Created index on product_overview_history.(product_slug, snapshot_at)")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.debug("Index on product_overview_history already exists")
+        else:
+            logger.warning(f"Could not create index on product_overview_history: {e}")
+
 
 async def ensure_pipeline_indexes(db: AgnosticDatabase) -> None:
     """Ensure indexes exist on pipeline-related collections."""
@@ -366,6 +420,8 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     await ensure_deep_analysis_indexes(db)
     await ensure_aggregation_indexes(db)
     await ensure_document_version_indexes(db)
+    await ensure_monitoring_schedule_indexes(db)
+    await ensure_overview_history_indexes(db)
     await ensure_pipeline_indexes(db)
 
     # TTL indexes for ephemeral crawl data

@@ -72,6 +72,7 @@ from src.models.document import Document, coerce_doc_type_from_classifier
 from src.models.pipeline_job import classify_crawl_error
 from src.models.product import Product
 from src.repositories.crawl_repository import CrawlRepository
+from src.repositories.document_version_repository import DocumentVersionRepository
 from src.services.service_factory import create_document_service, create_product_service
 from src.utils.llm_usage import usage_tracking
 from src.utils.llm_usage_tracking_mixin import LLMUsageTrackingMixin
@@ -108,6 +109,20 @@ def _content_fingerprint(text: str) -> str:
     """
     normalized = re.sub(r"\s+", " ", text.lower().strip())
     return hashlib.md5(normalized[:5000].encode()).hexdigest()
+
+
+def _diff_fields(existing: "Document", incoming: "Document") -> list[str]:
+    tracked = ["text", "title", "doc_type", "locale", "regions", "effective_date"]
+    changed = []
+    for field in tracked:
+        old_val = getattr(existing, field)
+        new_val = getattr(incoming, field)
+        if field == "regions":
+            if set(old_val or []) != set(new_val or []):
+                changed.append(field)
+        elif old_val != new_val:
+            changed.append(field)
+    return changed
 
 
 # Locale path segment (/es/, /fr/, /pt-br/, /en_US/) or locale subdomain (es., de.).
@@ -720,6 +735,7 @@ class PolicyDocumentPipeline:
         progress_callback: Callable[[str, int, int], None]
         | Callable[[str, int, int], Awaitable[None]]
         | None = None,  # Optional progress callback (phase, current, total)
+        job_id: str | None = None,
     ):
         """
         Initialize the policy document pipeline.
@@ -802,6 +818,7 @@ class PolicyDocumentPipeline:
             Callable[[str, int, int], None] | Callable[[str, int, int], Awaitable[None]] | None
         ) = progress_callback
         self._pending_progress_tasks: list[asyncio.Task] = []
+        self._job_id = job_id
 
         # Initialize components
         self.analyzer = DocumentAnalyzer()
@@ -978,11 +995,17 @@ class PolicyDocumentPipeline:
                                 duplicate_count += 1
                                 continue
 
+                            changed = _diff_fields(existing_doc, document)
+                            await DocumentVersionRepository().archive(
+                                db, existing_doc, job_id=self._job_id, changed_fields=changed
+                            )
+
                             # Update existing document with new content/metadata
                             logger_storage.info(
                                 f"updating existing document with changes: {document.url}"
                             )
                             document.id = existing_doc.id  # Preserve original ID
+                            document.content_hash = _content_fingerprint(document.text)
                             await document_service.update_document(db, document)
                             stored_count += 1
                             updated_count += 1
@@ -1019,6 +1042,7 @@ class PolicyDocumentPipeline:
 
                         # Create new document
                         logger_storage.info(f"storing new document: {document.url}")
+                        document.content_hash = _content_fingerprint(document.text)
                         await document_service.store_document(db, document)
                         stored_count += 1
 

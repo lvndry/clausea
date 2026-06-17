@@ -17,6 +17,7 @@ from src.repositories.pipeline_repository import PipelineRepository
 from src.routes import (
     contact,
     extension,
+    history,
     paddle,
     pipeline,
     products,
@@ -84,6 +85,7 @@ routes = [
     extension.router,
     contact.router,
     pipeline.router,
+    history.router,
 ]
 
 for route in routes:
