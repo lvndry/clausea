@@ -1440,8 +1440,6 @@ class PolicyDocumentPipeline:
             seen_fingerprints: set[str] = set()
             total_results = 0
             processed_documents: list[Document] = []
-            discovered_doc_types: set[str] = set()
-            discovery_coverage_met = False
 
             # Stream each crawled result through classification + storage as it is
             # produced, so a crawl killed at the time ceiling or by a stall keeps the
@@ -1450,7 +1448,6 @@ class PolicyDocumentPipeline:
             # per-result calls exactly as the old batch call did. _store_documents is
             # idempotent (dedupes by URL/fingerprint), so re-arrivals are safe.
             async def result_callback(result: CrawlResult) -> None:
-                nonlocal discovery_coverage_met
                 docs = await self._classify_results(
                     [result], product, processed_urls, seen_fingerprints
                 )
@@ -1458,16 +1455,6 @@ class PolicyDocumentPipeline:
                     stored = await self._store_documents(docs)
                     self.stats.policy_documents_stored += stored
                     processed_documents.extend(docs)
-                    discovered_doc_types.update(
-                        str(doc.doc_type) for doc in docs if getattr(doc, "doc_type", None)
-                    )
-                    if len(processed_documents) >= self.min_docs_before_fallback and all(
-                        req in discovered_doc_types for req in self.required_doc_types
-                    ):
-                        discovery_coverage_met = True
-
-            def stop_discovery_callback() -> bool:
-                return discovery_coverage_met
 
             # Docs stored within the resume freshness window. A retried crawl skips
             # re-fetching these so it resumes instead of re-rendering hours of work;
@@ -1497,19 +1484,12 @@ class PolicyDocumentPipeline:
                 strategy=self.discovery_strategy,
                 progress_phase="discovery",
                 result_callback=result_callback,
-                stop_callback=stop_discovery_callback,
                 recently_stored_urls=recently_stored_urls,
             )
             discovery_results = await self._crawl_base_urls(discovery_crawler, crawl_urls)
             logger_discovery.info(
                 f"discovery pass complete for '{product.name}': found {len(discovery_results)} pages"
             )
-            if discovery_coverage_met:
-                logger_discovery.info(
-                    f"discovery coverage target met for '{product.name}' "
-                    f"(required types: {', '.join(self.required_doc_types)}); "
-                    "stopped discovery early"
-                )
             total_results += len(discovery_results)
 
             # Fallback deep crawl (recall-first) if coverage is low. The decision runs

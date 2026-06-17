@@ -99,7 +99,7 @@ def test_add_urls_to_queue_respects_rel_nofollow_and_meta():
     all_urls = (
         {u for u, _ in crawler.url_queue}
         | {u for u, _ in crawler.url_stack}
-        | {u for _, u, _, _ in crawler.url_priority_queue}
+        | {u for _, _, u, _, _ in crawler.url_priority_queue}
     )
     assert "https://example.com/privacy" not in all_urls
 
@@ -109,7 +109,7 @@ def test_add_urls_to_queue_respects_rel_nofollow_and_meta():
     all_urls2 = (
         {u for u, _ in crawler2.url_queue}
         | {u for u, _ in crawler2.url_stack}
-        | {u for _, u, _, _ in crawler2.url_priority_queue}
+        | {u for _, _, u, _, _ in crawler2.url_priority_queue}
     )
     assert "https://example.com/privacy" in all_urls2
 

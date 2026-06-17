@@ -656,6 +656,17 @@ class URLScorer:
             re.IGNORECASE,
         )
 
+        # Segment-anchored so "platforms" never matches "terms". URLs matching this
+        # are drained from the best-first frontier ahead of everything else, so a
+        # boost-inflated marketing section (e.g. a 100-page /security tree) cannot
+        # exhaust the page budget before the real policy docs are fetched.
+        self._strong_policy_path_re = re.compile(
+            r"(?:^|/)(?:privacy|terms|tos|legal|cookies?|gdpr|ccpa|dpa|"
+            r"data-processing(?:-addendum)?|sub-?processors?|site-policy|policies|"
+            r"policy|eula|acceptable-use|community-guidelines)(?:[-_/]|$)",
+            re.IGNORECASE,
+        )
+
         self.legal_keywords = {
             # Generic legal terms
             "legal": 3.5,
@@ -831,6 +842,14 @@ class URLScorer:
         boosts — see ``add_urls_to_queue``.
         """
         return bool(self._non_policy_section_re.search(urlparse(url.lower()).path))
+
+    def is_strong_policy_path(self, url: str) -> bool:
+        """True when a path segment unambiguously names a core policy document.
+
+        Such URLs are crawled before any other lead so a high-volume marketing
+        section can't consume the page budget ahead of the real policy docs.
+        """
+        return bool(self._strong_policy_path_re.search(urlparse(url.lower()).path))
 
 
 class ContentAnalyzer:
@@ -1667,7 +1686,7 @@ class ClauseaCrawler:
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
         self.url_stack: list[tuple[str, int]] = []  # For DFS
         # best-first frontier: (-score, url, depth, base_score). base_score excludes parent boost.
-        self.url_priority_queue: list[tuple[float, str, int, float]] = []
+        self.url_priority_queue: list[tuple[int, float, str, int, float]] = []
         self._frontier_real_leads: int = 0  # queued URLs whose own score clears the gate
         self._policy_pages_found: int = 0
         self._crawls_since_new_lead: int = 0
@@ -3803,7 +3822,8 @@ class ClauseaCrawler:
 
     def _enqueue_best_first(self, url: str, depth: int, score: float, base_score: float) -> None:
         """Push to the frontier; only an own-score lead (not a boost-only link) counts as real."""
-        heapq.heappush(self.url_priority_queue, (-score, url, depth, base_score))
+        policy_rank = 0 if self.url_scorer.is_strong_policy_path(url) else 1
+        heapq.heappush(self.url_priority_queue, (policy_rank, -score, url, depth, base_score))
         if base_score >= self.min_legal_score:
             self._frontier_real_leads += 1
             self._crawls_since_new_lead = 0
@@ -3812,7 +3832,7 @@ class ClauseaCrawler:
         """Best remaining own-score in the frontier (ignores parent-page boost)."""
         if self.strategy != "best_first" or not self.url_priority_queue:
             return None
-        return max(base_score for _, _, _, base_score in self.url_priority_queue)
+        return max(base_score for _, _, _, _, base_score in self.url_priority_queue)
 
     def _relevance_exhausted(self) -> bool:
         """True once only low-own-score URLs remain after policy has been found.
@@ -3967,7 +3987,7 @@ class ClauseaCrawler:
         elif self.strategy == "dfs" and self.url_stack:
             return self.url_stack.pop()
         elif self.strategy == "best_first" and self.url_priority_queue:
-            _, url, depth, base_score = heapq.heappop(self.url_priority_queue)
+            _, _, url, depth, base_score = heapq.heappop(self.url_priority_queue)
             if base_score >= self.min_legal_score:
                 self._frontier_real_leads -= 1
             return url, depth

@@ -185,7 +185,10 @@ async def test_streamed_docs_drive_fallback_decision(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_discovery_stop_callback_stops_after_required_types(monkeypatch):
+async def test_discovery_does_not_stop_after_required_types(monkeypatch):
+    """Having privacy + terms must NOT halt discovery: the crawl keeps streaming so
+    cookie/DPA/subprocessor docs found later are still classified and stored. The
+    old coverage-met stop dropped every policy doc after the first two."""
     product = Product(
         id="prod-1",
         name="Acme",
@@ -197,20 +200,18 @@ async def test_discovery_stop_callback_stops_after_required_types(monkeypatch):
     discovery = [
         _result("https://acme.com/privacy"),
         _result("https://acme.com/terms"),
-        _result("https://acme.com/blog"),  # should be skipped once coverage is met
+        _result("https://acme.com/cookies"),  # arrives AFTER the required types are met
     ]
 
     classified_urls: list[str] = []
 
     async def fake_process_crawl_result(result: CrawlResult, _product):
+        classified_urls.append(result.url)
         if "privacy" in result.url:
-            classified_urls.append(result.url)
             return _doc(result.url, "privacy_policy")
         if "terms" in result.url:
-            classified_urls.append(result.url)
             return _doc(result.url, "terms_of_service")
-        classified_urls.append(result.url)
-        return None
+        return _doc(result.url, "cookie_policy")
 
     pipeline = PolicyDocumentPipeline(
         min_docs_before_fallback=1,
@@ -236,5 +237,6 @@ async def test_discovery_stop_callback_stops_after_required_types(monkeypatch):
     assert {document.doc_type for document in documents} == {
         "privacy_policy",
         "terms_of_service",
+        "cookie_policy",
     }
-    assert "https://acme.com/blog" not in classified_urls
+    assert "https://acme.com/cookies" in classified_urls
