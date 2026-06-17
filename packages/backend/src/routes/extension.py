@@ -68,6 +68,7 @@ class ExtensionAnalyzeRequest(BaseModel):
     """Request body for triggering analysis from the extension."""
 
     url: str
+    seed_urls: list[str] | None = None
 
 
 class ExtensionAnalyzeResponse(BaseModel):
@@ -321,9 +322,13 @@ async def analyze_url(
     domain = extract_domain(url)
     normalized_url = f"https://{domain}"
 
+    # Cap and sanitize extension-provided seeds (best-effort; malformed URLs are
+    # skipped by the crawler's URL gate, so no strict validation needed here).
+    seed_urls = [s for s in (payload.seed_urls or []) if s.startswith("http")][:20] or None
+
     pipeline_svc = create_pipeline_service()
 
-    result = await pipeline_svc.create_job_for_url(db, normalized_url)
+    result = await pipeline_svc.create_job_for_url(db, normalized_url, seed_urls=seed_urls)
 
     if result.get("already_indexed"):
         return ExtensionAnalyzeResponse(

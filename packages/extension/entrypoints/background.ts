@@ -167,6 +167,41 @@ export default defineBackground(() => {
     }
   });
 
+  /**
+   * Scan the active tab's rendered DOM for footer policy links.
+   * Runs in the page context via chrome.scripting.executeScript.
+   * Returns up to 20 URLs whose path segments name a core policy document.
+   */
+  function collectPolicyLinks(): string[] {
+    const policyRe =
+      /\/(privacy|terms|tos|legal|cookies?|gdpr|ccpa|dpa|data-processing|sub-?processors?|policies?|policy|eula|acceptable-use|community-guidelines)/i;
+
+    const footerEls = Array.from(
+      document.querySelectorAll('footer, [role="contentinfo"], .footer, #footer'),
+    );
+    const scope: Element[] = footerEls.length > 0 ? footerEls : [document.body];
+
+    const seen = new Set<string>();
+    const seeds: string[] = [];
+
+    for (const el of scope) {
+      for (const a of Array.from(el.querySelectorAll("a[href]")) as HTMLAnchorElement[]) {
+        const href = a.href;
+        if (!href?.startsWith("http") || seen.has(href)) continue;
+        try {
+          if (policyRe.test(new URL(href).pathname)) {
+            seen.add(href);
+            seeds.push(href);
+            if (seeds.length >= 20) return seeds;
+          }
+        } catch {
+          // malformed href — skip
+        }
+      }
+    }
+    return seeds;
+  }
+
   // Handle messages from popup
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "CHECK_URL") {
@@ -204,6 +239,27 @@ export default defineBackground(() => {
       getExtensionHeaders()
         .then((headers) => sendResponse({ success: true, headers }))
         .catch(() => sendResponse({ success: true, headers: {} }));
+      return true;
+    }
+
+    if (message.type === "COLLECT_FOOTER_SEEDS") {
+      // Inject collectPolicyLinks into the active tab's page context.
+      // activeTab grants temporary access to the current tab when the user
+      // opens the popup, so no broad host_permissions are required.
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tabId = tabs[0]?.id;
+        if (!tabId) {
+          sendResponse({ success: true, seeds: [] });
+          return;
+        }
+        chrome.scripting
+          .executeScript({ target: { tabId }, func: collectPolicyLinks })
+          .then((results) => {
+            const seeds = (results[0]?.result as string[]) ?? [];
+            sendResponse({ success: true, seeds });
+          })
+          .catch(() => sendResponse({ success: true, seeds: [] }));
+      });
       return true;
     }
   });

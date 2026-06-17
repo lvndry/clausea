@@ -33,6 +33,7 @@ from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.pipeline_repository import PipelineRepository
+from src.repositories.product_repository import ProductRepository
 from src.services.service_factory import create_document_service, create_product_service
 from src.utils.domain import extract_domain as _extract_domain
 
@@ -91,7 +92,9 @@ class PipelineService:
         """Get the active (running) pipeline job for a product, if any."""
         return await self._pipeline_repo.find_active_by_product_slug(db, product_slug)
 
-    async def create_job_for_url(self, db: AgnosticDatabase, url: str) -> dict:
+    async def create_job_for_url(
+        self, db: AgnosticDatabase, url: str, seed_urls: list[str] | None = None
+    ) -> dict:
         """Create a pipeline job for a URL.
 
         If the product is already fully indexed (completed overview exists), returns
@@ -147,11 +150,25 @@ class PipelineService:
             await product_svc.create_product(db, product)
             logger.info(f"Created new product '{product.name}' ({product.slug}) from URL: {url}")
 
+        # Persist extension-provided seeds into the product so every future re-crawl
+        # can reach them. Sites behind anti-bot walls are unreachable without these
+        # URLs — discarding them after one use means monitoring re-crawls will find
+        # zero documents. $addToSet ensures no duplicates.
+        if seed_urls:
+            product_repo = ProductRepository()
+            await product_repo.add_crawl_seeds(db, product.id, seed_urls)
+            logger.info(
+                "persisted %d extension seed(s) to product %s crawl_base_urls",
+                len(seed_urls),
+                product.slug,
+            )
+
         job = PipelineJob(
             product_slug=product.slug,
             product_id=product.id,
             product_name=product.name,
             url=url,
+            seed_urls=seed_urls or [],
         )
         job, created = await self._pipeline_repo.find_or_create_active(db, job)
         if created:

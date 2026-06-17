@@ -93,6 +93,13 @@ class ProductRepository(BaseRepository):
         logger.debug(f"Created product {product.slug}")
         return product
 
+    async def add_crawl_seeds(self, db: AgnosticDatabase, product_id: str, urls: list[str]) -> None:
+        """Append URLs to crawl_base_urls, ignoring duplicates already present."""
+        await db.products.update_one(
+            {"id": product_id},
+            {"$addToSet": {"crawl_base_urls": {"$each": urls}}},
+        )
+
     async def find_all(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 
