@@ -249,8 +249,13 @@ BROWSER_NAV_TIMEOUT_MS = 20_000
 # content is still captured by the SPA_HYDRATION_RETRIES polling below.
 BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
 
-# Resource types aborted during render — bytes we don't need, and the main renderer-memory driver.
-_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+# Narrow per-asset routes (not a catch-all "**/*"): only these abort, everything else navigates
+# untouched. A blanket route that continue_()s every request stalls SPA navigation under load.
+_BLOCKED_ASSET_GLOBS = (
+    "**/*.{png,jpg,jpeg,gif,webp,avif,svg,ico,bmp,tif,tiff}",
+    "**/*.{woff,woff2,ttf,otf,eot}",
+    "**/*.{mp4,webm,ogg,ogv,mp3,wav,m4a,m4v,mov,avi}",
+)
 
 # Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
 # copies of prod pages — crawling them just duplicates documents. Matched on the subdomain only.
@@ -2276,17 +2281,15 @@ class ClauseaCrawler:
         await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
-            # Abort images/media/fonts (we only need DOM text); keep CSS/JS for SPA hydration.
+
             async def _abort_heavy(route: Route) -> None:
                 try:
-                    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
-                        await route.abort()
-                    else:
-                        await route.continue_()
+                    await route.abort()
                 except Exception:
                     pass  # route/page already closed mid-flight
 
-            await page.route("**/*", _abort_heavy)
+            for asset_glob in _BLOCKED_ASSET_GLOBS:
+                await page.route(asset_glob, _abort_heavy)
 
             # Tight navigation budget: a page that hasn't reached domcontentloaded within
             # BROWSER_NAV_TIMEOUT_MS is hung or bot-walled, not slow — don't burn the full
