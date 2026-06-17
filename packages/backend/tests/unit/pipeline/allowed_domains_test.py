@@ -19,9 +19,7 @@ def test_seed_on_other_registered_domain_is_unioned() -> None:
         ],
     )
     allowed = _fn(product)
-    domains = {d.lower() for d in allowed}
-    assert "shein.com" in domains
-    assert any("sheingroup" in d for d in domains)
+    assert set(allowed) == {"shein.com", "sheingroup.com"}
 
 
 def test_same_domain_seeds_do_not_duplicate() -> None:
@@ -33,7 +31,7 @@ def test_same_domain_seeds_do_not_duplicate() -> None:
         crawl_base_urls=["https://m.shein.com/a", "https://us.shein.com/b"],
     )
     allowed = _fn(product)
-    assert sum("shein" in d for d in allowed) == 1
+    assert allowed == ["shein.com"]
 
 
 def test_empty_seeds_returns_product_domains() -> None:

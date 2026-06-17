@@ -55,6 +55,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+import tldextract
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -64,7 +65,7 @@ from src.analyzers.locale_analyzer import LocaleAnalyzer
 from src.analyzers.region_detector import RegionDetector
 from src.core.database import db_session
 from src.core.logging import get_logger
-from src.crawler import _TLD_EXTRACT, ClauseaCrawler, CrawlResult
+from src.crawler import ClauseaCrawler, CrawlResult
 from src.llm import SupportedModel, acompletion_with_fallback
 from src.models.crawl import CrawlSession
 from src.models.document import Document, coerce_doc_type_from_classifier
@@ -80,6 +81,10 @@ from src.utils.perf import log_memory_usage, memory_monitor_task
 load_dotenv()
 
 logger = get_logger(__name__)
+
+# Offline extractor (no live suffix-list fetch), matching the crawler's domain matching.
+_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+
 logger_discovery = get_logger(__name__, component="pipeline:discovery")
 logger_analysis = get_logger(__name__, component="pipeline:analysis")
 logger_storage = get_logger(__name__, component="pipeline:storage")
