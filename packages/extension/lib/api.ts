@@ -91,20 +91,28 @@ export async function checkUrl(url: string): Promise<ExtensionCheckResponse> {
  *
  * Creates the product from URL metadata if it doesn't exist,
  * then starts the background pipeline. Idempotent per domain.
+ *
+ * seedUrls: policy-page URLs harvested from the rendered DOM footer. Passed
+ * as high-priority crawl seeds so sites behind anti-bot walls can still be
+ * analyzed when the server crawler cannot reach them.
  */
 export async function analyzeUrl(
   url: string,
   extraHeaders?: Record<string, string>,
+  seedUrls?: string[],
 ): Promise<ExtensionAnalyzeResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...extraHeaders,
   };
 
+  const body: Record<string, unknown> = { url };
+  if (seedUrls && seedUrls.length > 0) body.seed_urls = seedUrls;
+
   const response = await fetch(`${API_BASE_URL}/extension/analyze`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

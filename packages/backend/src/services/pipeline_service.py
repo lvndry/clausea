@@ -91,7 +91,9 @@ class PipelineService:
         """Get the active (running) pipeline job for a product, if any."""
         return await self._pipeline_repo.find_active_by_product_slug(db, product_slug)
 
-    async def create_job_for_url(self, db: AgnosticDatabase, url: str) -> dict:
+    async def create_job_for_url(
+        self, db: AgnosticDatabase, url: str, seed_urls: list[str] | None = None
+    ) -> dict:
         """Create a pipeline job for a URL.
 
         If the product is already fully indexed (completed overview exists), returns
@@ -152,6 +154,7 @@ class PipelineService:
             product_id=product.id,
             product_name=product.name,
             url=url,
+            seed_urls=seed_urls or [],
         )
         job, created = await self._pipeline_repo.find_or_create_active(db, job)
         if created:
@@ -388,7 +391,7 @@ class PipelineService:
                         crawl_tasks.append(task)
 
                     pipeline = PolicyDocumentPipeline(progress_callback=_on_crawl_progress)
-                    stats = await pipeline.run([product])
+                    stats = await pipeline.run([product], seed_urls=job.seed_urls or None)
 
                     # Drain pending progress tasks before finalizing the crawl step
                     if crawl_tasks:

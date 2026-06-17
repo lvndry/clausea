@@ -1393,7 +1393,9 @@ class PolicyDocumentPipeline:
         )
         return results
 
-    async def _process_product(self, product: Product) -> list[Document]:
+    async def _process_product(
+        self, product: Product, seed_urls: list[str] | None = None
+    ) -> list[Document]:
         """
         Process a single product through the complete pipeline.
 
@@ -1405,6 +1407,23 @@ class PolicyDocumentPipeline:
         """
         product_start_time = time.time()
         log_memory_usage(f"Starting {product.name}")
+
+        # Extension-provided footer seeds: fold them into crawl_base_urls so
+        # _get_crawl_urls dedupes them with existing seeds and
+        # _allowed_domains_for_product adds their registered domains to the allowed list.
+        # These are direct policy-page URLs harvested from the rendered DOM (the user's
+        # browser already bypassed any anti-bot wall), so they arrive before the regular
+        # discovery seeds and get policy_rank=0 in the best-first frontier.
+        if seed_urls:
+            product = product.model_copy(
+                update={"crawl_base_urls": list(product.crawl_base_urls or []) + seed_urls}
+            )
+            logger.info(
+                "injecting %d extension footer seed(s) for %s: %s",
+                len(seed_urls),
+                product.name,
+                seed_urls,
+            )
 
         # Get crawl URLs (domain roots primary, crawl_base_urls as optional overrides).
         crawl_urls = self._get_crawl_urls(product)
@@ -1575,7 +1594,11 @@ class PolicyDocumentPipeline:
             self.stats.failed_product_slugs.append(product.slug)
             return []
 
-    async def run(self, products: list[Product] | None = None) -> ProcessingStats:
+    async def run(
+        self,
+        products: list[Product] | None = None,
+        seed_urls: list[str] | None = None,
+    ) -> ProcessingStats:
         """
         Execute the complete policy document crawling pipeline.
 
@@ -1606,7 +1629,7 @@ class PolicyDocumentPipeline:
             async def _process_product_with_semaphore(idx: int, product: Product) -> None:
                 async with semaphore:
                     logger.info(f"🏢 [{idx}/{len(products)}] Starting product: {product.name}")
-                    await self._process_product(product)
+                    await self._process_product(product, seed_urls=seed_urls)
                     logger.info(f"✅ [{idx}/{len(products)}] Finished product: {product.name}")
 
             # Create tasks for all products

@@ -173,3 +173,8 @@ class PipelineJob(BaseModel):
     # categorized failure message when crawl_errors is empty but the
     # pipeline still found no policy documents.
     crawl_skip_reasons: list[CrawlSkip] = Field(default_factory=list)
+
+    # Policy-page URLs harvested from the live DOM by the browser extension
+    # (footer links the server crawler cannot reach due to anti-bot walls).
+    # Injected as high-priority seeds at the start of the crawl.
+    seed_urls: list[str] = Field(default_factory=list)
