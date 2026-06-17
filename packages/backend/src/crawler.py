@@ -271,6 +271,27 @@ async def _block_heavy_assets(page: Page) -> None:
     await page.route(_BLOCKED_ASSETS_RE, _abort)
 
 
+# Consent / cookie-management widgets (OneTrust, TrustArc, Cookiebot, Osano, Usercentrics,
+# Didomi, and Shein's own cmp_/_shein_privacy) embed a hidden block whose class often contains
+# "privacy", so a "[class*=privacy]" selector latches onto the 2-3k-char consent widget instead
+# of the real policy body. Excluded from content selection — but only when the text is actually
+# consent UI (≥2 markers), so a genuine Cookie Policy page is never dropped.
+_CONSENT_CONTAINER_RE = re.compile(
+    r"(onetrust|ot-sdk|ot-pc|truste|trustarc|cookiebot|osano|usercentrics|didomi|klaro|"
+    r"cookie-?consent|consent-?(?:banner|manager|preference)|privacy-?(?:preference|settings)|"
+    r"cmp[-_]|_shein_privacy)",
+    re.IGNORECASE,
+)
+_CONSENT_TEXT_MARKERS = (
+    "manage consent",
+    "strictly necessary cookies",
+    "reject all",
+    "confirm my choices",
+    "privacy settings center",
+    "privacy preference center",
+    "store or retrieve information on your browser",
+)
+
 # Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
 # copies of prod pages — crawling them just duplicates documents. Matched on the subdomain only.
 # The trailing boundary is "." or end-of-label, NOT "-": a hyphen there over-matches legit
@@ -2488,6 +2509,7 @@ class ClauseaCrawler:
         best_text_len = 0
         for selector in selectors:
             matches = self._top_level_elements(soup.select(selector))
+            matches = [el for el in matches if not self._is_consent_container(el)]
             if not matches:
                 continue
             combined_text_len = sum(len(el.get_text(" ", strip=True)) for el in matches)
@@ -2516,6 +2538,13 @@ class ClauseaCrawler:
             ["nav", "header", "footer", "aside", "form", "button", "input", "select", "textarea"]
         ):
             tag.decompose()
+
+        # Drop consent/cookie-management widgets the boilerplate pattern below misses (vendor
+        # classes like _shein_privacy / cmp_). Done before that pass so the legal-container
+        # guard can't preserve them.
+        for tag in list(cleaned.find_all(True)):
+            if tag.attrs is not None and self._is_consent_container(tag):
+                tag.decompose()
 
         # Remove common boilerplate containers (cookie banners, menus, popups, etc.).
         boilerplate_pattern = re.compile(
@@ -2548,6 +2577,21 @@ class ClauseaCrawler:
                 tag.decompose()
 
         return cleaned
+
+    @classmethod
+    def _is_consent_container(cls, element: Any) -> bool:
+        """True when an element is a cookie/consent widget (vendor class + ≥2 consent markers).
+
+        The text corroboration keeps a genuine Cookie Policy page (prose, no widget controls)
+        from being mistaken for the consent UI.
+        """
+        if getattr(element, "attrs", None) is None:
+            return False
+        attrs = " ".join(str(v) for v in (element.get("id", ""), element.get("class", "")))
+        if not _CONSENT_CONTAINER_RE.search(attrs):
+            return False
+        text_lower = element.get_text(" ", strip=True).lower()
+        return sum(marker in text_lower for marker in _CONSENT_TEXT_MARKERS) >= 2
 
     @staticmethod
     def _is_substantive_legal_policy_container(attrs: str, text: str) -> bool:
