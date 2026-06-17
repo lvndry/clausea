@@ -249,8 +249,27 @@ BROWSER_NAV_TIMEOUT_MS = 20_000
 # content is still captured by the SPA_HYDRATION_RETRIES polling below.
 BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
 
-# Resource types aborted during render — bytes we don't need, and the main renderer-memory driver.
-_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+# Heavy assets aborted during render to cap renderer memory. A regex route — Playwright matches
+# only these URLs, so document/CSS/JS/XHR navigate untouched with no event-loop overhead. NOT a
+# catch-all "**/*" (a blanket route that continue_()s every request stalls SPA navigation under
+# load), and NOT a glob: Playwright globs don't support braces ({png,jpg}), so this must be regex.
+_BLOCKED_ASSETS_RE = re.compile(
+    r"\.(?:png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?"
+    r"|woff2?|ttf|otf|eot"
+    r"|mp4|webm|ogg|ogv|mp3|wav|m4a|m4v|mov|avi)(?:[?#]|$)",
+    re.IGNORECASE,
+)
+
+
+async def _block_heavy_assets(page: Page) -> None:
+    async def _abort(route: Route) -> None:
+        try:
+            await route.abort()
+        except Exception:
+            pass  # route/page already closed mid-flight
+
+    await page.route(_BLOCKED_ASSETS_RE, _abort)
+
 
 # Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
 # copies of prod pages — crawling them just duplicates documents. Matched on the subdomain only.
@@ -2276,17 +2295,7 @@ class ClauseaCrawler:
         await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
-            # Abort images/media/fonts (we only need DOM text); keep CSS/JS for SPA hydration.
-            async def _abort_heavy(route: Route) -> None:
-                try:
-                    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
-                        await route.abort()
-                    else:
-                        await route.continue_()
-                except Exception:
-                    pass  # route/page already closed mid-flight
-
-            await page.route("**/*", _abort_heavy)
+            await _block_heavy_assets(page)
 
             # Tight navigation budget: a page that hasn't reached domcontentloaded within
             # BROWSER_NAV_TIMEOUT_MS is hung or bot-walled, not slow — don't burn the full
