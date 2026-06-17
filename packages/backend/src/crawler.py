@@ -273,11 +273,20 @@ MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
 # Browser fetch: short polling attempts when initial DOM text is below MIN_CONTENT_LENGTH_FOR_SPA_CHECK.
 SPA_HYDRATION_RETRIES = 3
 
-# Max child sitemaps to follow from a single sitemap index. Real indexes list hundreds
-# (Notion's lists 211), and a hard cut in index order silently drops policy sitemaps that
-# sit past the cut. We sort children policy-first before truncating, so a generous cap keeps
-# every plausible policy sitemap while still bounding the multi-MB content-sitemap tail.
+# Max child sitemaps to follow from a single sitemap index.
 MAX_CHILD_SITEMAPS = int(os.getenv("CRAWLER_MAX_CHILD_SITEMAPS", "200"))
+
+# Policy-relevant keywords in a sitemap URL. A child sitemap whose filename/path contains
+# any of these is a "policy sitemap" and always fetched. Children with none of these are
+# "generic" (content/product/store indexes) and capped at a small safety number so sites
+# like Disney+ (80+ non-policy sitemaps) don't stall discovery.
+_POLICY_SITEMAP_RE = re.compile(
+    r"legal|privacy|terms|policy|tos|gdpr|ccpa|dpa|cookie|compliance|trust",
+    re.IGNORECASE,
+)
+# How many zero-score generic child sitemaps to still attempt, as a safety net for sites
+# that don't name their sitemaps descriptively.
+_MAX_GENERIC_CHILD_SITEMAPS = int(os.getenv("CRAWLER_MAX_GENERIC_CHILD_SITEMAPS", "8"))
 
 # aiohttp's default 8190-byte header cap rejects sites with large headers (e.g. Notion's CSP)
 # with HTTP 400, failing every fetch for that domain. Raise it so we don't lose those sites.
@@ -2966,18 +2975,34 @@ class ClauseaCrawler:
                     seen_urls.add(url)
                     discovered_urls.append(url)
 
-            # Follow child sitemaps one level deep (bounded — an index may list hundreds).
-            # Sort policy-first before truncating: the scorer ranks a child like
-            # ``.../sitemap-legal.xml`` above ``.../sitemap-products-7.xml``, so when the cap
-            # is hit the children we drop are the non-policy content/product sitemaps, not the
-            # legal ones. Stable sort preserves index order among equally scored children.
-            child_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
-            if len(child_sitemaps) > max_child_sitemaps:
+            # Follow child sitemaps one level deep.
+            #
+            # Partition into policy-named (URL contains legal/privacy/terms/…) and generic
+            # (content, product, store, numbered) sitemaps. Policy sitemaps are always
+            # fetched (up to the cap). Generic sitemaps are capped tightly: large catalogs
+            # like Disney+ expose 80+ multi-MB content sitemaps; fetching all of them to
+            # discover they exceed the size limit wastes seconds per crawl. By fetching only
+            # a small generic safety net we still catch sites that use opaque sitemap names
+            # while skipping the obvious content-only batches.
+            policy_sitemaps = [u for u in child_sitemaps if _POLICY_SITEMAP_RE.search(u)]
+            generic_sitemaps = [u for u in child_sitemaps if not _POLICY_SITEMAP_RE.search(u)]
+
+            policy_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
+            generic_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
+
+            children_to_fetch = (
+                policy_sitemaps[:max_child_sitemaps]
+                + generic_sitemaps[:_MAX_GENERIC_CHILD_SITEMAPS]
+            )
+            skipped_generic = max(0, len(generic_sitemaps) - _MAX_GENERIC_CHILD_SITEMAPS)
+            if skipped_generic:
                 logger.info(
-                    f"Sitemap index {sitemap_url} lists {len(child_sitemaps)} children; "
-                    f"following the first {max_child_sitemaps} (policy-relevant sorted first)."
+                    f"Sitemap index {sitemap_url}: {len(policy_sitemaps)} policy-named, "
+                    f"{len(generic_sitemaps)} generic — skipping {skipped_generic} generic "
+                    f"(no policy keywords in URL)."
                 )
-            for child_url in child_sitemaps[:max_child_sitemaps]:
+
+            for child_url in children_to_fetch:
                 nested_urls = await _fetch_and_parse_sitemap(child_url)
                 for url in nested_urls:
                     if url not in seen_urls:

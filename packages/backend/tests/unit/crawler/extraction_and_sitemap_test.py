@@ -520,7 +520,8 @@ async def test_child_sitemap_truncation_past_cap_logs(caplog):
         await crawler._discover_sitemap_urls(cast(aiohttp.ClientSession, session), origin)
 
     assert any(
-        f"lists {len(children)} children" in record.getMessage() for record in caplog.records
+        "skipping" in record.getMessage() and "generic" in record.getMessage()
+        for record in caplog.records
     )
 
 
