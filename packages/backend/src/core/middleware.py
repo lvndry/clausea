@@ -140,7 +140,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         try:
             token = auth_header.split(" ")[1]
-            user_info: dict[str, Any] = await clerk_auth_service.verify_token(token)
+            payload: dict[str, Any] = await clerk_auth_service.verify_token(token)
+
+            # Normalise to the same shape as SERVICE_ACCOUNT_IDENTITY so
+            # _get_user_id / check_usage_limit always find "user_id".
+            # Clerk JWTs use "sub" (standard) or "id" (template custom claim).
+            user_id = payload.get("sub") or payload.get("id")
+            user_info = {
+                "user_id": user_id,
+                "email": payload.get("email"),
+                "name": payload.get("name"),
+            }
 
             self.logger.info(
                 "JWT authentication successful",
