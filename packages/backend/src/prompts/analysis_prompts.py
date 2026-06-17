@@ -217,10 +217,13 @@ Explicitly surface, when the inputs support it: children's or teens' data, sale 
 - Distinguish *absent* from *vague*. "Mentioned but unspecified" and "not mentioned at all" are different findings — never collapse the former into the latter. If a document addresses a topic only with boilerplate or without naming a concrete mechanism (e.g. "we apply appropriate safeguards" for international transfers, with no Standard Contractual Clauses / adequacy decision / BCRs named), describe it as **vague or unspecified** (e.g. "transfer safeguards are claimed but unspecified — no mechanism named"), not as missing or non-existent. Flagging vague boilerplate as a weakness is correct; stating that none exists when the document claims otherwise is not.
 
 ## SUMMARY
-1. Up to 5 sentences: who this company is, what data they collect overall, the most important privacy risk, and the most important protection (if any). Start directly with the company or service name.
-2. A markdown bullet list titled "Key Takeaways" - 6-10 specific cross-document findings users must know.
+One sentence (max 20 words) that tells a non-technical user the single most important thing about this service's data practices. Start with the service name. Be specific — name the actual risk or strength, not generic labels.
 
-Rules: start with the company/service name; be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
+If you cannot write a confident, specific sentence from the evidence provided, return an empty string "". Never return "None", "N/A", "null", placeholder text, or a generic statement that could apply to any product.
+
+Then a markdown bullet list titled "Key Takeaways" — 6-10 specific cross-document findings users must know.
+
+Rules: be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
 
 ## SCORES
 Synthesize from all document scores. Where documents conflict, use the most conservative (worst) interpretation for the underlying facts, then assign scores that spread across the 0-10 scale.

@@ -586,9 +586,7 @@ class PipelineService:
                     # fail here truthfully instead of reporting "completed" and letting the
                     # next step blow up. (Non-core partial loss is reported, not failed.)
                     core_docs = [
-                        doc
-                        for doc in analysed_docs
-                        if getattr(doc, "doc_type", None) in OVERVIEW_CORE_DOC_TYPES
+                        doc for doc in analysed_docs if doc.doc_type in OVERVIEW_CORE_DOC_TYPES
                     ]
                     core_analysed = sum(1 for doc in core_docs if doc.analysis)
                     no_analysis = bool(analysed_docs) and analysed_count == 0

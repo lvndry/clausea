@@ -396,13 +396,13 @@ class ProductService:
             overview.company_name = product.company_name
 
         # Attach optional fields from meta_summary and computed values
-        overview.keypoints = getattr(meta_summary, "keypoints", None)
+        overview.keypoints = meta_summary.keypoints
         overview.document_counts = document_counts
         overview.document_types = document_types
 
         # Attach new structured fields for Overview redesign
-        overview.data_collection_details = getattr(meta_summary, "data_collection_details", None)
-        overview.third_party_details = getattr(meta_summary, "third_party_details", None)
+        overview.data_collection_details = meta_summary.data_collection_details
+        overview.third_party_details = meta_summary.third_party_details
 
         # If compliance_status is missing from meta summary, aggregate from document analyses
         if not overview.compliance_status and product:

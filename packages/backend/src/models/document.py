@@ -389,6 +389,9 @@ class DocumentAnalysis(BaseModel):
     verdict: Literal[
         "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
     ] = Field(default="moderate", description="Privacy friendliness level based on risk score")
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None, description="A-E grade derived deterministically from risk_score"
+    )
     liability_risk: int | None = Field(
         default=None, ge=0, le=10, description="Liability risk score (0-10, for business users)"
     )
@@ -499,6 +502,9 @@ class MetaSummary(BaseModel):
     verdict: Literal[
         "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
     ]
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None, description="A-E grade derived deterministically from risk_score"
+    )
     keypoints: list[str] = Field(default_factory=list)
     data_collected: list[str] | None = None
     data_purposes: list[str] | None = None
