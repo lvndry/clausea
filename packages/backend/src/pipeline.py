@@ -1036,7 +1036,9 @@ class PolicyDocumentPipeline:
 
         return stored_count
 
-    async def _process_crawl_result(self, result: CrawlResult, product: Product) -> Document | None:
+    async def _process_crawl_result(
+        self, result: CrawlResult, product: Product, trusted: bool = False
+    ) -> Document | None:
         """
         Process a single crawl result through the analysis pipeline.
 
@@ -1077,7 +1079,11 @@ class PolicyDocumentPipeline:
                 logger_analysis.info(f"[skip:garbled_content] {result.url}")
                 return None
 
-            if result.legal_score is not None and result.legal_score < MIN_LEGAL_SCORE_THRESHOLD:
+            if (
+                not trusted
+                and result.legal_score is not None
+                and result.legal_score < MIN_LEGAL_SCORE_THRESHOLD
+            ):
                 self.stats.crawl_skip_reasons.append(
                     {
                         "url": result.url,
@@ -1346,12 +1352,15 @@ class PolicyDocumentPipeline:
         product: Product,
         processed_urls: set[str],
         seen_fingerprints: set[str],
+        trusted_urls: frozenset[str] | None = None,
     ) -> list[Document]:
         """Classify a batch of crawl results and return policy documents.
 
         Mutates *processed_urls* to track deduplication across calls.
         Mutates *seen_fingerprints* for near-duplicate content skipping across passes.
         Failed crawl results are collected in ``self.stats.crawl_errors``.
+        trusted_urls: URLs that bypass the legal_score gate (seed URLs whose path
+        carries no policy keywords despite containing policy content).
         """
         documents: list[Document] = []
         for result in results:
@@ -1364,7 +1373,8 @@ class PolicyDocumentPipeline:
                     logger.debug(f"Skipping near-duplicate: {result.url}")
                     continue
                 seen_fingerprints.add(fp)
-                document = await self._process_crawl_result(result, product)
+                is_trusted = trusted_urls is not None and result.url in trusted_urls
+                document = await self._process_crawl_result(result, product, trusted=is_trusted)
                 if document:
                     documents.append(document)
             else:
@@ -1441,6 +1451,13 @@ class PolicyDocumentPipeline:
             total_results = 0
             processed_documents: list[Document] = []
 
+            # Seed URLs were explicitly provided by the user or extension as known
+            # policy pages. They bypass the URL-score gate in _process_crawl_result
+            # because their path may carry no policy keywords (e.g. amazon's
+            # /gp/help/customer/display.html?nodeId=...) even though the content is
+            # clearly a policy document. The content-based LLM classifier still runs.
+            trusted_urls: frozenset[str] = frozenset(crawl_urls)
+
             # Stream each crawled result through classification + storage as it is
             # produced, so a crawl killed at the time ceiling or by a stall keeps the
             # work done so far instead of losing everything in an end-of-crawl batch.
@@ -1449,7 +1466,11 @@ class PolicyDocumentPipeline:
             # idempotent (dedupes by URL/fingerprint), so re-arrivals are safe.
             async def result_callback(result: CrawlResult) -> None:
                 docs = await self._classify_results(
-                    [result], product, processed_urls, seen_fingerprints
+                    [result],
+                    product,
+                    processed_urls,
+                    seen_fingerprints,
+                    trusted_urls=trusted_urls,
                 )
                 if docs:
                     stored = await self._store_documents(docs)
