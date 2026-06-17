@@ -2385,7 +2385,12 @@ class ClauseaCrawler:
         # Camoufox/Firefox fails to decompress Brotli ("br") response bodies, leaving the DOM
         # full of compressed garbage — common on Cloudflare-fronted sites (OpenAI, etc.), which
         # serve br by default. Request gzip only so the browser decodes content correctly.
-        await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
+        await page.set_extra_http_headers(
+            {
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        )
 
         try:
             await _block_heavy_assets(page)
