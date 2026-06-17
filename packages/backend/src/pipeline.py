@@ -866,6 +866,7 @@ class PolicyDocumentPipeline:
         strategy: str | None = None,
         progress_phase: str | None = None,
         result_callback: Callable[[CrawlResult], Awaitable[None]] | None = None,
+        stop_callback: Callable[[], bool] | Callable[[], Awaitable[bool]] | None = None,
         recently_stored_urls: list[str] | None = None,
     ) -> ClauseaCrawler:
         """Create a configured crawler instance for a specific product."""
@@ -914,6 +915,7 @@ class PolicyDocumentPipeline:
             denied_paths=product.crawl_denied_paths,
             progress_callback=progress_callback,
             result_callback=result_callback,
+            stop_callback=stop_callback,
             recently_stored_urls=recently_stored_urls,
         )
 
@@ -1248,9 +1250,26 @@ class PolicyDocumentPipeline:
         # Prepend https://
         return f"https://{url_or_domain}"
 
+    def _seed_dedupe_key(self, normalized_url: str) -> tuple[str, str, str, str]:
+        """Stable dedupe key for crawl seeds.
+
+        Treat root variants as equivalent (``https://x.com`` == ``https://x.com/``)
+        while preserving deeper paths and query-bearing override seeds.
+        """
+        parsed = urlparse(normalized_url)
+        path = parsed.path
+        if path in ("", "/"):
+            path = ""
+        return (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            path,
+            parsed.query,
+        )
+
     def _get_crawl_urls(self, product: Product) -> list[str]:
         """
-        Get crawl URLs for a product, falling back to domains if crawl_base_urls is empty.
+        Get crawl URLs for a product with domain roots as primary seeds.
 
         Args:
             product: Product to get URLs for
@@ -1258,22 +1277,28 @@ class PolicyDocumentPipeline:
         Returns:
             List of URLs to crawl (all normalized with https:// protocol)
         """
-        if product.crawl_base_urls:
-            # Normalize crawl_base_urls to ensure they have https:// protocol
-            return [self._normalize_url(url) for url in product.crawl_base_urls if url.strip()]
-
-        # Fallback to domains if crawl_base_urls is empty
-        if not product.domains:
-            return []
-
-        # Convert domains to URLs (prepend https:// if not already present)
-        urls = []
+        # Domain roots are the backbone (always crawl homepage + sitemap discovery).
+        candidates: list[str] = []
         for domain in product.domains:
             normalized = self._normalize_url(domain)
             if normalized:
-                urls.append(normalized)
+                candidates.append(normalized)
 
-        return urls
+        # crawl_base_urls are optional overrides for odd sites, not the primary source.
+        for seed in product.crawl_base_urls or []:
+            normalized = self._normalize_url(seed)
+            if normalized:
+                candidates.append(normalized)
+
+        deduped: list[str] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for candidate in candidates:
+            key = self._seed_dedupe_key(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(candidate)
+        return deduped
 
     async def _start_crawl_session(self, product: Product, crawl_urls: list[str]) -> CrawlSession:
         session = CrawlSession(
@@ -1381,7 +1406,7 @@ class PolicyDocumentPipeline:
         product_start_time = time.time()
         log_memory_usage(f"Starting {product.name}")
 
-        # Get crawl URLs (from crawl_base_urls or fallback to domains)
+        # Get crawl URLs (domain roots primary, crawl_base_urls as optional overrides).
         crawl_urls = self._get_crawl_urls(product)
 
         if not crawl_urls:
@@ -1393,9 +1418,14 @@ class PolicyDocumentPipeline:
             self.stats.failed_product_slugs.append(product.slug)
             return []
 
-        # Log whether we're using crawl_base_urls or domains
-        using_domains = not product.crawl_base_urls
-        source = "domains" if using_domains else "crawl_base_urls"
+        has_domains = bool(product.domains)
+        has_overrides = bool(product.crawl_base_urls)
+        if has_domains and has_overrides:
+            source = "domains+overrides"
+        elif has_domains:
+            source = "domains"
+        else:
+            source = "crawl_base_urls_override"
         crawl_session: CrawlSession | None = None
         try:
             logger.info(
@@ -1410,6 +1440,8 @@ class PolicyDocumentPipeline:
             seen_fingerprints: set[str] = set()
             total_results = 0
             processed_documents: list[Document] = []
+            discovered_doc_types: set[str] = set()
+            discovery_coverage_met = False
 
             # Stream each crawled result through classification + storage as it is
             # produced, so a crawl killed at the time ceiling or by a stall keeps the
@@ -1418,6 +1450,7 @@ class PolicyDocumentPipeline:
             # per-result calls exactly as the old batch call did. _store_documents is
             # idempotent (dedupes by URL/fingerprint), so re-arrivals are safe.
             async def result_callback(result: CrawlResult) -> None:
+                nonlocal discovery_coverage_met
                 docs = await self._classify_results(
                     [result], product, processed_urls, seen_fingerprints
                 )
@@ -1425,6 +1458,16 @@ class PolicyDocumentPipeline:
                     stored = await self._store_documents(docs)
                     self.stats.policy_documents_stored += stored
                     processed_documents.extend(docs)
+                    discovered_doc_types.update(
+                        str(doc.doc_type) for doc in docs if getattr(doc, "doc_type", None)
+                    )
+                    if len(processed_documents) >= self.min_docs_before_fallback and all(
+                        req in discovered_doc_types for req in self.required_doc_types
+                    ):
+                        discovery_coverage_met = True
+
+            def stop_discovery_callback() -> bool:
+                return discovery_coverage_met
 
             # Docs stored within the resume freshness window. A retried crawl skips
             # re-fetching these so it resumes instead of re-rendering hours of work;
@@ -1454,12 +1497,19 @@ class PolicyDocumentPipeline:
                 strategy=self.discovery_strategy,
                 progress_phase="discovery",
                 result_callback=result_callback,
+                stop_callback=stop_discovery_callback,
                 recently_stored_urls=recently_stored_urls,
             )
             discovery_results = await self._crawl_base_urls(discovery_crawler, crawl_urls)
             logger_discovery.info(
                 f"discovery pass complete for '{product.name}': found {len(discovery_results)} pages"
             )
+            if discovery_coverage_met:
+                logger_discovery.info(
+                    f"discovery coverage target met for '{product.name}' "
+                    f"(required types: {', '.join(self.required_doc_types)}); "
+                    "stopped discovery early"
+                )
             total_results += len(discovery_results)
 
             # Fallback deep crawl (recall-first) if coverage is low. The decision runs

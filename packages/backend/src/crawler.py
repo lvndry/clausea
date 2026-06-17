@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import aiohttp
@@ -152,6 +152,14 @@ _LANGUAGE_NAMES = frozenset(
 _ENGLISH_TOKENS = frozenset({"en", "english"})
 
 
+def _english_locale_variant(token: str) -> str | None:
+    """Bare English marker (en/english) — safe to collapse. Region-qualified en-XX (en-us vs
+    en-gb = CCPA vs GDPR) are jurisdiction-distinct and returned as None so they aren't merged."""
+    if token.lower().strip() in ("en", "english"):
+        return "en"
+    return None
+
+
 def _is_bare_language(token: str) -> bool:
     """True if ``token`` names a language with no region qualifier.
 
@@ -200,6 +208,38 @@ def locale_canonical_key(parsed: ParseResult) -> tuple[str, bool, bool]:
     return canonical, had_signal, is_english
 
 
+def english_locale_canonical_key(parsed: ParseResult) -> tuple[str, str | None]:
+    """Canonical key for English locale variants of one document.
+
+    Strips English locale markers from path segments and locale query params, returning
+    the canonical URL plus the normalized English variant token (``en``, ``en-us``,
+    ``en-gb``, etc.) when one was present.
+    """
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    kept_segments: list[str] = []
+    english_variant: str | None = None
+    for seg in segments:
+        variant = _english_locale_variant(seg)
+        if variant is not None:
+            english_variant = english_variant or variant
+            continue
+        kept_segments.append(seg)
+
+    kept_query: list[tuple[str, str]] = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        variant = _english_locale_variant(value) if key.lower() in _LOCALE_QUERY_KEYS else None
+        if variant is not None:
+            english_variant = english_variant or variant
+            continue
+        kept_query.append((key, value))
+
+    canonical_path = "/" + "/".join(kept_segments)
+    canonical = urlunparse(
+        (parsed.scheme, parsed.netloc, canonical_path, "", urlencode(kept_query), "")
+    )
+    return canonical, english_variant
+
+
 # Standard user agent string following RFC 7231 format
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; ClauseaBot/2.0; +https://www.clausea.co/bot.html; lvndry@proton.me)"
@@ -221,6 +261,10 @@ CONVERGENCE_LEGAL_SCORE = 0.2
 # Boost-only pages to keep crawling after the own-score frontier empties, in case one links a
 # policy reachable no other way. A new real lead resets it. See _relevance_exhausted.
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
+# Cap per-document English locale variants (e.g. en-us/en-gb) to reduce duplicate crawls.
+MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
+    os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
+)
 
 # Minimum extracted body text length to treat static fetch as sufficient (low URL score) and
 # to skip SPA hydration waits in the browser fetch path.
@@ -243,12 +287,9 @@ MAX_HEADER_BYTES = 65_536
 # use, so it gets a tight cap: a page that hasn't reached domcontentloaded in this long is
 # almost always hung or bot-walled, not a slow policy page. Bounded by the static timeout.
 BROWSER_NAV_TIMEOUT_MS = 20_000
-# Per load-state settle wait after navigation. We do NOT wait for "networkidle": SPA/marketing
-# sites (analytics, websockets, long-polling) rarely reach it, so waiting just burns the budget
-# on a state that never fires. domcontentloaded + a short "load" settle is enough; late-hydrating
-# content is still captured by the SPA_HYDRATION_RETRIES polling below.
-BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
-
+# Short "load" settle; partial-SSR pages inject their body at load. Kept low so SPAs that never
+# fire it don't burn the budget.
+BROWSER_LOAD_STATE_TIMEOUT_MS = int(os.getenv("CRAWLER_BROWSER_LOAD_STATE_MS", "2000"))
 # Heavy assets aborted during render to cap renderer memory. A regex route — Playwright matches
 # only these URLs, so document/CSS/JS/XHR navigate untouched with no event-loop overhead. NOT a
 # catch-all "**/*" (a blanket route that continue_()s every request stalls SPA navigation under
@@ -1502,7 +1543,7 @@ class ClauseaCrawler:
         max_retries: int = 3,  # Maximum retry attempts for transient errors
         log_file_path: str | None = None,  # Optional path to log file for crawl session
         use_browser: bool = False,  # Whether to use a headless browser for dynamic rendering
-        browser_concurrency: int = 2,  # Max concurrent browser renders (shared browser instance)
+        browser_concurrency: int = 4,  # Max concurrent browser renders (shared browser instance)
         proxy: str | None = None,  # Optional proxy URL (e.g., "http://user:pass@host:port")
         allowed_paths: list[str] | None = None,  # Optional list of allowed path regexes
         denied_paths: list[str] | None = None,  # Optional list of denied path regexes
@@ -1516,6 +1557,9 @@ class ClauseaCrawler:
         # failure). Lets callers stream each page to classification/storage as it is
         # produced instead of batching at the end of a multi-hour crawl.
         result_callback: Callable[[CrawlResult], Awaitable[None]] | None = None,
+        # Optional early-stop hook checked after each processed result. Return True to
+        # stop the crawl once caller-specific coverage criteria are met.
+        stop_callback: Callable[[], bool] | Callable[[], Awaitable[bool]] | None = None,
         # URLs of docs stored within the resume freshness window. Skipped during
         # should_crawl_url so a retried long crawl resumes (keeps already-stored
         # pages) instead of re-fetching and re-rendering them from scratch.
@@ -1576,6 +1620,7 @@ class ClauseaCrawler:
         # Progress callback for external monitoring
         self.progress_callback = progress_callback
         self.result_callback = result_callback
+        self.stop_callback = stop_callback
         # Number of processed URLs at the last progress report (for cadence).
         self._last_progress_report = 0
 
@@ -1615,6 +1660,10 @@ class ClauseaCrawler:
         # translation duplicates of an already-seen document are skipped while
         # region-qualified locales (jurisdiction-distinct) are always preserved.
         self._locale_seen_keys: set[str] = set()
+        # Canonical English-locale key -> variants admitted for this document. Caps
+        # duplicate en-* policy crawls while retaining representative coverage.
+        self.max_english_locale_variants = max(1, MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC)
+        self._english_locale_seen: dict[str, set[str]] = {}
         self.url_queue: deque[tuple[str, int]] = deque()  # For BFS
         self.url_stack: list[tuple[str, int]] = []  # For DFS
         # best-first frontier: (-score, url, depth, base_score). base_score excludes parent boost.
@@ -2333,26 +2382,11 @@ class ClauseaCrawler:
                 logger.warning(f"❌ Browser fetch failed to initiate for {url}")
                 return None
 
-            # Short load-state settle after navigation. We deliberately do NOT wait for
-            # "networkidle" — SPA/marketing sites rarely reach it, so it just times out and
-            # wastes the budget. Late-hydrating content is recovered by the SPA-hydration
-            # polling below, so dropping networkidle is recall-neutral.
-            wait_states: list[Literal["domcontentloaded", "load"]] = [
-                "domcontentloaded",
-                "load",
-            ]
-            state_timeout = BROWSER_LOAD_STATE_TIMEOUT_MS
-
-            for state in wait_states:
-                try:
-                    logger.debug(f"⏳ Waiting for {state} state for {url}")
-                    await page.wait_for_load_state(state, timeout=state_timeout)
-                    logger.debug(f"✅ Reached {state} state for {url}")
-                except Exception as e:
-                    logger.debug(f"⚠️ Wait for {state} timed out for {url} (continuing): {e}")
-                    # If we reached domcontentloaded, we can try to extract content even if others fail.
-                    # We continue the loop to try the next state if time remains.
-                    continue
+            # Short "load" settle so partial-SSR bodies aren't truncated; swallow if it never fires.
+            try:
+                await page.wait_for_load_state("load", timeout=BROWSER_LOAD_STATE_TIMEOUT_MS)
+            except Exception:
+                pass
 
             title = await page.title()
             content = await page.content()
@@ -3062,14 +3096,32 @@ class ClauseaCrawler:
                 logger.debug(f"❌ URL {url} rejected: matches skip pattern {pattern.pattern}")
                 return False
 
+        normalized_parsed = self._parse_url(self.normalize_url(url))
+
+        # Cap English locale variants per canonical document path (e.g. /en-us, /en-gb)
+        # so the crawl keeps representative coverage without exploding on en-* mirrors.
+        english_key, english_variant = english_locale_canonical_key(normalized_parsed)
+        if english_variant is not None:
+            seen_variants = self._english_locale_seen.setdefault(english_key, set())
+            if english_variant in seen_variants:
+                logger.debug(
+                    f"❌ URL {url} rejected: duplicate English locale variant "
+                    f"'{english_variant}' for {english_key}"
+                )
+                return False
+            if len(seen_variants) >= self.max_english_locale_variants:
+                logger.debug(
+                    f"❌ URL {url} rejected: English locale variant cap reached for {english_key} "
+                    f"(cap={self.max_english_locale_variants})"
+                )
+                return False
+            seen_variants.add(english_variant)
+
         # Skip pure-translation duplicates of a document we've already admitted. The
-        # canonical key strips only bare-language markers, so region-qualified locales
-        # (jurisdiction-distinct, e.g. en-GB vs en-US, /eu vs /us) keep separate keys
-        # and are always crawled. We keep the language-less or English variant when one
-        # exists; otherwise the first translation seen.
-        canonical_key, had_language_signal, is_english = locale_canonical_key(
-            self._parse_url(self.normalize_url(url))
-        )
+        # canonical key strips only bare-language markers, so jurisdictional region
+        # paths (/eu vs /us) keep separate keys. English region variants are handled
+        # by the cap above; non-English translations collapse to one representative.
+        canonical_key, had_language_signal, is_english = locale_canonical_key(normalized_parsed)
         if had_language_signal and not is_english and canonical_key in self._locale_seen_keys:
             logger.debug(f"❌ URL {url} rejected: translation duplicate of {canonical_key}")
             return False
@@ -3425,6 +3477,8 @@ class ClauseaCrawler:
                         status_code=(browser_page.status_code if browser_page else raw.status_code),
                         success=False,
                         error_message="Static content unusable and browser rendering failed",
+                        # Keep links: a thin app shell still footers to the real policy pages.
+                        discovered_links=(browser_page.discovered_links if browser_page else []),
                     )
                 if page is not None:
                     # Not policy-relevant but we parsed something — keep the static content
@@ -3754,12 +3808,25 @@ class ClauseaCrawler:
             self._frontier_real_leads += 1
             self._crawls_since_new_lead = 0
 
+    def _frontier_top_base_score(self) -> float | None:
+        """Best remaining own-score in the frontier (ignores parent-page boost)."""
+        if self.strategy != "best_first" or not self.url_priority_queue:
+            return None
+        return max(base_score for _, _, _, base_score in self.url_priority_queue)
+
     def _relevance_exhausted(self) -> bool:
-        """True once policy content is found and only boost-only links remain past the grace window."""
+        """True once only low-own-score URLs remain after policy has been found.
+
+        For discovery we care about *own* legal relevance, not parent-page boost.
+        When the frontier's best own-score falls below ``min_legal_score`` (and
+        stays there for the grace budget), everything left is tail noise.
+        """
+        top_base_score = self._frontier_top_base_score()
         return (
             self.strategy == "best_first"
             and self._policy_pages_found >= 1
-            and self._frontier_real_leads <= 0
+            and top_base_score is not None
+            and top_base_score < self.min_legal_score
             and self._crawls_since_new_lead >= CRAWL_EXHAUSTION_GRACE
         )
 
@@ -3951,6 +4018,15 @@ class ClauseaCrawler:
         if self.result_callback is not None:
             await self.result_callback(result)
 
+    async def _should_stop_early(self) -> bool:
+        """Return True when caller-provided stop callback asks to end the crawl."""
+        if self.stop_callback is None:
+            return False
+        decision = self.stop_callback()
+        if isinstance(decision, Awaitable):
+            decision = await decision
+        return bool(decision)
+
     async def _drain_render_retries(self, session: aiohttp.ClientSession) -> None:
         """Serially re-attempt renders that failed during the concurrent crawl.
 
@@ -4028,6 +4104,7 @@ class ClauseaCrawler:
             self._frontier_real_leads = 0
             self._policy_pages_found = 0
             self._crawls_since_new_lead = 0
+            self._english_locale_seen.clear()
 
             # Add base URL to queue. Base URLs are explicit seeds (crawl_base_urls) and
             # are always crawled regardless of score; record a generous score so the
@@ -4106,6 +4183,7 @@ class ClauseaCrawler:
                 # policy content once we've found some, to stop wandering the marketing site.
                 pages_since_policy_hit = 0
                 found_policy = False
+                stop_requested = False
                 while len(self.visited_urls) < self.max_pages:
                     # Get batch of URLs to process
                     batch = []
@@ -4148,14 +4226,6 @@ class ClauseaCrawler:
                             else:
                                 pages_since_policy_hit += 1
 
-                            # Add discovered URLs to queue
-                            if depth < self.max_depth:
-                                self.add_urls_to_queue(
-                                    result.discovered_links,
-                                    base_url,
-                                    depth,
-                                    page_metadata=result.metadata,
-                                )
                             logger.info(
                                 f"✅ [{self.stats.crawled_urls}/{self.max_pages}] "
                                 f"{url} — {len(result.discovered_links)} links"
@@ -4171,14 +4241,32 @@ class ClauseaCrawler:
                             if result.blocked_by_robots_txt:
                                 self.results.append(result)
 
+                        # Follow links even from failed results: a thin page is a vital nav source.
+                        if depth < self.max_depth and result.discovered_links:
+                            self.add_urls_to_queue(
+                                result.discovered_links,
+                                base_url,
+                                depth,
+                                page_metadata=result.metadata,
+                            )
+
                         # Stream every processed result (success and failure) so the
                         # pipeline can classify+store as pages arrive and keep the job
                         # heartbeat fresh during long crawls.
                         await self._emit_result(result)
+                        if await self._should_stop_early():
+                            stop_requested = True
+                            logger.info(
+                                "🧭 Crawl stopped early: caller coverage criteria satisfied."
+                            )
+                            break
 
                     # Progress update — emitted on a threshold crossing so it
                     # survives batched jumps in total_urls (see helper docstring).
                     self._report_crawl_progress()
+
+                    if stop_requested:
+                        break
 
                     if self._has_converged(found_policy, pages_since_policy_hit):
                         logger.info(
@@ -4202,7 +4290,8 @@ class ClauseaCrawler:
                 self._report_crawl_progress(force=True)
 
                 # Recover any policy-relevant pages whose render failed under load.
-                await self._drain_render_retries(session)
+                if not stop_requested:
+                    await self._drain_render_retries(session)
 
             # Render instrumentation — data for future concurrency/pooling decisions.
             if self._render_attempts:
@@ -4235,6 +4324,12 @@ class ClauseaCrawler:
 
         try:
             for i, url in enumerate(urls, 1):
+                if await self._should_stop_early():
+                    logger.info(
+                        f"🧭 Stopping remaining seeds early after {i - 1}/{len(urls)} seed(s): "
+                        "coverage criteria already met."
+                    )
+                    break
                 logger.info(f"🔄 Processing URL {i}/{len(urls)}: {url}")
                 results = await self.crawl(url, cleanup=False)
                 all_results.extend(results)
@@ -4249,6 +4344,7 @@ class ClauseaCrawler:
                 self.failed_urls.clear()
                 self.queued_urls.clear()
                 self._locale_seen_keys.clear()
+                self._english_locale_seen.clear()
                 self._sitemap_seeded = False
                 self.url_queue.clear()
                 self.url_stack.clear()

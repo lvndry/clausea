@@ -38,7 +38,8 @@ class TestRelevanceExhaustion:
     def test_stops_only_after_grace_once_leads_exhausted(self) -> None:
         crawler = ClauseaCrawler(strategy="best_first", min_legal_score=2.5)
         crawler._policy_pages_found = 1
-        crawler._frontier_real_leads = 0
+        # Only a boost-only URL remains (own score below the gate) — tail noise.
+        crawler._enqueue_best_first("https://x.com/random", 1, 3.0, 0.0)
         crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE - 1
         assert crawler._relevance_exhausted() is False  # grace not yet elapsed
         crawler._crawls_since_new_lead = CRAWL_EXHAUSTION_GRACE

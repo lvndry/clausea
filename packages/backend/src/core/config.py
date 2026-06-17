@@ -152,7 +152,7 @@ class CrawlerConfig:
 
         # --- Concurrency & politeness ---
         self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", "20"))
-        self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "2"))
+        self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "4"))
         self.delay_between_requests: float = float(
             os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.0")
         )

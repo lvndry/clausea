@@ -1,10 +1,11 @@
-"""Pure-translation URL variants are deduped; region-qualified locales are preserved.
+"""Pure-translation URL variants are deduped; English locale variants are capped.
 
 Sites like Steam (``?l=ukrainian`` over a path-locale matrix) and Epic (``?lang=…``)
 expose the same legal document in dozens of translations. Each one browser-renders and
 times out, so a single crawl burned ~30 min on hundreds of redundant fetches. We keep
-the canonical/English variant and skip the rest — but anything carrying a region
-qualifier (jurisdiction-distinct, e.g. GDPR vs CCPA) is always crawled.
+the canonical/English variant and skip the rest. English region variants are capped
+to representative coverage, while jurisdictional region paths (e.g. /eu vs /us)
+remain distinct.
 """
 
 from urllib.parse import urlparse
@@ -56,6 +57,24 @@ def test_region_variants_are_each_crawled() -> None:
     assert crawler.should_crawl_url(base + "/eu", base, 1) is True
     assert crawler.should_crawl_url(base + "/us", base, 1) is True
     assert crawler.should_crawl_url(base + "/en-GB", base, 1) is True
+
+
+def test_english_region_variants_are_each_crawled() -> None:
+    # en-us (CCPA), en-gb (GDPR), en-au are jurisdiction-distinct legal texts, not translations:
+    # never collapsed pre-fetch. Identical ones are dropped later by the content fingerprint.
+    crawler = _crawler()
+    base = "https://example.com/privacy"
+    assert crawler.should_crawl_url(base + "/en-us", base, 1) is True
+    assert crawler.should_crawl_url(base + "/en-gb", base, 1) is True
+    assert crawler.should_crawl_url(base + "/en-au", base, 1) is True
+
+
+def test_english_region_query_variants_are_each_crawled() -> None:
+    crawler = _crawler()
+    base = "https://legal.example.com/terms"
+    assert crawler.should_crawl_url(base + "?lang=en-gb", base, 1) is True
+    assert crawler.should_crawl_url(base + "?lang=en-ca", base, 1) is True
+    assert crawler.should_crawl_url(base + "?lang=en-au", base, 1) is True
 
 
 def test_hr_and_uk_path_segments_are_not_treated_as_languages() -> None:
