@@ -55,6 +55,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+import tldextract
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -80,6 +81,10 @@ from src.utils.perf import log_memory_usage, memory_monitor_task
 load_dotenv()
 
 logger = get_logger(__name__)
+
+# Offline extractor (no live suffix-list fetch), matching the crawler's domain matching.
+_TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+
 logger_discovery = get_logger(__name__, component="pipeline:discovery")
 logger_analysis = get_logger(__name__, component="pipeline:analysis")
 logger_storage = get_logger(__name__, component="pipeline:storage")
@@ -834,6 +839,23 @@ class PolicyDocumentPipeline:
             )
             return []
 
+    @staticmethod
+    def _allowed_domains_for_product(product: Product) -> list[str]:
+        """Product domains unioned with the registered domain of every crawl seed.
+
+        A seed on a different registered domain (e.g. www.sheingroup.com seeded for a product
+        whose domain is shein.com) is otherwise rejected by the domain gate, dropping a whole
+        policy source. Deduped by registered-domain name, matching is_allowed_domain.
+        """
+        domains = list(product.domains or [])
+        seen = {_TLD_EXTRACT(d).domain for d in domains}
+        for seed in product.crawl_base_urls or []:
+            ext = _TLD_EXTRACT(seed)
+            if ext.domain and ext.domain not in seen:
+                seen.add(ext.domain)
+                domains.append(f"{ext.domain}.{ext.suffix}" if ext.suffix else ext.domain)
+        return domains
+
     def _create_crawler_for_product(
         self,
         product: Product,
@@ -878,7 +900,7 @@ class PolicyDocumentPipeline:
             delay_between_requests=self.delay_between_requests,
             delay_jitter=config.crawler.rate_limit_jitter,
             timeout=self.timeout,
-            allowed_domains=product.domains,
+            allowed_domains=self._allowed_domains_for_product(product),
             respect_robots_txt=self.respect_robots_txt,
             user_agent=self.user_agent,
             follow_external_links=False,
