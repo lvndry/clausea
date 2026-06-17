@@ -1549,7 +1549,7 @@ class ClauseaCrawler:
     # exact modulo, because URLs are processed in concurrent batches and
     # ``stats.total_urls`` jumps by the batch size — an exact ``% N == 0`` gate
     # is routinely skipped, freezing the UI mid-crawl.
-    PROGRESS_REPORT_INTERVAL = 10
+    PROGRESS_REPORT_INTERVAL = 3
 
     def __init__(
         self,
