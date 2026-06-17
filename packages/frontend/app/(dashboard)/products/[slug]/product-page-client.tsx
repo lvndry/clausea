@@ -155,13 +155,11 @@ export default function CompanyPage({
           return;
         }
 
-        // No overview yet — decide what to show based on the latest pipeline job.
-        // The pipeline is auto-triggered ONLY when the product has never been
-        // indexed (no job) or a job is still in progress. Terminal jobs are
-        // surfaced without retriggering:
-        //   - no_documents: crawl finished but found nothing (no retry — a
-        //     re-run yields the same result)
-        //   - failed: interrupted/errored (offer a manual Retry button)
+        if (overviewRes.status === 401) {
+          setIndexationMode("ready");
+          return;
+        }
+
         setIndexationMode("indexing");
         setData(null);
 
@@ -172,7 +170,7 @@ export default function CompanyPage({
         const activeStatuses = [
           "pending",
           "crawling",
-          "summarizing",
+          "synthesising",
           "generating_overview",
         ];
 
