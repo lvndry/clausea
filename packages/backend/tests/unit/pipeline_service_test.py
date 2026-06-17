@@ -219,7 +219,7 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
     fake_pipeline.run = AsyncMock(return_value=crawl_stats)
 
     # Analysis returns the documents, but none got an `.analysis` (all failed).
-    unanalysed_docs = [SimpleNamespace(analysis=None) for _ in range(3)]
+    unanalysed_docs = [SimpleNamespace(analysis=None, doc_type="privacy_policy") for _ in range(3)]
     analyse_mock = AsyncMock(return_value=unanalysed_docs)
     overview_mock = AsyncMock()
 

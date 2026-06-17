@@ -312,7 +312,7 @@ def _calculate_grade(risk_score: int) -> Literal["A", "B", "C", "D", "E"]:
         return "B"
     if risk_score <= 6:
         return "C"
-    if risk_score <= 7:
+    if risk_score <= 8:
         return "D"
     return "E"
 
@@ -330,7 +330,7 @@ def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int
             signals.sells_data == "yes",
             signals.ai_training_on_user_data == "yes",
             signals.children_data_collection == "yes",
-            getattr(signals, "cross_site_tracking", "no") == "yes",
+            signals.cross_site_tracking == "yes",
         ]
     )
     if critical_count >= 2:
@@ -1640,7 +1640,7 @@ Per-document analyses and extractions:
         if meta_summary and core_docs:
             blended = _weighted_product_risk_score(core_docs)
             if blended is not None:
-                signals = getattr(meta_summary, "privacy_signals", None)
+                signals = meta_summary.privacy_signals
                 floored = _apply_signal_floors(blended, signals)
                 meta_summary.risk_score = floored
                 meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
