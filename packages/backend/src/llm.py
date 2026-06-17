@@ -50,13 +50,7 @@ class Model:
         self.extra_headers = extra_headers
 
 
-# Model identifier strings. Supported prefixes:
-#   gemini*       → Google     (GEMINI_API_KEY)
-#   voyage*       → Voyage     (VOYAGE_API_KEY, embeddings)
-#   openrouter/*  → OpenRouter (OPENROUTER_API_KEY)
 SupportedModel = str
-
-# Only rotating free slugs are aliased (env-overridable); other models use full slugs.
 _OPENROUTER_ALIASES: dict[str, str] = {
     "openrouter/owl-alpha": os.getenv(
         "OPENROUTER_OWL_ALPHA_MODEL", "openrouter/openrouter/owl-alpha"
@@ -69,9 +63,7 @@ _OPENROUTER_ALIASES: dict[str, str] = {
     ),
 }
 
-# Single free-first cascade used by every pipeline stage. ESCALATION is its paid tail.
 MODEL_PRIORITY: list[SupportedModel] = [
-    "gemini-2.5-flash-lite",
     "openrouter/owl-alpha",
     "openrouter/gpt-oss-120b-free",
     "openrouter/gemma-free",
