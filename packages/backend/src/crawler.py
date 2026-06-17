@@ -2543,6 +2543,8 @@ class ClauseaCrawler:
         # classes like _shein_privacy / cmp_). Done before that pass so the legal-container
         # guard can't preserve them.
         for tag in list(cleaned.find_all(True)):
+            if tag.parent is None:  # already removed with a decomposed ancestor
+                continue
             if tag.attrs is not None and self._is_consent_container(tag):
                 tag.decompose()
 
@@ -2587,7 +2589,12 @@ class ClauseaCrawler:
         """
         if getattr(element, "attrs", None) is None:
             return False
-        attrs = " ".join(str(v) for v in (element.get("id", ""), element.get("class", "")))
+        class_value = element.get("class")
+        if isinstance(class_value, list):
+            class_str = " ".join(str(cls) for cls in class_value)
+        else:
+            class_str = str(class_value or "")
+        attrs = f"{element.get('id') or ''} {class_str}"
         if not _CONSENT_CONTAINER_RE.search(attrs):
             return False
         text_lower = element.get_text(" ", strip=True).lower()
