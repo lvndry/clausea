@@ -79,7 +79,7 @@ async def test_streams_store_per_result_and_counts_once(monkeypatch):
     # Record the order of classify vs store calls to prove interleaving (not one batch).
     call_log: list[str] = []
 
-    async def fake_process_crawl_result(result: CrawlResult, _product):
+    async def fake_process_crawl_result(result: CrawlResult, _product, trusted=False):
         call_log.append(f"classify:{result.url}")
         doc_type = "privacy_policy" if "privacy" in result.url else "terms_of_service"
         return _doc(result.url, doc_type)
@@ -145,7 +145,7 @@ async def test_streamed_docs_drive_fallback_decision(monkeypatch):
     fallback = [_result("https://acme.com/terms")]
     passes = iter([discovery, fallback])
 
-    async def fake_process_crawl_result(result: CrawlResult, _product):
+    async def fake_process_crawl_result(result: CrawlResult, _product, trusted=False):
         doc_type = "privacy_policy" if "privacy" in result.url else "terms_of_service"
         return _doc(result.url, doc_type)
 
@@ -205,7 +205,7 @@ async def test_discovery_does_not_stop_after_required_types(monkeypatch):
 
     classified_urls: list[str] = []
 
-    async def fake_process_crawl_result(result: CrawlResult, _product):
+    async def fake_process_crawl_result(result: CrawlResult, _product, trusted=False):
         classified_urls.append(result.url)
         if "privacy" in result.url:
             return _doc(result.url, "privacy_policy")
