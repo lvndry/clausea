@@ -33,6 +33,7 @@ from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.pipeline_repository import PipelineRepository
+from src.repositories.product_repository import ProductRepository
 from src.services.service_factory import create_document_service, create_product_service
 from src.utils.domain import extract_domain as _extract_domain
 
@@ -148,6 +149,19 @@ class PipelineService:
             )
             await product_svc.create_product(db, product)
             logger.info(f"Created new product '{product.name}' ({product.slug}) from URL: {url}")
+
+        # Persist extension-provided seeds into the product so every future re-crawl
+        # can reach them. Sites behind anti-bot walls are unreachable without these
+        # URLs — discarding them after one use means monitoring re-crawls will find
+        # zero documents. $addToSet ensures no duplicates.
+        if seed_urls:
+            product_repo = ProductRepository()
+            await product_repo.add_crawl_seeds(db, product.id, seed_urls)
+            logger.info(
+                "persisted %d extension seed(s) to product %s crawl_base_urls",
+                len(seed_urls),
+                product.slug,
+            )
 
         job = PipelineJob(
             product_slug=product.slug,
@@ -391,7 +405,7 @@ class PipelineService:
                         crawl_tasks.append(task)
 
                     pipeline = PolicyDocumentPipeline(progress_callback=_on_crawl_progress)
-                    stats = await pipeline.run([product], seed_urls=job.seed_urls or None)
+                    stats = await pipeline.run([product])
 
                     # Drain pending progress tasks before finalizing the crawl step
                     if crawl_tasks:

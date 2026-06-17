@@ -96,15 +96,20 @@ def test_extension_seed_domain_added_to_allowed_domains() -> None:
 
 @pytest.mark.asyncio
 async def test_extension_seeds_reach_crawl_multiple(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_process_product must pass extension seeds to crawl_multiple."""
+    """Seeds persisted into product.crawl_base_urls reach crawl_multiple naturally.
+
+    The extension writes seeds to the product in the DB before the pipeline runs.
+    The pipeline fetches the updated product and _get_crawl_urls includes the seeds
+    without any special parameter threading.
+    """
+    seed = "https://fr.shein.com/Consumer-Privacy-Notice-s-101.html"
     product = Product(
         id="p6",
         name="Shein",
         slug="shein",
         domains=["shein.com"],
-        crawl_base_urls=[],
+        crawl_base_urls=[seed],  # seeds already persisted to the product
     )
-    seed = "https://fr.shein.com/Consumer-Privacy-Notice-s-101.html"
     batches: list[list[str]] = []
 
     class _FakeCrawler:
@@ -123,7 +128,7 @@ async def test_extension_seeds_reach_crawl_multiple(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(pipeline, "_finish_crawl_session", AsyncMock(return_value=None))
     monkeypatch.setattr(pipeline, "_get_recently_stored_urls", AsyncMock(return_value=[]))
 
-    await pipeline._process_product(product, seed_urls=[seed])
+    await pipeline._process_product(product)
 
     all_crawled = [url for batch in batches for url in batch]
     assert seed in all_crawled
