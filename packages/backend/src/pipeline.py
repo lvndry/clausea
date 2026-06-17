@@ -64,7 +64,7 @@ from src.analyzers.locale_analyzer import LocaleAnalyzer
 from src.analyzers.region_detector import RegionDetector
 from src.core.database import db_session
 from src.core.logging import get_logger
-from src.crawler import ClauseaCrawler, CrawlResult
+from src.crawler import _TLD_EXTRACT, ClauseaCrawler, CrawlResult
 from src.llm import SupportedModel, acompletion_with_fallback
 from src.models.crawl import CrawlSession
 from src.models.document import Document, coerce_doc_type_from_classifier
@@ -834,6 +834,23 @@ class PolicyDocumentPipeline:
             )
             return []
 
+    @staticmethod
+    def _allowed_domains_for_product(product: Product) -> list[str]:
+        """Product domains unioned with the registered domain of every crawl seed.
+
+        A seed on a different registered domain (e.g. www.sheingroup.com seeded for a product
+        whose domain is shein.com) is otherwise rejected by the domain gate, dropping a whole
+        policy source. Deduped by registered-domain name, matching is_allowed_domain.
+        """
+        domains = list(product.domains or [])
+        seen = {_TLD_EXTRACT(d).domain for d in domains}
+        for seed in product.crawl_base_urls or []:
+            ext = _TLD_EXTRACT(seed)
+            if ext.domain and ext.domain not in seen:
+                seen.add(ext.domain)
+                domains.append(f"{ext.domain}.{ext.suffix}" if ext.suffix else ext.domain)
+        return domains
+
     def _create_crawler_for_product(
         self,
         product: Product,
@@ -878,7 +895,7 @@ class PolicyDocumentPipeline:
             delay_between_requests=self.delay_between_requests,
             delay_jitter=config.crawler.rate_limit_jitter,
             timeout=self.timeout,
-            allowed_domains=product.domains,
+            allowed_domains=self._allowed_domains_for_product(product),
             respect_robots_txt=self.respect_robots_txt,
             user_agent=self.user_agent,
             follow_external_links=False,
