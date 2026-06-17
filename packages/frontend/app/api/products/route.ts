@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { apiEndpoints } from "@lib/config";
 import { httpJson } from "@lib/http";
+import { enrichLogos } from "@lib/logo";
 import { productsPageSchema } from "@lib/schemas";
 
 export async function GET(request: NextRequest) {
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
       schema: productsPageSchema,
     });
 
-    return NextResponse.json(data);
+    return NextResponse.json(enrichLogos(data));
   } catch (error) {
     console.error("Error fetching products:", error);
     return NextResponse.json(

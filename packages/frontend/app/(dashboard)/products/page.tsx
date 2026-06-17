@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
+import { enrichLogos } from "@lib/logo";
 
 import {
   ProductsListClient,
@@ -17,7 +18,7 @@ async function fetchInitialProducts(page: number): Promise<ProductsPage> {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) return EMPTY_PAGE;
-    return (await res.json()) as ProductsPage;
+    return enrichLogos((await res.json()) as ProductsPage);
   } catch {
     return EMPTY_PAGE;
   }
