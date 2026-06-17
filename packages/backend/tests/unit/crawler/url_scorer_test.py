@@ -228,7 +228,7 @@ class TestParentPageBoost:
         )
 
         assert len(crawler.url_priority_queue) == 1
-        neg_score, url, _depth, _base = crawler.url_priority_queue[0]
+        _rank, neg_score, url, _depth, _base = crawler.url_priority_queue[0]
         actual_score = -neg_score
 
         # Score should exceed the base URL score thanks to the parent boost
@@ -258,7 +258,7 @@ class TestParentPageBoost:
             page_metadata={"title": "Legal Resources"},
         )
 
-        queued = {url for _neg, url, _depth, _base in crawler.url_priority_queue}
+        queued = {url for _rank, _neg, url, _depth, _base in crawler.url_priority_queue}
         assert "https://example.com/template/holiday" not in queued
         assert "https://example.com/templates/legal-case/exp9" not in queued
         # The boost still works for non-excluded opaque policy URLs.
@@ -394,3 +394,60 @@ class TestMirrorSubdomainExclusion:
             "www",
         ):
             assert not _MIRROR_SUBDOMAIN_RE.search(subdomain), subdomain
+
+
+class TestStrongPolicyPathPriority:
+    """Strong policy-path URLs drain from the best-first frontier before any other
+    lead, so a boost-inflated marketing section can't exhaust the page budget first."""
+
+    def _make_crawler(self) -> ClauseaCrawler:
+        crawler = ClauseaCrawler(
+            respect_robots_txt=False,
+            strategy="best_first",
+            min_legal_score=0.0,
+            allowed_domains=["example.com"],
+        )
+        crawler._sitemap_seeded = True
+        return crawler
+
+    def test_strong_policy_path_predicate(self) -> None:
+        scorer = URLScorer()
+        assert scorer.is_strong_policy_path("https://example.com/legal/privacy")
+        assert scorer.is_strong_policy_path("https://example.com/terms-of-service")
+        assert scorer.is_strong_policy_path("https://example.com/cookie-policy")
+        assert scorer.is_strong_policy_path(
+            "https://docs.github.com/en/site-policy/privacy-policies/github-cookies"
+        )
+        # Ambiguous / non-policy segments stay out of the priority tier.
+        assert not scorer.is_strong_policy_path("https://example.com/security/overview")
+        assert not scorer.is_strong_policy_path("https://example.com/platforms")
+        assert not scorer.is_strong_policy_path("https://example.com/blog/our-policy-update")
+
+    def test_policy_path_dequeued_before_higher_scored_marketing(self) -> None:
+        crawler = self._make_crawler()
+        # Marketing page with an inflated (parent-boosted) score...
+        crawler._enqueue_best_first("https://example.com/security/overview", 1, 9.0, 9.0)
+        # ...still loses to a genuine policy path scored far lower.
+        crawler._enqueue_best_first("https://example.com/legal/privacy", 1, 3.0, 3.0)
+
+        first = crawler.get_next_url()
+        assert first is not None and first[0] == "https://example.com/legal/privacy"
+
+    def test_all_policy_paths_drain_before_any_marketing(self) -> None:
+        crawler = self._make_crawler()
+        crawler._enqueue_best_first("https://example.com/security/a", 1, 9.0, 9.0)
+        crawler._enqueue_best_first("https://example.com/security/b", 1, 8.5, 8.5)
+        crawler._enqueue_best_first("https://example.com/cookie-policy", 1, 2.0, 2.0)
+        crawler._enqueue_best_first("https://example.com/terms", 1, 4.0, 4.0)
+
+        order: list[str] = []
+        while (nxt := crawler.get_next_url()) is not None:
+            order.append(nxt[0])
+
+        # Higher score leads within the policy tier; both policy paths precede marketing.
+        assert order == [
+            "https://example.com/terms",
+            "https://example.com/cookie-policy",
+            "https://example.com/security/a",
+            "https://example.com/security/b",
+        ]

@@ -142,7 +142,7 @@ class TestCrawlerState:
         import heapq
 
         crawler = ClauseaCrawler(strategy="best_first")
-        heapq.heappush(crawler.url_priority_queue, (-5.0, "https://example.com/a", 1, 5.0))
+        heapq.heappush(crawler.url_priority_queue, (1, -5.0, "https://example.com/a", 1, 5.0))
         assert crawler._get_pending_url_count() == 1
 
 
