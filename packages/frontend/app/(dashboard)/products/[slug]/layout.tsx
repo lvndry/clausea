@@ -105,12 +105,17 @@ const fetchProductForMetadata = cache(async function (
     const product = (await productRes.json()) as ProductMetadata;
 
     if (overviewRes?.ok) {
-      const overview = (await overviewRes.json()) as {
-        risk_score?: number;
-        verdict?: ProductMetadata["verdict"];
-      };
-      if (overview.risk_score != null) product.risk_score = overview.risk_score;
-      if (overview.verdict) product.verdict = overview.verdict;
+      try {
+        const overview = (await overviewRes.json()) as {
+          risk_score?: number;
+          verdict?: ProductMetadata["verdict"];
+        };
+        if (overview.risk_score != null)
+          product.risk_score = overview.risk_score;
+        if (overview.verdict) product.verdict = overview.verdict;
+      } catch {
+        // Overview unavailable or malformed — OG card shows name only
+      }
     }
 
     return { kind: "ok", product };
