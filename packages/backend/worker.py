@@ -130,8 +130,16 @@ async def main() -> None:
         except NotImplementedError:
             pass  # add_signal_handler is unavailable on Windows; signals are a Unix/prod concern
 
-    # Reap jobs orphaned by a previous crash before claiming new work.
-    await _sweep_stale(repo)
+    # Reap jobs orphaned by a previous crash/redeploy before claiming new work.
+    # On boot we use threshold=0: any job still "crawling" when this process starts
+    # was owned by a now-dead process and must be reset immediately. The periodic
+    # sweep uses 30 min to avoid interrupting genuinely running jobs.
+    async with db_session() as db:
+        boot_reaped = await repo.mark_stale_as_failed(db, stale_threshold_minutes=0)
+        if boot_reaped:
+            async with db_session() as db2:
+                requeued = await repo.requeue_failed_jobs(db2)
+            logger.info("Boot sweep: reset %d orphaned job(s), re-queued %d", boot_reaped, requeued)
     last_sweep = loop.time()
     last_monitoring_sweep = loop.time()
 
