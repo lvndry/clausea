@@ -1,5 +1,6 @@
-import { auth } from "@clerk/nextjs/server";
 import type { ZodType } from "zod";
+
+import { auth } from "@clerk/nextjs/server";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 

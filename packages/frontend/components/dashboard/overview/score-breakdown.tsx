@@ -1,6 +1,12 @@
 "use client";
 
-import { Eye, Layers, Share2, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import {
+  Eye,
+  Layers,
+  Share2,
+  ShieldAlert,
+  SlidersHorizontal,
+} from "lucide-react";
 
 import { gradeToneStyle, gradeToneWord, scoreToGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";

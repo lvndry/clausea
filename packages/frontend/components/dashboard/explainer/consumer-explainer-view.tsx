@@ -57,7 +57,9 @@ export function ConsumerExplainerView({
 
       <SilentOn items={explainer.silent_on ?? []} />
 
-      <Conflicts items={explainer.contradictions ?? explainer.conflicts ?? []} />
+      <Conflicts
+        items={explainer.contradictions ?? explainer.conflicts ?? []}
+      />
     </div>
   );
 }

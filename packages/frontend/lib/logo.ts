@@ -1,5 +1,13 @@
-type MinimalItem = { logo?: string | null | undefined; domains?: string[] | undefined };
-type MinimalPage<T extends MinimalItem> = { items: T[]; total: number; page: number; pages: number };
+type MinimalItem = {
+  logo?: string | null | undefined;
+  domains?: string[] | undefined;
+};
+type MinimalPage<T extends MinimalItem> = {
+  items: T[];
+  total: number;
+  page: number;
+  pages: number;
+};
 
 function toHostname(raw: string): string {
   try {
@@ -9,7 +17,9 @@ function toHostname(raw: string): string {
   }
 }
 
-export function enrichLogos<T extends MinimalItem>(data: MinimalPage<T>): MinimalPage<T> {
+export function enrichLogos<T extends MinimalItem>(
+  data: MinimalPage<T>,
+): MinimalPage<T> {
   const token = process.env.LOGO_DEV_API_KEY;
   if (!token) return data;
   return {
@@ -17,7 +27,10 @@ export function enrichLogos<T extends MinimalItem>(data: MinimalPage<T>): Minima
     items: data.items.map((item): T => {
       if (item.logo || !item.domains?.length) return item;
       const hostname = toHostname(item.domains[0]);
-      return { ...item, logo: `https://img.logo.dev/${hostname}?token=${token}` } as T;
+      return {
+        ...item,
+        logo: `https://img.logo.dev/${hostname}?token=${token}`,
+      } as T;
     }),
   };
 }

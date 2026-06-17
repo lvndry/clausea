@@ -21,7 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getVerdictConfig } from "@/lib/verdict";
-
 import type {
   CriticalClause,
   DocumentRiskBreakdown,
@@ -188,7 +187,10 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
 
   if (documents.length === 0) {
     return (
-      <Card variant="default" className="border-border bg-background shadow-none">
+      <Card
+        variant="default"
+        className="border-border bg-background shadow-none"
+      >
         <CardContent className="py-12 text-center">
           <div className="w-14 h-14 rounded-none bg-muted/50 flex items-center justify-center mx-auto mb-3">
             <FolderOpen className="h-7 w-7 text-muted-foreground/50" />
@@ -203,7 +205,10 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
   }
 
   return (
-    <Card variant="default" className="border-border bg-background shadow-none overflow-hidden">
+    <Card
+      variant="default"
+      className="border-border bg-background shadow-none overflow-hidden"
+    >
       <CardHeader className="pb-4">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -270,9 +275,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                   <div
                     className={cn(
                       "w-9 h-9 rounded-none flex items-center justify-center shrink-0 transition-colors",
-                      isExpanded
-                        ? "bg-muted"
-                        : "bg-muted/50",
+                      isExpanded ? "bg-muted" : "bg-muted/50",
                     )}
                   >
                     <FileText
@@ -293,9 +296,7 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                         <h4
                           className={cn(
                             "font-semibold text-sm mb-1 transition-colors",
-                            isExpanded
-                              ? "text-foreground"
-                              : "",
+                            isExpanded ? "text-foreground" : "",
                           )}
                         >
                           {doc.title || "Untitled Document"}
@@ -539,46 +540,59 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                 Key Sections
                               </h5>
                               <div className="space-y-2">
-                                {displayKeySections.slice(0, 5).map((section, i) => {
-                                  const importanceColors = {
-                                    critical: "border-risk-high/20 bg-risk-high/5",
-                                    high: "border-risk-high/20 bg-risk-high/5",
-                                    medium: "border-risk-medium/20 bg-risk-medium/5",
-                                    low: "border-border bg-card/50",
-                                  };
-                                  const importanceDotColors = {
-                                    critical: "bg-risk-high",
-                                    high: "bg-risk-high",
-                                    medium: "bg-risk-medium",
-                                    low: "bg-muted-foreground",
-                                  };
-                                  return (
-                                    <div
-                                      key={i}
-                                      className={cn(
-                                        "rounded-none border p-3",
-                                        importanceColors[section.importance] ?? importanceColors.low,
-                                      )}
-                                    >
-                                      <div className="flex items-center gap-2 mb-1.5">
-                                        <span className={cn("h-2 w-2 rounded-full shrink-0", importanceDotColors[section.importance] ?? importanceDotColors.low)} />
-                                        <span className="text-xs font-semibold text-foreground/90">
-                                          {section.section_title}
-                                        </span>
+                                {displayKeySections
+                                  .slice(0, 5)
+                                  .map((section, i) => {
+                                    const importanceColors = {
+                                      critical:
+                                        "border-risk-high/20 bg-risk-high/5",
+                                      high: "border-risk-high/20 bg-risk-high/5",
+                                      medium:
+                                        "border-risk-medium/20 bg-risk-medium/5",
+                                      low: "border-border bg-card/50",
+                                    };
+                                    const importanceDotColors = {
+                                      critical: "bg-risk-high",
+                                      high: "bg-risk-high",
+                                      medium: "bg-risk-medium",
+                                      low: "bg-muted-foreground",
+                                    };
+                                    return (
+                                      <div
+                                        key={i}
+                                        className={cn(
+                                          "rounded-none border p-3",
+                                          importanceColors[
+                                            section.importance
+                                          ] ?? importanceColors.low,
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                          <span
+                                            className={cn(
+                                              "h-2 w-2 rounded-full shrink-0",
+                                              importanceDotColors[
+                                                section.importance
+                                              ] ?? importanceDotColors.low,
+                                            )}
+                                          />
+                                          <span className="text-xs font-semibold text-foreground/90">
+                                            {section.section_title}
+                                          </span>
+                                        </div>
+                                        {section.analysis && (
+                                          <p className="text-xs text-foreground/80 leading-snug mb-2 ml-4">
+                                            {section.analysis}
+                                          </p>
+                                        )}
+                                        {section.content && (
+                                          <blockquote className="text-xs leading-relaxed text-foreground/70 border-l-2 border-current/30 pl-2 ml-4 italic">
+                                            &ldquo;{section.content}&rdquo;
+                                          </blockquote>
+                                        )}
                                       </div>
-                                      {section.analysis && (
-                                        <p className="text-xs text-foreground/80 leading-snug mb-2 ml-4">
-                                          {section.analysis}
-                                        </p>
-                                      )}
-                                      {section.content && (
-                                        <blockquote className="text-xs leading-relaxed text-foreground/70 border-l-2 border-current/30 pl-2 ml-4 italic">
-                                          &ldquo;{section.content}&rdquo;
-                                        </blockquote>
-                                      )}
-                                    </div>
-                                  );
-                                })}
+                                    );
+                                  })}
                               </div>
                             </div>
                           )}
@@ -670,7 +684,9 @@ export function SourcesList({ productSlug, documents }: SourcesListProps) {
                                                     height: 0,
                                                     opacity: 0,
                                                   }}
-                                                  transition={{ duration: 0.15 }}
+                                                  transition={{
+                                                    duration: 0.15,
+                                                  }}
                                                   className="overflow-hidden"
                                                 >
                                                   <div className="mt-2 space-y-2 border-t border-border/60 pt-2">

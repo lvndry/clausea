@@ -311,28 +311,36 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>
-                  <span className="text-foreground font-medium">Access</span> — request
-                  a copy of the personal data we hold about you.
+                  <span className="text-foreground font-medium">Access</span> —
+                  request a copy of the personal data we hold about you.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Rectification</span> —
-                  ask us to correct inaccurate or incomplete data.
+                  <span className="text-foreground font-medium">
+                    Rectification
+                  </span>{" "}
+                  — ask us to correct inaccurate or incomplete data.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Erasure</span> — ask us
-                  to delete your personal data, subject to legal retention
-                  requirements.
+                  <span className="text-foreground font-medium">Erasure</span> —
+                  ask us to delete your personal data, subject to legal
+                  retention requirements.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Restriction &amp; objection</span>{" "}
+                  <span className="text-foreground font-medium">
+                    Restriction &amp; objection
+                  </span>{" "}
                   — ask us to limit or stop certain processing.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Portability</span> —
-                  receive your data in a structured, machine-readable format.
+                  <span className="text-foreground font-medium">
+                    Portability
+                  </span>{" "}
+                  — receive your data in a structured, machine-readable format.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Withdraw consent</span>{" "}
+                  <span className="text-foreground font-medium">
+                    Withdraw consent
+                  </span>{" "}
                   — where processing is based on consent, withdraw it at any
                   time.
                 </li>

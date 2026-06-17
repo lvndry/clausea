@@ -1,7 +1,8 @@
+import { cookies } from "next/headers";
+
 import { MobileSidebar, Sidebar } from "@/components/dashboard/sidebar";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { UserButton } from "@clerk/nextjs";
-import { cookies } from "next/headers";
 
 export default async function DashboardLayout({
   children,
@@ -43,7 +44,11 @@ export default async function DashboardLayout({
         </header>
 
         {/* Content */}
-        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 overflow-y-auto"
+        >
           <div className="min-h-full p-4 sm:p-6 md:p-8 lg:p-10">{children}</div>
         </main>
       </div>

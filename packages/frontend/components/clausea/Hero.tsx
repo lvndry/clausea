@@ -9,7 +9,11 @@ import { useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 
-export default function Hero({ analyzedCount }: { analyzedCount?: number | null }) {
+export default function Hero({
+  analyzedCount,
+}: {
+  analyzedCount?: number | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(containerRef, { once: true, amount: 0.3 });
 

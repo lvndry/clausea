@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import type { CrawlError } from "@/types";
 import { getBackendUrl } from "@lib/config";
 import { httpJson } from "@lib/http";
-import type { CrawlError } from "@/types";
 
 type PipelineJobStatus =
   | "pending"

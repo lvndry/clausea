@@ -26,7 +26,8 @@ const regulationLabels: Record<string, string> = {
 
 const statusStyles: Record<ComplianceStatus, string> = {
   Compliant: "border-risk-low/20 bg-risk-low/5 text-risk-low",
-  "Partially Compliant": "border-risk-medium/20 bg-risk-medium/5 text-risk-medium",
+  "Partially Compliant":
+    "border-risk-medium/20 bg-risk-medium/5 text-risk-medium",
   "Non-Compliant": "border-risk-high/20 bg-risk-high/5 text-risk-high",
   Unknown: "border-border bg-muted/5 text-muted-foreground",
 };

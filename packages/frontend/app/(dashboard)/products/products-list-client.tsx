@@ -100,9 +100,7 @@ function ProductCard({
         }
       }}
     >
-      <div
-        className="border border-border bg-background p-6 sm:p-8 relative overflow-hidden transition-colors hover:border-foreground/30 cursor-pointer h-full flex flex-col gap-6"
-      >
+      <div className="border border-border bg-background p-6 sm:p-8 relative overflow-hidden transition-colors hover:border-foreground/30 cursor-pointer h-full flex flex-col gap-6">
         <div className="flex items-start justify-between">
           <div className="w-12 h-12 flex items-center justify-center border border-border bg-muted/5 shrink-0">
             {isLoadingLogo ? (
@@ -233,7 +231,10 @@ export function ProductsListClient({
     async function fetchProducts() {
       try {
         setLoading(true);
-        const params = new URLSearchParams({ page: String(currentPage), limit: "20" });
+        const params = new URLSearchParams({
+          page: String(currentPage),
+          limit: "20",
+        });
         if (debouncedSearch) params.set("search", debouncedSearch);
         const response = await fetch(`/api/products?${params.toString()}`, {
           signal: controller.signal,
@@ -248,7 +249,9 @@ export function ProductsListClient({
       } catch (err) {
         if (controller.signal.aborted) return;
         console.error("Error fetching products:", err);
-        setError(err instanceof Error ? err.message : "Failed to fetch products");
+        setError(
+          err instanceof Error ? err.message : "Failed to fetch products",
+        );
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
@@ -386,10 +389,7 @@ export function ProductsListClient({
         >
           <div className="border border-risk-low/20 bg-risk-low/5 p-4 flex items-center justify-between gap-6">
             <div className="flex items-center gap-3">
-              <CheckCircle2
-                className="h-4 w-4 text-risk-low"
-                strokeWidth={2}
-              />
+              <CheckCircle2 className="h-4 w-4 text-risk-low" strokeWidth={2} />
               <p className="text-[10px] uppercase tracking-widest font-bold text-risk-low">
                 Analysis available: {alreadyIndexed.name}
               </p>
@@ -443,7 +443,10 @@ export function ProductsListClient({
 
         <div className="flex items-center p-2 bg-muted/5">
           <div className="flex items-center px-6 gap-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            <ArrowUpDown className="h-4 w-4 text-foreground/40" strokeWidth={1.5} />
+            <ArrowUpDown
+              className="h-4 w-4 text-foreground/40"
+              strokeWidth={1.5}
+            />
             <span>Name (A–Z)</span>
           </div>
 
@@ -462,83 +465,83 @@ export function ProductsListClient({
         )}
         aria-busy={loading}
       >
-      <AnimatePresence mode="popLayout">
-        {paginatedProducts.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex flex-col items-center justify-center py-32 text-center"
-          >
-            <div className="w-16 h-16 border border-border flex items-center justify-center mb-6">
-              <Search className="h-6 w-6 text-muted-foreground/20" />
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">
-                Not analyzed yet
-              </h3>
-              <p className="text-[10px] uppercase tracking-widest text-muted-foreground max-w-sm mx-auto">
-                Paste a URL above and we&apos;ll break this service down for
-                you.
-              </p>
-            </div>
-          </motion.div>
-        ) : (
-          <div className="space-y-12">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {paginatedProducts.map((product, index) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  index={index}
-                  onClick={() => handleProductClick(product)}
-                />
-              ))}
-            </div>
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="pt-12 border-t border-border flex items-center justify-between">
-                <Button
-                  variant="ghost"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                  className="rounded-none text-[10px] uppercase tracking-widest font-bold gap-3 px-0 hover:bg-transparent hover:text-foreground/70"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Previous
-                </Button>
-
-                <div className="flex gap-4">
-                  {[...Array(totalPages)].map((_, i) => (
-                    <button
-                      key={i + 1}
-                      onClick={() => setPage(i + 1)}
-                      className={cn(
-                        "text-[10px] font-bold uppercase tracking-widest transition-colors",
-                        currentPage === i + 1
-                          ? "text-foreground underline underline-offset-8"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {i + 1}
-                    </button>
-                  ))}
-                </div>
-
-                <Button
-                  variant="ghost"
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                  className="rounded-none text-[10px] uppercase tracking-widest font-bold gap-3 px-0 hover:bg-transparent hover:text-foreground/70"
-                >
-                  Next
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
+        <AnimatePresence mode="popLayout">
+          {paginatedProducts.length === 0 ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex flex-col items-center justify-center py-32 text-center"
+            >
+              <div className="w-16 h-16 border border-border flex items-center justify-center mb-6">
+                <Search className="h-6 w-6 text-muted-foreground/20" />
               </div>
-            )}
-          </div>
-        )}
-      </AnimatePresence>
+              <div className="space-y-2">
+                <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">
+                  Not analyzed yet
+                </h3>
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground max-w-sm mx-auto">
+                  Paste a URL above and we&apos;ll break this service down for
+                  you.
+                </p>
+              </div>
+            </motion.div>
+          ) : (
+            <div className="space-y-12">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {paginatedProducts.map((product, index) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    index={index}
+                    onClick={() => handleProductClick(product)}
+                  />
+                ))}
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="pt-12 border-t border-border flex items-center justify-between">
+                  <Button
+                    variant="ghost"
+                    disabled={currentPage === 1}
+                    onClick={() => setPage(currentPage - 1)}
+                    className="rounded-none text-[10px] uppercase tracking-widest font-bold gap-3 px-0 hover:bg-transparent hover:text-foreground/70 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+
+                  <div className="flex gap-4">
+                    {[...Array(totalPages)].map((_, i) => (
+                      <button
+                        key={i + 1}
+                        onClick={() => setPage(i + 1)}
+                        className={cn(
+                          "text-[10px] font-bold uppercase tracking-widest transition-colors",
+                          currentPage === i + 1
+                            ? "text-foreground underline underline-offset-8"
+                            : "text-muted-foreground hover:text-foreground cursor-pointer",
+                        )}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    disabled={currentPage === totalPages}
+                    onClick={() => setPage(currentPage + 1)}
+                    className="rounded-none text-[10px] uppercase tracking-widest font-bold gap-3 px-0 hover:bg-transparent hover:text-foreground/70 cursor-pointer"
+                  >
+                    Next
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
