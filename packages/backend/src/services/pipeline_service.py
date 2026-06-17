@@ -1,7 +1,7 @@
 """Pipeline service for orchestrating background crawl/analysis jobs.
 
 Manages pipeline job lifecycle: creation, status tracking, and background
-execution of the full crawl -> summarize -> overview pipeline.
+execution of the full crawl -> synthesise -> overview pipeline.
 """
 
 import asyncio
@@ -379,7 +379,7 @@ class PipelineService:
 
                     # Track progress tasks to ensure they are all processed before switching phases.
                     # This prevents a race condition where a late 'Discovery' update overwrites
-                    # the subsequent 'summarizing' job status in MongoDB.
+                    # the subsequent 'synthesising' job status in MongoDB.
                     crawl_tasks: list[asyncio.Task] = []
 
                     # Create progress callback for crawl phase.
@@ -389,7 +389,7 @@ class PipelineService:
                     # for crawling: the frontier is a moving target (it grows as links are
                     # found) and is inflated by speculative policy-URL probes that mostly
                     # 404, so any ratio is fiction. Report an honest count and let the UI
-                    # render this step as indeterminate. (The summarizing step, which has a
+                    # render this step as indeterminate. (The synthesising step, which has a
                     # real fixed total, keeps its genuine percentage.)
                     async def _on_crawl_progress(_phase: str, current: int, _total: int) -> None:
                         pages = "page" if current == 1 else "pages"
@@ -500,7 +500,7 @@ class PipelineService:
                         await self._update_step(
                             db,
                             job,
-                            "summarizing",
+                            "synthesising",
                             "failed",
                             "Skipped - no documents to analyze",
                         )
@@ -536,9 +536,9 @@ class PipelineService:
                         return
 
                     # === Step 2: Summarize ===
-                    job.status = "summarizing"
+                    job.status = "synthesising"
                     await self._update_step(
-                        db, job, "summarizing", "running", "Analyzing document contents..."
+                        db, job, "synthesising", "running", "Analyzing document contents..."
                     )
 
                     doc_svc = create_document_service()
@@ -547,19 +547,21 @@ class PipelineService:
                         await self._update_step_progress(
                             db,
                             job,
-                            "summarizing",
+                            "synthesising",
                             current=0,
                             total=expected_total,
                             message=f"Queued {expected_total} documents for analysis",
                         )
 
-                    async def _on_summarize_progress(index: int, total: int, doc: Document) -> None:
+                    async def _on_synthesise_progress(
+                        index: int, total: int, doc: Document
+                    ) -> None:
                         remaining = max(total - index, 0)
                         title = f": {doc.title}" if doc.title else ""
                         await self._update_step_progress(
                             db,
                             job,
-                            "summarizing",
+                            "synthesising",
                             current=index,
                             total=total,
                             message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
@@ -569,7 +571,7 @@ class PipelineService:
                         db,
                         job.product_slug,
                         doc_svc,
-                        progress_callback=_on_summarize_progress,
+                        progress_callback=_on_synthesise_progress,
                     )
 
                     # Truthful step state: a document either got analysis or it didn't.
@@ -601,7 +603,7 @@ class PipelineService:
                                 "could be analyzed — cannot build a reliable overview. Usually a "
                                 "temporary model rate-limit/timeout issue — try again."
                             )
-                            summarizing_message = (
+                            synthesising_message = (
                                 f"0 of {len(core_docs)} core documents could be analyzed "
                                 f"({analysed_count} of {len(analysed_docs)} total)"
                             )
@@ -612,16 +614,16 @@ class PipelineService:
                                 "of them. This is usually a temporary issue (model rate limits or "
                                 "timeouts) — try again."
                             )
-                            summarizing_message = (
+                            synthesising_message = (
                                 f"0 of {len(analysed_docs)} documents could be analyzed"
                             )
                         job.completed_at = datetime.now()
                         await self._update_step(
                             db,
                             job,
-                            "summarizing",
+                            "synthesising",
                             "failed",
-                            summarizing_message,
+                            synthesising_message,
                         )
                         await self._update_step(
                             db,
@@ -636,7 +638,7 @@ class PipelineService:
                     await self._update_step(
                         db,
                         job,
-                        "summarizing",
+                        "synthesising",
                         "completed",
                         f"Analyzed {analysed_count} of {len(analysed_docs)} documents",
                     )

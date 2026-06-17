@@ -27,7 +27,7 @@ async def test_mark_stale_targets_only_in_progress_not_pending():
     # A queued job was never started, so a restart must not fail it.
     assert "pending" not in eligible
     # Only actively-executing statuses can be orphaned by a crash.
-    assert set(eligible) == {"crawling", "summarizing", "generating_overview"}
+    assert set(eligible) == {"crawling", "synthesising", "generating_overview"}
 
 
 def _failed_jobs_collection(active_slugs, candidates):
@@ -84,7 +84,9 @@ async def test_requeue_failed_respects_retry_policy(monkeypatch):
     # One retryable + under-budget job was requeued.
     assert requeued == 1
 
-    by_id = {call.args[0]["id"]: call.args[1]["$set"] for call in collection.update_one.call_args_list}
+    by_id = {
+        call.args[0]["id"]: call.args[1]["$set"] for call in collection.update_one.call_args_list
+    }
     assert by_id["a"]["status"] == "pending"
     assert by_id["b"]["auto_retry_disabled"] is True
     assert "attempt limit reached" in by_id["b"]["auto_retry_disabled_reason"]

@@ -56,7 +56,7 @@ async def test_stall_guard_lets_a_progressing_pipeline_finish(monkeypatch):
     monkeypatch.setattr(ps, "STALL_TIMEOUT_SECONDS", 0.2)
     monkeypatch.setattr(ps, "db_session", _fake_session)
     repo = MagicMock(spec=PipelineRepository)
-    repo.find_by_id = AsyncMock(return_value=_job("summarizing", datetime.now()))
+    repo.find_by_id = AsyncMock(return_value=_job("synthesising", datetime.now()))
     svc = PipelineService(pipeline_repo=repo)
 
     async def finishes_quickly() -> None:
