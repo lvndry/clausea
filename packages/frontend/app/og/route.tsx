@@ -1,138 +1,460 @@
 import { ImageResponse } from "next/og";
+import type { NextRequest } from "next/server";
 
-export const alt = "Clausea AI - Legal Document Intelligence Platform";
 export const contentType = "image/png";
 
-export async function GET() {
+// Colors matching lib/grade.ts tone palette
+const TONE_COLORS: Record<string, string> = {
+  good: "#2B7A5C",
+  ok: "#B58D2D",
+  warn: "#B58D2D",
+  bad: "#BD452D",
+};
+
+// Punchy OG-specific labels keyed by verdict
+const VERDICT_LABELS: Record<string, { label: string; tone: string }> = {
+  very_user_friendly: { label: "Excellent", tone: "good" },
+  user_friendly: { label: "Good", tone: "good" },
+  moderate: { label: "Mixed", tone: "ok" },
+  pervasive: { label: "Concerning", tone: "warn" },
+  very_pervasive: { label: "Alarming", tone: "bad" },
+};
+
+// Grade bands: risk_score is higher = worse, invert to get letter
+const GRADE_BANDS = [
+  { min: 9.5, letter: "A+" },
+  { min: 8.5, letter: "A" },
+  { min: 8.0, letter: "A-" },
+  { min: 7.5, letter: "B+" },
+  { min: 6.5, letter: "B" },
+  { min: 6.0, letter: "B-" },
+  { min: 5.5, letter: "C+" },
+  { min: 4.5, letter: "C" },
+  { min: 4.0, letter: "C-" },
+  { min: 3.5, letter: "D+" },
+  { min: 2.5, letter: "D" },
+  { min: 1.0, letter: "D-" },
+  { min: -Infinity, letter: "E" },
+];
+
+function riskScoreToGrade(score: number): string {
+  const effective = 10 - Math.max(0, Math.min(10, score));
+  return (
+    GRADE_BANDS.find((b) => effective >= b.min)?.letter ??
+    GRADE_BANDS[GRADE_BANDS.length - 1].letter
+  );
+}
+
+async function loadFont(
+  family: string,
+  weight: number,
+): Promise<ArrayBuffer | null> {
   try {
+    const css = await fetch(
+      `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@${weight}`,
+      { headers: { "User-Agent": "Mozilla/5.0" } },
+    ).then((r) => r.text());
+    const url = css.match(/src: url\((.+?)\)/)?.[1];
+    if (!url) return null;
+    return fetch(url).then((r) => r.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const name = searchParams.get("name");
+  const scoreRaw = searchParams.get("score");
+  const verdict = searchParams.get("verdict") ?? "";
+
+  const isProduct = Boolean(name);
+
+  const [jakartaBold, jakartaMedium] = await Promise.all([
+    loadFont("Plus Jakarta Sans", 700),
+    loadFont("Plus Jakarta Sans", 500),
+  ]);
+
+  type OgFont = {
+    name: string;
+    data: ArrayBuffer;
+    weight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900;
+    style?: "normal" | "italic";
+  };
+  const fonts: OgFont[] = [];
+  if (jakartaBold)
+    fonts.push({
+      name: "Jakarta",
+      data: jakartaBold,
+      weight: 700,
+      style: "normal",
+    });
+  if (jakartaMedium)
+    fonts.push({
+      name: "Jakarta",
+      data: jakartaMedium,
+      weight: 500,
+      style: "normal",
+    });
+
+  const fontFamily = fonts.length
+    ? "Jakarta, sans-serif"
+    : "system-ui, -apple-system, sans-serif";
+
+  // ─── Product OG ──────────────────────────────────────────────────────────────
+  if (isProduct) {
+    const score = scoreRaw ? parseFloat(scoreRaw) : null;
+    const gradeLetter =
+      score !== null && !isNaN(score) ? riskScoreToGrade(score) : null;
+    const verdictInfo = VERDICT_LABELS[verdict] ?? null;
+    const gradeColor = verdictInfo
+      ? TONE_COLORS[verdictInfo.tone]
+      : "rgba(250,249,246,0.4)";
+
     return new ImageResponse(
       <div
         style={{
-          height: "100%",
           width: "100%",
+          height: "100%",
+          background: "#1a1918",
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "#faf8f4", // Warm ivory: hsl(40, 25%, 97%)
+          padding: "56px 64px",
           position: "relative",
+          fontFamily,
         }}
       >
-        {/* Main content */}
+        {/* Inset border frame */}
+        <div
+          style={{
+            position: "absolute",
+            top: 20,
+            left: 20,
+            right: 20,
+            bottom: 20,
+            border: "1px solid rgba(250,249,246,0.1)",
+            display: "flex",
+          }}
+        />
+
+        {/* Top row */}
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
+            justifyContent: "space-between",
             alignItems: "center",
-            justifyContent: "center",
-            padding: "80px 100px",
-            textAlign: "center",
-            zIndex: 1,
-            maxWidth: "1100px",
           }}
         >
-          {/* Brand name */}
-          <div
+          <span
             style={{
-              fontSize: "84px",
-              fontWeight: "bold",
-              color: "#c6704f", // Terracotta
-              marginBottom: "40px",
-              letterSpacing: "-0.02em",
-              lineHeight: "1.1",
-              fontFamily: "system-ui, -apple-system, sans-serif",
+              color: "#faf9f6",
+              fontSize: 18,
+              fontWeight: 700,
+              letterSpacing: "0.18em",
+              fontFamily,
             }}
           >
-            Clausea AI
+            CLAUSEA
+          </span>
+          <span
+            style={{
+              color: "rgba(250,249,246,0.35)",
+              fontSize: 12,
+              fontWeight: 500,
+              letterSpacing: "0.28em",
+              fontFamily,
+            }}
+          >
+            POLICY ANALYSIS
+          </span>
+        </div>
+
+        {/* Main content row */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 40,
+          }}
+        >
+          {/* Left: company name + verdict */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              flex: 1,
+            }}
+          >
+            <div
+              style={{
+                fontSize: name && name.length > 14 ? 72 : 96,
+                fontWeight: 700,
+                color: "#faf9f6",
+                lineHeight: 0.9,
+                letterSpacing: "-0.03em",
+                fontFamily,
+                wordBreak: "break-word",
+              }}
+            >
+              {name}
+            </div>
+            {verdictInfo && (
+              <div
+                style={{
+                  marginTop: 28,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                }}
+              >
+                <div
+                  style={{
+                    width: 3,
+                    height: 28,
+                    background: gradeColor,
+                    display: "flex",
+                  }}
+                />
+                <span
+                  style={{
+                    color: gradeColor,
+                    fontSize: 18,
+                    fontWeight: 700,
+                    letterSpacing: "0.22em",
+                    fontFamily,
+                  }}
+                >
+                  {verdictInfo.label.toUpperCase()}
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Main tagline - first part */}
-          <div
-            style={{
-              fontSize: "52px",
-              color: "#1a1614", // Deep charcoal: hsl(30, 5%, 10%)
-              marginBottom: "12px",
-              lineHeight: "1.2",
-              fontWeight: "600",
-              fontFamily: "system-ui, -apple-system, sans-serif",
-            }}
-          >
-            Legal documents
-          </div>
+          {/* Right: grade letter */}
+          {gradeLetter && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 200,
+                  fontWeight: 700,
+                  color: gradeColor,
+                  lineHeight: 1,
+                  letterSpacing: "-0.05em",
+                  fontFamily,
+                }}
+              >
+                {gradeLetter}
+              </span>
+              <span
+                style={{
+                  color: "rgba(250,249,246,0.25)",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  letterSpacing: "0.28em",
+                  fontFamily,
+                }}
+              >
+                PRIVACY GRADE
+              </span>
+            </div>
+          )}
+        </div>
 
-          {/* Italic emphasis line */}
-          <div
+        {/* Bottom bar */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderTop: "1px solid rgba(250,249,246,0.1)",
+            paddingTop: 24,
+          }}
+        >
+          <span
             style={{
-              fontSize: "52px",
-              color: "#c6704f", // Terracotta: hsl(18, 55%, 54%)
-              marginBottom: "12px",
-              lineHeight: "1.2",
-              fontWeight: "400",
-              fontStyle: "italic",
-              fontFamily: "Georgia, serif",
+              color: "rgba(250,249,246,0.3)",
+              fontSize: 13,
+              letterSpacing: "0.22em",
+              fontWeight: 500,
+              fontFamily,
             }}
           >
-            were not written for you...
-          </div>
-
-          {/* Accent line with underline */}
-          <div
+            clausea.co
+          </span>
+          <span
             style={{
-              fontSize: "52px",
-              color: "#6b8e78", // Sage green: hsl(150, 20%, 49%)
-              marginBottom: "48px",
-              lineHeight: "1.2",
-              fontWeight: "600",
-              fontFamily: "system-ui, -apple-system, sans-serif",
+              color: "#6b8e78",
+              fontSize: 13,
+              letterSpacing: "0.22em",
+              fontWeight: 700,
+              fontFamily,
             }}
           >
-            until now
-          </div>
-
-          {/* Subtitle */}
-          <div
-            style={{
-              fontSize: "32px",
-              color: "#6b5d52", // Muted foreground: hsl(30, 10%, 45%)
-              maxWidth: "900px",
-              lineHeight: "1.5",
-              fontWeight: "400",
-              fontFamily: "system-ui, -apple-system, sans-serif",
-            }}
-          >
-            Navigate legal complexities with ease
-          </div>
+            ACTIVE MONITORING
+          </span>
         </div>
       </div>,
-      {
-        width: 1200,
-        height: 630,
-      },
-    );
-  } catch (error) {
-    console.error("Error generating OG image:", error);
-    // Return a warm-themed fallback
-    return new ImageResponse(
-      <div
-        style={{
-          height: "100%",
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "#faf8f4",
-          color: "#c6704f", // Terracotta
-          fontSize: "64px",
-          fontWeight: "bold",
-          fontFamily: "system-ui, -apple-system, sans-serif",
-        }}
-      >
-        Clausea AI
-      </div>,
-      {
-        width: 1200,
-        height: 630,
-      },
+      { width: 1200, height: 630, fonts },
     );
   }
+
+  // ─── Homepage OG ─────────────────────────────────────────────────────────────
+  return new ImageResponse(
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        background: "#1a1918",
+        display: "flex",
+        flexDirection: "column",
+        padding: "56px 64px",
+        position: "relative",
+        fontFamily,
+      }}
+    >
+      {/* Inset border frame */}
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 20,
+          right: 20,
+          bottom: 20,
+          border: "1px solid rgba(250,249,246,0.1)",
+          display: "flex",
+        }}
+      />
+
+      {/* Top row */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <span
+          style={{
+            color: "#faf9f6",
+            fontSize: 18,
+            fontWeight: 700,
+            letterSpacing: "0.18em",
+            fontFamily,
+          }}
+        >
+          CLAUSEA
+        </span>
+        <span
+          style={{
+            color: "rgba(250,249,246,0.35)",
+            fontSize: 12,
+            fontWeight: 500,
+            letterSpacing: "0.28em",
+            fontFamily,
+          }}
+        >
+          DOCUMENT INTELLIGENCE
+        </span>
+      </div>
+
+      {/* Main headline */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          marginTop: 20,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 114,
+            fontWeight: 700,
+            color: "#faf9f6",
+            lineHeight: 0.88,
+            letterSpacing: "-0.03em",
+            fontFamily,
+          }}
+        >
+          Automated
+        </div>
+        <div
+          style={{
+            fontSize: 114,
+            fontWeight: 700,
+            color: "#faf9f6",
+            lineHeight: 0.88,
+            letterSpacing: "-0.03em",
+            marginTop: 8,
+            fontFamily,
+          }}
+        >
+          Legal Analysis.
+        </div>
+        <div
+          style={{
+            marginTop: 40,
+            color: "rgba(250,249,246,0.45)",
+            fontSize: 22,
+            lineHeight: 1.55,
+            maxWidth: 660,
+            fontWeight: 500,
+            fontFamily,
+          }}
+        >
+          Transforming complex privacy policies and legal agreements into
+          plain-language risk signals.
+        </div>
+      </div>
+
+      {/* Bottom bar */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          borderTop: "1px solid rgba(250,249,246,0.1)",
+          paddingTop: 24,
+        }}
+      >
+        <span
+          style={{
+            color: "rgba(250,249,246,0.3)",
+            fontSize: 13,
+            letterSpacing: "0.22em",
+            fontWeight: 500,
+            fontFamily,
+          }}
+        >
+          clausea.co
+        </span>
+        <span
+          style={{
+            color: "#6b8e78",
+            fontSize: 13,
+            letterSpacing: "0.22em",
+            fontWeight: 700,
+            fontFamily,
+          }}
+        >
+          ACTIVE MONITORING
+        </span>
+      </div>
+    </div>,
+    { width: 1200, height: 630, fonts },
+  );
 }

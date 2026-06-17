@@ -23,6 +23,18 @@ interface ProductMetadata {
     | "very_pervasive";
 }
 
+function buildOgUrl(
+  base: string,
+  name: string,
+  score?: number | null,
+  verdict?: string | null,
+): string {
+  const params = new URLSearchParams({ name });
+  if (score != null) params.set("score", String(score));
+  if (verdict) params.set("verdict", verdict);
+  return `${base}/og?${params.toString()}`;
+}
+
 function humanizeSlug(slug: string): string {
   return slug
     .split(/[-_]+/)
@@ -102,7 +114,7 @@ function neutralProductMetadata(displayName: string, slug: string): Metadata {
       siteName: "Clausea AI",
       images: [
         {
-          url: `${siteUrl}/og`,
+          url: buildOgUrl(siteUrl, displayName),
           width: 1200,
           height: 630,
           alt: `${displayName}`,
@@ -115,7 +127,7 @@ function neutralProductMetadata(displayName: string, slug: string): Metadata {
       card: "summary_large_image",
       title: `${displayName} | Clausea AI`,
       description,
-      images: [`${siteUrl}/og`],
+      images: [buildOgUrl(siteUrl, displayName)],
     },
     alternates: {
       canonical: `${siteUrl}/products/${slug}`,
@@ -188,7 +200,12 @@ export async function generateMetadata({
       siteName: "Clausea AI",
       images: [
         {
-          url: `${siteUrl}/og`,
+          url: buildOgUrl(
+            siteUrl,
+            productName,
+            product.risk_score,
+            product.verdict,
+          ),
           width: 1200,
           height: 630,
           alt: `${productName} policy overview`,
@@ -201,7 +218,9 @@ export async function generateMetadata({
       card: "summary_large_image",
       title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
-      images: [`${siteUrl}/og`],
+      images: [
+        buildOgUrl(siteUrl, productName, product.risk_score, product.verdict),
+      ],
     },
     alternates: {
       canonical: `${siteUrl}/products/${product.slug}`,
