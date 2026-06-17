@@ -176,12 +176,13 @@ class TestJWTAuth:
     @patch("src.core.middleware.clerk_auth_service")
     async def test_valid_jwt(self, mock_clerk: MagicMock, middleware: AuthMiddleware) -> None:
         mock_clerk.verify_token = AsyncMock(
-            return_value={"user_id": "user_123", "email": "user@example.com"}
+            return_value={"sub": "user_123", "email": "user@example.com", "name": "Test User"}
         )
         request = _make_request()
         result = await middleware._authenticate_jwt("Bearer valid-token", request)
         assert result is not None
         assert result["user_id"] == "user_123"
+        assert result["email"] == "user@example.com"
 
     @pytest.mark.asyncio
     @patch("src.core.middleware.clerk_auth_service")
