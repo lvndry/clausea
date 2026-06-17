@@ -34,37 +34,45 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
   const { userId } = await auth();
   const { pathname } = new URL(request.url);
 
-  // Always let crawlers through so OG metadata is scrapeable
-  const ua = request.headers.get("user-agent") ?? "";
-  if (CRAWLER_UA.test(ua)) {
-    return NextResponse.next();
-  }
-
-  // Hard-protected routes require a session
+  // Hard-protected routes always require a session — UA spoofing must not bypass these
   if (isProtectedRoute(request) && !userId) {
     const signInUrl = new URL("/sign-in", request.url);
     signInUrl.searchParams.set("redirect_url", request.url);
     return NextResponse.redirect(signInUrl);
   }
 
-  // Metered product detail pages for unauthenticated users
-  if (!userId && PRODUCT_DETAIL_RE.test(pathname)) {
-    const count = parseInt(request.cookies.get(PV_COOKIE)?.value ?? "0", 10);
-
-    if (count >= FREE_PRODUCT_VIEWS) {
-      const signInUrl = new URL("/sign-in", request.url);
-      signInUrl.searchParams.set("redirect_url", request.url);
-      return NextResponse.redirect(signInUrl);
+  // Product detail pages: crawlers pass freely (OG scraping), humans get metered access
+  if (PRODUCT_DETAIL_RE.test(pathname)) {
+    const ua = request.headers.get("user-agent") ?? "";
+    if (CRAWLER_UA.test(ua)) {
+      return NextResponse.next();
     }
 
-    const response = NextResponse.next();
-    response.cookies.set(PV_COOKIE, String(count + 1), {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30,
-    });
-    return response;
+    if (!userId) {
+      // Next.js prefetch requests must not consume the free-view quota
+      const isPrefetch =
+        request.headers.get("next-router-prefetch") === "1" ||
+        request.headers.get("purpose") === "prefetch";
+      if (isPrefetch) return NextResponse.next();
+
+      const raw = parseInt(request.cookies.get(PV_COOKIE)?.value ?? "0", 10);
+      const count = isNaN(raw) ? 0 : raw;
+
+      if (count >= FREE_PRODUCT_VIEWS) {
+        const signInUrl = new URL("/sign-in", request.url);
+        signInUrl.searchParams.set("redirect_url", request.url);
+        return NextResponse.redirect(signInUrl);
+      }
+
+      const response = NextResponse.next();
+      response.cookies.set(PV_COOKIE, String(count + 1), {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+      return response;
+    }
   }
 
   return NextResponse.next();
