@@ -2984,17 +2984,25 @@ class ClauseaCrawler:
             # discover they exceed the size limit wastes seconds per crawl. By fetching only
             # a small generic safety net we still catch sites that use opaque sitemap names
             # while skipping the obvious content-only batches.
-            policy_sitemaps = [sm for sm in child_sitemaps if _POLICY_SITEMAP_RE.search(sm)]
-            generic_sitemaps = [sm for sm in child_sitemaps if not _POLICY_SITEMAP_RE.search(sm)]
+            policy_sitemaps: list[str] = []
+            generic_sitemaps: list[str] = []
+            for child_sitemap in child_sitemaps:
+                if _POLICY_SITEMAP_RE.search(child_sitemap):
+                    policy_sitemaps.append(child_sitemap)
+                else:
+                    generic_sitemaps.append(child_sitemap)
 
             policy_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
             generic_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
 
-            children_to_fetch = (
-                policy_sitemaps[:max_child_sitemaps]
-                + generic_sitemaps[:_MAX_GENERIC_CHILD_SITEMAPS]
+            # Respect max_child_sitemaps as a hard upper bound across both groups.
+            capped_policy = policy_sitemaps[:max_child_sitemaps]
+            max_generic_to_fetch = min(
+                _MAX_GENERIC_CHILD_SITEMAPS,
+                max(0, max_child_sitemaps - len(capped_policy)),
             )
-            skipped_generic = max(0, len(generic_sitemaps) - _MAX_GENERIC_CHILD_SITEMAPS)
+            children_to_fetch = capped_policy + generic_sitemaps[:max_generic_to_fetch]
+            skipped_generic = max(0, len(generic_sitemaps) - max_generic_to_fetch)
             if skipped_generic:
                 logger.info(
                     f"Sitemap index {sitemap_url}: {len(policy_sitemaps)} policy-named, "
