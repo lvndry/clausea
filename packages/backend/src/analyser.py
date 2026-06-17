@@ -1646,15 +1646,6 @@ Per-document analyses and extractions:
                 meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
                 meta_summary.grade = _calculate_grade(meta_summary.risk_score)
 
-        # Sentinel guard: replace LLM placeholder text with empty string.
-        # Only matches the whole trimmed value — "none" as a full response, not
-        # as a word inside a real sentence like "none of the documents...".
-        _BAD_SUMMARY_VALUES = {"none", "n/a", "null", "undefined", "n.a.", "na"}
-        if meta_summary:
-            stripped = (meta_summary.summary or "").strip()
-            if not stripped or stripped.lower() in _BAD_SUMMARY_VALUES or len(stripped) < 10:
-                meta_summary.summary = ""
-
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(
             db,
