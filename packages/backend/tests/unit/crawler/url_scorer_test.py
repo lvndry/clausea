@@ -1,6 +1,6 @@
 import pytest
 
-from src.crawler import ClauseaCrawler, URLScorer
+from src.crawler import _MIRROR_SUBDOMAIN_RE, ClauseaCrawler, URLScorer
 
 
 class TestURLScorerGlossaryGuard:
@@ -377,3 +377,20 @@ class TestMirrorSubdomainExclusion:
             "https://docs.github.com/en/site-policy",
             1,
         )
+
+    def test_regex_catches_real_mirrors(self) -> None:
+        for subdomain in ("docs-internal", "staging", "preview", "preview.staging"):
+            assert _MIRROR_SUBDOMAIN_RE.search(subdomain), subdomain
+
+    def test_regex_spares_legit_subdomains_with_token_prefix(self) -> None:
+        # Hyphenated subdomains that merely start with a trigger token are legitimate, not
+        # mirrors — rejecting them silently drops real pages.
+        for subdomain in (
+            "preview-blog",
+            "staging-guide",
+            "my-internal-tool",
+            "internal-docs",
+            "international",
+            "www",
+        ):
+            assert not _MIRROR_SUBDOMAIN_RE.search(subdomain), subdomain

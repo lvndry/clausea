@@ -273,7 +273,10 @@ async def _block_heavy_assets(page: Page) -> None:
 
 # Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
 # copies of prod pages — crawling them just duplicates documents. Matched on the subdomain only.
-_MIRROR_SUBDOMAIN_RE = re.compile(r"(?:^|[.-])(?:internal|staging|preview)(?:$|[.-])")
+# The trailing boundary is "." or end-of-label, NOT "-": a hyphen there over-matches legit
+# subdomains that merely start with the token (preview-blog, staging-guide, my-internal-tool),
+# silently dropping real pages — recall loss we won't trade for dedup.
+_MIRROR_SUBDOMAIN_RE = re.compile(r"(?:^|[.-])(?:internal|staging|preview)(?:$|\.)")
 
 # Hard cap on a Camoufox launch. The launch (__aenter__ spawns Firefox) has no internal
 # timeout, so a stuck launch — common when two instances start at once in a constrained
