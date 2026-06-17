@@ -41,6 +41,13 @@ repos:
   # Local hooks for project-specific checks
   - repo: local
     hooks:
+      - id: frontend-format
+        name: Frontend Prettier
+        entry: bash -c 'cd packages/frontend && bun run format'
+        language: system
+        files: ^packages/frontend/
+        pass_filenames: false
+
       - id: frontend-lint
         name: Frontend ESLint
         entry: bash -c 'cd packages/frontend && bun run lint'
