@@ -176,27 +176,26 @@ export default defineBackground(() => {
     const policyRe =
       /\/(privacy|terms|tos|legal|cookies?|gdpr|ccpa|dpa|data-processing|sub-?processors?|policies?|policy|eula|acceptable-use|community-guidelines)/i;
 
-    const footerEls = Array.from(
-      document.querySelectorAll('footer, [role="contentinfo"], .footer, #footer'),
-    );
-    const scope: Element[] = footerEls.length > 0 ? footerEls : [document.body];
+    const footerSelector = 'footer, [role="contentinfo"], .footer, #footer';
+    const hasFooter = document.querySelector(footerSelector) !== null;
+    const linkSelector = hasFooter
+      ? `${footerSelector} a[href]`
+      : "a[href]";
 
     const seen = new Set<string>();
     const seeds: string[] = [];
 
-    for (const el of scope) {
-      for (const a of Array.from(el.querySelectorAll("a[href]")) as HTMLAnchorElement[]) {
-        const href = a.href;
-        if (!href?.startsWith("http") || seen.has(href)) continue;
-        try {
-          if (policyRe.test(new URL(href).pathname)) {
-            seen.add(href);
-            seeds.push(href);
-            if (seeds.length >= 20) return seeds;
-          }
-        } catch {
-          // malformed href — skip
+    for (const a of Array.from(document.querySelectorAll(linkSelector)) as HTMLAnchorElement[]) {
+      const href = a.href;
+      if (!href?.startsWith("http") || seen.has(href)) continue;
+      try {
+        if (policyRe.test(new URL(href).pathname)) {
+          seen.add(href);
+          seeds.push(href);
+          if (seeds.length >= 20) return seeds;
         }
+      } catch {
+        // malformed href — skip
       }
     }
     return seeds;

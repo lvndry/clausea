@@ -843,6 +843,7 @@ class URLScorer:
         """
         return bool(self._non_policy_section_re.search(urlparse(url.lower()).path))
 
+    @lru_cache(maxsize=10000)  # noqa: B019
     def is_strong_policy_path(self, url: str) -> bool:
         """True when a path segment unambiguously names a core policy document.
 
@@ -3841,14 +3842,14 @@ class ClauseaCrawler:
         When the frontier's best own-score falls below ``min_legal_score`` (and
         stays there for the grace budget), everything left is tail noise.
         """
+        if (
+            self.strategy != "best_first"
+            or self._policy_pages_found < 1
+            or self._crawls_since_new_lead < CRAWL_EXHAUSTION_GRACE
+        ):
+            return False
         top_base_score = self._frontier_top_base_score()
-        return (
-            self.strategy == "best_first"
-            and self._policy_pages_found >= 1
-            and top_base_score is not None
-            and top_base_score < self.min_legal_score
-            and self._crawls_since_new_lead >= CRAWL_EXHAUSTION_GRACE
-        )
+        return top_base_score is not None and top_base_score < self.min_legal_score
 
     def add_urls_to_queue(
         self,

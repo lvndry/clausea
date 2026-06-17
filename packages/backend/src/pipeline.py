@@ -1451,12 +1451,17 @@ class PolicyDocumentPipeline:
             total_results = 0
             processed_documents: list[Document] = []
 
-            # Seed URLs were explicitly provided by the user or extension as known
-            # policy pages. They bypass the URL-score gate in _process_crawl_result
-            # because their path may carry no policy keywords (e.g. amazon's
-            # /gp/help/customer/display.html?nodeId=...) even though the content is
-            # clearly a policy document. The content-based LLM classifier still runs.
-            trusted_urls: frozenset[str] = frozenset(crawl_urls)
+            # crawl_base_urls are explicit overrides provided by the user or extension.
+            # Unlike domain roots (derived from product.domains), these are known policy
+            # pages and bypass the URL-score gate in _process_crawl_result — their path
+            # may carry no policy keywords (e.g. amazon's /gp/help/customer/display.html)
+            # even though the content is clearly a policy document. Domain roots still go
+            # through normal scoring. The content-based LLM classifier runs for all.
+            trusted_urls: frozenset[str] = frozenset(
+                self._normalize_url(u)
+                for u in (product.crawl_base_urls or [])
+                if self._normalize_url(u)
+            )
 
             # Stream each crawled result through classification + storage as it is
             # produced, so a crawl killed at the time ceiling or by a stall keeps the
