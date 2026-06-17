@@ -327,7 +327,8 @@ export default function CompanyPage({
       const isFailed = failedJob !== null;
       // The crawl succeeded (documents were stored) but a later stage — document
       // analysis or overview synthesis — failed. Don't blame the crawl in this case.
-      const isAnalysisFailure = isFailed && (failedJob?.documents_stored ?? 0) > 0;
+      const isAnalysisFailure =
+        isFailed && (failedJob?.documents_stored ?? 0) > 0;
       const crawlErrors = terminalJob?.crawl_errors ?? [];
       const allRobotsBlocked =
         crawlErrors.length > 0 &&
@@ -621,10 +622,7 @@ export default function CompanyPage({
         }}
       >
         <div>
-          <TabsList
-            variant="underline"
-            className="w-full sm:w-auto gap-8"
-          >
+          <TabsList variant="underline" className="w-full sm:w-auto gap-8">
             <TabsTrigger
               value="overview"
               variant="underline"
@@ -715,7 +713,8 @@ export default function CompanyPage({
                       label: "Missing",
                     },
                     not_analyzed: {
-                      className: "border-border bg-muted/5 text-muted-foreground",
+                      className:
+                        "border-border bg-muted/5 text-muted-foreground",
                       label: "Not Analyzed",
                     },
                   };

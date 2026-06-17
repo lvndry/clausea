@@ -29,8 +29,8 @@ export default function BotPage() {
                 Clausea AI. Our bot crawls websites to discover and analyze
                 policy documents such as privacy policies, terms of service,
                 cookie policies, safety policies, community guidelines, and
-                other agreements to help users understand what
-                they&apos;re agreeing to.
+                other agreements to help users understand what they&apos;re
+                agreeing to.
               </p>
             </section>
 
@@ -44,7 +44,8 @@ export default function BotPage() {
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>
                   Discover policy documents (privacy policies, terms of service,
-                  cookie policies, safety policies, community guidelines, etc.) on websites
+                  cookie policies, safety policies, community guidelines, etc.)
+                  on websites
                 </li>
                 <li>
                   Analyze and extract key information from policy documents

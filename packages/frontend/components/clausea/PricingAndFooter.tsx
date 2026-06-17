@@ -6,10 +6,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
-import { GithubIcon } from "@/components/ui/brand-icons";
 
 import { useRef, useState } from "react";
 
+import { GithubIcon } from "@/components/ui/brand-icons";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
 import { cn } from "@/lib/utils";

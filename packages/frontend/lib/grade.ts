@@ -65,7 +65,9 @@ export function scoreToGrade(
   const clamped = Math.max(0, Math.min(10, score));
   // riskScore is "higher = worse"; inverting maps it onto the "higher = better" bands.
   const effective = opts?.invert ? 10 - clamped : clamped;
-  const band = GRADE_BANDS.find((entry) => effective >= entry.min) ?? GRADE_BANDS[GRADE_BANDS.length - 1];
+  const band =
+    GRADE_BANDS.find((entry) => effective >= entry.min) ??
+    GRADE_BANDS[GRADE_BANDS.length - 1];
   return { letter: band.letter, tone: band.tone };
 }
 

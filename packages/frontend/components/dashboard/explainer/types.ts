@@ -179,7 +179,9 @@ function regionLabel(code: string): string {
 // Labels to show as scope badges: nothing when the step applies to everyone.
 export function scopeLabels(codes: string[] | null | undefined): string[] {
   if (!codes || codes.length === 0) return [];
-  const meaningful = codes.filter((code) => code.trim().toLowerCase() !== "global");
+  const meaningful = codes.filter(
+    (code) => code.trim().toLowerCase() !== "global",
+  );
   return meaningful.map(regionLabel);
 }
 

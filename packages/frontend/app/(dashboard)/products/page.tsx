@@ -2,10 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
 import { enrichLogos } from "@lib/logo";
 
-import {
-  ProductsListClient,
-  type ProductsPage,
-} from "./products-list-client";
+import { ProductsListClient, type ProductsPage } from "./products-list-client";
 
 const EMPTY_PAGE: ProductsPage = { items: [], total: 0, page: 1, pages: 1 };
 

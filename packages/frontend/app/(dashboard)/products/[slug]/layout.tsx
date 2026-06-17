@@ -220,8 +220,7 @@ export default async function ProductLayout({
   const result = await fetchProductForMetadata(slug);
 
   const product = result.kind === "ok" ? result.product : null;
-  const productName =
-    product?.name || product?.company_name || null;
+  const productName = product?.name || product?.company_name || null;
   const description = product?.one_line_summary || undefined;
 
   return (
@@ -251,7 +250,9 @@ export default async function ProductLayout({
                   "@type": "SoftwareApplication",
                   name: productName,
                   ...(product.company_name
-                    ? { brand: { "@type": "Brand", name: product.company_name } }
+                    ? {
+                        brand: { "@type": "Brand", name: product.company_name },
+                      }
                     : {}),
                 },
                 ...(typeof product.risk_score === "number"
