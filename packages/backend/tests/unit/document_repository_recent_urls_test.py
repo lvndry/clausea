@@ -22,6 +22,9 @@ class _FakeCursor:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
+    def sort(self, keys: list[tuple[str, int]]) -> _FakeCursor:
+        return self
+
     async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
         return list(self._rows)
 

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.models.pipeline_job import PipelineErrorCode
+from src.repositories import pipeline_repository as pr
 from src.repositories.pipeline_repository import PipelineRepository
 
 
@@ -33,22 +35,39 @@ def _failed_jobs_collection(active_slugs, candidates):
     collection = MagicMock()
     collection.distinct = AsyncMock(return_value=active_slugs)
     cursor = MagicMock()
+    cursor.sort.return_value = cursor
     cursor.to_list = AsyncMock(return_value=candidates)
     collection.find = MagicMock(return_value=cursor)
-    collection.update_one = AsyncMock()
+    collection.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
     return collection
 
 
 @pytest.mark.asyncio
-async def test_requeue_failed_retries_unlimited_regardless_of_attempts():
-    # Retries are unlimited: a job mostly accrues attempts from redeploys orphaning long
-    # crawls, not real defects, so there is no attempt ceiling. Even a high-attempt job
-    # must be requeued.
+async def test_requeue_failed_respects_retry_policy(monkeypatch):
+    monkeypatch.setattr(pr, "MAX_AUTO_RETRY_ATTEMPTS", 3)
+
     collection = _failed_jobs_collection(
         active_slugs=[],
         candidates=[
-            {"id": "a", "product_slug": "alpha", "attempts": 1},
-            {"id": "b", "product_slug": "beta", "attempts": 99},
+            {
+                "id": "a",
+                "product_slug": "alpha",
+                "attempts": 1,
+                "error": PipelineErrorCode.internal_error.value,
+            },
+            {
+                "id": "b",
+                "product_slug": "beta",
+                "attempts": 3,
+                "error": PipelineErrorCode.internal_error.value,
+            },
+            {
+                "id": "c",
+                "product_slug": "gamma",
+                "attempts": 1,
+                "error": PipelineErrorCode.no_documents_found.value,
+            },
+            {"id": "d", "product_slug": "delta", "attempts": 1, "error": "Cancelled by user"},
         ],
     )
     db = MagicMock()
@@ -57,17 +76,55 @@ async def test_requeue_failed_retries_unlimited_regardless_of_attempts():
     requeued = await PipelineRepository().requeue_failed_jobs(db)
 
     query = collection.find.call_args.args[0]
-    # Only failed jobs are retried; no_documents stays terminal.
+    # Only failed/non-active/non-disabled jobs are considered.
     assert query["status"] == "failed"
-    # No attempt cap: the query must not filter on attempts at all.
-    assert "$or" not in query
+    assert query["active"] == {"$ne": True}
+    assert query["auto_retry_disabled"] == {"$ne": True}
     assert "attempts" not in query
-    update = collection.update_one.call_args.args[1]
-    assert update["$set"]["status"] == "pending"
-    # Steps reset so a retry doesn't carry stale terminal step state.
-    assert all(s["status"] == "pending" for s in update["$set"]["steps"])
-    # The 99-attempt job is requeued too.
-    assert requeued == 2
+    # One retryable + under-budget job was requeued.
+    assert requeued == 1
+
+    by_id = {call.args[0]["id"]: call.args[1]["$set"] for call in collection.update_one.call_args_list}
+    assert by_id["a"]["status"] == "pending"
+    assert by_id["b"]["auto_retry_disabled"] is True
+    assert "attempt limit reached" in by_id["b"]["auto_retry_disabled_reason"]
+    assert by_id["c"]["auto_retry_disabled"] is True
+    assert "non-retryable failure" in by_id["c"]["auto_retry_disabled_reason"]
+    assert by_id["d"]["auto_retry_disabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_requeue_failed_resets_attempt_local_crawl_state():
+    collection = _failed_jobs_collection(
+        active_slugs=[],
+        candidates=[
+            {
+                "id": "a",
+                "product_slug": "alpha",
+                "attempts": 1,
+                "error": PipelineErrorCode.internal_error.value,
+                "documents_found": 42,
+                "documents_stored": 7,
+                "crawl_errors": [{"url": "https://example.com/p", "error_type": "http_error"}],
+                "crawl_skip_reasons": [
+                    {"url": "https://example.com/t", "reason": "non_policy_classification"}
+                ],
+            }
+        ],
+    )
+    db = MagicMock()
+    db.__getitem__.return_value = collection
+
+    requeued = await PipelineRepository().requeue_failed_jobs(db)
+
+    assert requeued == 1
+    update = collection.update_one.call_args.args[1]["$set"]
+    assert update["status"] == "pending"
+    assert update["documents_found"] == 0
+    assert update["documents_stored"] == 0
+    assert update["crawl_errors"] == []
+    assert update["crawl_skip_reasons"] == []
+    assert all(step["status"] == "pending" for step in update["steps"])
 
 
 @pytest.mark.asyncio

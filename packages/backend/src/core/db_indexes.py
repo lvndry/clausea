@@ -122,6 +122,22 @@ async def ensure_document_indexes(db: AgnosticDatabase) -> None:
         else:
             logger.warning(f"Could not create index on documents.url: {e}")
 
+    try:
+        await collection.create_index(
+            [("product_id", 1), ("updated_at", -1), ("created_at", -1)],
+            name="idx_document_recent_by_product",
+            background=True,
+        )
+        logger.info("Created index on documents.(product_id,updated_at,created_at)")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("Index on documents.(product_id,updated_at,created_at) already exists")
+        else:
+            logger.warning(
+                "Could not create index on documents.(product_id,updated_at,created_at): %s", e
+            )
+
 
 async def ensure_user_indexes(db: AgnosticDatabase) -> None:
     """Ensure indexes exist on the users collection."""
@@ -265,6 +281,23 @@ async def ensure_pipeline_indexes(db: AgnosticDatabase) -> None:
             logger.debug("Index on pipeline_jobs.product_slug already exists")
         else:
             logger.warning(f"Could not create index on pipeline_jobs.product_slug: {e}")
+
+    # Worker stale/requeue sweeps scan by status/active and order by updated_at.
+    try:
+        await db.pipeline_jobs.create_index(
+            [("status", 1), ("active", 1), ("updated_at", 1)],
+            name="idx_pipeline_job_requeue_scan",
+            background=True,
+        )
+        logger.info("Created index on pipeline_jobs.(status,active,updated_at)")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("Index on pipeline_jobs.(status,active,updated_at) already exists")
+        else:
+            logger.warning(
+                "Could not create index on pipeline_jobs.(status,active,updated_at): %s", e
+            )
 
     # indexation_subscriptions
     try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +19,23 @@ from src.models.document import (
 from src.repositories.base_repository import BaseRepository
 
 logger = get_logger(__name__)
+_DEFAULT_MAX_RESUME_URLS = 5000
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("Invalid %s=%r (must be int), using default=%d", name, raw, default)
+        return default
+
+
+MAX_RECENT_URLS_PER_RESUME = _read_positive_int_env(
+    "PIPELINE_RESUME_MAX_RECENT_URLS", _DEFAULT_MAX_RESUME_URLS
+)
 
 
 def _normalize_document_record(document: dict[str, Any]) -> dict[str, Any]:
@@ -249,9 +267,18 @@ class DocumentRepository(BaseRepository):
                 {"created_at": {"$gte": cutoff}},
             ],
         }
-        rows: list[dict[str, Any]] = await db.documents.find(query, {"_id": 0, "url": 1}).to_list(
-            length=None
+        rows: list[dict[str, Any]] = (
+            await db.documents.find(query, {"_id": 0, "url": 1})
+            .sort([("updated_at", -1), ("created_at", -1)])
+            .to_list(length=MAX_RECENT_URLS_PER_RESUME)
         )
+        if len(rows) == MAX_RECENT_URLS_PER_RESUME:
+            logger.warning(
+                "Resume URL cap reached for product_id=%s (cap=%d). "
+                "Older recent URLs were truncated this run.",
+                product_id,
+                MAX_RECENT_URLS_PER_RESUME,
+            )
         return [row["url"] for row in rows if row.get("url")]
 
     # ============================================================================

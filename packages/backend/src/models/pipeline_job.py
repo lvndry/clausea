@@ -43,8 +43,8 @@ PipelineJobStatus = Literal[
 #   - completed:    ran to the end, overview generated
 #   - no_documents: crawl ran to completion but found 0 policy documents (a valid,
 #                   deterministic result — retrying yields the same outcome)
-#   - failed:       interrupted (orphaned/timeout) or errored — eligible for a
-#                   user-initiated retry, but never auto-retriggered
+#   - failed:       interrupted or errored. Auto-retry may re-queue some failed
+#                   jobs (transient/retryable) within a bounded attempt budget.
 TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
     "completed",
     "failed",
@@ -157,6 +157,9 @@ class PipelineJob(BaseModel):
     last_heartbeat: datetime | None = None
 
     attempts: int = 0  # claims so far; bounds auto-retry of failed/orphaned jobs
+    # Sticky auto-retry guard: when true, stale sweeps won't re-queue this failed job.
+    auto_retry_disabled: bool = False
+    auto_retry_disabled_reason: str | None = None
 
     # Stats from the crawl phase
     documents_found: int = 0

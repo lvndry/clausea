@@ -76,3 +76,10 @@ class TestCrawlerConfig:
         assert c.required_doc_types == ["privacy_policy", "cookie_policy"]
         assert c.use_browser is False
         assert c.respect_robots_txt is False
+
+    def test_browser_concurrency_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.core.config import CrawlerConfig
+
+        monkeypatch.delenv("CRAWLER_BROWSER_CONCURRENCY", raising=False)
+        c = CrawlerConfig()
+        assert c.browser_concurrency == 4
