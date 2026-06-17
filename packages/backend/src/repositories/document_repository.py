@@ -267,8 +267,10 @@ class DocumentRepository(BaseRepository):
                 {"created_at": {"$gte": cutoff}},
             ],
         }
-        rows: list[dict[str, Any]] = await db.documents.find(query, {"_id": 0, "url": 1}).to_list(
-            length=MAX_RECENT_URLS_PER_RESUME
+        rows: list[dict[str, Any]] = (
+            await db.documents.find(query, {"_id": 0, "url": 1})
+            .sort([("updated_at", -1), ("created_at", -1)])
+            .to_list(length=MAX_RECENT_URLS_PER_RESUME)
         )
         if len(rows) == MAX_RECENT_URLS_PER_RESUME:
             logger.warning(

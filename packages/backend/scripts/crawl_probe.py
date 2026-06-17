@@ -17,6 +17,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from src.core.logging import setup_logging
@@ -67,21 +68,18 @@ def _policy_page_details(results: list[CrawlResult]) -> list[dict[str, object]]:
     return details
 
 
-def _compare_probe_runs(current: dict[str, object], baseline_path: str) -> dict[str, object]:
-    baseline = json.loads(Path(baseline_path).read_text())
+def _len_map(details: Any) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for item in details or []:
+        if isinstance(item, dict) and item.get("url"):
+            out[str(item["url"])] = int(item.get("content_length", 0))
+    return out
 
-    current_details = current.get("policy_page_details", [])
-    baseline_details = baseline.get("policy_page_details", [])
-    current_map = {
-        str(item["url"]): int(item.get("content_length", 0))
-        for item in current_details
-        if isinstance(item, dict) and item.get("url")
-    }
-    baseline_map = {
-        str(item["url"]): int(item.get("content_length", 0))
-        for item in baseline_details
-        if isinstance(item, dict) and item.get("url")
-    }
+
+def _compare_probe_runs(current: dict[str, Any], baseline_path: str) -> dict[str, object]:
+    baseline = json.loads(Path(baseline_path).read_text())
+    current_map = _len_map(current.get("policy_page_details"))
+    baseline_map = _len_map(baseline.get("policy_page_details"))
 
     current_urls = set(current_map)
     baseline_urls = set(baseline_map)
@@ -203,8 +201,8 @@ async def main() -> None:
     if write_path:
         Path(write_path).write_text(json.dumps(summary, indent=2) + "\n")
     print("PROBE_RESULT " + json.dumps(summary))
-    if compare_path and isinstance(summary.get("comparison"), dict):
-        comparison = summary["comparison"]
+    comparison = summary.get("comparison")
+    if compare_path and isinstance(comparison, dict):
         if not comparison.get("verification_gate_passed", False):
             raise SystemExit(2)
 

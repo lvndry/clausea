@@ -122,7 +122,6 @@ async def ensure_document_indexes(db: AgnosticDatabase) -> None:
         else:
             logger.warning(f"Could not create index on documents.url: {e}")
 
-    # Resume helper query: find_recent_urls_by_product(product_id + recency window).
     try:
         await collection.create_index(
             [("product_id", 1), ("updated_at", -1), ("created_at", -1)],
