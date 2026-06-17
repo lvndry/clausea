@@ -397,6 +397,11 @@ class PipelineService:
                     job.documents_found = stats.total_documents_found
                     job.documents_stored = stats.policy_documents_stored
 
+                    # Reset attempt-local crawl diagnostics so a retry cannot inherit
+                    # stale errors/skips from a previous failed attempt.
+                    job.crawl_errors = []
+                    job.crawl_skip_reasons = []
+
                     # Persist per-URL crawl failures on the job
                     if stats.crawl_errors:
                         job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]

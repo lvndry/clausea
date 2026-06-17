@@ -48,15 +48,20 @@ def _doc(url: str, doc_type: DocType) -> Document:
 class _FakeCrawler:
     """Stands in for ClauseaCrawler: replays canned results through the result_callback."""
 
-    def __init__(self, results: list[CrawlResult], result_callback) -> None:
+    def __init__(self, results: list[CrawlResult], result_callback, stop_callback=None) -> None:
         self._results = results
         self._result_callback = result_callback
+        self._stop_callback = stop_callback
 
     async def crawl_multiple(self, _urls: list[str]) -> list[CrawlResult]:
+        emitted: list[CrawlResult] = []
         for result in self._results:
+            if self._stop_callback is not None and self._stop_callback():
+                break
+            emitted.append(result)
             if self._result_callback is not None:
                 await self._result_callback(result)
-        return list(self._results)
+        return emitted
 
 
 @pytest.mark.asyncio
@@ -98,7 +103,11 @@ async def test_streams_store_per_result_and_counts_once(monkeypatch):
     monkeypatch.setattr(pipeline, "_finish_crawl_session", AsyncMock(return_value=None))
 
     def fake_create_crawler(_product, **kwargs):
-        return _FakeCrawler(discovery, kwargs.get("result_callback"))
+        return _FakeCrawler(
+            discovery,
+            kwargs.get("result_callback"),
+            kwargs.get("stop_callback"),
+        )
 
     monkeypatch.setattr(pipeline, "_create_crawler_for_product", fake_create_crawler)
 
@@ -154,7 +163,11 @@ async def test_streamed_docs_drive_fallback_decision(monkeypatch):
     crawlers_created: list[_FakeCrawler] = []
 
     def fake_create_crawler(_product, **kwargs):
-        crawler = _FakeCrawler(next(passes), kwargs.get("result_callback"))
+        crawler = _FakeCrawler(
+            next(passes),
+            kwargs.get("result_callback"),
+            kwargs.get("stop_callback"),
+        )
         crawlers_created.append(crawler)
         return crawler
 
@@ -169,3 +182,59 @@ async def test_streamed_docs_drive_fallback_decision(monkeypatch):
         "terms_of_service",
     }
     assert pipeline.stats.policy_documents_stored == 2
+
+
+@pytest.mark.asyncio
+async def test_discovery_stop_callback_stops_after_required_types(monkeypatch):
+    product = Product(
+        id="prod-1",
+        name="Acme",
+        slug="acme",
+        domains=["acme.com"],
+        crawl_base_urls=["https://acme.com/"],
+    )
+
+    discovery = [
+        _result("https://acme.com/privacy"),
+        _result("https://acme.com/terms"),
+        _result("https://acme.com/blog"),  # should be skipped once coverage is met
+    ]
+
+    classified_urls: list[str] = []
+
+    async def fake_process_crawl_result(result: CrawlResult, _product):
+        if "privacy" in result.url:
+            classified_urls.append(result.url)
+            return _doc(result.url, "privacy_policy")
+        if "terms" in result.url:
+            classified_urls.append(result.url)
+            return _doc(result.url, "terms_of_service")
+        classified_urls.append(result.url)
+        return None
+
+    pipeline = PolicyDocumentPipeline(
+        min_docs_before_fallback=1,
+        required_doc_types=["privacy_policy", "terms_of_service"],
+    )
+
+    monkeypatch.setattr(pipeline, "_process_crawl_result", fake_process_crawl_result)
+    monkeypatch.setattr(pipeline, "_store_documents", AsyncMock(side_effect=lambda docs: len(docs)))
+    monkeypatch.setattr(pipeline, "_start_crawl_session", AsyncMock(return_value=None))
+    monkeypatch.setattr(pipeline, "_finish_crawl_session", AsyncMock(return_value=None))
+
+    def fake_create_crawler(_product, **kwargs):
+        return _FakeCrawler(
+            discovery,
+            kwargs.get("result_callback"),
+            kwargs.get("stop_callback"),
+        )
+
+    monkeypatch.setattr(pipeline, "_create_crawler_for_product", fake_create_crawler)
+
+    documents = await pipeline._process_product(product)
+
+    assert {document.doc_type for document in documents} == {
+        "privacy_policy",
+        "terms_of_service",
+    }
+    assert "https://acme.com/blog" not in classified_urls
