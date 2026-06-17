@@ -18,6 +18,7 @@ import signal
 
 from src.core.database import close_motor_client, db_session
 from src.core.logging import get_logger, setup_logging
+from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_pipeline_service
 
@@ -33,6 +34,7 @@ _CONCURRENCY = max(
 )
 _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
+_MONITORING_SWEEP_SECONDS = float(os.getenv("PIPELINE_MONITORING_SWEEP_SECONDS", "3600"))
 _SHUTDOWN_GRACE_SECONDS = float(os.getenv("PIPELINE_WORKER_SHUTDOWN_GRACE", "20"))
 
 
@@ -53,6 +55,43 @@ async def _sweep_stale(repo: PipelineRepository) -> None:
             logger.info("Re-queued %d failed job(s) for retry", requeued)
     except Exception as exc:  # noqa: BLE001 - the queue self-heal must not kill the worker
         logger.error("Stale sweep failed (continuing): %s", exc, exc_info=True)
+
+
+async def _sweep_monitoring() -> None:
+    try:
+        monitoring_repo = MonitoringScheduleRepository()
+        pipeline_svc = create_pipeline_service()
+        triggered = 0
+        async with db_session() as db:
+            due = await monitoring_repo.find_due(db)
+        for schedule in due:
+            try:
+                async with db_session() as db:
+                    product_docs = await db.products.find_one(
+                        {"slug": schedule.product_slug}, {"crawl_base_urls": 1, "domains": 1}
+                    )
+                if product_docs:
+                    domains = product_docs.get("domains") or []
+                    base_urls = product_docs.get("crawl_base_urls") or []
+                    crawl_url = (
+                        base_urls[0]
+                        if base_urls
+                        else (f"https://{domains[0]}" if domains else None)
+                    )
+                else:
+                    crawl_url = None
+                if not crawl_url:
+                    continue
+                async with db_session() as db:
+                    await pipeline_svc.create_job_for_url(db, crawl_url)
+                    await monitoring_repo.mark_triggered(db, schedule.product_slug)
+                triggered += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Monitoring sweep failed for %s: %s", schedule.product_slug, exc)
+        if triggered:
+            logger.info("Monitoring sweep triggered %d re-crawl(s)", triggered)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Monitoring sweep failed (continuing): %s", exc, exc_info=True)
 
 
 async def _run_job(job_id: str) -> None:
@@ -86,6 +125,7 @@ async def main() -> None:
     # Reap jobs orphaned by a previous crash before claiming new work.
     await _sweep_stale(repo)
     last_sweep = loop.time()
+    last_monitoring_sweep = loop.time()
 
     logger.info("Pipeline worker started (concurrency=%d, poll=%.1fs)", _CONCURRENCY, _POLL_SECONDS)
     running: set[asyncio.Task[None]] = set()
@@ -94,6 +134,10 @@ async def main() -> None:
         if loop.time() - last_sweep >= _STALE_SWEEP_SECONDS:
             await _sweep_stale(repo)
             last_sweep = loop.time()
+
+        if loop.time() - last_monitoring_sweep >= _MONITORING_SWEEP_SECONDS:
+            await _sweep_monitoring()
+            last_monitoring_sweep = loop.time()
 
         if len(running) >= _CONCURRENCY:
             await _sleep_or_stop(stop, _POLL_SECONDS)

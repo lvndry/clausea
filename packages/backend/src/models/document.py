@@ -1473,6 +1473,7 @@ class Document(BaseModel):
     # freshness window, while older docs are still re-fetched for change detection.
     updated_at: datetime = Field(default_factory=datetime.now)
     tier_relevance: TierRelevance = "extended"
+    content_hash: str | None = None
 
 
 # Resolve forward references now that all classes are defined.

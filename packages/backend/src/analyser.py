@@ -1316,6 +1316,7 @@ async def generate_product_overview(
     document_svc: DocumentService | None = None,
     cancellation_token: CancellationToken | None = None,
     on_progress: HeartbeatCallback | None = None,
+    job_id: str | None = None,
 ) -> MetaSummary:
     """
     Generate a cached product overview from analyzed core policy documents.
@@ -1612,6 +1613,7 @@ Per-document analyses and extractions:
             db,
             product_slug=product_slug,
             meta_summary=meta_summary,
+            job_id=job_id,
         )
         logger.info(f"✓ Saved product overview for {product_slug}")
 

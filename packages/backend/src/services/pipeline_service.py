@@ -32,6 +32,7 @@ from src.models.pipeline_job import (
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
+from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.service_factory import create_document_service, create_product_service
@@ -404,7 +405,9 @@ class PipelineService:
                         )
                         crawl_tasks.append(task)
 
-                    pipeline = PolicyDocumentPipeline(progress_callback=_on_crawl_progress)
+                    pipeline = PolicyDocumentPipeline(
+                        progress_callback=_on_crawl_progress, job_id=job.id
+                    )
                     stats = await pipeline.run([product])
 
                     # Drain pending progress tasks before finalizing the crawl step
@@ -671,6 +674,7 @@ class PipelineService:
                         product_svc=product_svc_for_overview,
                         document_svc=doc_svc_for_overview,
                         on_progress=_on_overview_progress,
+                        job_id=job.id,
                     )
 
                     # Verify the overview actually persisted — same truthfulness lesson as
@@ -782,6 +786,20 @@ class PipelineService:
                         f"Pipeline job {job.id} completed for {job.product_slug} "
                         f"({job.documents_stored} documents)"
                     )
+
+                    # Auto-enroll in monitoring (best-effort)
+                    try:
+                        await MonitoringScheduleRepository().enroll(
+                            db,
+                            product_slug=job.product_slug,
+                            product_id=job.product_id,
+                        )
+                    except Exception as enroll_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to enroll %s in monitoring: %s",
+                            job.product_slug,
+                            enroll_exc,
+                        )
 
                     # Notify subscribers (best-effort)
                     try:
