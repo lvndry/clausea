@@ -80,22 +80,45 @@ const fetchProductForMetadata = cache(async function (
     }
 
     const cookie = headerList.get("cookie");
+    const reqHeaders: HeadersInit = cookie ? { Cookie: cookie } : {};
 
-    const response = await fetch(`${origin}/api/products/${slug}`, {
-      headers: cookie ? { Cookie: cookie } : {},
-      next: { revalidate: 60 },
-    });
+    const [productRes, overviewRes] = await Promise.all([
+      fetch(`${origin}/api/products/${slug}`, {
+        headers: reqHeaders,
+        next: { revalidate: 60 },
+      }),
+      fetch(`${origin}/api/products/${slug}/overview`, {
+        headers: reqHeaders,
+        next: { revalidate: 60 },
+      }).catch(() => null),
+    ]);
 
-    if (response.status === 404) {
+    if (productRes.status === 404) {
       return { kind: "not_found" };
     }
 
-    if (!response.ok) {
-      console.error("Product metadata: API error", response.status, slug);
+    if (!productRes.ok) {
+      console.error("Product metadata: API error", productRes.status, slug);
       return { kind: "uncertain", displayName: humanizeSlug(slug) };
     }
 
-    return { kind: "ok", product: (await response.json()) as ProductMetadata };
+    const product = (await productRes.json()) as ProductMetadata;
+
+    if (overviewRes?.ok) {
+      try {
+        const overview = (await overviewRes.json()) as {
+          risk_score?: number;
+          verdict?: ProductMetadata["verdict"];
+        };
+        if (overview.risk_score != null)
+          product.risk_score = overview.risk_score;
+        if (overview.verdict) product.verdict = overview.verdict;
+      } catch {
+        // Overview unavailable or malformed — OG card shows name only
+      }
+    }
+
+    return { kind: "ok", product };
   } catch (error) {
     console.error("Error fetching product data for metadata:", error);
     return { kind: "uncertain", displayName: humanizeSlug(slug) };

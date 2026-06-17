@@ -12,17 +12,6 @@ const PRODUCT_DETAIL_RE = /^\/products\/[^/]+/;
 const FREE_PRODUCT_VIEWS = 5;
 const PV_COOKIE = "__pv";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/features",
-  "/about",
-  "/pricing",
-  "/products",
-  "/api/webhooks(.*)",
-]);
-
 const isProtectedRoute = createRouteMatcher([
   "/dashboard(.*)",
   "/onboarding(.*)",
