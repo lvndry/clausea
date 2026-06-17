@@ -31,7 +31,6 @@ import { SourcesList } from "@/components/dashboard/sources-list";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ErrorDisplay } from "@/components/ui/error-display";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -537,13 +536,27 @@ export default function CompanyPage({
     }
 
     return (
-      <ErrorDisplay
-        variant="not-found"
-        title="Product Not Found"
-        message="The product you're looking for doesn't exist or has been removed."
-        actionLabel="Browse Products"
-        actionHref="/products"
-      />
+      <div className="space-y-8">
+        <div className="border-b border-border pb-8">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-4">
+            404 — Not Found
+          </p>
+          <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+            Product Not Found
+          </h1>
+          <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
+            The product you&apos;re looking for doesn&apos;t exist or has been
+            removed.
+          </p>
+        </div>
+        <Link
+          href="/products"
+          className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Browse Products
+        </Link>
+      </div>
     );
   }
 
