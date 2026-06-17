@@ -2,23 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { apiEndpoints } from "@lib/config";
 import { httpJson } from "@lib/http";
+import { enrichLogos } from "@lib/logo";
 import { productsPageSchema } from "@lib/schemas";
-import type { z } from "zod";
-
-type ProductsPage = z.infer<typeof productsPageSchema>;
-
-function enrichLogos(data: ProductsPage): ProductsPage {
-  const token = process.env.LOGO_DEV_API_KEY;
-  if (!token) return data;
-  return {
-    ...data,
-    items: data.items.map((item) => {
-      if (item.logo || !item.domains?.length) return item;
-      const domain = item.domains[0].replace(/^https?:\/\//, "");
-      return { ...item, logo: `https://img.logo.dev/${domain}?token=${token}` };
-    }),
-  };
-}
 
 export async function GET(request: NextRequest) {
   try {

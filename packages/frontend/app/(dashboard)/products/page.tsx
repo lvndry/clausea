@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
+import { enrichLogos } from "@lib/logo";
 
 import {
   ProductsListClient,
@@ -7,19 +8,6 @@ import {
 } from "./products-list-client";
 
 const EMPTY_PAGE: ProductsPage = { items: [], total: 0, page: 1, pages: 1 };
-
-function enrichLogos(data: ProductsPage): ProductsPage {
-  const token = process.env.LOGO_DEV_API_KEY;
-  if (!token) return data;
-  return {
-    ...data,
-    items: data.items.map((item) => {
-      if (item.logo || !item.domains?.length) return item;
-      const domain = item.domains[0].replace(/^https?:\/\//, "");
-      return { ...item, logo: `https://img.logo.dev/${domain}?token=${token}` };
-    }),
-  };
-}
 
 async function fetchInitialProducts(page: number): Promise<ProductsPage> {
   try {
