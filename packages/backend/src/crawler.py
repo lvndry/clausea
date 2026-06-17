@@ -249,12 +249,15 @@ BROWSER_NAV_TIMEOUT_MS = 20_000
 # content is still captured by the SPA_HYDRATION_RETRIES polling below.
 BROWSER_LOAD_STATE_TIMEOUT_MS = 5_000
 
-# Narrow per-asset routes (not a catch-all "**/*"): only these abort, everything else navigates
-# untouched. A blanket route that continue_()s every request stalls SPA navigation under load.
-_BLOCKED_ASSET_GLOBS = (
-    "**/*.{png,jpg,jpeg,gif,webp,avif,svg,ico,bmp,tif,tiff}",
-    "**/*.{woff,woff2,ttf,otf,eot}",
-    "**/*.{mp4,webm,ogg,ogv,mp3,wav,m4a,m4v,mov,avi}",
+# Heavy assets aborted during render to cap renderer memory. A regex route — Playwright matches
+# only these URLs, so document/CSS/JS/XHR navigate untouched with no event-loop overhead. NOT a
+# catch-all "**/*" (a blanket route that continue_()s every request stalls SPA navigation under
+# load), and NOT a glob: Playwright globs don't support braces ({png,jpg}), so this must be regex.
+_BLOCKED_ASSETS_RE = re.compile(
+    r"\.(?:png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?"
+    r"|woff2?|ttf|otf|eot"
+    r"|mp4|webm|ogg|ogv|mp3|wav|m4a|m4v|mov|avi)(?:[?#]|$)",
+    re.IGNORECASE,
 )
 
 
@@ -265,8 +268,7 @@ async def _block_heavy_assets(page: Page) -> None:
         except Exception:
             pass  # route/page already closed mid-flight
 
-    for asset_glob in _BLOCKED_ASSET_GLOBS:
-        await page.route(asset_glob, _abort)
+    await page.route(_BLOCKED_ASSETS_RE, _abort)
 
 
 # Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
