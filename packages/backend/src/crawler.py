@@ -2984,8 +2984,8 @@ class ClauseaCrawler:
             # discover they exceed the size limit wastes seconds per crawl. By fetching only
             # a small generic safety net we still catch sites that use opaque sitemap names
             # while skipping the obvious content-only batches.
-            policy_sitemaps = [u for u in child_sitemaps if _POLICY_SITEMAP_RE.search(u)]
-            generic_sitemaps = [u for u in child_sitemaps if not _POLICY_SITEMAP_RE.search(u)]
+            policy_sitemaps = [sm for sm in child_sitemaps if _POLICY_SITEMAP_RE.search(sm)]
+            generic_sitemaps = [sm for sm in child_sitemaps if not _POLICY_SITEMAP_RE.search(sm)]
 
             policy_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
             generic_sitemaps.sort(key=self.url_scorer.score_url, reverse=True)
