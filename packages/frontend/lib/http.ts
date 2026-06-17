@@ -33,11 +33,21 @@ export async function http(
   let token: string | null | undefined = undefined;
   try {
     token = await userAuth.getToken?.({ template: "default" });
-    if (!token) {
+  } catch (err) {
+    console.warn("[http] getToken template=default failed, falling back:", err);
+  }
+  if (!token) {
+    try {
       token = await userAuth.getToken?.();
+    } catch (err) {
+      console.warn("[http] getToken fallback failed:", err);
     }
-  } catch (_) {
-    // ignore
+  }
+  if (!token) {
+    console.warn(
+      "[http] no token obtained for request to:",
+      typeof input === "string" ? input : input.toString(),
+    );
   }
 
   const mergedHeaders: HeadersInit = {
