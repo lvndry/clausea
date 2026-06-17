@@ -8,6 +8,19 @@ import {
 
 const EMPTY_PAGE: ProductsPage = { items: [], total: 0, page: 1, pages: 1 };
 
+function enrichLogos(data: ProductsPage): ProductsPage {
+  const token = process.env.LOGO_DEV_API_KEY;
+  if (!token) return data;
+  return {
+    ...data,
+    items: data.items.map((item) => {
+      if (item.logo || !item.domains?.length) return item;
+      const domain = item.domains[0].replace(/^https?:\/\//, "");
+      return { ...item, logo: `https://img.logo.dev/${domain}?token=${token}` };
+    }),
+  };
+}
+
 async function fetchInitialProducts(page: number): Promise<ProductsPage> {
   try {
     const { getToken } = await auth();
@@ -17,7 +30,7 @@ async function fetchInitialProducts(page: number): Promise<ProductsPage> {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) return EMPTY_PAGE;
-    return (await res.json()) as ProductsPage;
+    return enrichLogos((await res.json()) as ProductsPage);
   } catch {
     return EMPTY_PAGE;
   }

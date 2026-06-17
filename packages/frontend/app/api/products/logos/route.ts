@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
       domain = domain.replace(/^https?:\/\//, "");
 
-      const logoDevToken = process.env.LOGO_DEV_PUBLIC_KEY;
+      const logoDevToken = process.env.LOGO_DEV_API_KEY;
 
       if (logoDevToken) {
         logo = `https://img.logo.dev/${domain}?token=${logoDevToken}`;
