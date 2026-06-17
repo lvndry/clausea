@@ -76,7 +76,7 @@ async def test_update_step_progress_skips_terminal_steps(pipeline_service, mock_
         product_slug="test-product",
         product_name="Test Product",
         url="https://test.com",
-        status="summarizing",
+        status="synthesising",
         steps=[PipelineStep(name="crawling", status="completed", message="Final Message")],
     )
 
@@ -187,7 +187,7 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
     """Crawl succeeds but every document fails analysis.
 
     The job must fail at the ANALYSIS stage with a truthful, retry-oriented error
-    (not a generic/crawl-flavored failure), the summarizing step must be marked
+    (not a generic/crawl-flavored failure), the synthesising step must be marked
     failed (not "completed"), and overview synthesis must never run.
     """
     job = PipelineJob(

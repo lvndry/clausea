@@ -31,7 +31,7 @@ class PipelineErrorCode(StrEnum):
 PipelineJobStatus = Literal[
     "pending",
     "crawling",
-    "summarizing",
+    "synthesising",
     "generating_overview",
     "completed",
     "failed",
@@ -140,7 +140,7 @@ class PipelineJob(BaseModel):
     steps: list[PipelineStep] = Field(
         default_factory=lambda: [
             PipelineStep(name="crawling"),
-            PipelineStep(name="summarizing"),
+            PipelineStep(name="synthesising"),
             PipelineStep(name="generating_overview"),
         ]
     )

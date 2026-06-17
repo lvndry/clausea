@@ -19,7 +19,7 @@ _TERMINAL_STATUSES = list(TERMINAL_PIPELINE_STATUSES)
 # Statuses for a job that was actively executing and can be left orphaned by a worker
 # crash. A "pending" job is only queued — never started — so a restart must leave it
 # pending for the worker to pick up, not fail it. Only these can be marked stale.
-_ORPHANABLE_STATUSES = ["crawling", "summarizing", "generating_overview"]
+_ORPHANABLE_STATUSES = ["crawling", "synthesising", "generating_overview"]
 
 logger = get_logger(__name__)
 
@@ -62,7 +62,7 @@ def _is_auto_retryable_failure(error_code: Any) -> bool:
     We keep this forgiving for backward compatibility with historical rows that
     store free-form strings in ``error``.
     """
-    code = (str(error_code).strip().lower() if error_code is not None else "")
+    code = str(error_code).strip().lower() if error_code is not None else ""
     if not code:
         return True
     if code in _NON_RETRYABLE_PIPELINE_ERRORS:
@@ -272,7 +272,7 @@ class PipelineRepository(BaseRepository):
                 "started_at": None,
                 "completed_at": None,
             }
-            for name in ("crawling", "summarizing", "generating_overview")
+            for name in ("crawling", "synthesising", "generating_overview")
         ]
         claimed_slugs: set[str] = set(
             await db[self.COLLECTION].distinct("product_slug", {"active": True})
