@@ -45,6 +45,7 @@ from src.models.document import (
     DPIATriggerAssessment,
     IndividualImpact,
     MetaSummary,
+    PrivacySignals,
     ProcurementDecision,
     ProductContradiction,
     ProductDeepAnalysis,
@@ -304,6 +305,39 @@ def _calculate_verdict(
         return "very_pervasive"
 
 
+def _calculate_grade(risk_score: int) -> Literal["A", "B", "C", "D", "E"]:
+    if risk_score <= 2:
+        return "A"
+    if risk_score <= 4:
+        return "B"
+    if risk_score <= 6:
+        return "C"
+    if risk_score <= 7:
+        return "D"
+    return "E"
+
+
+def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int:
+    if signals is None:
+        return risk_score
+    floor = risk_score
+    if signals.sells_data == "yes" or signals.ai_training_on_user_data == "yes":
+        floor = max(floor, 6)
+    if signals.children_data_collection == "yes":
+        floor = max(floor, 7)
+    critical_count = sum(
+        [
+            signals.sells_data == "yes",
+            signals.ai_training_on_user_data == "yes",
+            signals.children_data_collection == "yes",
+            getattr(signals, "cross_site_tracking", "no") == "yes",
+        ]
+    )
+    if critical_count >= 2:
+        floor = max(floor, 8)
+    return floor
+
+
 # Doc types that must never influence the product risk score or deep analysis LLM prompt.
 # "other" means the classifier could not assign a policy type; community_guidelines and
 # copyright_policy address editorial/IP rules rather than data/privacy risk.
@@ -364,6 +398,7 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     # returned. _calculate_risk_score handles partial score sets by normalising weights.
     parsed.risk_score = _calculate_risk_score(parsed.scores)
     parsed.verdict = _calculate_verdict(parsed.risk_score)
+    parsed.grade = _calculate_grade(parsed.risk_score)
 
     return parsed
 
@@ -1605,8 +1640,20 @@ Per-document analyses and extractions:
         if meta_summary and core_docs:
             blended = _weighted_product_risk_score(core_docs)
             if blended is not None:
-                meta_summary.risk_score = blended
+                signals = getattr(meta_summary, "privacy_signals", None)
+                floored = _apply_signal_floors(blended, signals)
+                meta_summary.risk_score = floored
                 meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
+                meta_summary.grade = _calculate_grade(meta_summary.risk_score)
+
+        # Sentinel guard: replace LLM placeholder text with empty string.
+        # Only matches the whole trimmed value — "none" as a full response, not
+        # as a word inside a real sentence like "none of the documents...".
+        _BAD_SUMMARY_VALUES = {"none", "n/a", "null", "undefined", "n.a.", "na"}
+        if meta_summary:
+            stripped = (meta_summary.summary or "").strip()
+            if not stripped or stripped.lower() in _BAD_SUMMARY_VALUES or len(stripped) < 10:
+                meta_summary.summary = ""
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(
