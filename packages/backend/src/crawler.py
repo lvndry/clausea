@@ -1821,7 +1821,7 @@ class ClauseaCrawler:
         loop = _running_loop()
         async with _get_shared_browser_lock():
             if loop not in _shared_browser_instances:
-                init_kwargs: dict[str, Any] = {"headless": True}
+                init_kwargs: dict[str, Any] = {"headless": True, "locale": "en-US"}
                 if self.proxy:
                     # Camoufox supports proxy configuration directly
                     init_kwargs["proxy"] = {"server": self.proxy}
@@ -2385,12 +2385,7 @@ class ClauseaCrawler:
         # Camoufox/Firefox fails to decompress Brotli ("br") response bodies, leaving the DOM
         # full of compressed garbage — common on Cloudflare-fronted sites (OpenAI, etc.), which
         # serve br by default. Request gzip only so the browser decodes content correctly.
-        await page.set_extra_http_headers(
-            {
-                "Accept-Encoding": "gzip, deflate",
-                "Accept-Language": "en-US,en;q=0.9",
-            }
-        )
+        await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
             await _block_heavy_assets(page)
@@ -4159,6 +4154,7 @@ class ClauseaCrawler:
                 timeout=timeout,
                 max_line_size=MAX_HEADER_BYTES,
                 max_field_size=MAX_HEADER_BYTES,
+                headers={"Accept-Language": "en-US,en;q=0.9"},
             ) as session:
                 # Discover sitemaps and use their URLs as depth-0 seeds.
                 # This gives every sitemap URL the full max_depth of crawling
