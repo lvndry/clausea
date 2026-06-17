@@ -257,6 +257,18 @@ _BLOCKED_ASSET_GLOBS = (
     "**/*.{mp4,webm,ogg,ogv,mp3,wav,m4a,m4v,mov,avi}",
 )
 
+
+async def _block_heavy_assets(page: Page) -> None:
+    async def _abort(route: Route) -> None:
+        try:
+            await route.abort()
+        except Exception:
+            pass  # route/page already closed mid-flight
+
+    for asset_glob in _BLOCKED_ASSET_GLOBS:
+        await page.route(asset_glob, _abort)
+
+
 # Non-production mirror subdomains (docs-internal, staging., preview.) serve near-identical
 # copies of prod pages — crawling them just duplicates documents. Matched on the subdomain only.
 _MIRROR_SUBDOMAIN_RE = re.compile(r"(?:^|[.-])(?:internal|staging|preview)(?:$|[.-])")
@@ -2281,15 +2293,7 @@ class ClauseaCrawler:
         await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
 
         try:
-
-            async def _abort_heavy(route: Route) -> None:
-                try:
-                    await route.abort()
-                except Exception:
-                    pass  # route/page already closed mid-flight
-
-            for asset_glob in _BLOCKED_ASSET_GLOBS:
-                await page.route(asset_glob, _abort_heavy)
+            await _block_heavy_assets(page)
 
             # Tight navigation budget: a page that hasn't reached domcontentloaded within
             # BROWSER_NAV_TIMEOUT_MS is hung or bot-walled, not slow — don't burn the full
