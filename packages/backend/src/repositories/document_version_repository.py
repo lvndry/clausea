@@ -17,6 +17,12 @@ class DocumentVersionRepository:
         job_id: str | None,
         changed_fields: list[str],
     ) -> None:
+        product_slug: str | None = None
+        if existing_doc.product_id:
+            product = await db.products.find_one({"id": existing_doc.product_id}, {"slug": 1})
+            if product:
+                product_slug = product.get("slug")
+
         version = DocumentVersion(
             document_id=existing_doc.id,
             product_id=existing_doc.product_id,
@@ -30,7 +36,7 @@ class DocumentVersionRepository:
             text=existing_doc.text,
             content_hash=existing_doc.content_hash,
             metadata=dict(existing_doc.metadata),
-            product_slug=None,
+            product_slug=product_slug,
             changed_fields=changed_fields,
             job_id=job_id,
         )

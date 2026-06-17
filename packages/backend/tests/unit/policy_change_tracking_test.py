@@ -77,6 +77,8 @@ class TestDocumentVersionRepository:
         db = MagicMock()
         db.document_versions = MagicMock()
         db.document_versions.insert_one = AsyncMock()
+        db.products = MagicMock()
+        db.products.find_one = AsyncMock(return_value={"slug": "acme"})
 
         existing = _doc()
         repo = DocumentVersionRepository()
@@ -87,12 +89,15 @@ class TestDocumentVersionRepository:
         assert inserted["document_id"] == existing.id
         assert inserted["job_id"] == "job123"
         assert inserted["changed_fields"] == ["text"]
+        assert inserted["product_slug"] == "acme"
 
     @pytest.mark.asyncio
     async def test_archive_with_no_job_id(self) -> None:
         db = MagicMock()
         db.document_versions = MagicMock()
         db.document_versions.insert_one = AsyncMock()
+        db.products = MagicMock()
+        db.products.find_one = AsyncMock(return_value=None)
 
         existing = _doc()
         await DocumentVersionRepository().archive(db, existing, job_id=None, changed_fields=[])

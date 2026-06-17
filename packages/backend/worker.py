@@ -81,6 +81,14 @@ async def _sweep_monitoring() -> None:
                 else:
                     crawl_url = None
                 if not crawl_url:
+                    async with db_session() as db:
+                        await db.monitoring_schedules.update_one(
+                            {"product_slug": schedule.product_slug},
+                            {"$set": {"enabled": False}},
+                        )
+                    logger.warning(
+                        "Disabled monitoring for %s: no crawl URL found", schedule.product_slug
+                    )
                     continue
                 async with db_session() as db:
                     await pipeline_svc.create_job_for_url(db, crawl_url)

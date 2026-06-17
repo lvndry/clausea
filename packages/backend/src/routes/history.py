@@ -1,4 +1,5 @@
 import difflib
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from motor.core import AgnosticDatabase
@@ -13,14 +14,14 @@ router = APIRouter(prefix="/history", tags=["history"])
 
 class DocumentVersionSummary(BaseModel):
     id: str
-    created_at: str
+    created_at: datetime
     changed_fields: list[str] | None
     job_id: str | None
     content_hash: str | None
 
 
 class DiffResponse(BaseModel):
-    version_a_id: str
+    version_a_id: str | None
     version_b_id: str
     unified_diff: str
 
@@ -41,7 +42,7 @@ async def list_document_versions(
     return [
         DocumentVersionSummary(
             id=str(row.get("id", "")),
-            created_at=str(row.get("created_at", "")),
+            created_at=row.get("created_at"),
             changed_fields=row.get("changed_fields"),
             job_id=row.get("job_id"),
             content_hash=row.get("content_hash"),
@@ -77,7 +78,7 @@ async def diff_document_versions(
         )
     )
     return DiffResponse(
-        version_a_id=str((previous or {}).get("id", "")),
+        version_a_id=previous.get("id") if previous else None,
         version_b_id=version_id,
         unified_diff="".join(diff_lines),
     )

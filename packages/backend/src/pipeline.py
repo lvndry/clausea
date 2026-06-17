@@ -113,7 +113,16 @@ def _content_fingerprint(text: str) -> str:
 
 def _diff_fields(existing: "Document", incoming: "Document") -> list[str]:
     tracked = ["text", "title", "doc_type", "locale", "regions", "effective_date"]
-    return [f for f in tracked if getattr(existing, f) != getattr(incoming, f)]
+    changed = []
+    for field in tracked:
+        old_val = getattr(existing, field)
+        new_val = getattr(incoming, field)
+        if field == "regions":
+            if set(old_val or []) != set(new_val or []):
+                changed.append(field)
+        elif old_val != new_val:
+            changed.append(field)
+    return changed
 
 
 # Locale path segment (/es/, /fr/, /pt-br/, /en_US/) or locale subdomain (es., de.).
@@ -996,7 +1005,7 @@ class PolicyDocumentPipeline:
                                 f"updating existing document with changes: {document.url}"
                             )
                             document.id = existing_doc.id  # Preserve original ID
-                            document.content_hash = current_hash
+                            document.content_hash = _content_fingerprint(document.text)
                             await document_service.update_document(db, document)
                             stored_count += 1
                             updated_count += 1
