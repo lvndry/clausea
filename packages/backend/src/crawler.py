@@ -261,11 +261,6 @@ CONVERGENCE_LEGAL_SCORE = 0.2
 # Boost-only pages to keep crawling after the own-score frontier empties, in case one links a
 # policy reachable no other way. A new real lead resets it. See _relevance_exhausted.
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
-# Pages to visit before giving up if zero policy-relevant content has been found.
-# Prevents blocked/bot-walled sites from holding a slot for 400 pages × 20-30 sec.
-# The relevance_exhausted check only fires once a policy page is found; this covers
-# sites where nothing is ever found.
-CRAWL_ZERO_POLICY_ABORT = int(os.getenv("CRAWLER_ZERO_POLICY_ABORT", "50"))
 # Cap per-document English locale variants (e.g. en-us/en-gb) to reduce duplicate crawls.
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
@@ -1705,6 +1700,7 @@ class ClauseaCrawler:
         self._frontier_real_leads: int = 0  # queued URLs whose own score clears the gate
         self._policy_pages_found: int = 0
         self._crawls_since_new_lead: int = 0
+        self._consecutive_blocked: int = 0  # consecutive fetch failures (bot-wall detection)
         self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
         # Best policy-relevance score assigned to each queued URL (anchor-aware).
         # Consulted by the browser-fetch gate so opaque policy URLs discovered via
@@ -4275,6 +4271,7 @@ class ClauseaCrawler:
                         if result.success:
                             self.stats.crawled_urls += 1
                             self.results.append(result)
+                            self._consecutive_blocked = 0
 
                             if (
                                 result.legal_score is not None
@@ -4294,6 +4291,7 @@ class ClauseaCrawler:
                             self.stats.failed_urls += 1
                             self.failed_urls.add(url)
                             pages_since_policy_hit += 1
+                            self._consecutive_blocked += 1
                             logger.warning(f"❌ Failed: {url} - {result.error_message}")
                             # Surface robots.txt blocks so the pipeline can tell the user
                             # the SITE blocked us (not that we failed). Other failures stay
@@ -4345,16 +4343,11 @@ class ClauseaCrawler:
                         )
                         break
 
-                    if (
-                        self._policy_pages_found == 0
-                        and len(self.visited_urls) >= CRAWL_ZERO_POLICY_ABORT
-                        and self.strategy == "best_first"
-                        and (self._frontier_top_base_score() or 0) < self.min_legal_score
-                    ):
+                    if self._consecutive_blocked >= CRAWL_EXHAUSTION_GRACE * 5:
                         logger.info(
-                            f"🧭 Crawl zero-policy abort: {len(self.visited_urls)} pages visited "
-                            f"with 0 policy pages found and no promising URLs remaining; "
-                            f"site is likely blocked or has no accessible policy documents."
+                            f"🧭 Crawl bot-wall abort: {self._consecutive_blocked} consecutive "
+                            f"fetch failures — site is actively blocking the crawler. "
+                            f"Stopping at {len(self.visited_urls)} pages."
                         )
                         break
 
