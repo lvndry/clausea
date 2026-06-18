@@ -171,18 +171,6 @@ class DocumentService:
             document.updated_at = datetime.now()
             result = await self._document_repo.save(db, document)
 
-            # Business logic: Invalidate product overview cache for this product
-            try:
-                product = await self._product_repo.find_by_id(db, document.product_id)
-                if product:
-                    await self._product_repo.delete_product_overview(db, product.slug)
-                    logger.debug(f"Deleted product overview for product {product.slug}")
-            except Exception as cache_error:
-                # Don't fail document storage if cache invalidation fails
-                logger.warning(
-                    f"Failed to invalidate cache for document {document.id}: {cache_error}"
-                )
-
             return result
         except Exception as e:
             logger.error(f"Error storing document {document.id}: {e}")
