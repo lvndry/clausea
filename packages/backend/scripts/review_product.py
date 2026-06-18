@@ -52,6 +52,8 @@ async def review(db, product_svc, doc_svc, slug: str) -> None:
     if job:
         skips: dict[str, int] = {}
         for s in job.get("crawl_skip_reasons") or []:
+            if not isinstance(s, dict):
+                continue
             skips[s.get("reason", "?")] = skips.get(s.get("reason", "?"), 0) + 1
         skip_str = (
             ", ".join(f"{k}={v}" for k, v in sorted(skips.items(), key=lambda x: -x[1])) or "none"

@@ -40,9 +40,13 @@ def test_is_rate_limited_detects_429() -> None:
         pass
 
     assert _is_rate_limited(_RateLimitError("x"))
-    # Unrelated failures are not treated as rate limits.
+    assert _is_rate_limited(Exception("rate limit exceeded"))
+    # Unrelated failures are not treated as rate limits — including "429" inside a
+    # larger number or token, which must NOT be read as a status code.
     assert not _is_rate_limited(ValueError("bad json"))
     assert not _is_rate_limited(ConnectionError("reset"))
+    assert not _is_rate_limited(Exception("prompt has 4290 tokens"))
+    assert not _is_rate_limited(Exception("model v429 unavailable"))
 
 
 def test_rate_limit_delay_honors_retry_after_and_caps() -> None:
@@ -54,8 +58,10 @@ def test_rate_limit_delay_honors_retry_after_and_caps() -> None:
     exc.response = SimpleNamespace(headers={"retry-after": "9999"})
     assert _rate_limit_delay(exc, 0) == _RATE_LIMIT_MAX_DELAY
 
-    # No Retry-After → positive, capped backoff.
-    assert 0 < _rate_limit_delay(_RateLimited("x"), 0) <= _RATE_LIMIT_MAX_DELAY * 1.25
+    # No Retry-After → positive, and never exceeds the cap even after jitter (large
+    # prior_backoffs forces the base to the cap, so jitter must not push it over).
+    assert 0 < _rate_limit_delay(_RateLimited("x"), 0) <= _RATE_LIMIT_MAX_DELAY
+    assert _rate_limit_delay(_RateLimited("x"), 20) <= _RATE_LIMIT_MAX_DELAY
 
 
 @pytest.mark.asyncio

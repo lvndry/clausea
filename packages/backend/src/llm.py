@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import os
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -119,11 +120,22 @@ _RATE_LIMIT_MAX_DELAY = float(os.getenv("LLM_RATE_LIMIT_MAX_DELAY", "30"))
 
 
 def _is_rate_limited(exc: Exception) -> bool:
-    """True if an LLM call failed because of rate limiting (HTTP 429)."""
+    """True if an LLM call failed because of rate limiting (HTTP 429).
+
+    Matches the structured status code, the litellm ``RateLimitError`` class name, or an
+    explicit rate-limit phrase. ``429`` is only matched as a standalone token so unrelated
+    errors (e.g. ``4290 tokens``, model ``v429``) aren't misread as rate limits.
+    """
     if getattr(exc, "status_code", None) == 429:
         return True
-    name = type(exc).__name__.lower()
-    return "ratelimit" in name or "429" in str(exc)
+    if "ratelimit" in type(exc).__name__.lower():
+        return True
+    text = str(exc).lower()
+    return (
+        "rate limit" in text
+        or "too many requests" in text
+        or re.search(r"\b429\b", text) is not None
+    )
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:
@@ -146,7 +158,8 @@ def _rate_limit_delay(exc: Exception, prior_backoffs: int) -> float:
     if retry_after is not None:
         return min(retry_after, _RATE_LIMIT_MAX_DELAY)
     delay = min(_RATE_LIMIT_BASE_DELAY * (2**prior_backoffs), _RATE_LIMIT_MAX_DELAY)
-    return delay + random.uniform(0, delay * 0.25)
+    # Cap again after jitter so the cap is a true ceiling, not cap+25%.
+    return min(delay + random.uniform(0, delay * 0.25), _RATE_LIMIT_MAX_DELAY)
 
 
 async def _completion_with_fallback_impl(
