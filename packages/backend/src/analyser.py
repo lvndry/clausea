@@ -244,7 +244,7 @@ async def recover_dropped_analyses(
     db: AgnosticDatabase,
     product_slug: str,
     document_svc: DocumentService,
-    product_svc: ProductService | None = None,
+    product_svc: ProductService,
     cancellation_token: CancellationToken | None = None,
 ) -> int:
     """Re-analyse documents whose analysis was dropped by a transient failure.
@@ -276,7 +276,16 @@ async def recover_dropped_analyses(
         # Don't invalidate per-doc — the overview is rebuilt once below so it never sits
         # deleted-without-regeneration.
         await document_svc.update_document(db, doc, invalidate_product_overview=False)
-        await document_svc.update_document_analysis(db, doc.id, analysis)
+        persisted = await document_svc.update_document_analysis(db, doc.id, analysis)
+        if not persisted:
+            # The write didn't land — surface it as a failure rather than counting a
+            # recovery that isn't in the database (which would also wrongly trigger an
+            # overview rebuild that omits this doc).
+            doc.analysis = None
+            doc.analysis_error = "analysis recovered but database write did not persist"
+            await _stamp_analysis_error(db, document_svc, doc)
+            logger.error(f"Recovery: write did not persist for {doc.id} ({doc.url})")
+            continue
         recovered += 1
         logger.info(f"Recovery: re-analysed {doc.id} ({doc.url})")
 

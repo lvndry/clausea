@@ -21,12 +21,16 @@ if _prod:
 from src.analyser import recover_dropped_analyses  # noqa: E402
 from src.core.database import db_session  # noqa: E402
 from src.core.logging import setup_logging  # noqa: E402
-from src.services.service_factory import create_document_service  # noqa: E402
+from src.services.service_factory import (  # noqa: E402
+    create_document_service,
+    create_product_service,
+)
 
 
 async def main(slugs: list[str]) -> None:
     setup_logging()
     doc_svc = create_document_service()
+    product_svc = create_product_service()
     async with db_session() as db:
         if slugs == ["--completed"]:
             jobs = await db.pipeline_jobs.find({"status": "completed"}).to_list(length=500)
@@ -34,7 +38,7 @@ async def main(slugs: list[str]) -> None:
             print(f"recovering across {len(slugs)} completed product(s)")
         total = 0
         for slug in slugs:
-            recovered = await recover_dropped_analyses(db, slug, doc_svc)
+            recovered = await recover_dropped_analyses(db, slug, doc_svc, product_svc)
             if recovered:
                 print(f"  {slug}: recovered {recovered} document(s)")
             total += recovered

@@ -3,7 +3,7 @@
 A transient LLM failure (e.g. a provider rate-limit window defeating all in-run retries)
 leaves a document with extraction but no analysis, and nothing re-attempts it — so it is
 silently excluded from the product overview forever. ``recover_dropped_analyses`` finds
-those documents and re-runs analysis, persisting and invalidating the overview on success.
+those documents and re-runs analysis, persisting and regenerating the overview on success.
 'other' documents (skipped by design) and documents without extraction are left alone.
 """
 
@@ -16,6 +16,7 @@ import pytest
 
 from src.analyser import recover_dropped_analyses
 from src.models.document import (
+    DocType,
     Document,
     DocumentAnalysis,
     DocumentAnalysisScores,
@@ -23,7 +24,13 @@ from src.models.document import (
 )
 
 
-def _doc(doc_id: str, *, doc_type: str = "terms_of_service", analysis=None, extracted=True):
+def _doc(
+    doc_id: str,
+    *,
+    doc_type: DocType = "terms_of_service",
+    analysis: DocumentAnalysis | None = None,
+    extracted: bool = True,
+) -> Document:
     return Document(
         id=doc_id,
         url=f"https://x/{doc_id}",
@@ -64,7 +71,10 @@ async def test_recovers_dropped_document_and_clears_error() -> None:
         patch("src.analyser.generate_product_overview", new=AsyncMock()) as regen,
     ):
         recovered = await recover_dropped_analyses(
-            db=AsyncMock(), product_slug="example", document_svc=document_svc
+            db=AsyncMock(),
+            product_slug="example",
+            document_svc=document_svc,
+            product_svc=AsyncMock(),
         )
 
     assert recovered == 1
@@ -94,7 +104,10 @@ async def test_skips_other_docs_and_docs_without_extraction() -> None:
         patch("src.analyser.generate_product_overview", new=AsyncMock()) as regen,
     ):
         recovered = await recover_dropped_analyses(
-            db=AsyncMock(), product_slug="example", document_svc=document_svc
+            db=AsyncMock(),
+            product_slug="example",
+            document_svc=document_svc,
+            product_svc=AsyncMock(),
         )
 
     assert recovered == 0
@@ -119,7 +132,10 @@ async def test_recovery_that_still_fails_is_not_counted() -> None:
         patch("src.analyser.generate_product_overview", new=AsyncMock()) as regen,
     ):
         recovered = await recover_dropped_analyses(
-            db=AsyncMock(), product_slug="example", document_svc=document_svc
+            db=AsyncMock(),
+            product_slug="example",
+            document_svc=document_svc,
+            product_svc=AsyncMock(),
         )
 
     assert recovered == 0
