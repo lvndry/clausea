@@ -42,8 +42,10 @@ from src.models.document import (
     DocumentDeepAnalysis,
     DocumentExtraction,
     DocumentRiskBreakdown,
+    DocumentSummary,
     DPIATriggerAssessment,
     IndividualImpact,
+    InsightCategory,
     MetaSummary,
     PrivacySignals,
     ProcurementDecision,
@@ -53,6 +55,8 @@ from src.models.document import (
     RemediationItem,
     RiskRegisterItem,
     SecurityPosture,
+    TopicStanceBreakdown,
+    TopicSupportCitation,
     WorkforceDataAssessment,
 )
 from src.prompts.analysis_prompts import (
@@ -73,6 +77,8 @@ from src.services.aggregation_service import AggregationService
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
+from src.services.topic_report_service import build_product_topic_report
+from src.services.topic_stance_service import compose_product_risk_from_topics
 from src.utils.cancellation import CancellationToken
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
@@ -357,6 +363,89 @@ def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int
     if critical_count >= 2:
         floor = max(floor, 8)
     return floor
+
+
+_TOPIC_WHY_IT_MATTERS: dict[str, str] = {
+    "data_collection": "This affects how much personal information the product can gather about you.",
+    "data_sharing": "This determines whether your data is disclosed to external partners.",
+    "retention": "This controls how long your data remains stored after use.",
+    "ai_training": "This decides whether your prompts/outputs may be used to train models.",
+    "data_sale": "Data sale provisions can expand commercial use of your information.",
+    "security": "Security disclosures indicate how well user data is protected in practice.",
+    "user_rights": "Rights disclosures determine how easily you can access or delete your data.",
+}
+
+_TOPIC_RECOMMENDED_ACTIONS: dict[str, str] = {
+    "data_collection": "Review settings and disable optional data collection where possible.",
+    "data_sharing": "Check privacy controls and opt out of third-party sharing when available.",
+    "retention": "Request deletion timelines in writing if retention windows are unclear.",
+    "ai_training": "Disable training/usage permissions for your prompts if an opt-out exists.",
+    "data_sale": "Use explicit opt-out mechanisms for sale/sharing and document your preference.",
+    "security": "Request security documentation for controls relevant to your deployment.",
+    "user_rights": "Test the product's access/deletion workflow before relying on it at scale.",
+}
+
+
+def _truncate_text(value: str | None, limit: int = 220) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def _topic_supporting_citations(topic: Any) -> list[TopicSupportCitation]:
+    selected: list[TopicSupportCitation] = []
+    citation_pool = [
+        *(citation for finding in topic.findings for citation in (finding.citations or [])),
+        *(citation for conflict in topic.conflicts for citation in (conflict.citations or [])),
+    ]
+    for citation in citation_pool:
+        quote = getattr(citation, "quote", None)
+        if not quote:
+            continue
+        document_id = getattr(citation, "document_id", "")
+        section_title = getattr(citation, "section_title", None)
+        document_url = getattr(citation, "document_url", None)
+        selected.append(
+            TopicSupportCitation(
+                document_id=document_id,
+                document_title=getattr(citation, "document_title", None),
+                document_url=document_url,
+                quote=str(quote),
+                section_title=section_title,
+                verified=bool(getattr(citation, "verified", True)),
+            )
+        )
+    return selected
+
+
+def _topic_why_it_matters(topic: str, status: str, stance: str, conflict_count: int) -> str:
+    if status in {"missing", "not_disclosed"}:
+        return "No explicit disclosure was found, which limits risk clarity for this topic."
+    if status == "ambiguous" or stance == "mixed":
+        return (
+            f"Documents disagree on this topic ({conflict_count} conflict(s)), "
+            "so commitments may vary by page or policy version."
+        )
+    return _TOPIC_WHY_IT_MATTERS.get(
+        topic,
+        "This topic materially influences user privacy expectations and legal risk.",
+    )
+
+
+def _topic_recommended_action(topic: str, status: str, stance: str) -> str:
+    if status in {"missing", "not_disclosed"}:
+        return "Request written clarification from the vendor before relying on this area."
+    if status == "ambiguous" or stance == "mixed":
+        return "Treat this as unresolved and ask for a single controlling policy statement."
+    return _TOPIC_RECOMMENDED_ACTIONS.get(
+        topic,
+        "Capture this topic in your vendor checklist and verify it during onboarding.",
+    )
 
 
 # Doc types that must never influence the product risk score or deep analysis LLM prompt.
@@ -1444,6 +1533,12 @@ async def generate_product_overview(
     aggregation = await aggregation_service.build_product_aggregation(
         db, product_id=product.id, product_slug=product_slug
     )
+    document_summaries = [DocumentSummary.from_document(doc) for doc in documents]
+    topic_report = build_product_topic_report(
+        product_slug=product_slug,
+        aggregation=aggregation,
+        documents=document_summaries,
+    )
 
     # Filter to core documents only for the synthesis.
     # Non-core docs (community_guidelines, copyright_policy, etc.) are analysed
@@ -1562,9 +1657,23 @@ async def generate_product_overview(
             + "\n"
         )
 
+    topic_signals = [
+        {
+            "topic": topic.topic,
+            "status": topic.status,
+            "stance": topic.stance,
+            "topic_score": topic.topic_score,
+            "rationale": topic.rationale,
+            "sample_findings": [finding.value for finding in topic.findings[:3]],
+        }
+        for topic in topic_report.topics
+    ]
+
     prompt = f"""Product: {product_slug}
 Core documents analyzed: {len(doc_inputs)} of {len(core_docs)} core documents
 Document types: {", ".join(doc.doc_type for doc in core_docs if doc.analysis)}
+Deterministic per-topic signals:
+{json.dumps(topic_signals, indent=2)}
 {conflicts_section}
 Per-document analyses and extractions:
 {json.dumps(doc_inputs, indent=2)}
@@ -1593,6 +1702,7 @@ Per-document analyses and extractions:
                     ],
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
+                    temperature=0,
                 )
             )
 
@@ -1656,16 +1766,83 @@ Per-document analyses and extractions:
             except Exception as e:
                 logger.warning(f"Failed to parse contradictions: {e}")
 
-        # Product risk_score: deterministic blend of core document analyses (privacy
-        # policy weighted highest). LLM overview risk_score is discarded.
-        if meta_summary and core_docs:
-            blended = _weighted_product_risk_score(core_docs)
-            if blended is not None:
-                signals = meta_summary.privacy_signals
-                floored = _apply_signal_floors(blended, signals)
-                meta_summary.risk_score = floored
-                meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
-                meta_summary.grade = _calculate_grade(meta_summary.risk_score)
+        # Attach deterministic topic stances used for both UI explainability and scoring.
+        meta_summary.topic_stances = []
+        for topic in topic_report.topics:
+            cited_document_ids: set[str] = set()
+            evidence_count = 0
+            for finding in topic.findings:
+                cited_document_ids.update(finding.document_ids)
+                evidence_count += len(finding.citations)
+            for conflict in topic.conflicts:
+                cited_document_ids.update(conflict.document_ids)
+                evidence_count += len(conflict.citations)
+            primary_finding = topic.findings[0] if topic.findings else None
+            primary_conflict = topic.conflicts[0] if topic.conflicts else None
+            supporting_citations = _topic_supporting_citations(topic)
+            if primary_finding and primary_finding.value:
+                headline_claim = _truncate_text(primary_finding.value)
+            elif primary_conflict and primary_conflict.description:
+                headline_claim = _truncate_text(primary_conflict.description)
+            elif topic.status in {"missing", "not_disclosed"}:
+                headline_claim = "No verifiable disclosure found across analyzed documents."
+            else:
+                headline_claim = None
+
+            meta_summary.topic_stances.append(
+                TopicStanceBreakdown(
+                    topic=topic.topic,
+                    status=topic.status,
+                    stance=topic.stance,
+                    topic_score=topic.topic_score,
+                    rationale=topic.rationale,
+                    rationale_key=topic.rationale_key,
+                    rationale_params=topic.rationale_params,
+                    evidence_count=evidence_count,
+                    document_count=len(cited_document_ids),
+                    headline_claim=headline_claim,
+                    supporting_citations=supporting_citations,
+                    conflict_note=_truncate_text(
+                        primary_conflict.description if primary_conflict else None
+                    ),
+                    why_it_matters=_topic_why_it_matters(
+                        topic=str(topic.topic),
+                        status=str(topic.status),
+                        stance=str(topic.stance),
+                        conflict_count=len(topic.conflicts),
+                    ),
+                    recommended_action=_topic_recommended_action(
+                        topic=str(topic.topic),
+                        status=str(topic.status),
+                        stance=str(topic.stance),
+                    ),
+                )
+            )
+
+        topic_rows: dict[InsightCategory, dict[str, Any]] = {
+            topic.topic: {
+                "status": topic.status,
+                "topic_score": topic.topic_score,
+            }
+            for topic in topic_report.topics
+        }
+        topic_blended = compose_product_risk_from_topics(topic_rows)
+        legacy_blended = _weighted_product_risk_score(core_docs)
+        if legacy_blended is not None:
+            logger.info(
+                "overview scoring comparison for %s: legacy_doc=%s topic=%s drift=%s",
+                product_slug,
+                legacy_blended,
+                topic_blended,
+                abs(topic_blended - legacy_blended),
+            )
+        blended = topic_blended
+
+        signals = meta_summary.privacy_signals
+        floored = _apply_signal_floors(blended, signals)
+        meta_summary.risk_score = floored
+        meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
+        meta_summary.grade = _calculate_grade(meta_summary.risk_score)
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(

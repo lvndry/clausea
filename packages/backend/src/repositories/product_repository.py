@@ -23,6 +23,10 @@ from src.repositories.product_overview_history_repository import ProductOverview
 logger = get_logger(__name__)
 
 
+def _product_document_membership_query(product_id: str) -> dict[str, Any]:
+    return {"$or": [{"product_id": product_id}, {"product_ids": product_id}]}
+
+
 class ProductRepository(BaseRepository):
     """Repository for product-related database operations.
 
@@ -122,9 +126,35 @@ class ProductRepository(BaseRepository):
         Returns:
             List of products that have documents
         """
-        # Use aggregation to find distinct product_ids from documents
+        # Use aggregation to find distinct linked product_ids from canonical documents.
         pipeline = [
-            {"$group": {"_id": "$product_id"}},
+            {
+                "$project": {
+                    "linked_product_ids": {
+                        "$concatArrays": [
+                            {
+                                "$cond": [
+                                    {"$isArray": "$product_ids"},
+                                    "$product_ids",
+                                    [],
+                                ]
+                            },
+                            [
+                                {
+                                    "$cond": [
+                                        {"$eq": [{"$type": "$product_id"}, "string"]},
+                                        "$product_id",
+                                        None,
+                                    ]
+                                }
+                            ],
+                        ]
+                    }
+                }
+            },
+            {"$unwind": "$linked_product_ids"},
+            {"$match": {"linked_product_ids": {"$type": "string"}}},
+            {"$group": {"_id": "$linked_product_ids"}},
             {"$project": {"_id": 0, "product_id": "$_id"}},
         ]
         product_ids_data: list[dict[str, Any]] = await db.documents.aggregate(pipeline).to_list(
@@ -308,6 +338,19 @@ class ProductRepository(BaseRepository):
         )
         return result.matched_count > 0 or result.upserted_id is not None
 
+    async def update_product_explainer_grade(
+        self, db: AgnosticDatabase, product_slug: str, grade: str
+    ) -> None:
+        """Update only the stored explainer grade for a product.
+
+        Used by the service layer when reconciling legacy explainer rows against
+        the canonical overview score, without rewriting the entire explainer.
+        """
+        await db.product_explainers.update_one(
+            {"product_slug": product_slug},
+            {"$set": {"grade": grade, "updated_at": datetime.now()}},
+        )
+
     # ============================================================================
     # Compliance Assessment Storage (product-level, per-regime score + why)
     # ============================================================================
@@ -407,9 +450,10 @@ class ProductRepository(BaseRepository):
             Dictionary with total, analyzed, and pending counts, or None on error
         """
         try:
-            total = await db.documents.count_documents({"product_id": product_id})
+            membership = _product_document_membership_query(product_id)
+            total = await db.documents.count_documents(membership)
             analyzed = await db.documents.count_documents(
-                {"product_id": product_id, "analysis": {"$exists": True}}
+                {"$and": [membership, {"analysis": {"$exists": True, "$ne": None}}]}
             )
             pending = max(0, total - analyzed)
             return {
@@ -434,7 +478,7 @@ class ProductRepository(BaseRepository):
         """
         try:
             pipeline = [
-                {"$match": {"product_id": product_id}},
+                {"$match": _product_document_membership_query(product_id)},
                 {"$group": {"_id": "$doc_type", "count": {"$sum": 1}}},
             ]
             agg: list[dict[str, Any]] = await db.documents.aggregate(pipeline).to_list(length=None)

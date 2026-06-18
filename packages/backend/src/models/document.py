@@ -374,6 +374,40 @@ class CoverageItem(BaseModel):
     evidence_count: int | None = None
 
 
+TopicStatus = Literal["found", "missing", "not_disclosed", "ambiguous"]
+TopicStance = Literal["low_risk", "moderate_risk", "high_risk", "not_disclosed", "mixed"]
+
+
+class TopicStanceBreakdown(BaseModel):
+    """Deterministic per-topic status and risk stance at product level."""
+
+    topic: InsightCategory
+    status: TopicStatus
+    stance: TopicStance
+    topic_score: int | None = Field(default=None, ge=0, le=10)
+    rationale: str | None = None
+    rationale_key: str | None = None
+    rationale_params: dict[str, int | str | None] | None = None
+    evidence_count: int | None = None
+    document_count: int | None = None
+    headline_claim: str | None = None
+    supporting_citations: list["TopicSupportCitation"] = Field(default_factory=list)
+    conflict_note: str | None = None
+    why_it_matters: str | None = None
+    recommended_action: str | None = None
+
+
+class TopicSupportCitation(BaseModel):
+    """Compact citation attached to topic overview cards."""
+
+    document_id: str
+    document_title: str | None = None
+    document_url: str | None = None
+    quote: str
+    section_title: str | None = None
+    verified: bool = True
+
+
 class DocumentAnalysis(BaseModel):
     """
     Full document analysis — narrative, scoring, and clause-level breakdown.
@@ -517,6 +551,7 @@ class MetaSummary(BaseModel):
     privacy_signals: PrivacySignals | None = None
     compliance_status: dict[str, int] | None = None
     coverage: list[CoverageItem] | None = None
+    topic_stances: list[TopicStanceBreakdown] | None = None
     contract_clauses: list[str] | None = None
     contradictions: list[ProductContradiction] | None = None
 
@@ -706,7 +741,8 @@ class ConsumerExplainer(BaseModel):
 
     Finding lists are ordered worst-first. ``grade`` is advisory as emitted by
     the model and is re-clamped server-side from ``critical_findings_count`` by
-    the validator in analyser.py.
+    the validator in analyser.py. For product pages, the service layer further
+    reconciles it to the canonical grade derived from product_overviews.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -896,6 +932,7 @@ class ProductOverview(BaseModel):
 
     # Quick-scan privacy signals
     privacy_signals: PrivacySignals | None = None
+    topic_stances: list[TopicStanceBreakdown] | None = None
 
     # User Empowerment
     your_rights: list[str] | None = Field(
@@ -1462,6 +1499,10 @@ class Document(BaseModel):
     url: str
     title: str | None = None
     product_id: str
+    # Canonical document rows can be shared across multiple products.
+    # product_id remains the canonical owner for backward compatibility, while
+    # product_ids tracks all linked products that can reuse this document.
+    product_ids: list[str] = Field(default_factory=list)
     doc_type: DocType = "other"
     markdown: str
     text: str
@@ -1481,6 +1522,27 @@ class Document(BaseModel):
     tier_relevance: TierRelevance = "extended"
     content_hash: str | None = None
     analysis_error: str | None = None
+
+    @model_validator(mode="after")
+    def _ensure_product_membership(self) -> "Document":
+        linked: list[str] = []
+        for candidate in [self.product_id, *self.product_ids]:
+            if not isinstance(candidate, str):
+                continue
+            normalized = candidate.strip()
+            if normalized and normalized not in linked:
+                linked.append(normalized)
+
+        if not linked:
+            linked = [self.product_id]
+
+        # Keep product_id as the canonical first member.
+        self.product_id = linked[0]
+        self.product_ids = linked
+        return self
+
+    def is_linked_to_product(self, product_id: str) -> bool:
+        return product_id in self.product_ids
 
 
 # Resolve forward references now that all classes are defined.

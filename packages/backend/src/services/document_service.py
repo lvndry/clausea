@@ -79,6 +79,18 @@ class DocumentService:
         """
         return await self._document_repo.find_by_url(db, url)
 
+    async def get_product_document_by_url(
+        self, db: AgnosticDatabase, product_id: str, url: str
+    ) -> Document | None:
+        """Get a document by URL for one product only."""
+        return await self._document_repo.find_by_product_and_url(db, product_id, url)
+
+    async def link_document_to_product(
+        self, db: AgnosticDatabase, document_id: str, product_id: str
+    ) -> bool:
+        """Link an existing canonical document to a product."""
+        return await self._document_repo.link_to_product(db, document_id, product_id)
+
     async def get_product_documents(self, db: AgnosticDatabase, product_id: str) -> list[Document]:
         """Get all documents for a specific product.
 

@@ -272,7 +272,8 @@ async def get_product_documents_isolated(product_slug: str) -> list[Document]:
             logger.error(f"Product {product_slug} has no ID")
             return []
 
-        documents = await db.db.documents.find({"product_id": product_id}).to_list(length=None)
+        membership_query = {"$or": [{"product_id": product_id}, {"product_ids": product_id}]}
+        documents = await db.db.documents.find(membership_query).to_list(length=None)
         result = []
         for doc in documents:
             try:
@@ -291,7 +292,8 @@ async def get_product_documents_by_id_isolated(product_id: str) -> list[Document
     """Get all documents for a product by product_id with an isolated database connection."""
     db = await get_dashboard_db()
     try:
-        documents = await db.db.documents.find({"product_id": product_id}).to_list(length=None)
+        membership_query = {"$or": [{"product_id": product_id}, {"product_ids": product_id}]}
+        documents = await db.db.documents.find(membership_query).to_list(length=None)
         result = []
         for doc in documents:
             try:
@@ -314,7 +316,35 @@ async def get_document_counts_by_product() -> dict[str, int]:
     """
     db = await get_dashboard_db()
     try:
-        pipeline = [{"$group": {"_id": "$product_id", "count": {"$sum": 1}}}]
+        pipeline = [
+            {
+                "$project": {
+                    "linked_product_ids": {
+                        "$concatArrays": [
+                            {
+                                "$cond": [
+                                    {"$isArray": "$product_ids"},
+                                    "$product_ids",
+                                    [],
+                                ]
+                            },
+                            [
+                                {
+                                    "$cond": [
+                                        {"$eq": [{"$type": "$product_id"}, "string"]},
+                                        "$product_id",
+                                        None,
+                                    ]
+                                }
+                            ],
+                        ]
+                    }
+                }
+            },
+            {"$unwind": "$linked_product_ids"},
+            {"$match": {"linked_product_ids": {"$type": "string"}}},
+            {"$group": {"_id": "$linked_product_ids", "count": {"$sum": 1}}},
+        ]
         results = await db.db.documents.aggregate(pipeline).to_list(length=None)
 
         counts = {result["_id"]: result["count"] for result in results if result.get("_id")}

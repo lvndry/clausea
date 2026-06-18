@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -121,7 +121,8 @@ async def test_unpersisted_analysis_is_reported_as_failure_not_masked() -> None:
 def _fake_db_with_existing(stored: dict[str, Any]) -> tuple[Any, AsyncMock]:
     documents_collection = AsyncMock()
     documents_collection.find_one = AsyncMock(return_value={"id": "doc-1", **stored})
-    update_result = AsyncMock()
+    update_result = MagicMock()
+    update_result.matched_count = 1
     update_result.modified_count = 1
     documents_collection.update_one = AsyncMock(return_value=update_result)
 

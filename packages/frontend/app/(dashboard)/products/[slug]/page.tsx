@@ -1,5 +1,10 @@
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
-import type { DocumentSummary, Product, ProductOverview } from "@/types";
+import type {
+  DocumentSummary,
+  Product,
+  ProductOverview,
+  ProductTopicReport,
+} from "@/types";
 import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
 
@@ -36,13 +41,19 @@ export default async function ProductPage({
     : {};
 
   const tag = `product-${slug}`;
-  const [initialProduct, initialData, initialDocuments, initialExplainer] =
-    await Promise.all([
-      fetchWithAuth(getBackendUrl(`/products/${slug}`), headers, tag),
-      fetchWithAuth(getBackendUrl(`/products/${slug}/overview`), headers, tag),
-      fetchWithAuth(getBackendUrl(`/products/${slug}/documents`), headers, tag),
-      fetchWithAuth(getBackendUrl(`/products/${slug}/explainer`), headers, tag),
-    ]);
+  const [
+    initialProduct,
+    initialData,
+    initialDocuments,
+    initialExplainer,
+    initialTopics,
+  ] = await Promise.all([
+    fetchWithAuth(getBackendUrl(`/products/${slug}`), headers, tag),
+    fetchWithAuth(getBackendUrl(`/products/${slug}/overview`), headers, tag),
+    fetchWithAuth(getBackendUrl(`/products/${slug}/documents`), headers, tag),
+    fetchWithAuth(getBackendUrl(`/products/${slug}/explainer`), headers, tag),
+    fetchWithAuth(getBackendUrl(`/products/${slug}/topics`), headers, tag),
+  ]);
 
   return (
     <CompanyPage
@@ -51,6 +62,7 @@ export default async function ProductPage({
       initialData={initialData as ProductOverview | null}
       initialDocuments={(initialDocuments as DocumentSummary[]) ?? []}
       initialExplainer={initialExplainer as ConsumerExplainer | null}
+      initialTopics={initialTopics as ProductTopicReport | null}
     />
   );
 }

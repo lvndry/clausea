@@ -78,7 +78,8 @@ async def ensure_document_indexes(db: AgnosticDatabase) -> None:
 
     Creates indexes for:
     - id: Unique index for primary key lookups
-    - product_id: Index for product-based document queries (non-unique, multiple docs per product)
+    - product_id: Backward-compatible index for legacy single-owner reads
+    - product_ids: Index for shared-document product membership reads
 
     Args:
         db: Database instance
@@ -111,6 +112,19 @@ async def ensure_document_indexes(db: AgnosticDatabase) -> None:
             logger.debug("Index on documents.product_id already exists")
         else:
             logger.warning(f"Could not create index on documents.product_id: {e}")
+
+    # Multi-product linkage index. Not unique: one document can be linked to many products.
+    try:
+        await collection.create_index(
+            "product_ids", name="idx_document_product_ids", background=True
+        )
+        logger.info("Created index on documents.product_ids")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("Index on documents.product_ids already exists")
+        else:
+            logger.warning(f"Could not create index on documents.product_ids: {e}")
 
     try:
         await collection.create_index("url", unique=True, name="idx_document_url", background=True)

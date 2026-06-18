@@ -36,14 +36,34 @@ class _FakeDocuments:
         self._rows = rows
 
     def find(self, query: dict[str, Any], projection: dict[str, Any]) -> _FakeCursor:
-        product_id = query["product_id"]
-        or_clauses = query["$or"]
+        if "$and" in query:
+            membership_clause, recency_clause = query["$and"]
+            membership_or = membership_clause["$or"]
+            product_id = next(
+                (
+                    clause.get("product_id") or clause.get("product_ids")
+                    for clause in membership_or
+                    if isinstance(clause, dict)
+                ),
+                None,
+            )
+            if not product_id:
+                raise KeyError("product_id")
+            or_clauses = recency_clause["$or"]
+        else:
+            # Backwards-compat: older repository query shape used top-level product_id + $or.
+            product_id = query["product_id"]
+            or_clauses = query["$or"]
         updated_cutoff = or_clauses[0]["updated_at"]["$gte"]
         created_cutoff = or_clauses[1]["created_at"]["$gte"]
 
         matched: list[dict[str, Any]] = []
         for row in self._rows:
-            if row.get("product_id") != product_id:
+            row_product_ids = row.get("product_ids")
+            is_member = row.get("product_id") == product_id or (
+                isinstance(row_product_ids, list) and product_id in row_product_ids
+            )
+            if not is_member:
                 continue
             recent = (row.get("updated_at") and row["updated_at"] >= updated_cutoff) or (
                 row.get("created_at") and row["created_at"] >= created_cutoff
