@@ -172,6 +172,21 @@ def _is_bare_language(token: str) -> bool:
     return lowered in _LANGUAGE_CODES or lowered in _LANGUAGE_NAMES
 
 
+def _is_locale_query_value(value: str) -> bool:
+    """True if a locale query value (e.g. the ``ta`` in ``?lang=ta``) names a translation.
+
+    The query key (``lang``, ``hl``, …) already proves the value is a locale, so — unlike
+    bare path segments — no language allowlist is needed: any bare alphabetic value is a
+    translation marker. Region-qualified values (``en-GB``, ``pt_BR``) keep their region
+    and return False so jurisdiction-distinct documents are never collapsed, and
+    non-alphabetic values (``?l=10`` pagination) are left intact.
+    """
+    lowered = value.lower()
+    if not lowered or "-" in lowered or "_" in lowered:
+        return False
+    return lowered.isalpha()
+
+
 def locale_canonical_key(parsed: ParseResult) -> tuple[str, bool, bool]:
     """Reduce a URL to a key shared by all pure-translation variants of one document.
 
@@ -194,7 +209,7 @@ def locale_canonical_key(parsed: ParseResult) -> tuple[str, bool, bool]:
 
     kept_query: list[tuple[str, str]] = []
     for key, value in parse_qsl(parsed.query, keep_blank_values=True):
-        if key.lower() in _LOCALE_QUERY_KEYS and _is_bare_language(value):
+        if key.lower() in _LOCALE_QUERY_KEYS and _is_locale_query_value(value):
             had_signal = True
             if value.lower() in _ENGLISH_TOKENS:
                 is_english = True
