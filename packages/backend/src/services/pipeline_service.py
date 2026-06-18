@@ -574,6 +574,11 @@ class PipelineService:
                         progress_callback=_on_synthesise_progress,
                     )
 
+                    # Update to total docs in product (not just newly stored this run).
+                    # documents_stored was set from crawl stats which only counts new/changed
+                    # docs — misleading when re-crawling a product that already has docs.
+                    job.documents_stored = len(analysed_docs)
+
                     # Truthful step state: a document either got analysis or it didn't.
                     # Per-document failures are isolated inside analyse_product_documents,
                     # so the call returns even when every document failed. If NONE were
