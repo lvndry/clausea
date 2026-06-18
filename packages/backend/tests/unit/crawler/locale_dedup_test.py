@@ -131,3 +131,19 @@ def test_non_alphabetic_query_value_is_not_treated_as_language() -> None:
     key, had_signal, _ = locale_canonical_key(urlparse("https://shop.example.com/items?l=10"))
     assert key == "https://shop.example.com/items?l=10"
     assert had_signal is False
+
+
+def test_ambiguous_l_query_value_falls_back_to_allowlist() -> None:
+    # ?l= also means layout/list/grid on many sites; alphabetic-but-not-a-language values
+    # must NOT collapse, while a real language under ?l= still does.
+    for value in ("list", "grid", "home"):
+        key, had_signal, _ = locale_canonical_key(
+            urlparse(f"https://shop.example.com/items?l={value}")
+        )
+        assert key == f"https://shop.example.com/items?l={value}"
+        assert had_signal is False
+    key, had_signal, _ = locale_canonical_key(
+        urlparse("https://store.steampowered.com/privacy?l=english")
+    )
+    assert key == "https://store.steampowered.com/privacy"
+    assert had_signal is True

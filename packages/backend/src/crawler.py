@@ -172,18 +172,28 @@ def _is_bare_language(token: str) -> bool:
     return lowered in _LANGUAGE_CODES or lowered in _LANGUAGE_NAMES
 
 
-def _is_locale_query_value(value: str) -> bool:
+# Locale query keys whose name doesn't itself prove "language": ``l`` and ``lr`` are
+# widely reused for layout/list/limit/quality, so their bare values still go through the
+# language allowlist. The explicit keys (lang, hl, locale, …) need no such guard.
+_AMBIGUOUS_LOCALE_QUERY_KEYS = frozenset({"l", "lr"})
+
+
+def _is_locale_query_value(key: str, value: str) -> bool:
     """True if a locale query value (e.g. the ``ta`` in ``?lang=ta``) names a translation.
 
-    The query key (``lang``, ``hl``, …) already proves the value is a locale, so — unlike
-    bare path segments — no language allowlist is needed: any bare alphabetic value is a
-    translation marker. Region-qualified values (``en-GB``, ``pt_BR``) keep their region
+    For an explicit locale key (``lang``, ``hl``, ``locale``, …) the key already proves the
+    value is a locale, so — unlike bare path segments — no language allowlist is needed: any
+    bare alphabetic value is a translation marker. The ambiguous short keys ``l``/``lr`` are
+    reused for non-locale purposes (``?l=list``, ``?l=grid``), so their values still go
+    through the allowlist. Region-qualified values (``en-GB``, ``pt_BR``) keep their region
     and return False so jurisdiction-distinct documents are never collapsed, and
     non-alphabetic values (``?l=10`` pagination) are left intact.
     """
     lowered = value.lower()
     if not lowered or "-" in lowered or "_" in lowered:
         return False
+    if key.lower() in _AMBIGUOUS_LOCALE_QUERY_KEYS:
+        return _is_bare_language(lowered)
     return lowered.isalpha()
 
 
@@ -209,7 +219,7 @@ def locale_canonical_key(parsed: ParseResult) -> tuple[str, bool, bool]:
 
     kept_query: list[tuple[str, str]] = []
     for key, value in parse_qsl(parsed.query, keep_blank_values=True):
-        if key.lower() in _LOCALE_QUERY_KEYS and _is_locale_query_value(value):
+        if key.lower() in _LOCALE_QUERY_KEYS and _is_locale_query_value(key, value):
             had_signal = True
             if value.lower() in _ENGLISH_TOKENS:
                 is_english = True
