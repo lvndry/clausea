@@ -264,6 +264,7 @@ CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
 # Consecutive fetch failures before concluding the site is actively blocking us.
 # A successful fetch resets this counter — only sustained unbroken blocking triggers abort.
 CRAWL_BOT_WALL_ABORT = int(os.getenv("CRAWLER_BOT_WALL_ABORT", "50"))
+MIN_PAGES_PER_SEED = int(os.getenv("CRAWLER_MIN_PAGES_PER_SEED", "60"))
 # Cap per-document English locale variants (e.g. en-us/en-gb) to reduce duplicate crawls.
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
@@ -4114,6 +4115,9 @@ class ClauseaCrawler:
                     await self._emit_result(result)
                 else:
                     logger.warning(f"❌ Still failed after serial retry: {url}")
+                # A heartbeat per retry so a long drain of failing renders isn't read as a stall.
+                self.stats.total_urls += 1
+                self._report_crawl_progress(force=True)
         finally:
             self._in_render_retry = False
 
@@ -4388,8 +4392,16 @@ class ClauseaCrawler:
                 await self._shutdown_log_executor()
 
     async def crawl_multiple(self, urls: list[str]) -> list[CrawlResult]:
-        """Crawl multiple base URLs."""
+        """Crawl multiple base URLs, sharing one page budget across all of them."""
         all_results = []
+
+        full_max_pages = self.max_pages
+        per_seed_max_pages = max(MIN_PAGES_PER_SEED, full_max_pages // max(1, len(urls)))
+        if per_seed_max_pages < full_max_pages:
+            logger.info(
+                f"📐 {len(urls)} seeds share a {full_max_pages}-page budget: "
+                f"{per_seed_max_pages} pages per seed."
+            )
 
         try:
             for i, url in enumerate(urls, 1):
@@ -4400,6 +4412,7 @@ class ClauseaCrawler:
                     )
                     break
                 logger.info(f"🔄 Processing URL {i}/{len(urls)}: {url}")
+                self.max_pages = per_seed_max_pages
                 results = await self.crawl(url, cleanup=False)
                 all_results.extend(results)
                 logger.info(
@@ -4428,6 +4441,7 @@ class ClauseaCrawler:
                 if self.robots_checker:
                     self.robots_checker.clear_cache()
         finally:
+            self.max_pages = full_max_pages
             await self._shutdown_log_executor()
             # The shared browser is process-owned and reused across products — it is torn
             # down only on a crash (see _cleanup_browser) or when the worker exits.
