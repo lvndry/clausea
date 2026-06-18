@@ -441,14 +441,28 @@ class PipelineService:
                     )
 
                     if stats.policy_documents_stored == 0:
-                        # The crawl ran to completion but found nothing storable. This
-                        # is a deterministic terminal outcome, NOT a failure to retry —
-                        # retrying yields the same result. Marking it `no_documents`
-                        # (rather than `failed`) stops the product page from
-                        # retriggering the pipeline on every visit. `failed` is
-                        # reserved for genuine interruptions/errors (see the except
-                        # and timeout handlers below).
-                        job.status = "no_documents"
+                        # Crawl stored nothing new. Before giving up, check if the
+                        # product already has documents from a previous run. If yes,
+                        # those docs are valid input for synthesis — deduplicated
+                        # re-crawls (same content hash) legitimately store 0 new docs
+                        # but must not skip the overview step.
+                        doc_svc_check = create_document_service()
+                        existing_docs = await doc_svc_check.get_product_documents_by_slug(
+                            db, job.product_slug
+                        )
+                        existing_policy_docs = [
+                            doc for doc in existing_docs if doc.doc_type != "other"
+                        ]
+                        if existing_policy_docs:
+                            logger.info(
+                                "Crawl stored 0 new docs but %d existing docs found for %s "
+                                "— proceeding to synthesis",
+                                len(existing_policy_docs),
+                                job.product_slug,
+                            )
+                            job.documents_stored = len(existing_policy_docs)
+                        else:
+                            job.status = "no_documents"
 
                         # Build a descriptive error based on crawl error types
                         robots_blocked = [
