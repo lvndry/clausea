@@ -374,6 +374,22 @@ class CoverageItem(BaseModel):
     evidence_count: int | None = None
 
 
+TopicStatus = Literal["found", "missing", "not_disclosed", "ambiguous"]
+TopicStance = Literal["low_risk", "moderate_risk", "high_risk", "not_disclosed", "mixed"]
+
+
+class TopicStanceBreakdown(BaseModel):
+    """Deterministic per-topic status and risk stance at product level."""
+
+    topic: InsightCategory
+    status: TopicStatus
+    stance: TopicStance
+    topic_score: int | None = Field(default=None, ge=0, le=10)
+    rationale: str | None = None
+    evidence_count: int | None = None
+    document_count: int | None = None
+
+
 class DocumentAnalysis(BaseModel):
     """
     Full document analysis — narrative, scoring, and clause-level breakdown.
@@ -517,6 +533,7 @@ class MetaSummary(BaseModel):
     privacy_signals: PrivacySignals | None = None
     compliance_status: dict[str, int] | None = None
     coverage: list[CoverageItem] | None = None
+    topic_stances: list[TopicStanceBreakdown] | None = None
     contract_clauses: list[str] | None = None
     contradictions: list[ProductContradiction] | None = None
 
@@ -896,6 +913,7 @@ class ProductOverview(BaseModel):
 
     # Quick-scan privacy signals
     privacy_signals: PrivacySignals | None = None
+    topic_stances: list[TopicStanceBreakdown] | None = None
 
     # User Empowerment
     your_rights: list[str] | None = Field(

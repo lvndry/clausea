@@ -28,7 +28,9 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.models.topic_report import ProductTopicReport
 from src.models.user import UserTier
+from src.repositories.aggregation_repository import AggregationRepository
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
@@ -37,6 +39,7 @@ from src.services.service_factory import (
     create_product_service,
     create_services,
 )
+from src.services.topic_report_service import build_product_topic_report
 
 logger = get_logger(__name__)
 
@@ -153,6 +156,39 @@ async def get_product_overview(
             "code": "overview_not_ready",
             "product_slug": slug,
         },
+    )
+
+
+@router.get("/{slug}/topics", response_model=ProductTopicReport)
+async def get_product_topics(
+    slug: str,
+    _request: Request,
+    _usage: None = Depends(check_usage_limit),
+    _increment: None = Depends(increment_usage),
+    db: AgnosticDatabase = Depends(get_db),
+    service: ProductService = Depends(create_product_service),
+) -> ProductTopicReport:
+    """Get per-topic cross-document findings with evidence citations."""
+    product = await service.get_product_by_slug(db, slug)
+    if not product:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+
+    aggregation = await AggregationRepository().get(db, product.id)
+    if not aggregation:
+        raise HTTPException(
+            status_code=HTTP_425_TOO_EARLY,
+            detail={
+                "message": "Topic findings are not available yet. Indexation may be in progress.",
+                "code": "topics_not_ready",
+                "product_slug": slug,
+            },
+        )
+
+    documents = await service.get_product_documents(db, slug)
+    return build_product_topic_report(
+        product_slug=slug,
+        aggregation=aggregation,
+        documents=documents,
     )
 
 

@@ -19,6 +19,7 @@ from typing import Any, Literal
 from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
 
+from src.core.config import config
 from src.core.logging import get_logger
 from src.llm import (
     MODEL_PRIORITY,
@@ -42,6 +43,7 @@ from src.models.document import (
     DocumentDeepAnalysis,
     DocumentExtraction,
     DocumentRiskBreakdown,
+    DocumentSummary,
     DPIATriggerAssessment,
     IndividualImpact,
     MetaSummary,
@@ -53,6 +55,7 @@ from src.models.document import (
     RemediationItem,
     RiskRegisterItem,
     SecurityPosture,
+    TopicStanceBreakdown,
     WorkforceDataAssessment,
 )
 from src.prompts.analysis_prompts import (
@@ -73,6 +76,8 @@ from src.services.aggregation_service import AggregationService
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
+from src.services.topic_report_service import build_product_topic_report
+from src.services.topic_stance_service import compose_product_risk_from_topics
 from src.utils.cancellation import CancellationToken
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
@@ -1444,6 +1449,12 @@ async def generate_product_overview(
     aggregation = await aggregation_service.build_product_aggregation(
         db, product_id=product.id, product_slug=product_slug
     )
+    document_summaries = [DocumentSummary.from_document(doc) for doc in documents]
+    topic_report = build_product_topic_report(
+        product_slug=product_slug,
+        aggregation=aggregation,
+        documents=document_summaries,
+    )
 
     # Filter to core documents only for the synthesis.
     # Non-core docs (community_guidelines, copyright_policy, etc.) are analysed
@@ -1562,9 +1573,23 @@ async def generate_product_overview(
             + "\n"
         )
 
+    topic_signals = [
+        {
+            "topic": topic.topic,
+            "status": topic.status,
+            "stance": topic.stance,
+            "topic_score": topic.topic_score,
+            "rationale": topic.rationale,
+            "sample_findings": [finding.value for finding in topic.findings[:3]],
+        }
+        for topic in topic_report.topics
+    ]
+
     prompt = f"""Product: {product_slug}
 Core documents analyzed: {len(doc_inputs)} of {len(core_docs)} core documents
 Document types: {", ".join(doc.doc_type for doc in core_docs if doc.analysis)}
+Deterministic per-topic signals:
+{json.dumps(topic_signals, indent=2)}
 {conflicts_section}
 Per-document analyses and extractions:
 {json.dumps(doc_inputs, indent=2)}
@@ -1593,6 +1618,7 @@ Per-document analyses and extractions:
                     ],
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
+                    temperature=0,
                 )
             )
 
@@ -1656,16 +1682,57 @@ Per-document analyses and extractions:
             except Exception as e:
                 logger.warning(f"Failed to parse contradictions: {e}")
 
-        # Product risk_score: deterministic blend of core document analyses (privacy
-        # policy weighted highest). LLM overview risk_score is discarded.
-        if meta_summary and core_docs:
-            blended = _weighted_product_risk_score(core_docs)
-            if blended is not None:
-                signals = meta_summary.privacy_signals
-                floored = _apply_signal_floors(blended, signals)
-                meta_summary.risk_score = floored
-                meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
-                meta_summary.grade = _calculate_grade(meta_summary.risk_score)
+        # Attach deterministic topic stances used for both UI explainability and scoring.
+        meta_summary.topic_stances = []
+        for topic in topic_report.topics:
+            cited_document_ids: set[str] = set()
+            evidence_count = 0
+            for finding in topic.findings:
+                cited_document_ids.update(finding.document_ids)
+                evidence_count += len(finding.citations)
+            for conflict in topic.conflicts:
+                cited_document_ids.update(conflict.document_ids)
+                evidence_count += len(conflict.citations)
+            meta_summary.topic_stances.append(
+                TopicStanceBreakdown(
+                    topic=topic.topic,
+                    status=topic.status,
+                    stance=topic.stance,
+                    topic_score=topic.topic_score,
+                    rationale=topic.rationale,
+                    evidence_count=evidence_count,
+                    document_count=len(cited_document_ids),
+                )
+            )
+
+        topic_rows = {
+            topic.topic: {
+                "status": topic.status,
+                "topic_score": topic.topic_score,
+            }
+            for topic in topic_report.topics
+        }
+        topic_blended = compose_product_risk_from_topics(topic_rows)
+        legacy_blended = _weighted_product_risk_score(core_docs)
+        if legacy_blended is not None:
+            logger.info(
+                "overview scoring comparison for %s: legacy_doc=%s topic=%s drift=%s",
+                product_slug,
+                legacy_blended,
+                topic_blended,
+                abs(topic_blended - legacy_blended),
+            )
+        if config.features.topic_stance_scoring:
+            blended = topic_blended
+        else:
+            # Keep old headline path until the feature flag is enabled.
+            blended = legacy_blended if legacy_blended is not None else topic_blended
+
+        signals = meta_summary.privacy_signals
+        floored = _apply_signal_floors(blended, signals)
+        meta_summary.risk_score = floored
+        meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
+        meta_summary.grade = _calculate_grade(meta_summary.risk_score)
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(

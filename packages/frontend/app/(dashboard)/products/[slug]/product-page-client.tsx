@@ -28,6 +28,7 @@ import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
 import { SourcesList } from "@/components/dashboard/sources-list";
+import { TopicEvidencePanel } from "@/components/dashboard/topics/topic-evidence-panel";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ import type {
   FailedCrawlJob,
   Product,
   ProductOverview,
+  ProductTopicReport,
 } from "@/types";
 
 function derivePipelineUrl(product: Product): string | null {
@@ -68,6 +70,7 @@ interface CompanyPageProps {
   initialData?: ProductOverview | null;
   initialDocuments?: DocumentSummary[];
   initialExplainer?: ConsumerExplainer | null;
+  initialTopics?: ProductTopicReport | null;
 }
 
 export default function CompanyPage({
@@ -75,6 +78,7 @@ export default function CompanyPage({
   initialData: initialOverview,
   initialDocuments: initialDocs,
   initialExplainer,
+  initialTopics,
 }: CompanyPageProps = {}) {
   const params = useParams();
   const slug = params.slug as string;
@@ -89,6 +93,9 @@ export default function CompanyPage({
   );
   const [documents, setDocuments] = useState<DocumentSummary[]>(
     initialDocs ?? [],
+  );
+  const [topics, setTopics] = useState<ProductTopicReport | null>(
+    initialTopics ?? null,
   );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -117,19 +124,22 @@ export default function CompanyPage({
 
         // Fire all requests in parallel — product, documents, overview, and the
         // consumer explainer arrive together instead of in a sequential chain.
-        const [prodRes, docsRes, overviewRes, explainerRes] = await Promise.all(
-          [
+        const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
+          await Promise.all([
             fetch(`/api/products/${slug}`),
             fetch(`/api/products/${slug}/documents`),
             fetch(`/api/products/${slug}/overview`),
             fetch(`/api/products/${slug}/explainer`),
-          ],
-        );
+            fetch(`/api/products/${slug}/topics`),
+          ]);
 
         // The explainer may 404/425 while the product is still indexing — a
         // missing explainer is non-fatal, the overview sections still render.
         if (explainerRes.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
+        }
+        if (topicsRes.ok) {
+          setTopics((await topicsRes.json()) as ProductTopicReport);
         }
 
         if (!prodRes.ok) {
@@ -214,7 +224,7 @@ export default function CompanyPage({
       }
     }
     fetchData();
-  }, [slug]);
+  }, [slug, initialProduct, initialOverview]);
 
   /**
    * Ensures a pipeline job is running for the product.
@@ -675,6 +685,14 @@ export default function CompanyPage({
             <PrivacySignals signals={data.privacy_signals} />
           )}
 
+          {/* Topic-first stance layer (cross-document, evidence-backed) */}
+          <TopicEvidencePanel
+            title="Per-Topic Stances"
+            topicStances={data.topic_stances}
+            topicReport={topics}
+            showCitations={false}
+          />
+
           {/* Coverage */}
           {data.coverage && data.coverage.length > 0 && (
             <div className="border border-border bg-background">
@@ -821,7 +839,11 @@ export default function CompanyPage({
               <Skeleton className="h-32 rounded-2xl" />
             </div>
           ) : (
-            <SourcesList productSlug={slug} documents={documents} />
+            <SourcesList
+              productSlug={slug}
+              documents={documents}
+              topicReport={topics}
+            />
           )}
         </TabsContent>
       </Tabs>

@@ -188,6 +188,15 @@ class CrawlerConfig:
         )
 
 
+class FeatureFlagsConfig:
+    """Runtime feature flags."""
+
+    def __init__(self) -> None:
+        # Topic-based deterministic headline scoring is now the default path.
+        # Set FEATURE_TOPIC_STANCE_SCORING=false only for emergency rollback.
+        self.topic_stance_scoring: bool = _env_bool("FEATURE_TOPIC_STANCE_SCORING", True)
+
+
 class Config:
     """Application configuration with nested configuration objects"""
 
@@ -200,6 +209,7 @@ class Config:
         self.tracking = TrackingConfig()
         self.paddle = PaddleConfig()
         self.crawler = CrawlerConfig()
+        self.features = FeatureFlagsConfig()
 
         logger.info(f"Tracking enabled: {self.tracking.tracking_enabled}")
 
