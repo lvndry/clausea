@@ -1590,7 +1590,7 @@ class PolicyDocumentPipeline:
             log_memory_usage(f"Completed {product.name}")
             logger.info(
                 f"✅ Completed {product.name} in {product_duration:.2f}s "
-                f"({len(processed_documents)} policy/legal docs)"
+                f"({len(processed_documents)} policy docs this run)"
             )
 
             return processed_documents
