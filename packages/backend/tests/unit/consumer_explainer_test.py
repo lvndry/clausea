@@ -389,6 +389,7 @@ async def test_repository_update_guards_explainer_against_none_wipe() -> None:
         }
     )
     update_result = MagicMock()
+    update_result.matched_count = 1
     update_result.modified_count = 1
     documents_collection.update_one = AsyncMock(return_value=update_result)
     db = AsyncMock()
