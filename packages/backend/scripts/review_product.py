@@ -14,7 +14,6 @@ import asyncio
 import os
 import sys
 
-# The app services read MONGO_URI; point them at production before they load.
 _prod = os.getenv("PRODUCTION_MONGO_URI")
 if _prod:
     os.environ["MONGO_URI"] = _prod
@@ -48,7 +47,6 @@ async def review(db, product_svc, doc_svc, slug: str) -> None:
 
     print(f"\n=== {slug} ({product.name}) ===")
 
-    # --- Crawl ---
     if job:
         skips: dict[str, int] = {}
         for s in job.get("crawl_skip_reasons") or []:
@@ -64,10 +62,7 @@ async def review(db, product_svc, doc_svc, slug: str) -> None:
         )
         print(f"  skips: {skip_str}")
 
-    # --- Documents + flags ---
     issues: list[str] = []
-    # 'other' docs are intentionally not analysed (analyser.py:134) — informational,
-    # not a failure. A non-'other' doc with no analysis is a real analysis failure.
     other_skipped = [d for d in docs if not d.analysis and d.doc_type == "other"]
     real_unanalysed = [d for d in docs if not d.analysis and d.doc_type != "other"]
     region_bad = [d for d in docs if _region_looks_mislabelled(d.title or "", d.url, d.regions)]
@@ -87,7 +82,6 @@ async def review(db, product_svc, doc_svc, slug: str) -> None:
             f"clauses={nclauses} regions={d.regions}{flag}"
         )
 
-    # --- Overview / grade (grade lives top-level in the product_overviews doc) ---
     ov_doc = await db.product_overviews.find_one({"product_slug": slug})
     if overview:
         grade = (ov_doc or {}).get("grade")

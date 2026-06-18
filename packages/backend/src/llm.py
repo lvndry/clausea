@@ -4,7 +4,6 @@ import asyncio
 import importlib
 import os
 import random
-import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -111,31 +110,8 @@ def get_model(model_name: SupportedModel) -> Model:
     raise ValueError(f"Unsupported model: {model_name}")
 
 
-# Rate-limit backoff. The model cascade shares one OpenRouter account/key, so an
-# account-level 429 hits every model at once. Without spacing, the whole cascade (and
-# the caller's retries) fires within seconds and lands inside the same rate-limit window.
-# Backing off on a 429 spreads attempts across tens of seconds so a brief window passes.
 _RATE_LIMIT_BASE_DELAY = float(os.getenv("LLM_RATE_LIMIT_BASE_DELAY", "2"))
 _RATE_LIMIT_MAX_DELAY = float(os.getenv("LLM_RATE_LIMIT_MAX_DELAY", "30"))
-
-
-def _is_rate_limited(exc: Exception) -> bool:
-    """True if an LLM call failed because of rate limiting (HTTP 429).
-
-    Matches the structured status code, the litellm ``RateLimitError`` class name, or an
-    explicit rate-limit phrase. ``429`` is only matched as a standalone token so unrelated
-    errors (e.g. ``4290 tokens``, model ``v429``) aren't misread as rate limits.
-    """
-    if getattr(exc, "status_code", None) == 429:
-        return True
-    if "ratelimit" in type(exc).__name__.lower():
-        return True
-    text = str(exc).lower()
-    return (
-        "rate limit" in text
-        or "too many requests" in text
-        or re.search(r"\b429\b", text) is not None
-    )
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:
@@ -158,7 +134,6 @@ def _rate_limit_delay(exc: Exception, prior_backoffs: int) -> float:
     if retry_after is not None:
         return min(retry_after, _RATE_LIMIT_MAX_DELAY)
     delay = min(_RATE_LIMIT_BASE_DELAY * (2**prior_backoffs), _RATE_LIMIT_MAX_DELAY)
-    # Cap again after jitter so the cap is a true ceiling, not cap+25%.
     return min(delay + random.uniform(0, delay * 0.25), _RATE_LIMIT_MAX_DELAY)
 
 
@@ -169,6 +144,8 @@ async def _completion_with_fallback_impl(
     validator: EscalationValidator | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
+    import litellm
+
     models_to_try = model_priority.copy() if model_priority else MODEL_PRIORITY.copy()
     last_exception: Exception | None = None
     # A response that returned cleanly but failed the quality validator. If every
@@ -196,10 +173,7 @@ async def _completion_with_fallback_impl(
             track_usage(response, model_name, provider_model, duration=duration)
         except Exception as e:
             last_exception = e
-            # On a 429, the shared account is throttled, so the next model would likely
-            # 429 too — wait out the window before moving on. Other errors fall straight
-            # through to the next model.
-            if _is_rate_limited(e):
+            if isinstance(e, litellm.exceptions.RateLimitError):
                 delay = _rate_limit_delay(e, rate_limit_backoffs)
                 rate_limit_backoffs += 1
                 logger.warning(

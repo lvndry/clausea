@@ -168,8 +168,6 @@ async def analyse_product_documents(
                 analysis = await analyse_document(doc, cancellation_token=token)
                 if analysis:
                     doc.analysis = analysis
-                    # Clear any prior drop marker — a successful (re)analysis means the
-                    # document is no longer in a failed state.
                     doc.analysis_error = None
                     # Persist the full document first so the extraction and analysis
                     # metadata stamps set by analyse_document land alongside the body.
