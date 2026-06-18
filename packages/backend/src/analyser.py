@@ -115,6 +115,20 @@ async def _maybe_await(result: Awaitable[None] | None) -> None:
         await result
 
 
+async def _stamp_analysis_error(
+    db: AgnosticDatabase, document_svc: DocumentService, doc: Document
+) -> None:
+    """Persist ``doc.analysis_error`` so a dropped analysis is visible, not silent.
+
+    Best-effort: a failure to write the marker must not mask the original analysis
+    failure, so write errors are swallowed.
+    """
+    try:
+        await document_svc.update_document(db, doc, invalidate_product_overview=False)
+    except Exception as exc:
+        logger.warning(f"could not stamp analysis_error for document {doc.id}: {exc}")
+
+
 async def analyse_product_documents(
     db: AgnosticDatabase,
     product_slug: str,
@@ -154,6 +168,7 @@ async def analyse_product_documents(
                 analysis = await analyse_document(doc, cancellation_token=token)
                 if analysis:
                     doc.analysis = analysis
+                    doc.analysis_error = None
                     # Persist the full document first so the extraction and analysis
                     # metadata stamps set by analyse_document land alongside the body.
                     await document_svc.update_document(db, doc, invalidate_product_overview=False)
@@ -165,6 +180,8 @@ async def analyse_product_documents(
                     persisted = await document_svc.update_document_analysis(db, doc.id, analysis)
                     if not persisted:
                         doc.analysis = None
+                        doc.analysis_error = "analysis generated but database write did not persist"
+                        await _stamp_analysis_error(db, document_svc, doc)
                         failed_doc_ids.append(doc.id)
                         logger.error(
                             f"✗ Analysis for document {doc.id} ({doc.url}) was generated "
@@ -174,6 +191,8 @@ async def analyse_product_documents(
                     else:
                         logger.info(f"✓ Stored analysis for document {doc.id}")
                 else:
+                    doc.analysis_error = "analyse_document returned no result after retries"
+                    await _stamp_analysis_error(db, document_svc, doc)
                     failed_doc_ids.append(doc.id)
                     logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
             except asyncio.CancelledError:
@@ -187,6 +206,8 @@ async def analyse_product_documents(
                 # so this doc simply contributes nothing rather than poisoning the
                 # whole product.
                 failed_doc_ids.append(doc.id)
+                doc.analysis_error = f"{exc.__class__.__name__}: {exc}"[:500]
+                await _stamp_analysis_error(db, document_svc, doc)
                 logger.error(
                     f"✗ Document analysis raised for {doc.id} ({doc.url}): "
                     f"{exc.__class__.__name__}: {exc}",

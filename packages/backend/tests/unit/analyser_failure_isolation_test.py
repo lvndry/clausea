@@ -83,8 +83,35 @@ async def test_one_failing_document_does_not_fail_the_product() -> None:
     assert by_id["b"].analysis is None
     assert by_id["c"].analysis is not None
 
-    # update_document should have been awaited exactly twice (a and c, not b).
-    assert document_svc.update_document.await_count == 2
+    assert by_id["b"].analysis_error is not None
+    assert "RuntimeError" in by_id["b"].analysis_error
+    assert by_id["a"].analysis_error is None
+    assert by_id["c"].analysis_error is None
+
+    assert document_svc.update_document.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_dropped_analysis_is_stamped_for_visibility() -> None:
+    """A doc dropped because analyse_document returned None must carry a visible marker,
+    not look like an intentional skip."""
+    docs = [_make_doc("a", "https://x/a")]
+    document_svc = AsyncMock()
+    document_svc.get_product_documents_by_slug = AsyncMock(return_value=docs)
+    document_svc.update_document = AsyncMock(return_value=True)
+
+    async def fake_analyse(doc: Document, **_: Any) -> DocumentAnalysis | None:
+        return None
+
+    with patch("src.analyser.analyse_document", side_effect=fake_analyse):
+        returned = await analyse_product_documents(
+            db=AsyncMock(), product_slug="example", document_svc=document_svc
+        )
+
+    doc = returned[0]
+    assert doc.analysis is None
+    assert doc.analysis_error == "analyse_document returned no result after retries"
+    document_svc.update_document.assert_awaited()
 
 
 @pytest.mark.asyncio

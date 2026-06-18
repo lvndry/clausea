@@ -1480,6 +1480,7 @@ class Document(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
     tier_relevance: TierRelevance = "extended"
     content_hash: str | None = None
+    analysis_error: str | None = None
 
 
 # Resolve forward references now that all classes are defined.
