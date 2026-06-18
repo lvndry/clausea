@@ -20,7 +20,7 @@ CHALLENGE_MARKER = re.compile(r"enable javascript and cookies", re.IGNORECASE)
 
 
 def visible_text_len(html: str) -> int:
-    no_scripts = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", "", html)
+    no_scripts = re.sub(r"(?is)<script.*?</script\s*>|<style.*?</style\s*>", "", html)
     text = re.sub(r"(?s)<[^>]+>", " ", no_scripts)
     return len(re.sub(r"\s+", " ", text).strip())
 
@@ -41,7 +41,7 @@ async def strategy(context, url: str, label: str, fn) -> None:
         print(f"  [{label}] {elapsed:5.1f}s OK  {summarize(html)}")
     except Exception as e:
         elapsed = time.monotonic() - start
-        msg = str(e).splitlines()[0]
+        msg = (str(e).splitlines() or [""])[0]
         print(f"  [{label}] {elapsed:5.1f}s FAIL {type(e).__name__}: {msg}")
     finally:
         try:
