@@ -17,10 +17,14 @@ import pytest
 from src.llm import (
     _RATE_LIMIT_MAX_DELAY,
     MODEL_PRIORITY,
+    Model,
     _completion_with_fallback_impl,
     _is_rate_limited,
     _rate_limit_delay,
 )
+
+# Resolve models without needing OPENROUTER_API_KEY in the test env (CI has no key).
+_fake_model = lambda _name: Model(model="test-model", api_key="test-key")  # noqa: E731
 
 
 class _RateLimited(Exception):
@@ -62,6 +66,7 @@ async def test_cascade_backs_off_on_429_then_succeeds() -> None:
     with (
         patch("src.llm.asyncio.sleep", new=AsyncMock()) as slept,
         patch("src.llm.track_usage", new=lambda *a, **k: None),
+        patch("src.llm.get_model", new=_fake_model),
     ):
         result = await _completion_with_fallback_impl(
             messages=[{"role": "user", "content": "hi"}],
@@ -81,6 +86,7 @@ async def test_non_rate_limit_error_does_not_back_off() -> None:
     with (
         patch("src.llm.asyncio.sleep", new=AsyncMock()) as slept,
         patch("src.llm.track_usage", new=lambda *a, **k: None),
+        patch("src.llm.get_model", new=_fake_model),
     ):
         result = await _completion_with_fallback_impl(
             messages=[{"role": "user", "content": "hi"}],
