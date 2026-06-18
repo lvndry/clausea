@@ -76,7 +76,9 @@ async def test_get_product_topics_425_when_aggregation_missing() -> None:
                 service=service,
             )
     assert exc_info.value.status_code == 425
-    assert exc_info.value.detail["code"] == "topics_not_ready"
+    detail = exc_info.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "topics_not_ready"
 
 
 @pytest.mark.asyncio

@@ -129,6 +129,7 @@ async def test_generate_product_overview_llm_call_is_temperature_zero() -> None:
             document_svc=document_svc,
         )
 
+    assert llm_mock.await_args is not None
     assert llm_mock.await_args.kwargs["temperature"] == 0
 
 

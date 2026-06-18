@@ -45,6 +45,7 @@ from src.models.document import (
     DocumentSummary,
     DPIATriggerAssessment,
     IndividualImpact,
+    InsightCategory,
     MetaSummary,
     PrivacySignals,
     ProcurementDecision,
@@ -1818,7 +1819,7 @@ Per-document analyses and extractions:
                 )
             )
 
-        topic_rows = {
+        topic_rows: dict[InsightCategory, dict[str, Any]] = {
             topic.topic: {
                 "status": topic.status,
                 "topic_score": topic.topic_score,

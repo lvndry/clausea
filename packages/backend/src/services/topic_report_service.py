@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.models.document import DocumentSummary, EvidenceSpan
+from src.models.document import DocumentSummary, EvidenceSpan, InsightCategory
 from src.models.finding import Aggregation
 from src.models.topic_report import (
     ProductTopicReport,
@@ -76,8 +76,8 @@ def build_product_topic_report(
     """Build per-topic output from stored aggregation + document metadata."""
     documents_by_id = {document.id: document for document in documents}
 
-    topics_by_category: dict[str, TopicReportItem] = {}
-    ordered_categories: list[str] = []
+    topics_by_category: dict[InsightCategory, TopicReportItem] = {}
+    ordered_categories: list[InsightCategory] = []
 
     if aggregation.coverage:
         for item in aggregation.coverage:
@@ -174,7 +174,7 @@ def build_product_topic_report(
         item.findings.sort(key=lambda finding: finding.value)
         item.conflicts.sort(key=lambda conflict: conflict.description)
 
-    ordered_categories = sorted(set(ordered_categories))
+    ordered_categories = sorted(topics_by_category.keys())
 
     return ProductTopicReport(
         product_slug=product_slug,

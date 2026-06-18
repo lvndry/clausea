@@ -17,9 +17,11 @@ import argparse
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
+
+from src.models.document import InsightCategory
 
 load_dotenv()
 
@@ -49,14 +51,19 @@ class SlugValidation:
     failures: list[str]
 
 
-def _topic_rows_for_composition(topics: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {
-        str(topic["topic"]): {
+def _topic_rows_for_composition(
+    topics: list[dict[str, Any]],
+) -> dict[InsightCategory, dict[str, Any]]:
+    topic_rows: dict[InsightCategory, dict[str, Any]] = {}
+    for topic in topics:
+        topic_name = topic.get("topic")
+        if not isinstance(topic_name, str):
+            continue
+        topic_rows[cast(InsightCategory, topic_name)] = {
             "status": topic.get("status"),
             "topic_score": topic.get("topic_score"),
         }
-        for topic in topics
-    }
+    return topic_rows
 
 
 async def _validate_slug(
