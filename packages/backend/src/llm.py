@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import random
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -109,6 +110,45 @@ def get_model(model_name: SupportedModel) -> Model:
     raise ValueError(f"Unsupported model: {model_name}")
 
 
+# Rate-limit backoff. The model cascade shares one OpenRouter account/key, so an
+# account-level 429 hits every model at once. Without spacing, the whole cascade (and
+# the caller's retries) fires within seconds and lands inside the same rate-limit window.
+# Backing off on a 429 spreads attempts across tens of seconds so a brief window passes.
+_RATE_LIMIT_BASE_DELAY = float(os.getenv("LLM_RATE_LIMIT_BASE_DELAY", "2"))
+_RATE_LIMIT_MAX_DELAY = float(os.getenv("LLM_RATE_LIMIT_MAX_DELAY", "30"))
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """True if an LLM call failed because of rate limiting (HTTP 429)."""
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    name = type(exc).__name__.lower()
+    return "ratelimit" in name or "429" in str(exc)
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Provider-supplied Retry-After (seconds), if present on the exception's response."""
+    try:
+        headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+        value = headers.get("retry-after") or headers.get("Retry-After")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _rate_limit_delay(exc: Exception, prior_backoffs: int) -> float:
+    """Seconds to wait before the next attempt after a 429.
+
+    Honors an explicit Retry-After when the provider gives one; otherwise uses jittered
+    exponential backoff, capped so a fully rate-limited cascade stays bounded.
+    """
+    retry_after = _retry_after_seconds(exc)
+    if retry_after is not None:
+        return min(retry_after, _RATE_LIMIT_MAX_DELAY)
+    delay = min(_RATE_LIMIT_BASE_DELAY * (2**prior_backoffs), _RATE_LIMIT_MAX_DELAY)
+    return delay + random.uniform(0, delay * 0.25)
+
+
 async def _completion_with_fallback_impl(
     messages: list[dict[str, str]],
     completion_fn: Callable[..., Awaitable[ModelResponse]],
@@ -122,6 +162,7 @@ async def _completion_with_fallback_impl(
     # model fails validation we return the last one anyway — partial data beats
     # blocking the pipeline.
     last_unvalidated: ModelResponse | None = None
+    rate_limit_backoffs = 0
 
     for model_name in models_to_try:
         model = get_model(model_name)
@@ -142,7 +183,20 @@ async def _completion_with_fallback_impl(
             track_usage(response, model_name, provider_model, duration=duration)
         except Exception as e:
             last_exception = e
-            logger.warning("Model %s failed: %s. Trying next model...", model_name, e)
+            # On a 429, the shared account is throttled, so the next model would likely
+            # 429 too — wait out the window before moving on. Other errors fall straight
+            # through to the next model.
+            if _is_rate_limited(e):
+                delay = _rate_limit_delay(e, rate_limit_backoffs)
+                rate_limit_backoffs += 1
+                logger.warning(
+                    "Model %s rate-limited (429); backing off %.1fs before next model",
+                    model_name,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.warning("Model %s failed: %s. Trying next model...", model_name, e)
             continue
 
         if validator is not None:

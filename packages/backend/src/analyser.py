@@ -240,68 +240,6 @@ async def analyse_product_documents(
     return documents
 
 
-async def recover_dropped_analyses(
-    db: AgnosticDatabase,
-    product_slug: str,
-    document_svc: DocumentService,
-    product_svc: ProductService,
-    cancellation_token: CancellationToken | None = None,
-) -> int:
-    """Re-analyse documents whose analysis was dropped by a transient failure.
-
-    A transient LLM failure (e.g. a provider rate-limit window defeating all in-run
-    retries) leaves a document with extraction but no analysis, and nothing re-attempts
-    it. This finds those documents — non-'other' (those are skipped by design), with
-    extraction present and no analysis — re-runs analysis and persists it. When at least
-    one document is recovered, the product overview is regenerated so it reflects them
-    (a plain cache invalidation would leave the product with no overview, since the
-    overview is not regenerated on read).
-
-    Returns the number of documents recovered.
-    """
-    docs = await document_svc.get_product_documents_by_slug(db, product_slug)
-    targets = [d for d in docs if d.doc_type != "other" and not d.analysis and d.extraction]
-    if not targets:
-        return 0
-
-    logger.info(f"Recovery: {len(targets)} dropped document(s) to re-analyse for {product_slug}")
-    recovered = 0
-    for doc in targets:
-        analysis = await analyse_document(doc, cancellation_token=cancellation_token)
-        if not analysis:
-            logger.warning(f"Recovery: re-analysis still failed for {doc.id} ({doc.url})")
-            continue
-        doc.analysis = analysis
-        doc.analysis_error = None
-        # Don't invalidate per-doc — the overview is rebuilt once below so it never sits
-        # deleted-without-regeneration.
-        await document_svc.update_document(db, doc, invalidate_product_overview=False)
-        persisted = await document_svc.update_document_analysis(db, doc.id, analysis)
-        if not persisted:
-            # The write didn't land — surface it as a failure rather than counting a
-            # recovery that isn't in the database (which would also wrongly trigger an
-            # overview rebuild that omits this doc).
-            doc.analysis = None
-            doc.analysis_error = "analysis recovered but database write did not persist"
-            await _stamp_analysis_error(db, document_svc, doc)
-            logger.error(f"Recovery: write did not persist for {doc.id} ({doc.url})")
-            continue
-        recovered += 1
-        logger.info(f"Recovery: re-analysed {doc.id} ({doc.url})")
-
-    if recovered:
-        await generate_product_overview(
-            db,
-            product_slug,
-            force_regenerate=True,
-            product_svc=product_svc,
-            document_svc=document_svc,
-            cancellation_token=cancellation_token,
-        )
-        logger.info(f"Recovery: regenerated overview for {product_slug} ({recovered} recovered)")
-    return recovered
-
-
 def _compute_document_hash(document: Document) -> str:
     """Compute a hash for the document content to enable caching."""
     content = f"{document.text}{document.doc_type}"
