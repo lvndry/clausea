@@ -115,6 +115,20 @@ async def _maybe_await(result: Awaitable[None] | None) -> None:
         await result
 
 
+async def _stamp_analysis_error(
+    db: AgnosticDatabase, document_svc: DocumentService, doc: Document
+) -> None:
+    """Persist ``doc.analysis_error`` so a dropped analysis is visible, not silent.
+
+    Best-effort: a failure to write the marker must not mask the original analysis
+    failure, so write errors are swallowed.
+    """
+    try:
+        await document_svc.update_document(db, doc, invalidate_product_overview=False)
+    except Exception as exc:
+        logger.warning(f"could not stamp analysis_error for document {doc.id}: {exc}")
+
+
 async def analyse_product_documents(
     db: AgnosticDatabase,
     product_slug: str,
@@ -154,6 +168,9 @@ async def analyse_product_documents(
                 analysis = await analyse_document(doc, cancellation_token=token)
                 if analysis:
                     doc.analysis = analysis
+                    # Clear any prior drop marker — a successful (re)analysis means the
+                    # document is no longer in a failed state.
+                    doc.analysis_error = None
                     # Persist the full document first so the extraction and analysis
                     # metadata stamps set by analyse_document land alongside the body.
                     await document_svc.update_document(db, doc, invalidate_product_overview=False)
@@ -165,6 +182,8 @@ async def analyse_product_documents(
                     persisted = await document_svc.update_document_analysis(db, doc.id, analysis)
                     if not persisted:
                         doc.analysis = None
+                        doc.analysis_error = "analysis generated but database write did not persist"
+                        await _stamp_analysis_error(db, document_svc, doc)
                         failed_doc_ids.append(doc.id)
                         logger.error(
                             f"✗ Analysis for document {doc.id} ({doc.url}) was generated "
@@ -174,6 +193,8 @@ async def analyse_product_documents(
                     else:
                         logger.info(f"✓ Stored analysis for document {doc.id}")
                 else:
+                    doc.analysis_error = "analyse_document returned no result after retries"
+                    await _stamp_analysis_error(db, document_svc, doc)
                     failed_doc_ids.append(doc.id)
                     logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
             except asyncio.CancelledError:
@@ -187,6 +208,8 @@ async def analyse_product_documents(
                 # so this doc simply contributes nothing rather than poisoning the
                 # whole product.
                 failed_doc_ids.append(doc.id)
+                doc.analysis_error = f"{exc.__class__.__name__}: {exc}"[:500]
+                await _stamp_analysis_error(db, document_svc, doc)
                 logger.error(
                     f"✗ Document analysis raised for {doc.id} ({doc.url}): "
                     f"{exc.__class__.__name__}: {exc}",
@@ -215,6 +238,59 @@ async def analyse_product_documents(
     else:
         logger.info(f"✓ Successfully analysed all {total_docs} documents for {product_slug}")
     return documents
+
+
+async def recover_dropped_analyses(
+    db: AgnosticDatabase,
+    product_slug: str,
+    document_svc: DocumentService,
+    product_svc: ProductService | None = None,
+    cancellation_token: CancellationToken | None = None,
+) -> int:
+    """Re-analyse documents whose analysis was dropped by a transient failure.
+
+    A transient LLM failure (e.g. a provider rate-limit window defeating all in-run
+    retries) leaves a document with extraction but no analysis, and nothing re-attempts
+    it. This finds those documents — non-'other' (those are skipped by design), with
+    extraction present and no analysis — re-runs analysis and persists it. When at least
+    one document is recovered, the product overview is regenerated so it reflects them
+    (a plain cache invalidation would leave the product with no overview, since the
+    overview is not regenerated on read).
+
+    Returns the number of documents recovered.
+    """
+    docs = await document_svc.get_product_documents_by_slug(db, product_slug)
+    targets = [d for d in docs if d.doc_type != "other" and not d.analysis and d.extraction]
+    if not targets:
+        return 0
+
+    logger.info(f"Recovery: {len(targets)} dropped document(s) to re-analyse for {product_slug}")
+    recovered = 0
+    for doc in targets:
+        analysis = await analyse_document(doc, cancellation_token=cancellation_token)
+        if not analysis:
+            logger.warning(f"Recovery: re-analysis still failed for {doc.id} ({doc.url})")
+            continue
+        doc.analysis = analysis
+        doc.analysis_error = None
+        # Don't invalidate per-doc — the overview is rebuilt once below so it never sits
+        # deleted-without-regeneration.
+        await document_svc.update_document(db, doc, invalidate_product_overview=False)
+        await document_svc.update_document_analysis(db, doc.id, analysis)
+        recovered += 1
+        logger.info(f"Recovery: re-analysed {doc.id} ({doc.url})")
+
+    if recovered:
+        await generate_product_overview(
+            db,
+            product_slug,
+            force_regenerate=True,
+            product_svc=product_svc,
+            document_svc=document_svc,
+            cancellation_token=cancellation_token,
+        )
+        logger.info(f"Recovery: regenerated overview for {product_slug} ({recovered} recovered)")
+    return recovered
 
 
 def _compute_document_hash(document: Document) -> str:

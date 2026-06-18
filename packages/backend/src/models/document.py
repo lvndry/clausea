@@ -1480,6 +1480,10 @@ class Document(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
     tier_relevance: TierRelevance = "extended"
     content_hash: str | None = None
+    # Set when analysis was attempted but dropped (e.g. a transient LLM failure exhausted
+    # retries), so silent drops are visible and queryable instead of looking like an
+    # intentional skip. Cleared when a (re)analysis succeeds.
+    analysis_error: str | None = None
 
 
 # Resolve forward references now that all classes are defined.
