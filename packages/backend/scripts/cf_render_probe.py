@@ -20,7 +20,7 @@ CHALLENGE_MARKER = re.compile(r"enable javascript and cookies", re.IGNORECASE)
 
 
 def visible_text_len(html: str) -> int:
-    no_scripts = re.sub(r"(?is)<script.*?</script\s*>|<style.*?</style\s*>", "", html)
+    no_scripts = re.sub(r"(?is)<script.*?</script[^>]*>|<style.*?</style[^>]*>", "", html)
     text = re.sub(r"(?s)<[^>]+>", " ", no_scripts)
     return len(re.sub(r"\s+", " ", text).strip())
 
