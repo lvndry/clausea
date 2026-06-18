@@ -93,14 +93,14 @@ DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evid
 3-5 concrete sentences. Name exact data types ("precise GPS", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics"), exact rights paths ("Settings > Privacy > Delete"). Start with the service/product name, never with "This document" or "This policy".
 
 ## SCORES
-Six dimensions, each 0-10 (higher = better for user). Only include a key when the extraction provides real evidence — a missing key is an honest signal.
+Each dimension is 0-10 (higher = better for the user). Include a dimension ONLY when the document substantively addresses it. If the document is silent on a dimension — e.g. a security/trust page that says nothing about data collection — OMIT that key. A score of 0 means the document EXPLICITLY describes the worst-case practice; silence or "not mentioned" is NEVER 0, omit instead.
 
 - **transparency**: clarity of what is collected, why, and by whom. 10=crystal clear, 0=deliberately opaque.
-- **data_collection_scope**: breadth of collection. 10=minimal/necessary only, 0=sweeping.
-- **user_control**: self-service controls. 10=full opt-out/deletion/portability, 0=none.
-- **third_party_sharing**: breadth of sharing. 10=no sharing, 0=unrestricted.
-- **data_retention_score**: retention specificity. 10=short specific periods, 0=indefinite. **Omit if extraction has no retention data.**
-- **security_score**: stated security measures. 10=E2EE/SOC2/pen-tests, 0=no mention. **Omit if extraction has no security data.**
+- **data_collection_scope**: breadth of collection. 10=minimal/necessary only, 0=explicitly sweeping.
+- **user_control**: self-service controls. 10=full opt-out/deletion/portability, 0=explicitly none.
+- **third_party_sharing**: breadth of sharing. 10=no sharing, 0=explicitly unrestricted.
+- **data_retention_score**: retention specificity. 10=short specific periods, 0=explicitly indefinite.
+- **security_score**: stated security measures. 10=E2EE/SOC2/pen-tests, 0=explicitly weak.
 
 Calibration: minimal-collection + E2EE → high collection/sharing scores (7-10). Ad-tech ecosystem + AI training on user content → low (0-4). Clear disclosure of invasive practices does NOT raise scores.
 
