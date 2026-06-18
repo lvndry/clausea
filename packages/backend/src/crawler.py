@@ -261,6 +261,9 @@ CONVERGENCE_LEGAL_SCORE = 0.2
 # Boost-only pages to keep crawling after the own-score frontier empties, in case one links a
 # policy reachable no other way. A new real lead resets it. See _relevance_exhausted.
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
+# Consecutive fetch failures before concluding the site is actively blocking us.
+# A successful fetch resets this counter — only sustained unbroken blocking triggers abort.
+CRAWL_BOT_WALL_ABORT = int(os.getenv("CRAWLER_BOT_WALL_ABORT", "50"))
 # Cap per-document English locale variants (e.g. en-us/en-gb) to reduce duplicate crawls.
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
@@ -4343,7 +4346,7 @@ class ClauseaCrawler:
                         )
                         break
 
-                    if self._consecutive_blocked >= CRAWL_EXHAUSTION_GRACE * 5:
+                    if self._consecutive_blocked >= CRAWL_BOT_WALL_ABORT:
                         logger.info(
                             f"🧭 Crawl bot-wall abort: {self._consecutive_blocked} consecutive "
                             f"fetch failures — site is actively blocking the crawler. "
