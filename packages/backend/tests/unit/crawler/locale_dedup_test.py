@@ -92,3 +92,58 @@ def test_english_variant_kept_over_other_translations() -> None:
     assert crawler.should_crawl_url(base + "?lang=en", base, 1) is True
     # A non-English sibling is then a redundant translation.
     assert crawler.should_crawl_url(base + "?lang=fr", base, 1) is False
+
+
+def test_query_language_dedup_is_not_limited_to_an_allowlist() -> None:
+    # ta/te/ur are real languages absent from the path-segment allowlist; the query key
+    # already proves they're translations, so they must dedup like any other ?lang= value.
+    for code in ("ta", "te", "ur", "sw", "uz"):
+        key, had_signal, is_english = locale_canonical_key(
+            urlparse(f"https://www.whatsapp.com/security?lang={code}")
+        )
+        assert key == "https://www.whatsapp.com/security"
+        assert had_signal is True
+        assert is_english is False
+
+
+def test_unlisted_query_translations_collapse_to_one_crawl() -> None:
+    crawler = _crawler()
+    base = "https://www.whatsapp.com/security"
+    assert crawler.should_crawl_url(base, base, 1) is True
+    # Tamil/Telugu/Urdu siblings are now redundant translations, not rendered.
+    assert crawler.should_crawl_url(base + "?lang=ta", base, 1) is False
+    assert crawler.should_crawl_url(base + "?lang=te", base, 1) is False
+    assert crawler.should_crawl_url(base + "?lang=ur", base, 1) is False
+
+
+def test_region_qualified_query_value_is_preserved() -> None:
+    # zh-hk (Cantonese/HK) and pt_BR carry a region — jurisdiction-distinct, never collapse.
+    for value in ("zh-hk", "pt_BR", "en-GB"):
+        key, had_signal, _ = locale_canonical_key(
+            urlparse(f"https://www.whatsapp.com/security?lang={value}")
+        )
+        assert key == f"https://www.whatsapp.com/security?lang={value}"
+        assert had_signal is False
+
+
+def test_non_alphabetic_query_value_is_not_treated_as_language() -> None:
+    # ?l= doubles as pagination/limit on some sites; a numeric value must not collapse pages.
+    key, had_signal, _ = locale_canonical_key(urlparse("https://shop.example.com/items?l=10"))
+    assert key == "https://shop.example.com/items?l=10"
+    assert had_signal is False
+
+
+def test_ambiguous_l_query_value_falls_back_to_allowlist() -> None:
+    # ?l= also means layout/list/grid on many sites; alphabetic-but-not-a-language values
+    # must NOT collapse, while a real language under ?l= still does.
+    for value in ("list", "grid", "home"):
+        key, had_signal, _ = locale_canonical_key(
+            urlparse(f"https://shop.example.com/items?l={value}")
+        )
+        assert key == f"https://shop.example.com/items?l={value}"
+        assert had_signal is False
+    key, had_signal, _ = locale_canonical_key(
+        urlparse("https://store.steampowered.com/privacy?l=english")
+    )
+    assert key == "https://store.steampowered.com/privacy"
+    assert had_signal is True
