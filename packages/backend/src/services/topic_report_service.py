@@ -136,6 +136,7 @@ def build_product_topic_report(
             )
             ordered_categories.append(conflict.category)
         topic_item = topics_by_category[conflict.category]
+        topic_item.coverage_status = "ambiguous"
 
         citations = _build_citations(conflict.evidence, documents_by_id)
         conflict_document_ids = _dedupe_preserve_order(

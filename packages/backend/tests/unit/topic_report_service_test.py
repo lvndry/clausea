@@ -173,3 +173,48 @@ def test_build_product_topic_report_is_deterministic() -> None:
         documents=_documents(),
     )
     assert report_one.model_dump(mode="json") == report_two.model_dump(mode="json")
+
+
+def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_coverage() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="example",
+        coverage=[CoverageItem(category="data_collection", status="found")],
+        findings=[
+            AggregatedFinding(
+                category="data_collection",
+                value="Email address",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We collect your email address.",
+                    )
+                ],
+            )
+        ],
+        conflicts=[
+            FindingConflict(
+                category="data_collection",
+                description="Conflicting statements for data_collection",
+                document_ids=["doc_1", "doc_2"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_2",
+                        url="https://example.com/security",
+                        quote="We do not collect user email.",
+                    )
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+    topic = next(item for item in report.topics if item.topic == "data_collection")
+    assert topic.coverage_status == "ambiguous"
+    assert topic.status == "ambiguous"

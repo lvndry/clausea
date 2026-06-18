@@ -229,6 +229,7 @@ def evaluate_topic_stances(
     - rationale: concise deterministic explanation
     """
     by_topic: dict[InsightCategory, dict[str, Any]] = {}
+    topic_document_ids: defaultdict[InsightCategory, set[str]] = defaultdict(set)
 
     for item in coverage or []:
         if item.status == "missing":
@@ -266,7 +267,7 @@ def evaluate_topic_stances(
         row["status"] = "found"
         row["finding_count"] += 1
         row["evidence_count"] += len(finding.evidence)
-        row["document_count"] += len(set(finding.documents))
+        topic_document_ids[topic].update(finding.documents)
 
     for topic, values in signal_values.items():
         if topic not in by_topic:
@@ -280,9 +281,7 @@ def evaluate_topic_stances(
         by_topic[topic]["topic_score"] = score
         by_topic[topic]["stance"] = _score_to_stance(score)
 
-    conflicts_by_topic: dict[InsightCategory, list[FindingConflict]] = defaultdict(list)
     for conflict in conflicts:
-        conflicts_by_topic[conflict.category].append(conflict)
         if conflict.category not in by_topic:
             by_topic[conflict.category] = _topic_row(
                 status="ambiguous",
@@ -297,11 +296,12 @@ def evaluate_topic_stances(
         row["stance"] = "mixed"
         row["conflict_count"] += 1
         row["evidence_count"] += len(conflict.evidence)
-        row["document_count"] += len(set(conflict.document_ids))
+        topic_document_ids[conflict.category].update(conflict.document_ids)
         current = row.get("topic_score")
         row["topic_score"] = min(10, (current if isinstance(current, int) else 6) + 1)
 
-    for _topic, row in by_topic.items():
+    for topic, row in by_topic.items():
+        row["document_count"] = len(topic_document_ids[topic])
         if row["status"] in {"missing", "not_disclosed"}:
             row["rationale_key"] = "topic.not_disclosed"
             row["rationale_params"] = None
