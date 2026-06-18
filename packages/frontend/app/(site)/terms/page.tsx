@@ -15,7 +15,7 @@ export default function TermsOfServicePage() {
               Terms of Service
             </h1>
             <p className="text-muted-foreground text-lg">
-              Last updated: January 2025
+              Last updated: June 2026
             </p>
           </div>
 
@@ -110,8 +110,8 @@ export default function TermsOfServicePage() {
                   Use the Service to violate any applicable laws or regulations
                 </li>
                 <li>
-                  Attempt to reverse engineer, decompile, or extract the source
-                  code of our Service
+                  Attempt to probe, bypass, or interfere with security controls
+                  of the Service
                 </li>
                 <li>
                   Use automated systems (bots, scrapers) to access the Service
@@ -144,11 +144,14 @@ export default function TermsOfServicePage() {
                 5.1 Our Intellectual Property
               </h3>
               <p className="text-muted-foreground leading-relaxed">
-                The Service, including all content, features, functionality,
-                algorithms, and technology, is owned by Clausea AI and protected
-                by copyright, trademark, patent, and other intellectual property
-                laws. You may not copy, modify, distribute, or create derivative
-                works without our express written permission.
+                Clausea is fully open source, and our code is available on
+                GitHub. Use of that code is governed by the license terms in the
+                relevant repository.
+              </p>
+              <p className="text-muted-foreground leading-relaxed mt-4">
+                These Terms govern your use of the hosted Service at clausea.co,
+                along with our trademarks, brand assets, and other non-code
+                materials.
               </p>
 
               <h3 className="text-2xl font-display font-semibold text-foreground mt-8 mb-4">
@@ -329,20 +332,19 @@ export default function TermsOfServicePage() {
                 12.1 Governing Law
               </h3>
               <p className="text-muted-foreground leading-relaxed">
-                These Terms shall be governed by and construed in accordance
-                with the laws of the State of California, United States, without
-                regard to its conflict of law provisions.
+                These Terms are governed by the laws of France, without regard
+                to conflict of law rules.
               </p>
 
               <h3 className="text-2xl font-display font-semibold text-foreground mt-8 mb-4">
                 12.2 Dispute Resolution
               </h3>
               <p className="text-muted-foreground leading-relaxed">
-                Any disputes arising out of or relating to these Terms or the
-                Service shall be resolved through binding arbitration in
-                accordance with the rules of the American Arbitration
-                Association, except where prohibited by law. The arbitration
-                shall take place in San Francisco, California.
+                If a dispute arises, you and Clausea agree to first try to
+                resolve it in good faith by contacting each other. If informal
+                resolution is not possible, disputes may be brought before the
+                competent courts of Paris, France, unless mandatory law provides
+                otherwise.
               </p>
             </section>
 
@@ -379,21 +381,24 @@ export default function TermsOfServicePage() {
               <div className="bg-muted/30 p-6 rounded-2xl border border-border mt-4">
                 <p className="text-foreground font-semibold mb-2">Clausea AI</p>
                 <p className="text-muted-foreground">
+                  Created in Paris, France
+                </p>
+                <p className="text-muted-foreground">
                   Email:{" "}
                   <a
-                    href="mailto:contact@clausea.co"
+                    href="mailto:lvndry@protonmail.com"
                     className="text-primary hover:underline"
                   >
-                    contact@clausea.co
+                    lvndry@protonmail.com
                   </a>
                 </p>
                 <p className="text-muted-foreground">
                   General inquiries:{" "}
                   <a
-                    href="mailto:contact@clausea.co"
+                    href="mailto:lvndry@protonmail.com"
                     className="text-primary hover:underline"
                   >
-                    contact@clausea.co
+                    lvndry@protonmail.com
                   </a>
                 </p>
               </div>
