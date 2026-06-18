@@ -159,6 +159,8 @@ def build_product_topic_report(
         item.stance = row["stance"]
         item.topic_score = row["topic_score"]
         item.rationale = row["rationale"]
+        item.rationale_key = row.get("rationale_key")
+        item.rationale_params = row.get("rationale_params")
 
     for item in topics_by_category.values():
         if item.status == "found" and not item.findings and not item.conflicts:
@@ -166,6 +168,8 @@ def build_product_topic_report(
             item.stance = "not_disclosed"
             item.topic_score = None
             item.rationale = "Topic lacks verifiable citation evidence."
+            item.rationale_key = "topic.missing_verifiable_citation"
+            item.rationale_params = None
         item.findings.sort(key=lambda finding: finding.value)
         item.conflicts.sort(key=lambda conflict: conflict.description)
 

@@ -58,6 +58,7 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
     data_collection = next(topic for topic in report.topics if topic.topic == "data_collection")
     assert data_collection.coverage_status == "found"
     assert data_collection.status == "found"
+    assert data_collection.rationale_key == "topic.findings_summary"
     assert len(data_collection.findings) == 1
     assert data_collection.findings[0].document_ids == ["doc_1", "doc_2"]
     assert len(data_collection.findings[0].citations) == 2
@@ -88,6 +89,7 @@ def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
     assert report.topics[0].coverage_status == "missing"
     assert report.topics[0].status == "missing"
     assert report.topics[0].topic_score is None
+    assert report.topics[0].rationale_key == "topic.not_disclosed"
     assert report.topics[0].findings == []
 
 
@@ -129,6 +131,7 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
     assert ai_training.coverage_status == "ambiguous"
     assert ai_training.status == "ambiguous"
     assert ai_training.stance == "mixed"
+    assert ai_training.rationale_key == "topic.conflicts_found"
     assert len(ai_training.conflicts) == 1
     assert ai_training.conflicts[0].document_ids == ["doc_1", "doc_2"]
     assert len(ai_training.conflicts[0].citations) == 2

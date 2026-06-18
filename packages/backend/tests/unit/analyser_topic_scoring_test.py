@@ -4,9 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from litellm import ModelResponse
 
-import src.analyser as analyser_module
 from src.analyser import generate_product_overview
-from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores
+from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores, EvidenceSpan
 from src.models.finding import AggregatedFinding, Aggregation
 
 
@@ -81,7 +80,13 @@ def _aggregation() -> Aggregation:
                 category="data_sale",
                 value="sells_data: yes",
                 documents=["doc_1"],
-                evidence=[],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We may sell data to advertising partners.",
+                    )
+                ],
             )
         ],
         coverage=[],
@@ -113,13 +118,11 @@ async def test_generate_product_overview_llm_call_is_temperature_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_product_overview_uses_topic_scoring_when_flag_enabled(monkeypatch) -> None:
+async def test_generate_product_overview_uses_topic_scoring() -> None:
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
     aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(return_value=_aggregation())
-
-    monkeypatch.setattr(analyser_module.config.features, "topic_stance_scoring", True)
 
     with (
         patch("src.analyser.AggregationService", return_value=aggregation_service),
@@ -139,33 +142,8 @@ async def test_generate_product_overview_uses_topic_scoring_when_flag_enabled(mo
 
     assert result.risk_score == 7
     assert result.topic_stances
-
-
-@pytest.mark.asyncio
-async def test_generate_product_overview_uses_legacy_scoring_when_flag_disabled(
-    monkeypatch,
-) -> None:
-    product_svc, document_svc = _services()
-    aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
-    aggregation_service.build_product_aggregation = AsyncMock(return_value=_aggregation())
-
-    monkeypatch.setattr(analyser_module.config.features, "topic_stance_scoring", False)
-
-    with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
-        patch(
-            "src.analyser.acompletion_with_fallback", AsyncMock(return_value=_overview_response())
-        ),
-        patch("src.analyser.compose_product_risk_from_topics", return_value=7),
-        patch("src.analyser._weighted_product_risk_score", return_value=2),
-    ):
-        result = await generate_product_overview(
-            MagicMock(),
-            "example",
-            force_regenerate=True,
-            product_svc=product_svc,
-            document_svc=document_svc,
-        )
-
-    assert result.risk_score == 2
+    assert result.topic_stances[0].rationale_key == "topic.findings_summary"
+    assert result.topic_stances[0].headline_claim is not None
+    assert result.topic_stances[0].supporting_quote is not None
+    assert result.topic_stances[0].why_it_matters is not None
+    assert result.topic_stances[0].recommended_action is not None

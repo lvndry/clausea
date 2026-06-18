@@ -37,11 +37,6 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only rebuild findings/aggregations; do not regenerate overview",
     )
-    parser.add_argument(
-        "--enable-topic-headline",
-        action="store_true",
-        help="Temporarily enable topic-based headline scoring during this run",
-    )
     return parser.parse_args()
 
 
@@ -97,7 +92,6 @@ async def _run(args: argparse.Namespace) -> int:
             return 1
         os.environ["MONGO_URI"] = production_uri
 
-    from src.core.config import config
     from src.core.database import db_session
     from src.core.logging import setup_logging
     from src.repositories.aggregation_repository import AggregationRepository
@@ -107,8 +101,6 @@ async def _run(args: argparse.Namespace) -> int:
     from src.services.service_factory import create_document_service, create_product_service
 
     setup_logging()
-    if args.enable_topic_headline:
-        config.features.topic_stance_scoring = True
 
     product_svc = create_product_service()
     doc_svc = create_document_service()

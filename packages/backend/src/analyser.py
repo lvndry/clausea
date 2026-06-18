@@ -19,7 +19,6 @@ from typing import Any, Literal
 from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
 
-from src.core.config import config
 from src.core.logging import get_logger
 from src.llm import (
     MODEL_PRIORITY,
@@ -362,6 +361,73 @@ def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int
     if critical_count >= 2:
         floor = max(floor, 8)
     return floor
+
+
+_TOPIC_WHY_IT_MATTERS: dict[str, str] = {
+    "data_collection": "This affects how much personal information the product can gather about you.",
+    "data_sharing": "This determines whether your data is disclosed to external partners.",
+    "retention": "This controls how long your data remains stored after use.",
+    "ai_training": "This decides whether your prompts/outputs may be used to train models.",
+    "data_sale": "Data sale provisions can expand commercial use of your information.",
+    "security": "Security disclosures indicate how well user data is protected in practice.",
+    "user_rights": "Rights disclosures determine how easily you can access or delete your data.",
+}
+
+_TOPIC_RECOMMENDED_ACTIONS: dict[str, str] = {
+    "data_collection": "Review settings and disable optional data collection where possible.",
+    "data_sharing": "Check privacy controls and opt out of third-party sharing when available.",
+    "retention": "Request deletion timelines in writing if retention windows are unclear.",
+    "ai_training": "Disable training/usage permissions for your prompts if an opt-out exists.",
+    "data_sale": "Use explicit opt-out mechanisms for sale/sharing and document your preference.",
+    "security": "Request security documentation for controls relevant to your deployment.",
+    "user_rights": "Test the product's access/deletion workflow before relying on it at scale.",
+}
+
+
+def _truncate_text(value: str | None, limit: int = 220) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def _topic_primary_citation(topic: Any) -> Any | None:
+    for finding in topic.findings:
+        if finding.citations:
+            return finding.citations[0]
+    for conflict in topic.conflicts:
+        if conflict.citations:
+            return conflict.citations[0]
+    return None
+
+
+def _topic_why_it_matters(topic: str, status: str, stance: str, conflict_count: int) -> str:
+    if status in {"missing", "not_disclosed"}:
+        return "No explicit disclosure was found, which limits risk clarity for this topic."
+    if status == "ambiguous" or stance == "mixed":
+        return (
+            f"Documents disagree on this topic ({conflict_count} conflict(s)), "
+            "so commitments may vary by page or policy version."
+        )
+    return _TOPIC_WHY_IT_MATTERS.get(
+        topic,
+        "This topic materially influences user privacy expectations and legal risk.",
+    )
+
+
+def _topic_recommended_action(topic: str, status: str, stance: str) -> str:
+    if status in {"missing", "not_disclosed"}:
+        return "Request written clarification from the vendor before relying on this area."
+    if status == "ambiguous" or stance == "mixed":
+        return "Treat this as unresolved and ask for a single controlling policy statement."
+    return _TOPIC_RECOMMENDED_ACTIONS.get(
+        topic,
+        "Capture this topic in your vendor checklist and verify it during onboarding.",
+    )
 
 
 # Doc types that must never influence the product risk score or deep analysis LLM prompt.
@@ -1693,6 +1759,18 @@ Per-document analyses and extractions:
             for conflict in topic.conflicts:
                 cited_document_ids.update(conflict.document_ids)
                 evidence_count += len(conflict.citations)
+            primary_finding = topic.findings[0] if topic.findings else None
+            primary_conflict = topic.conflicts[0] if topic.conflicts else None
+            primary_citation = _topic_primary_citation(topic)
+            if primary_finding and primary_finding.value:
+                headline_claim = _truncate_text(primary_finding.value)
+            elif primary_conflict and primary_conflict.description:
+                headline_claim = _truncate_text(primary_conflict.description)
+            elif topic.status in {"missing", "not_disclosed"}:
+                headline_claim = "No verifiable disclosure found across analyzed documents."
+            else:
+                headline_claim = None
+
             meta_summary.topic_stances.append(
                 TopicStanceBreakdown(
                     topic=topic.topic,
@@ -1700,8 +1778,38 @@ Per-document analyses and extractions:
                     stance=topic.stance,
                     topic_score=topic.topic_score,
                     rationale=topic.rationale,
+                    rationale_key=topic.rationale_key,
+                    rationale_params=topic.rationale_params,
                     evidence_count=evidence_count,
                     document_count=len(cited_document_ids),
+                    headline_claim=headline_claim,
+                    supporting_quote=_truncate_text(
+                        primary_citation.quote if primary_citation else None,
+                        limit=260,
+                    ),
+                    supporting_source_document_id=primary_citation.document_id
+                    if primary_citation
+                    else None,
+                    supporting_source_title=primary_citation.document_title
+                    if primary_citation
+                    else None,
+                    supporting_source_url=primary_citation.document_url
+                    if primary_citation
+                    else None,
+                    conflict_note=_truncate_text(
+                        primary_conflict.description if primary_conflict else None
+                    ),
+                    why_it_matters=_topic_why_it_matters(
+                        topic=str(topic.topic),
+                        status=str(topic.status),
+                        stance=str(topic.stance),
+                        conflict_count=len(topic.conflicts),
+                    ),
+                    recommended_action=_topic_recommended_action(
+                        topic=str(topic.topic),
+                        status=str(topic.status),
+                        stance=str(topic.stance),
+                    ),
                 )
             )
 
@@ -1722,11 +1830,7 @@ Per-document analyses and extractions:
                 topic_blended,
                 abs(topic_blended - legacy_blended),
             )
-        if config.features.topic_stance_scoring:
-            blended = topic_blended
-        else:
-            # Keep old headline path until the feature flag is enabled.
-            blended = legacy_blended if legacy_blended is not None else topic_blended
+        blended = topic_blended
 
         signals = meta_summary.privacy_signals
         floored = _apply_signal_floors(blended, signals)

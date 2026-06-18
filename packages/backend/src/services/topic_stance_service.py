@@ -11,6 +11,47 @@ from src.models.finding import AggregatedFinding, FindingConflict
 from src.models.topic_report import TopicStance
 
 
+def _render_rationale(rationale_key: str, params: dict[str, int | str | None] | None = None) -> str:
+    data = params or {}
+    if rationale_key == "topic.not_disclosed":
+        return "Topic is not disclosed in analyzed documents."
+    if rationale_key == "topic.conflicts_found":
+        return (
+            f"{data.get('conflict_count', 0)} conflict(s) found across "
+            f"{data.get('document_count', 0)} document(s)."
+        )
+    if rationale_key == "topic.findings_summary":
+        return (
+            f"{data.get('finding_count', 0)} finding(s) across "
+            f"{data.get('document_count', 0)} document(s) with "
+            f"{data.get('evidence_count', 0)} evidence span(s)."
+        )
+    # fallback to generic deterministic sentence
+    return "Evidence present for this topic."
+
+
+def _topic_row(
+    *,
+    status: str,
+    stance: str,
+    topic_score: int | None,
+    rationale_key: str,
+    rationale_params: dict[str, int | str | None] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "stance": stance,
+        "topic_score": topic_score,
+        "rationale_key": rationale_key,
+        "rationale_params": rationale_params,
+        "rationale": _render_rationale(rationale_key, rationale_params),
+        "finding_count": 0,
+        "conflict_count": 0,
+        "evidence_count": 0,
+        "document_count": 0,
+    }
+
+
 def _map_sensitivity_to_risk(value: str | None) -> int:
     mapping = {
         "low": 2,
@@ -196,35 +237,31 @@ def evaluate_topic_stances(
             base_status = "not_disclosed"
         else:
             base_status = "found"
-        by_topic[item.category] = {
-            "status": base_status,
-            "stance": "not_disclosed"
-            if base_status in {"missing", "not_disclosed"}
-            else "moderate_risk",
-            "topic_score": None if base_status in {"missing", "not_disclosed"} else 5,
-            "rationale": "No evidence extracted for this topic yet."
-            if base_status in {"missing", "not_disclosed"}
-            else "Evidence present for this topic.",
-            "finding_count": 0,
-            "conflict_count": 0,
-            "evidence_count": 0,
-            "document_count": 0,
-        }
+        if base_status in {"missing", "not_disclosed"}:
+            by_topic[item.category] = _topic_row(
+                status=base_status,
+                stance="not_disclosed",
+                topic_score=None,
+                rationale_key="topic.not_disclosed",
+            )
+        else:
+            by_topic[item.category] = _topic_row(
+                status=base_status,
+                stance="moderate_risk",
+                topic_score=5,
+                rationale_key="topic.found_generic",
+            )
 
     signal_values = _signals_from_findings(findings)
     for finding in findings:
         topic = finding.category
         if topic not in by_topic:
-            by_topic[topic] = {
-                "status": "found",
-                "stance": "moderate_risk",
-                "topic_score": 5,
-                "rationale": "Evidence present for this topic.",
-                "finding_count": 0,
-                "conflict_count": 0,
-                "evidence_count": 0,
-                "document_count": 0,
-            }
+            by_topic[topic] = _topic_row(
+                status="found",
+                stance="moderate_risk",
+                topic_score=5,
+                rationale_key="topic.found_generic",
+            )
         row = by_topic[topic]
         row["status"] = "found"
         row["finding_count"] += 1
@@ -233,16 +270,12 @@ def evaluate_topic_stances(
 
     for topic, values in signal_values.items():
         if topic not in by_topic:
-            by_topic[topic] = {
-                "status": "found",
-                "stance": "moderate_risk",
-                "topic_score": 5,
-                "rationale": "Evidence present for this topic.",
-                "finding_count": 0,
-                "conflict_count": 0,
-                "evidence_count": 0,
-                "document_count": 0,
-            }
+            by_topic[topic] = _topic_row(
+                status="found",
+                stance="moderate_risk",
+                topic_score=5,
+                rationale_key="topic.found_generic",
+            )
         score = round(sum(values) / len(values)) if values else 5
         by_topic[topic]["topic_score"] = score
         by_topic[topic]["stance"] = _score_to_stance(score)
@@ -251,16 +284,13 @@ def evaluate_topic_stances(
     for conflict in conflicts:
         conflicts_by_topic[conflict.category].append(conflict)
         if conflict.category not in by_topic:
-            by_topic[conflict.category] = {
-                "status": "ambiguous",
-                "stance": "mixed",
-                "topic_score": 6,
-                "rationale": "Conflicting statements found across documents.",
-                "finding_count": 0,
-                "conflict_count": 0,
-                "evidence_count": 0,
-                "document_count": 0,
-            }
+            by_topic[conflict.category] = _topic_row(
+                status="ambiguous",
+                stance="mixed",
+                topic_score=6,
+                rationale_key="topic.conflicts_found",
+                rationale_params={"conflict_count": 1, "document_count": 0},
+            )
 
         row = by_topic[conflict.category]
         row["status"] = "ambiguous"
@@ -273,17 +303,25 @@ def evaluate_topic_stances(
 
     for _topic, row in by_topic.items():
         if row["status"] in {"missing", "not_disclosed"}:
-            row["rationale"] = "Topic is not disclosed in analyzed documents."
+            row["rationale_key"] = "topic.not_disclosed"
+            row["rationale_params"] = None
+            row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
             continue
         if row["status"] == "ambiguous":
-            row["rationale"] = (
-                f"{row['conflict_count']} conflict(s) found across {row['document_count']} document(s)."
-            )
+            row["rationale_key"] = "topic.conflicts_found"
+            row["rationale_params"] = {
+                "conflict_count": row["conflict_count"],
+                "document_count": row["document_count"],
+            }
+            row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
             continue
-        row["rationale"] = (
-            f"{row['finding_count']} finding(s) across {row['document_count']} document(s) "
-            f"with {row['evidence_count']} evidence span(s)."
-        )
+        row["rationale_key"] = "topic.findings_summary"
+        row["rationale_params"] = {
+            "finding_count": row["finding_count"],
+            "document_count": row["document_count"],
+            "evidence_count": row["evidence_count"],
+        }
+        row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
 
     return by_topic
 

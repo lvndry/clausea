@@ -55,6 +55,8 @@ class TopicReportItem(BaseModel):
     stance: TopicStance = "not_disclosed"
     topic_score: int | None = Field(default=None, ge=0, le=10)
     rationale: str | None = None
+    rationale_key: str | None = None
+    rationale_params: dict[str, int | str | None] | None = None
     findings: list[TopicFinding] = Field(default_factory=list)
     conflicts: list[TopicConflict] = Field(default_factory=list)
 

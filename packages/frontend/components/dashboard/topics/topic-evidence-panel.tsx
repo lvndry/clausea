@@ -71,12 +71,29 @@ export function TopicEvidencePanel({
 
   const mergedTopics = reportItems.map((item) => {
     const stance = stancesByTopic.get(item.topic);
+    const firstCitation = item.findings.flatMap(
+      (finding) => finding.citations || [],
+    )[0];
     return {
       topic: item.topic,
       status: stance?.status ?? item.status,
       stance: stance?.stance ?? item.stance,
       topic_score: stance?.topic_score ?? item.topic_score,
       rationale: stance?.rationale ?? item.rationale,
+      rationale_key: stance?.rationale_key ?? item.rationale_key,
+      rationale_params: stance?.rationale_params ?? item.rationale_params,
+      headline_claim:
+        stance?.headline_claim ??
+        item.findings[0]?.value ??
+        item.conflicts[0]?.description,
+      supporting_quote: stance?.supporting_quote ?? firstCitation?.quote,
+      supporting_source_title:
+        stance?.supporting_source_title ?? firstCitation?.document_title,
+      supporting_source_url:
+        stance?.supporting_source_url ?? firstCitation?.document_url,
+      conflict_note: stance?.conflict_note ?? item.conflicts[0]?.description,
+      why_it_matters: stance?.why_it_matters,
+      recommended_action: stance?.recommended_action,
       findings: item.findings,
       conflicts: item.conflicts,
     };
@@ -129,9 +146,19 @@ export function TopicEvidencePanel({
                   <p className="text-sm font-semibold text-foreground capitalize">
                     {humanizeTopic(topic.topic)}
                   </p>
+                  {topic.headline_claim && (
+                    <p className="text-sm text-foreground/90 leading-relaxed">
+                      {topic.headline_claim}
+                    </p>
+                  )}
                   {topic.rationale && (
                     <p className="text-xs text-muted-foreground">
                       {topic.rationale}
+                    </p>
+                  )}
+                  {topic.why_it_matters && (
+                    <p className="text-xs text-muted-foreground">
+                      Why it matters: {topic.why_it_matters}
                     </p>
                   )}
                 </div>
@@ -150,6 +177,43 @@ export function TopicEvidencePanel({
                   )}
                 </div>
               </div>
+
+              {topic.recommended_action && (
+                <div className="rounded-none border border-border/60 bg-muted/20 p-2 text-xs text-foreground/85">
+                  <span className="font-semibold">Action:</span>{" "}
+                  {topic.recommended_action}
+                </div>
+              )}
+
+              {!showCitations && topic.supporting_quote && (
+                <div className="rounded-none bg-muted/40 border border-border/50 p-2">
+                  <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
+                    <span className="truncate">
+                      Source: {topic.supporting_source_title || "Document"}
+                    </span>
+                    {topic.supporting_source_url && (
+                      <a
+                        href={topic.supporting_source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 hover:text-foreground"
+                      >
+                        Open
+                        <ExternalLink className="h-3 w-3 opacity-60" />
+                      </a>
+                    )}
+                  </div>
+                  <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
+                    {topic.supporting_quote}
+                  </blockquote>
+                </div>
+              )}
+
+              {topic.conflict_note && topic.conflicts.length === 0 && (
+                <div className="text-xs text-risk-high border-l border-risk-high/40 pl-2">
+                  {topic.conflict_note}
+                </div>
+              )}
 
               {topic.findings.length > 0 && (
                 <div className="space-y-2">

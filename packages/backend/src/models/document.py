@@ -386,8 +386,18 @@ class TopicStanceBreakdown(BaseModel):
     stance: TopicStance
     topic_score: int | None = Field(default=None, ge=0, le=10)
     rationale: str | None = None
+    rationale_key: str | None = None
+    rationale_params: dict[str, int | str | None] | None = None
     evidence_count: int | None = None
     document_count: int | None = None
+    headline_claim: str | None = None
+    supporting_quote: str | None = None
+    supporting_source_document_id: str | None = None
+    supporting_source_title: str | None = None
+    supporting_source_url: str | None = None
+    conflict_note: str | None = None
+    why_it_matters: str | None = None
+    recommended_action: str | None = None
 
 
 class DocumentAnalysis(BaseModel):

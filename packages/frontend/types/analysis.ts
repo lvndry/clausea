@@ -54,8 +54,18 @@ export interface TopicStanceBreakdown {
     | "mixed";
   topic_score?: number | null;
   rationale?: string | null;
+  rationale_key?: string | null;
+  rationale_params?: Record<string, string | number | null> | null;
   evidence_count?: number | null;
   document_count?: number | null;
+  headline_claim?: string | null;
+  supporting_quote?: string | null;
+  supporting_source_document_id?: string | null;
+  supporting_source_title?: string | null;
+  supporting_source_url?: string | null;
+  conflict_note?: string | null;
+  why_it_matters?: string | null;
+  recommended_action?: string | null;
 }
 
 export interface ComplianceBreakdown {
@@ -207,6 +217,8 @@ export interface TopicReportItem {
     | "mixed";
   topic_score?: number | null;
   rationale?: string | null;
+  rationale_key?: string | null;
+  rationale_params?: Record<string, string | number | null> | null;
   findings: TopicFinding[];
   conflicts: TopicConflict[];
 }
