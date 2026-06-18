@@ -741,7 +741,8 @@ class ConsumerExplainer(BaseModel):
 
     Finding lists are ordered worst-first. ``grade`` is advisory as emitted by
     the model and is re-clamped server-side from ``critical_findings_count`` by
-    the validator in analyser.py.
+    the validator in analyser.py. For product pages, the service layer further
+    reconciles it to the canonical grade derived from product_overviews.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -1498,6 +1499,10 @@ class Document(BaseModel):
     url: str
     title: str | None = None
     product_id: str
+    # Canonical document rows can be shared across multiple products.
+    # product_id remains the canonical owner for backward compatibility, while
+    # product_ids tracks all linked products that can reuse this document.
+    product_ids: list[str] = Field(default_factory=list)
     doc_type: DocType = "other"
     markdown: str
     text: str
@@ -1517,6 +1522,27 @@ class Document(BaseModel):
     tier_relevance: TierRelevance = "extended"
     content_hash: str | None = None
     analysis_error: str | None = None
+
+    @model_validator(mode="after")
+    def _ensure_product_membership(self) -> "Document":
+        linked: list[str] = []
+        for candidate in [self.product_id, *self.product_ids]:
+            if not isinstance(candidate, str):
+                continue
+            normalized = candidate.strip()
+            if normalized and normalized not in linked:
+                linked.append(normalized)
+
+        if not linked:
+            linked = [self.product_id]
+
+        # Keep product_id as the canonical first member.
+        self.product_id = linked[0]
+        self.product_ids = linked
+        return self
+
+    def is_linked_to_product(self, product_id: str) -> bool:
+        return product_id in self.product_ids
 
 
 # Resolve forward references now that all classes are defined.

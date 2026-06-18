@@ -92,7 +92,67 @@ def _normalize_document_record(document: dict[str, Any]) -> dict[str, Any]:
     else:
         document["tier_relevance"] = "extended"
 
+    # Shared-document compatibility: legacy rows only have product_id while new rows
+    # also carry product_ids (all linked products). Always normalize to a deduped list.
+    product_id = document.get("product_id")
+    linked_ids = document.get("product_ids")
+    normalized_ids: list[str] = []
+    if isinstance(product_id, str) and product_id.strip():
+        normalized_ids.append(product_id.strip())
+    if isinstance(linked_ids, list):
+        for value in linked_ids:
+            if not isinstance(value, str):
+                continue
+            candidate = value.strip()
+            if candidate and candidate not in normalized_ids:
+                normalized_ids.append(candidate)
+    if normalized_ids:
+        document["product_ids"] = normalized_ids
+
     return document
+
+
+def _merge_product_ids(
+    *,
+    canonical_product_id: str | None,
+    linked_product_ids: list[str] | None,
+    extra_product_ids: list[str] | None = None,
+) -> list[str]:
+    merged: list[str] = []
+    for candidate in [
+        canonical_product_id,
+        *list(linked_product_ids or []),
+        *list(extra_product_ids or []),
+    ]:
+        if not isinstance(candidate, str):
+            continue
+        normalized = candidate.strip()
+        if normalized and normalized not in merged:
+            merged.append(normalized)
+    return merged
+
+
+def _product_membership_query(product_id: str) -> dict[str, Any]:
+    return {"$or": [{"product_id": product_id}, {"product_ids": product_id}]}
+
+
+def _product_scoped_query(product_id: str, query: dict[str, Any]) -> dict[str, Any]:
+    return {"$and": [query, _product_membership_query(product_id)]}
+
+
+def _contextualize_document_for_product(
+    document: dict[str, Any], product_id: str
+) -> dict[str, Any]:
+    normalized = _normalize_document_record(dict(document))
+    normalized["product_ids"] = _merge_product_ids(
+        canonical_product_id=normalized.get("product_id"),
+        linked_product_ids=normalized.get("product_ids"),
+        extra_product_ids=[product_id],
+    )
+    # Downstream per-product synthesis/finding generation expects document.product_id
+    # to be the current product context.
+    normalized["product_id"] = product_id
+    return normalized
 
 
 class DocumentRepository(BaseRepository):
@@ -148,6 +208,15 @@ class DocumentRepository(BaseRepository):
             return None
         return Document(**_normalize_document_record(document))
 
+    async def find_by_product_and_url(
+        self, db: AgnosticDatabase, product_id: str, url: str
+    ) -> Document | None:
+        """Get a document by URL when linked to the given product."""
+        document = await db.documents.find_one(_product_scoped_query(product_id, {"url": url}))
+        if not document:
+            return None
+        return Document(**_contextualize_document_for_product(document, product_id))
+
     async def find_by_product_id(self, db: AgnosticDatabase, product_id: str) -> list[Document]:
         """Get all documents for a specific product (listing / light reads).
 
@@ -163,21 +232,27 @@ class DocumentRepository(BaseRepository):
         """
         projection = {"text": 0, "markdown": 0, "analysis": 0, "extraction": 0}
         documents: list[dict[str, Any]] = await db.documents.find(
-            {"product_id": product_id}, projection
+            _product_membership_query(product_id), projection
         ).to_list(length=None)
         for document in documents:
             document.setdefault("text", "")
             document.setdefault("markdown", "")
-        return [Document(**_normalize_document_record(document)) for document in documents]
+        return [
+            Document(**_contextualize_document_for_product(document, product_id))
+            for document in documents
+        ]
 
     async def find_by_product_id_full(
         self, db: AgnosticDatabase, product_id: str
     ) -> list[Document]:
         """Get all documents for a product including full body and analysis (pipelines, summaries)."""
         documents: list[dict[str, Any]] = await db.documents.find(
-            {"product_id": product_id}
+            _product_membership_query(product_id)
         ).to_list(length=None)
-        return [Document(**_normalize_document_record(document)) for document in documents]
+        return [
+            Document(**_contextualize_document_for_product(document, product_id))
+            for document in documents
+        ]
 
     async def find_by_product_id_with_analysis(
         self, db: AgnosticDatabase, product_id: str
@@ -189,12 +264,15 @@ class DocumentRepository(BaseRepository):
         """
         projection = {"text": 0, "markdown": 0, "extraction": 0}
         documents: list[dict[str, Any]] = await db.documents.find(
-            {"product_id": product_id}, projection
+            _product_membership_query(product_id), projection
         ).to_list(length=None)
         for document in documents:
             document.setdefault("text", "")
             document.setdefault("markdown", "")
-        return [Document(**_normalize_document_record(document)) for document in documents]
+        return [
+            Document(**_contextualize_document_for_product(document, product_id))
+            for document in documents
+        ]
 
     async def get_compliance_status_by_product(
         self, db: AgnosticDatabase, product_id: str
@@ -206,7 +284,7 @@ class DocumentRepository(BaseRepository):
         """
         projection = {"_id": 0, "analysis.compliance_status": 1}
         rows: list[dict[str, Any]] = await db.documents.find(
-            {"product_id": product_id, "analysis.compliance_status": {"$exists": True}},
+            _product_scoped_query(product_id, {"analysis.compliance_status": {"$exists": True}}),
             projection,
         ).to_list(length=None)
         return [
@@ -244,9 +322,14 @@ class DocumentRepository(BaseRepository):
         """
         query: dict[str, Any] = {"analysis": {"$exists": True, "$ne": None}}
         if product_id:
-            query["product_id"] = product_id
+            query = {"$and": [query, _product_membership_query(product_id)]}
 
         documents: list[dict[str, Any]] = await db.documents.find(query).to_list(length=None)
+        if product_id:
+            return [
+                Document(**_contextualize_document_for_product(document, product_id))
+                for document in documents
+            ]
         return [Document(**_normalize_document_record(document)) for document in documents]
 
     async def find_recent_urls_by_product(
@@ -261,11 +344,15 @@ class DocumentRepository(BaseRepository):
         query rather than streaming full document bodies.
         """
         query: dict[str, Any] = {
-            "product_id": product_id,
-            "$or": [
-                {"updated_at": {"$gte": cutoff}},
-                {"created_at": {"$gte": cutoff}},
-            ],
+            "$and": [
+                _product_membership_query(product_id),
+                {
+                    "$or": [
+                        {"updated_at": {"$gte": cutoff}},
+                        {"created_at": {"$gte": cutoff}},
+                    ]
+                },
+            ]
         }
         rows: list[dict[str, Any]] = (
             await db.documents.find(query, {"_id": 0, "url": 1})
@@ -314,12 +401,44 @@ class DocumentRepository(BaseRepository):
             )
         try:
             document_dict = document.model_dump()
+            document_dict["product_ids"] = _merge_product_ids(
+                canonical_product_id=document.product_id,
+                linked_product_ids=document_dict.get("product_ids"),
+            )
             await db.documents.insert_one(document_dict)
-            logger.info(f"Stored document {document.id} for product {document.product_id}")
+            logger.info(
+                "Stored document %s for product %s (linked=%s)",
+                document.id,
+                document.product_id,
+                document_dict["product_ids"],
+            )
             return document
         except Exception as e:
             logger.error(f"Error storing document {document.id}: {e}")
             raise e
+
+    async def link_to_product(
+        self, db: AgnosticDatabase, document_id: str, product_id: str
+    ) -> bool:
+        """Link an existing canonical document to another product."""
+        existing = await db.documents.find_one(
+            {"id": document_id}, {"product_id": 1, "product_ids": 1}
+        )
+        if not existing:
+            return False
+        merged = _merge_product_ids(
+            canonical_product_id=existing.get("product_id"),
+            linked_product_ids=existing.get("product_ids"),
+            extra_product_ids=[product_id],
+        )
+        result = await db.documents.update_one(
+            {"id": document_id},
+            {"$set": {"product_ids": merged, "updated_at": datetime.now()}},
+        )
+        if result.matched_count == 0:
+            return False
+        logger.info("Linked document %s to product %s", document_id, product_id)
+        return True
 
     async def update(self, db: AgnosticDatabase, document: Document) -> bool:
         """Update a document in the database.
@@ -346,47 +465,69 @@ class DocumentRepository(BaseRepository):
             document_dict = document.model_dump()
             incoming_text = document_dict.get("text") or ""
             incoming_markdown = document_dict.get("markdown") or ""
+            guarded_fields = ("analysis", "extraction", "consumer_explainer")
+            projection = {
+                "text": 1,
+                "markdown": 1,
+                "product_id": 1,
+                "product_ids": 1,
+                **dict.fromkeys(guarded_fields, 1),
+            }
+            existing = await db.documents.find_one({"id": document.id}, projection)
+            if not existing:
+                logger.warning(f"No document found with id {document.id} to update")
+                return False
+
+            # Preserve canonical owner and merge all linked products. Product-scoped reads
+            # may contextualize document.product_id to the current product; writing that
+            # value back must not reassign canonical ownership.
+            canonical_product_id = existing.get("product_id")
+            merged_product_ids = _merge_product_ids(
+                canonical_product_id=canonical_product_id,
+                linked_product_ids=existing.get("product_ids"),
+                extra_product_ids=[
+                    document_dict.get("product_id"),
+                    *list(document_dict.get("product_ids") or []),
+                ],
+            )
+            if isinstance(canonical_product_id, str) and canonical_product_id.strip():
+                document_dict["product_id"] = canonical_product_id.strip()
+            document_dict["product_ids"] = merged_product_ids
 
             # Guard against round-trip wipes: a projecting reader strips heavy fields
             # to None/"" before this Document was built, so writing the full model_dump
             # back would null out stored content. Drop any heavy field from the $set
             # when it is empty incoming but non-empty stored.
-            guarded_fields = ("analysis", "extraction", "consumer_explainer")
             needs_guard = (
                 not incoming_text
                 or not incoming_markdown
                 or any(document_dict.get(field) is None for field in guarded_fields)
             )
             if needs_guard:
-                projection = {"text": 1, "markdown": 1, **dict.fromkeys(guarded_fields, 1)}
-                existing = await db.documents.find_one({"id": document.id}, projection)
-                if existing:
-                    if not incoming_text and (existing.get("text") or ""):
-                        document_dict.pop("text", None)
+                if not incoming_text and (existing.get("text") or ""):
+                    document_dict.pop("text", None)
+                    logger.warning(
+                        "DocumentRepository.update refused to overwrite non-empty "
+                        f"text for document {document.id} with an empty value "
+                        "(caller likely loaded via a projecting reader)."
+                    )
+                if not incoming_markdown and (existing.get("markdown") or ""):
+                    document_dict.pop("markdown", None)
+                    logger.warning(
+                        "DocumentRepository.update refused to overwrite non-empty "
+                        f"markdown for document {document.id} with an empty value."
+                    )
+                for field in guarded_fields:
+                    if document_dict.get(field) is None and existing.get(field) is not None:
+                        document_dict.pop(field, None)
                         logger.warning(
                             "DocumentRepository.update refused to overwrite non-empty "
-                            f"text for document {document.id} with an empty value "
+                            f"{field} for document {document.id} with None "
                             "(caller likely loaded via a projecting reader)."
                         )
-                    if not incoming_markdown and (existing.get("markdown") or ""):
-                        document_dict.pop("markdown", None)
-                        logger.warning(
-                            "DocumentRepository.update refused to overwrite non-empty "
-                            f"markdown for document {document.id} with an empty value."
-                        )
-                    for field in guarded_fields:
-                        if document_dict.get(field) is None and existing.get(field) is not None:
-                            document_dict.pop(field, None)
-                            logger.warning(
-                                "DocumentRepository.update refused to overwrite non-empty "
-                                f"{field} for document {document.id} with None "
-                                "(caller likely loaded via a projecting reader)."
-                            )
 
             result = await db.documents.update_one({"id": document.id}, {"$set": document_dict})
-            success = result.modified_count > 0
-            if not success:
-                logger.warning(f"No document found with id {document.id} to update")
+            success = result.matched_count > 0
             return bool(success)
         except Exception as e:
             logger.error(f"Error updating document {document.id}: {e}")

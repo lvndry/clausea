@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores
+from src.models.document import (
+    ConsumerExplainer,
+    Document,
+    DocumentAnalysis,
+    DocumentAnalysisScores,
+)
 from src.models.product import Product
 from src.models.user import UserTier
 from src.repositories.document_repository import DocumentRepository
@@ -97,6 +102,68 @@ async def test_get_product_overview(
     assert overview.product_slug == "test-product"
     assert overview.risk_score == 5
     mock_product_repo.get_product_overview.assert_called_once_with(mock_db, "test-product")
+
+
+@pytest.mark.asyncio
+async def test_get_product_explainer_uses_canonical_overview_grade(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    mock_product_repo.get_product_explainer = AsyncMock(
+        return_value={"product_slug": "test-product", "headline": "h", "grade": "D"}
+    )
+    mock_product_repo.get_product_overview = AsyncMock(
+        return_value={"overview": {"risk_score": 5, "grade": "C"}}
+    )
+    mock_product_repo.update_product_explainer_grade = AsyncMock()
+
+    explainer = await product_service.get_product_explainer(mock_db, "test-product")
+
+    assert explainer is not None
+    assert explainer["grade"] == "C"
+    mock_product_repo.update_product_explainer_grade.assert_awaited_once_with(
+        mock_db, "test-product", "C"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_product_explainer_derives_grade_from_risk_score_when_missing_grade(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    mock_product_repo.get_product_explainer = AsyncMock(
+        return_value={"product_slug": "test-product", "headline": "h", "grade": "B"}
+    )
+    mock_product_repo.get_product_overview = AsyncMock(return_value={"overview": {"risk_score": 8}})
+    mock_product_repo.update_product_explainer_grade = AsyncMock()
+
+    explainer = await product_service.get_product_explainer(mock_db, "test-product")
+
+    assert explainer is not None
+    assert explainer["grade"] == "D"
+    mock_product_repo.update_product_explainer_grade.assert_awaited_once_with(
+        mock_db, "test-product", "D"
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_product_explainer_overrides_grade_with_canonical_overview(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    mock_product_repo.get_product_overview = AsyncMock(
+        return_value={"overview": {"risk_score": 5, "grade": "C"}}
+    )
+    mock_product_repo.save_product_explainer = AsyncMock(return_value=True)
+
+    saved = await product_service.save_product_explainer(
+        mock_db,
+        "test-product",
+        ConsumerExplainer(headline="h", grade="D"),
+    )
+
+    assert saved is True
+    mock_product_repo.save_product_explainer.assert_awaited_once()
+    saved_explainer = mock_product_repo.save_product_explainer.await_args.args[2]
+    assert isinstance(saved_explainer, ConsumerExplainer)
+    assert saved_explainer.grade == "C"
 
 
 @pytest.mark.asyncio

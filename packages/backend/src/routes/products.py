@@ -203,6 +203,7 @@ async def get_product_explainer(
 ) -> ConsumerExplainer:
     """Get the plain-English consumer TOS-explainer for a product (the consumer-facing
     output). Does NOT trigger generation — produced by the indexation pipeline.
+    Grade values are reconciled server-side to the canonical product overview score.
 
     Status codes:
         404: No product with this slug.
@@ -323,7 +324,7 @@ async def get_document_extraction(
     doc = await doc_svc.get_document_by_id(db, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if doc.product_id != product.id:
+    if not doc.is_linked_to_product(product.id):
         raise HTTPException(status_code=404, detail="Document not found for this product")
     if not _can_access_document(
         tier=user_tier,
@@ -391,7 +392,7 @@ async def get_document_deep_analysis_route(
         raise HTTPException(status_code=404, detail="Product not found")
 
     doc = await doc_svc.get_document_by_id(db, document_id)
-    if not doc or doc.product_id != product.id:
+    if not doc or not doc.is_linked_to_product(product.id):
         raise HTTPException(status_code=404, detail="Document not found")
     if not _can_access_document(
         tier=user_tier,

@@ -947,6 +947,7 @@ class PolicyDocumentPipeline:
             Number of documents actually stored (new + updated)
         """
         stored_count = 0
+        linked_count = 0
         updated_count = 0
         duplicate_count = 0
         error_count = 0
@@ -964,9 +965,22 @@ class PolicyDocumentPipeline:
 
             for document in documents:
                 try:
-                    # Check for existing document
+                    source_product_id = document.product_id
+                    # Canonical URL lookup: the same policy URL can be reused by many products.
                     existing_doc = await document_service.get_document_by_url(db, document.url)
                     if existing_doc:
+                        linked_this_run = False
+                        if not existing_doc.is_linked_to_product(source_product_id):
+                            linked_this_run = await document_service.link_document_to_product(
+                                db, existing_doc.id, source_product_id
+                            )
+                            if linked_this_run:
+                                logger_storage.info(
+                                    "linked existing canonical document %s to product %s",
+                                    document.url,
+                                    source_product_id,
+                                )
+
                         # Calculate content + metadata hashes for comparison
                         # We include metadata that the LLM might have updated (title, doc_type, locale, regions, effective_date)
                         # We use separators to avoid potential string collisions
@@ -995,6 +1009,16 @@ class PolicyDocumentPipeline:
                                 duplicate_count += 1
                                 continue
 
+                            # Keep canonical owner stable while preserving all linked products.
+                            document.product_id = existing_doc.product_id
+                            document.product_ids = [
+                                *existing_doc.product_ids,
+                                *(
+                                    [source_product_id]
+                                    if source_product_id not in existing_doc.product_ids
+                                    else []
+                                ),
+                            ]
                             changed = _diff_fields(existing_doc, document)
                             await DocumentVersionRepository().archive(
                                 db, existing_doc, job_id=self._job_id, changed_fields=changed
@@ -1010,14 +1034,21 @@ class PolicyDocumentPipeline:
                             stored_count += 1
                             updated_count += 1
                         else:
-                            logger_storage.debug(
-                                f"skipping unchanged document (duplicate): {document.url}"
-                            )
-                            self.stats.duplicates_skipped += 1
-                            duplicate_count += 1
+                            if linked_this_run:
+                                # Reused canonical doc for a new product: count this as a
+                                # successful stored document for this product run so synthesis
+                                # can proceed even when no new canonical rows are inserted.
+                                stored_count += 1
+                                linked_count += 1
+                            else:
+                                logger_storage.debug(
+                                    f"skipping unchanged document (duplicate): {document.url}"
+                                )
+                                self.stats.duplicates_skipped += 1
+                                duplicate_count += 1
                         if document.text and document.text.strip():
                             seen_fingerprints[
-                                (document.product_id, _content_fingerprint(document.text))
+                                (source_product_id, _content_fingerprint(document.text))
                             ] = document.url
                     else:
                         # Collapse same-content locale variants: if another doc for this
@@ -1026,7 +1057,7 @@ class PolicyDocumentPipeline:
                         # therefore a different fingerprint, so they are never merged.
                         if document.text and document.text.strip():
                             fp_key = (
-                                document.product_id,
+                                source_product_id,
                                 _content_fingerprint(document.text),
                             )
                             kept_url = seen_fingerprints.get(fp_key)
@@ -1054,8 +1085,11 @@ class PolicyDocumentPipeline:
 
         # Log summary of storage operation
         if len(documents) > 0:
+            new_count = stored_count - updated_count - linked_count
             logger_storage.info(
-                f"storage complete: {stored_count} stored ({stored_count - updated_count} new, {updated_count} updated), {duplicate_count} duplicates skipped, {error_count} errors"
+                f"storage complete: {stored_count} stored "
+                f"({new_count} new, {updated_count} updated, {linked_count} linked), "
+                f"{duplicate_count} duplicates skipped, {error_count} errors"
             )
 
         return stored_count

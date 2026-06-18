@@ -47,6 +47,53 @@ def test_evaluate_topic_stances_detects_yes_no_signals() -> None:
     assert rows["security"]["stance"] == "low_risk"
 
 
+def test_evaluate_topic_stances_ai_training_uses_structured_attributes() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="ai_training",
+                value="Model improvement language without explicit yes/no token.",
+                documents=["doc_1"],
+                attributes=[{"usage_type": "training_on_user_data", "opt_out_available": "yes"}],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We use customer prompts to improve our models.",
+                    )
+                ],
+            )
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    assert rows["ai_training"]["topic_score"] == 8
+    assert rows["ai_training"]["stance"] == "high_risk"
+
+
+def test_evaluate_topic_stances_ai_training_parses_flexible_signal_format() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="ai_training",
+                value='{"AI_TRAINING_ON_USER_DATA":"NO"}',
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We do not use user data for model training.",
+                    )
+                ],
+            )
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    assert rows["ai_training"]["topic_score"] == 3
+    assert rows["ai_training"]["stance"] == "low_risk"
+
+
 def test_evaluate_topic_stances_marks_conflicts_as_mixed() -> None:
     rows = evaluate_topic_stances(
         findings=[],
@@ -102,3 +149,14 @@ def test_compose_product_risk_excludes_not_disclosed_topics() -> None:
     )
     # Must not be dragged toward 10 by undisclosed data_sharing.
     assert 3 <= score <= 6
+
+
+def test_compose_product_risk_prioritizes_ai_training_signal() -> None:
+    score = compose_product_risk_from_topics(
+        {
+            "ai_training": {"status": "found", "topic_score": 10},
+            "cookies_tracking": {"status": "found", "topic_score": 0},
+        }
+    )
+    # AI training must carry clearly stronger influence than tracking-only noise.
+    assert score >= 6

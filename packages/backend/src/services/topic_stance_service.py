@@ -10,6 +10,64 @@ from src.models.document import CoverageItem, InsightCategory
 from src.models.finding import AggregatedFinding, FindingConflict
 from src.models.topic_report import TopicStance
 
+_YES_TOKENS = {"yes", "true", "1"}
+_NO_TOKENS = {"no", "false", "0"}
+_UNCLEAR_TOKENS = {"unclear", "unknown", "null", "none", ""}
+
+_AI_TRAINING_FLAG_PATTERN = re.compile(
+    r"""
+    ["']?(?:ai_training_on_user_data|training_on_user_data|ai-training-on-user-data)["']?
+    \s*[:=]\s*
+    ["']?(yes|no|true|false|1|0|unclear|null|unknown|none)["']?
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _coerce_yes_no_unclear(value: object) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in _YES_TOKENS:
+        return "yes"
+    if normalized in _NO_TOKENS:
+        return "no"
+    if normalized in _UNCLEAR_TOKENS:
+        return "unclear"
+    return None
+
+
+def _ai_training_signal_from_attributes(attributes: list[dict[str, Any]]) -> str | None:
+    for attr in attributes:
+        direct = _coerce_yes_no_unclear(attr.get("ai_training_on_user_data"))
+        if direct in {"yes", "no"}:
+            return direct
+
+        alias = _coerce_yes_no_unclear(attr.get("training_on_user_data"))
+        if alias in {"yes", "no"}:
+            return alias
+
+        usage_type = str(attr.get("usage_type") or "").strip().lower()
+        if usage_type == "training_on_user_data":
+            return "yes"
+
+    return None
+
+
+def _ai_training_signal_from_value(value: str) -> str | None:
+    match = _AI_TRAINING_FLAG_PATTERN.search(value or "")
+    if not match:
+        return None
+    parsed = _coerce_yes_no_unclear(match.group(1))
+    if parsed in {"yes", "no"}:
+        return parsed
+    return "unclear"
+
+
+def _resolve_ai_training_signal(*, value: str, attributes: list[dict[str, Any]]) -> str | None:
+    from_attributes = _ai_training_signal_from_attributes(attributes)
+    if from_attributes is not None:
+        return from_attributes
+    return _ai_training_signal_from_value(value)
+
 
 def _render_rationale(rationale_key: str, params: dict[str, int | str | None] | None = None) -> str:
     data = params or {}
@@ -105,9 +163,10 @@ def _signals_from_findings(findings: list[AggregatedFinding]) -> dict[InsightCat
             continue
 
         if category == "ai_training":
-            if "ai_training_on_user_data: yes" in normalized:
+            training_signal = _resolve_ai_training_signal(value=finding.value, attributes=attrs)
+            if training_signal == "yes":
                 signals[category].append(8)
-            elif "ai_training_on_user_data: no" in normalized:
+            elif training_signal == "no":
                 signals[category].append(3)
             else:
                 signals[category].append(6)
@@ -327,14 +386,16 @@ def evaluate_topic_stances(
 
 
 _TOPIC_WEIGHT_DEFAULTS: dict[InsightCategory, float] = {
-    "data_collection": 0.18,
-    "data_sharing": 0.18,
-    "user_rights": 0.14,
+    # High-impact privacy posture drivers.
+    "data_collection": 0.16,
+    "data_sharing": 0.16,
+    "ai_training": 0.16,
+    "data_sale": 0.14,
+    # Secondary but still meaningful controls.
+    "user_rights": 0.12,
     "retention": 0.10,
-    "security": 0.10,
-    "cookies_tracking": 0.10,
-    "data_sale": 0.12,
-    "ai_training": 0.08,
+    "security": 0.09,
+    "cookies_tracking": 0.07,
 }
 
 

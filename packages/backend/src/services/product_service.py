@@ -171,8 +171,46 @@ class ProductService:
 
         counts: dict[str, Any] = {}
 
-        result = await db.documents.delete_many({"product_id": product_id})
-        counts["documents"] = result.deleted_count
+        # Shared-document semantics: unlink this product from canonical documents and
+        # delete only rows that are not linked to any remaining product.
+        linked_docs = await db.documents.find(
+            {"$or": [{"product_id": product_id}, {"product_ids": product_id}]},
+            {"id": 1, "product_id": 1, "product_ids": 1},
+        ).to_list(length=None)
+        documents_deleted = 0
+        documents_unlinked = 0
+        for row in linked_docs:
+            doc_id = row.get("id")
+            if not doc_id:
+                continue
+            linked_ids: list[str] = []
+            primary = row.get("product_id")
+            if isinstance(primary, str) and primary:
+                linked_ids.append(primary)
+            product_ids = row.get("product_ids")
+            if isinstance(product_ids, list):
+                for candidate in product_ids:
+                    if isinstance(candidate, str) and candidate and candidate not in linked_ids:
+                        linked_ids.append(candidate)
+            remaining_ids = [pid for pid in linked_ids if pid != product_id]
+            if remaining_ids:
+                await db.documents.update_one(
+                    {"id": doc_id},
+                    {
+                        "$set": {
+                            "product_id": remaining_ids[0],
+                            "product_ids": remaining_ids,
+                            "updated_at": datetime.now(),
+                        }
+                    },
+                )
+                documents_unlinked += 1
+            else:
+                await db.documents.delete_one({"id": doc_id})
+                documents_deleted += 1
+        counts["documents"] = documents_deleted + documents_unlinked
+        counts["documents_deleted"] = documents_deleted
+        counts["documents_unlinked"] = documents_unlinked
 
         result = await db.findings.delete_many({"product_id": product_id})
         counts["findings"] = result.deleted_count
@@ -276,14 +314,68 @@ class ProductService:
     async def get_product_explainer(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        """Get the stored product-level consumer explainer, or None."""
-        return await self._product_repo.get_product_explainer(db, product_slug)
+        """Get the product-level consumer explainer with canonical grade.
+
+        Product pages treat overview scoring as the single source of truth.
+        The explainer grade is therefore reconciled against product_overviews
+        before returning, and legacy mismatches are repaired best-effort.
+        """
+        explainer = await self._product_repo.get_product_explainer(db, product_slug)
+        if not explainer:
+            return None
+
+        canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
+        if canonical_grade is None:
+            return explainer
+
+        current_grade = self._coerce_grade(explainer.get("grade"))
+        if current_grade == canonical_grade:
+            return explainer
+
+        logger.info(
+            "Canonicalizing product explainer grade for %s: %s -> %s",
+            product_slug,
+            current_grade or "unknown",
+            canonical_grade,
+        )
+        repaired = dict(explainer)
+        repaired["grade"] = canonical_grade
+
+        try:
+            await self._product_repo.update_product_explainer_grade(
+                db, product_slug, canonical_grade
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort repair
+            logger.warning(
+                "Failed to persist canonical explainer grade for %s: %s",
+                product_slug,
+                exc,
+            )
+        return repaired
 
     async def save_product_explainer(
         self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer
     ) -> bool:
-        """Persist the product-level consumer explainer; True when it landed."""
-        return await self._product_repo.save_product_explainer(db, product_slug, explainer)
+        """Persist the product-level consumer explainer; True when it landed.
+
+        The grade is always derived from the canonical overview score when an
+        overview exists, so explainer-owned grading cannot diverge.
+        """
+        canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
+        payload = explainer
+
+        if canonical_grade is not None:
+            current_grade = self._coerce_grade(explainer.grade)
+            if current_grade != canonical_grade:
+                logger.info(
+                    "Overriding explainer grade with canonical overview grade for %s: %s -> %s",
+                    product_slug,
+                    current_grade or "unknown",
+                    canonical_grade,
+                )
+                payload = explainer.model_copy(update={"grade": canonical_grade})
+
+        return await self._product_repo.save_product_explainer(db, product_slug, payload)
 
     async def get_product_compliance(
         self, db: AgnosticDatabase, product_slug: str
@@ -552,6 +644,46 @@ class ProductService:
             coverage=meta.coverage,
             contract_clauses=meta.contract_clauses,
         )
+
+    @staticmethod
+    def _coerce_grade(raw_grade: Any) -> str | None:
+        if not isinstance(raw_grade, str):
+            return None
+        candidate = raw_grade.strip().upper()[:1]
+        if candidate in {"A", "B", "C", "D", "E"}:
+            return candidate
+        return None
+
+    @staticmethod
+    def _grade_from_risk_score(risk_score: int) -> str:
+        if risk_score <= 2:
+            return "A"
+        if risk_score <= 4:
+            return "B"
+        if risk_score <= 6:
+            return "C"
+        if risk_score <= 8:
+            return "D"
+        return "E"
+
+    async def _get_canonical_overview_grade(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> str | None:
+        overview_data = await self._product_repo.get_product_overview(db, product_slug)
+        overview = overview_data.get("overview") if overview_data else None
+        if not isinstance(overview, dict):
+            return None
+
+        risk_score = overview.get("risk_score")
+        if isinstance(risk_score, bool):
+            return None
+        if isinstance(risk_score, int):
+            clamped = max(0, min(10, risk_score))
+            return self._grade_from_risk_score(clamped)
+        if isinstance(risk_score, float):
+            clamped = max(0, min(10, round(risk_score)))
+            return self._grade_from_risk_score(clamped)
+        return self._coerce_grade(overview.get("grade"))
 
     @staticmethod
     def _normalize_domain(domain: str) -> str:
