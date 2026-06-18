@@ -261,6 +261,11 @@ CONVERGENCE_LEGAL_SCORE = 0.2
 # Boost-only pages to keep crawling after the own-score frontier empties, in case one links a
 # policy reachable no other way. A new real lead resets it. See _relevance_exhausted.
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
+# Pages to visit before giving up if zero policy-relevant content has been found.
+# Prevents blocked/bot-walled sites from holding a slot for 400 pages × 20-30 sec.
+# The relevance_exhausted check only fires once a policy page is found; this covers
+# sites where nothing is ever found.
+CRAWL_ZERO_POLICY_ABORT = int(os.getenv("CRAWLER_ZERO_POLICY_ABORT", "50"))
 # Cap per-document English locale variants (e.g. en-us/en-gb) to reduce duplicate crawls.
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
@@ -4337,6 +4342,19 @@ class ClauseaCrawler:
                             f"page(s) found and no own-score lead left after a "
                             f"{CRAWL_EXHAUSTION_GRACE}-page grace; stopping discovery at "
                             f"{len(self.visited_urls)} pages (only boost-only links remained)."
+                        )
+                        break
+
+                    if (
+                        self._policy_pages_found == 0
+                        and len(self.visited_urls) >= CRAWL_ZERO_POLICY_ABORT
+                        and self.strategy == "best_first"
+                        and (self._frontier_top_base_score() or 0) < self.min_legal_score
+                    ):
+                        logger.info(
+                            f"🧭 Crawl zero-policy abort: {len(self.visited_urls)} pages visited "
+                            f"with 0 policy pages found and no promising URLs remaining; "
+                            f"site is likely blocked or has no accessible policy documents."
                         )
                         break
 
