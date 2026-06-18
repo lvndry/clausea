@@ -48,7 +48,7 @@ MAX_PIPELINE_DURATION_SECONDS = float(os.getenv("PIPELINE_MAX_DURATION_SECONDS",
 # Abort a job that makes no forward progress (no page/document/step update bumps updated_at)
 # for this long. Bounds *inactivity*, not total runtime: a slow-but-advancing pipeline runs
 # indefinitely, while a wedged one frees its worker slot fast instead of clogging it.
-STALL_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_STALL_TIMEOUT_SECONDS", "2700"))
+STALL_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_STALL_TIMEOUT_SECONDS", "1200"))
 
 
 class _PipelineStalled(Exception):
