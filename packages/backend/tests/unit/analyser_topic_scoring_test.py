@@ -85,7 +85,22 @@ def _aggregation() -> Aggregation:
                         document_id="doc_1",
                         url="https://example.com/privacy",
                         quote="We may sell data to advertising partners.",
-                    )
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="A" * 320,
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="Users can opt out in account settings.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="Additional disclosure for enterprise plans.",
+                    ),
                 ],
             )
         ],
@@ -144,6 +159,10 @@ async def test_generate_product_overview_uses_topic_scoring() -> None:
     assert result.topic_stances
     assert result.topic_stances[0].rationale_key == "topic.findings_summary"
     assert result.topic_stances[0].headline_claim is not None
-    assert result.topic_stances[0].supporting_quote is not None
+    assert result.topic_stances[0].supporting_citations
+    assert len(result.topic_stances[0].supporting_citations) == 4
+    assert "A" * 320 in {
+        citation.quote for citation in result.topic_stances[0].supporting_citations
+    }
     assert result.topic_stances[0].why_it_matters is not None
     assert result.topic_stances[0].recommended_action is not None

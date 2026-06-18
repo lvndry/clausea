@@ -19,6 +19,8 @@ interface TopicEvidencePanelProps {
   showCitations?: boolean;
 }
 
+const TOPIC_CITATION_PREVIEW_LIMIT = 3;
+
 const stanceStyles: Record<
   TopicStanceBreakdown["stance"],
   { label: string; className: string; icon: typeof Shield }
@@ -71,9 +73,9 @@ export function TopicEvidencePanel({
 
   const mergedTopics = reportItems.map((item) => {
     const stance = stancesByTopic.get(item.topic);
-    const firstCitation = item.findings.flatMap(
+    const reportCitations = item.findings.flatMap(
       (finding) => finding.citations || [],
-    )[0];
+    );
     return {
       topic: item.topic,
       status: stance?.status ?? item.status,
@@ -86,11 +88,10 @@ export function TopicEvidencePanel({
         stance?.headline_claim ??
         item.findings[0]?.value ??
         item.conflicts[0]?.description,
-      supporting_quote: stance?.supporting_quote ?? firstCitation?.quote,
-      supporting_source_title:
-        stance?.supporting_source_title ?? firstCitation?.document_title,
-      supporting_source_url:
-        stance?.supporting_source_url ?? firstCitation?.document_url,
+      supporting_citations:
+        stance?.supporting_citations && stance.supporting_citations.length > 0
+          ? stance.supporting_citations
+          : reportCitations,
       conflict_note: stance?.conflict_note ?? item.conflicts[0]?.description,
       why_it_matters: stance?.why_it_matters,
       recommended_action: stance?.recommended_action,
@@ -139,6 +140,14 @@ export function TopicEvidencePanel({
         {allTopics.map((topic) => {
           const style = stanceStyles[topic.stance];
           const Icon = style.icon;
+          const previewCitations = (
+            showCitations
+              ? topic.findings.flatMap((finding) => finding.citations || [])
+              : topic.supporting_citations &&
+                  topic.supporting_citations.length > 0
+                ? topic.supporting_citations
+                : topic.findings.flatMap((finding) => finding.citations || [])
+          ).slice(0, TOPIC_CITATION_PREVIEW_LIMIT);
           return (
             <div key={topic.topic} className="p-5 space-y-3">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -185,27 +194,35 @@ export function TopicEvidencePanel({
                 </div>
               )}
 
-              {!showCitations && topic.supporting_quote && (
-                <div className="rounded-none bg-muted/40 border border-border/50 p-2">
-                  <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                    <span className="truncate">
-                      Source: {topic.supporting_source_title || "Document"}
-                    </span>
-                    {topic.supporting_source_url && (
-                      <a
-                        href={topic.supporting_source_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 hover:text-foreground"
-                      >
-                        Open
-                        <ExternalLink className="h-3 w-3 opacity-60" />
-                      </a>
-                    )}
-                  </div>
-                  <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
-                    {topic.supporting_quote}
-                  </blockquote>
+              {!showCitations && previewCitations.length > 0 && (
+                <div className="space-y-2">
+                  {previewCitations.map((citation, idx) => (
+                    <div
+                      key={`${topic.topic}-overview-citation-${idx}`}
+                      className="rounded-none bg-muted/40 border border-border/50 p-2"
+                    >
+                      <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
+                        <span className="truncate">
+                          Source:{" "}
+                          {citation.document_title || citation.document_id}
+                        </span>
+                        {citation.document_url && (
+                          <a
+                            href={citation.document_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 hover:text-foreground"
+                          >
+                            Open
+                            <ExternalLink className="h-3 w-3 opacity-60" />
+                          </a>
+                        )}
+                      </div>
+                      <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
+                        {citation.quote}
+                      </blockquote>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -241,38 +258,35 @@ export function TopicEvidencePanel({
                 </div>
               )}
 
-              {showCitations && topic.findings.length > 0 && (
+              {showCitations && previewCitations.length > 0 && (
                 <div className="space-y-2 pt-1">
-                  {topic.findings
-                    .flatMap((finding) => finding.citations || [])
-                    .slice(0, 3)
-                    .map((citation, idx) => (
-                      <div
-                        key={`${topic.topic}-quote-${idx}`}
-                        className="rounded-none bg-muted/40 border border-border/50 p-2"
-                      >
-                        <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                          <span className="truncate">
-                            Source:{" "}
-                            {citation.document_title || citation.document_id}
-                          </span>
-                          {citation.document_url && (
-                            <a
-                              href={citation.document_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 hover:text-foreground"
-                            >
-                              Open
-                              <ExternalLink className="h-3 w-3 opacity-60" />
-                            </a>
-                          )}
-                        </div>
-                        <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
-                          {citation.quote}
-                        </blockquote>
+                  {previewCitations.map((citation, idx) => (
+                    <div
+                      key={`${topic.topic}-quote-${idx}`}
+                      className="rounded-none bg-muted/40 border border-border/50 p-2"
+                    >
+                      <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
+                        <span className="truncate">
+                          Source:{" "}
+                          {citation.document_title || citation.document_id}
+                        </span>
+                        {citation.document_url && (
+                          <a
+                            href={citation.document_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 hover:text-foreground"
+                          >
+                            Open
+                            <ExternalLink className="h-3 w-3 opacity-60" />
+                          </a>
+                        )}
                       </div>
-                    ))}
+                      <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
+                        {citation.quote}
+                      </blockquote>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

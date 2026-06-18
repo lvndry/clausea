@@ -55,6 +55,7 @@ from src.models.document import (
     RiskRegisterItem,
     SecurityPosture,
     TopicStanceBreakdown,
+    TopicSupportCitation,
     WorkforceDataAssessment,
 )
 from src.prompts.analysis_prompts import (
@@ -395,14 +396,30 @@ def _truncate_text(value: str | None, limit: int = 220) -> str | None:
     return f"{text[: limit - 1].rstrip()}..."
 
 
-def _topic_primary_citation(topic: Any) -> Any | None:
-    for finding in topic.findings:
-        if finding.citations:
-            return finding.citations[0]
-    for conflict in topic.conflicts:
-        if conflict.citations:
-            return conflict.citations[0]
-    return None
+def _topic_supporting_citations(topic: Any) -> list[TopicSupportCitation]:
+    selected: list[TopicSupportCitation] = []
+    citation_pool = [
+        *(citation for finding in topic.findings for citation in (finding.citations or [])),
+        *(citation for conflict in topic.conflicts for citation in (conflict.citations or [])),
+    ]
+    for citation in citation_pool:
+        quote = getattr(citation, "quote", None)
+        if not quote:
+            continue
+        document_id = getattr(citation, "document_id", "")
+        section_title = getattr(citation, "section_title", None)
+        document_url = getattr(citation, "document_url", None)
+        selected.append(
+            TopicSupportCitation(
+                document_id=document_id,
+                document_title=getattr(citation, "document_title", None),
+                document_url=document_url,
+                quote=str(quote),
+                section_title=section_title,
+                verified=bool(getattr(citation, "verified", True)),
+            )
+        )
+    return selected
 
 
 def _topic_why_it_matters(topic: str, status: str, stance: str, conflict_count: int) -> str:
@@ -1761,7 +1778,7 @@ Per-document analyses and extractions:
                 evidence_count += len(conflict.citations)
             primary_finding = topic.findings[0] if topic.findings else None
             primary_conflict = topic.conflicts[0] if topic.conflicts else None
-            primary_citation = _topic_primary_citation(topic)
+            supporting_citations = _topic_supporting_citations(topic)
             if primary_finding and primary_finding.value:
                 headline_claim = _truncate_text(primary_finding.value)
             elif primary_conflict and primary_conflict.description:
@@ -1783,19 +1800,7 @@ Per-document analyses and extractions:
                     evidence_count=evidence_count,
                     document_count=len(cited_document_ids),
                     headline_claim=headline_claim,
-                    supporting_quote=_truncate_text(
-                        primary_citation.quote if primary_citation else None,
-                        limit=260,
-                    ),
-                    supporting_source_document_id=primary_citation.document_id
-                    if primary_citation
-                    else None,
-                    supporting_source_title=primary_citation.document_title
-                    if primary_citation
-                    else None,
-                    supporting_source_url=primary_citation.document_url
-                    if primary_citation
-                    else None,
+                    supporting_citations=supporting_citations,
                     conflict_note=_truncate_text(
                         primary_conflict.description if primary_conflict else None
                     ),

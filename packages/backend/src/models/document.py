@@ -391,13 +391,21 @@ class TopicStanceBreakdown(BaseModel):
     evidence_count: int | None = None
     document_count: int | None = None
     headline_claim: str | None = None
-    supporting_quote: str | None = None
-    supporting_source_document_id: str | None = None
-    supporting_source_title: str | None = None
-    supporting_source_url: str | None = None
+    supporting_citations: list["TopicSupportCitation"] = Field(default_factory=list)
     conflict_note: str | None = None
     why_it_matters: str | None = None
     recommended_action: str | None = None
+
+
+class TopicSupportCitation(BaseModel):
+    """Compact citation attached to topic overview cards."""
+
+    document_id: str
+    document_title: str | None = None
+    document_url: str | None = None
+    quote: str
+    section_title: str | None = None
+    verified: bool = True
 
 
 class DocumentAnalysis(BaseModel):

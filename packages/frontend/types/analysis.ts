@@ -59,10 +59,7 @@ export interface TopicStanceBreakdown {
   evidence_count?: number | null;
   document_count?: number | null;
   headline_claim?: string | null;
-  supporting_quote?: string | null;
-  supporting_source_document_id?: string | null;
-  supporting_source_title?: string | null;
-  supporting_source_url?: string | null;
+  supporting_citations?: TopicCitation[] | null;
   conflict_note?: string | null;
   why_it_matters?: string | null;
   recommended_action?: string | null;
