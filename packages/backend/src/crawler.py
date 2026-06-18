@@ -261,6 +261,9 @@ CONVERGENCE_LEGAL_SCORE = 0.2
 # Boost-only pages to keep crawling after the own-score frontier empties, in case one links a
 # policy reachable no other way. A new real lead resets it. See _relevance_exhausted.
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
+# Consecutive fetch failures before concluding the site is actively blocking us.
+# A successful fetch resets this counter — only sustained unbroken blocking triggers abort.
+CRAWL_BOT_WALL_ABORT = int(os.getenv("CRAWLER_BOT_WALL_ABORT", "50"))
 # Cap per-document English locale variants (e.g. en-us/en-gb) to reduce duplicate crawls.
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
@@ -1700,6 +1703,7 @@ class ClauseaCrawler:
         self._frontier_real_leads: int = 0  # queued URLs whose own score clears the gate
         self._policy_pages_found: int = 0
         self._crawls_since_new_lead: int = 0
+        self._consecutive_blocked: int = 0  # consecutive fetch failures (bot-wall detection)
         self._sitemap_seeded: bool = False  # True when sitemaps provided seed URLs
         # Best policy-relevance score assigned to each queued URL (anchor-aware).
         # Consulted by the browser-fetch gate so opaque policy URLs discovered via
@@ -4270,6 +4274,7 @@ class ClauseaCrawler:
                         if result.success:
                             self.stats.crawled_urls += 1
                             self.results.append(result)
+                            self._consecutive_blocked = 0
 
                             if (
                                 result.legal_score is not None
@@ -4289,6 +4294,7 @@ class ClauseaCrawler:
                             self.stats.failed_urls += 1
                             self.failed_urls.add(url)
                             pages_since_policy_hit += 1
+                            self._consecutive_blocked += 1
                             logger.warning(f"❌ Failed: {url} - {result.error_message}")
                             # Surface robots.txt blocks so the pipeline can tell the user
                             # the SITE blocked us (not that we failed). Other failures stay
@@ -4337,6 +4343,14 @@ class ClauseaCrawler:
                             f"page(s) found and no own-score lead left after a "
                             f"{CRAWL_EXHAUSTION_GRACE}-page grace; stopping discovery at "
                             f"{len(self.visited_urls)} pages (only boost-only links remained)."
+                        )
+                        break
+
+                    if self._consecutive_blocked >= CRAWL_BOT_WALL_ABORT:
+                        logger.info(
+                            f"🧭 Crawl bot-wall abort: {self._consecutive_blocked} consecutive "
+                            f"fetch failures — site is actively blocking the crawler. "
+                            f"Stopping at {len(self.visited_urls)} pages."
                         )
                         break
 

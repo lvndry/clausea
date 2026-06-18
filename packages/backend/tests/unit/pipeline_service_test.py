@@ -165,11 +165,19 @@ async def test_run_pipeline_zero_documents_marks_no_documents_not_failed(mock_db
     async def fake_db_session():
         yield mock_db
 
+    # No pre-existing docs — confirms no_documents is still reached
+    empty_doc_svc = MagicMock()
+    empty_doc_svc.get_product_documents_by_slug = AsyncMock(return_value=[])
+
     with (
         patch("src.services.pipeline_service.db_session", fake_db_session),
         patch(
             "src.services.pipeline_service.create_product_service",
             return_value=product_svc,
+        ),
+        patch(
+            "src.services.pipeline_service.create_document_service",
+            return_value=empty_doc_svc,
         ),
         patch(
             "src.services.pipeline_service.PolicyDocumentPipeline",
