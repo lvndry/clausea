@@ -74,6 +74,40 @@ class DocumentStorer:
                                     document.url,
                                     canonical,
                                 )
+
+                    # Cross-run dedup: if the URL is new but there's already a document
+                    # for the same product with identical content, link instead of duplicating.
+                    if not existing_doc and document.text and document.text.strip():
+                        content_fp = _content_fingerprint(document.text)
+                        existing_doc = await document_service.find_existing_by_content_hash(
+                            db, source_product_id, content_fp
+                        )
+                        if existing_doc:
+                            logger_storage.info(
+                                "collapsing cross-run content duplicate %s "
+                                "(identical to stored %s, hash=%s)",
+                                document.url,
+                                existing_doc.url,
+                                content_fp[:12],
+                            )
+                            self._stats.duplicates_skipped += 1
+                            duplicate_count += 1
+                            if not existing_doc.is_linked_to_product(source_product_id):
+                                linked = await document_service.link_document_to_product(
+                                    db, existing_doc.id, source_product_id
+                                )
+                                if linked:
+                                    stored_count += 1
+                                    linked_count += 1
+                                    stored_delta += 1
+                                    found_delta += 1
+                                    logger_storage.info(
+                                        "linked content-duplicate %s to product %s",
+                                        existing_doc.url,
+                                        source_product_id,
+                                    )
+                            seen_fingerprints[(source_product_id, content_fp)] = existing_doc.url
+                            continue
                     if existing_doc:
                         linked_this_run = False
                         if not existing_doc.is_linked_to_product(source_product_id):
