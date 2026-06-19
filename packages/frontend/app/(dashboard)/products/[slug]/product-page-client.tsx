@@ -46,6 +46,8 @@ import type {
   ProductTopicReport,
 } from "@/types";
 
+import { deriveProductPageOverviewState } from "./product-page-fetch-state";
+
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
   if (fromWebsite) return fromWebsite;
@@ -63,6 +65,28 @@ function derivePipelineUrl(product: Product): string | null {
   if (fromDomain) return `https://${fromDomain}`;
 
   return null;
+}
+
+function deriveLimitReachedDisplayName(
+  productName: string | null | undefined,
+  productSlug: string,
+): string {
+  const normalizedName = productName?.trim();
+  if (normalizedName) return normalizedName;
+
+  const normalizedSlug = productSlug
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalizedSlug) {
+    return "this company";
+  }
+
+  return normalizedSlug
+    .split(" ")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
 }
 
 interface CompanyPageProps {
@@ -100,7 +124,7 @@ export default function CompanyPage({
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
-    "ready" | "indexing" | "unknown"
+    "ready" | "indexing" | "limit_reached" | "unknown"
   >(initialOverview ? "ready" : "unknown");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [failedJob, setFailedJob] = useState<FailedCrawlJob | null>(null);
@@ -142,14 +166,16 @@ export default function CompanyPage({
           setTopics((await topicsRes.json()) as ProductTopicReport);
         }
 
-        if (!prodRes.ok) {
-          setProduct(null);
-          setData(null);
-          setDocumentsLoading(false);
-          setIndexationMode("ready"); // render not-found
-          return;
-        }
-        const prodJson = (await prodRes.json()) as Product;
+        const overviewState = deriveProductPageOverviewState({
+          overviewOk: overviewRes.ok,
+          overviewStatus: overviewRes.status,
+          explainerStatus: explainerRes.status,
+          topicsStatus: topicsRes.status,
+        });
+
+        const prodJson = prodRes.ok
+          ? ((await prodRes.json()) as Product)
+          : null;
         setProduct(prodJson);
 
         const docsJson = docsRes.ok
@@ -158,14 +184,29 @@ export default function CompanyPage({
         setDocuments(docsJson);
         setDocumentsLoading(false);
 
+        if (overviewState === "limit_reached") {
+          setData(null);
+          setActiveJobId(null);
+          setFailedJob(null);
+          setEmptyJob(null);
+          setIndexationMode("limit_reached");
+          return;
+        }
+
+        if (!prodJson) {
+          setData(null);
+          setIndexationMode("ready"); // render not-found
+          return;
+        }
+
         // Overview was fetched in parallel — use the result immediately.
-        if (overviewRes.ok) {
+        if (overviewState === "ready") {
           setData((await overviewRes.json()) as ProductOverview);
           setIndexationMode("ready");
           return;
         }
 
-        if (overviewRes.status === 401) {
+        if (overviewState === "unauthorized") {
           setIndexationMode("ready");
           return;
         }
@@ -323,7 +364,67 @@ export default function CompanyPage({
     );
   }
 
+  const limitReachedDisplayName = deriveLimitReachedDisplayName(
+    product?.name,
+    slug,
+  );
+
   if (!data) {
+    if (indexationMode === "limit_reached") {
+      return (
+        <div className="space-y-6">
+          <div className="border-b border-border pb-8">
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+              {limitReachedDisplayName}
+            </h1>
+            <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
+              You have reached your current plan&apos;s analysis limit for
+              product reports.
+            </p>
+          </div>
+
+          <div className="border border-border bg-background">
+            <div className="p-6 border-b border-border bg-muted/5">
+              <div className="flex items-center gap-3">
+                <ShieldBan
+                  className="h-5 w-5 text-amber-600"
+                  strokeWidth={1.5}
+                />
+                <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                  Usage Limit Reached
+                </h3>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <h2 className="text-xl font-display font-medium text-foreground">
+                Upgrade to continue this analysis
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
+                This report is unavailable right now because your monthly quota
+                is exhausted. Upgrade your plan for more analyses, or return
+                after your quota resets.
+              </p>
+              <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                <Link href="/pricing">
+                  <Button className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold">
+                    View plans
+                  </Button>
+                </Link>
+                <Link href="/settings">
+                  <Button
+                    variant="outline"
+                    className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                  >
+                    Check my limits
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // If product exists but indexation isn't ready, show the indexation message + email capture
     if (product && indexationMode === "indexing") {
       // Terminal outcomes that must NOT retrigger the pipeline:

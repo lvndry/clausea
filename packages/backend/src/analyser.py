@@ -404,16 +404,20 @@ def _topic_supporting_citations(topic: Any) -> list[TopicSupportCitation]:
         *(citation for conflict in topic.conflicts for citation in (conflict.citations or [])),
     ]
     for citation in citation_pool:
-        if not citation.quote:
+        quote = getattr(citation, "quote", None)
+        if not quote:
             continue
+        document_id = getattr(citation, "document_id", "")
+        section_title = getattr(citation, "section_title", None)
+        document_url = getattr(citation, "document_url", None)
         selected.append(
             TopicSupportCitation(
-                document_id=citation.document_id,
-                document_title=citation.document_title,
-                document_url=citation.document_url,
-                quote=str(citation.quote),
-                section_title=citation.section_title,
-                verified=bool(citation.verified),
+                document_id=document_id,
+                document_title=getattr(citation, "document_title", None),
+                document_url=document_url,
+                quote=str(quote),
+                section_title=section_title,
+                verified=bool(getattr(citation, "verified", True)),
             )
         )
     return selected
