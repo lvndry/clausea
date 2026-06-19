@@ -130,7 +130,7 @@ _SYNONYM_MAP: dict[str, str] = {
     "clickstream": "usage data",
 }
 
-_SYNONYM_KEYS: list[str] = sorted(_SYNONYM_MAP.keys(), key=len, reverse=True)
+_SYNONYM_KEYS: list[str] = sorted(_SYNONYM_MAP.keys(), key=len, reverse=True)  # type: ignore[type-var]
 _SYNONYM_CLOSE_MATCH_CUTOFF = 0.85
 
 

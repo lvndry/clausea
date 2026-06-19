@@ -265,13 +265,14 @@ class PolicyDocumentPipeline:
     async def _start_crawl_session(self, product: Product, crawl_urls: list[str]) -> CrawlSession:
         session = CrawlSession(
             product_id=product.id,
-            job_id=self._job_id,
-            status="in_progress",
+            product_slug=product.slug,
+            seed_urls=crawl_urls,
+            status="running",
             started_at=datetime.now(),
         )
         async with db_session() as db:
             crawl_repo = CrawlRepository()
-            await crawl_repo.create(db, session)
+            await crawl_repo.create_session(db, session)
         return session
 
     async def _finish_crawl_session(
@@ -281,12 +282,12 @@ class PolicyDocumentPipeline:
         error: str | None = None,
     ) -> None:
         session.completed_at = datetime.now()
-        session.status = "error" if error else "completed"
+        session.status = "failed" if error else "completed"
         session.error = error
-        session.stats = stats.crawl_errors
+        session.stats = {"errors": stats.crawl_errors}
         async with db_session() as db:
             crawl_repo = CrawlRepository()
-            await crawl_repo.update(db, session)
+            await crawl_repo.update_session(db, session)
 
     def _should_fallback_crawl(self, documents: list[Document]) -> bool:
         if len(documents) < self.min_docs_before_fallback:

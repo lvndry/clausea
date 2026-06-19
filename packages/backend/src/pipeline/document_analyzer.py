@@ -47,7 +47,9 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
         self.max_content_length = max_content_length
 
         self.locale_analyzer = LocaleAnalyzer()
-        self.document_classifier = DocumentClassifier(max_content_length=max_content_length)
+        self.document_classifier: DocumentClassifier = DocumentClassifier(
+            max_content_length=max_content_length
+        )
         self.region_detector = RegionDetector()
         self.date_extractor = DateExtractor()
 
@@ -105,12 +107,12 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
     async def classify_document(
         self, url: str, text: str, metadata: dict[str, Any]
     ) -> dict[str, Any]:
-        return await self.document_classifier.classify(url, text, metadata)
+        return await self.document_classifier.classify_document(url, text, metadata)
 
     async def detect_regions(
         self, text: str, metadata: dict[str, Any], url: str | None = None
     ) -> dict[str, Any]:
-        return await self.region_detector.detect_regions(text, metadata, url)
+        return await self.region_detector.detect_regions(text, metadata, url or "")
 
     async def extract_title(
         self, markdown: str, metadata: dict[str, Any], url: str, doc_type: str
@@ -236,12 +238,14 @@ Return only the date in YYYY-MM-DD format, or "null" if no date is found."""
                 messages,
                 model_priority=[self.model_name] if self.model_name else None,
             )
-            content = response.choices[0].message.content.strip()
-            if content and content.lower() != "null":
-                parsed = self._parse_date_string(content)
-                if parsed:
-                    logger.debug(f"extracted effective date via LLM: {parsed}")
-                    return parsed
+            content: str | None = response.choices[0].message.content
+            if content:
+                content = content.strip()
+                if content.lower() != "null":
+                    parsed = self._parse_date_string(content)
+                    if parsed:
+                        logger.debug(f"extracted effective date via LLM: {parsed}")
+                        return parsed
         except Exception as e:
             logger.debug(f"LLM date extraction failed: {e}")
         return None

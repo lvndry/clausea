@@ -22,6 +22,14 @@ accessible at ``src.pipeline``.
 """
 
 from src.core.database import db_session
+
+# Re-export submodule references so pyright resolves
+# ``pipeline_module.pipeline`` and ``pipeline_module.document_storer``
+# in test monkeypatching code.
+from src.pipeline import (
+    document_storer,  # noqa: F811
+    pipeline,  # noqa: F811
+)
 from src.pipeline.crawl_result_processor import CrawlResultProcessor
 from src.pipeline.document_analyzer import DocumentAnalyzer
 from src.pipeline.document_storer import DocumentStorer
@@ -59,9 +67,11 @@ __all__ = [
     "_diff_fields",
     "create_document_service",
     "db_session",
+    "document_storer",
     "logger",
     "logger_analysis",
     "logger_discovery",
     "logger_storage",
     "main",
+    "pipeline",
 ]
