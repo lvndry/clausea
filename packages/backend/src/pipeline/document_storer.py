@@ -1,0 +1,150 @@
+"""Document storage with deduplication, update detection, and versioning."""
+
+from __future__ import annotations
+
+import hashlib
+
+from src.core.database import db_session
+from src.models.document import Document
+from src.pipeline.helpers import (
+    _canonical_rank,
+    _content_fingerprint,
+    _diff_fields,
+    logger_storage,
+)
+from src.pipeline.models import ProcessingStats
+from src.repositories.document_version_repository import DocumentVersionRepository
+from src.services.service_factory import create_document_service
+
+
+class DocumentStorer:
+
+    def __init__(self, stats: ProcessingStats, job_id: str | None = None) -> None:
+        self._stats = stats
+        self._job_id = job_id
+
+    async def store_documents(self, documents: list[Document]) -> int:
+        stored_count = 0
+        linked_count = 0
+        updated_count = 0
+        duplicate_count = 0
+        error_count = 0
+
+        documents = sorted(documents, key=lambda d: _canonical_rank(d.url))
+        seen_fingerprints: dict[tuple[str | None, str], str] = {}
+
+        async with db_session() as db:
+            document_service = create_document_service()
+
+            for document in documents:
+                try:
+                    source_product_id = document.product_id
+                    existing_doc = await document_service.get_document_by_url(db, document.url)
+                    if existing_doc:
+                        linked_this_run = False
+                        if not existing_doc.is_linked_to_product(source_product_id):
+                            linked_this_run = await document_service.link_document_to_product(
+                                db, existing_doc.id, source_product_id
+                            )
+                            if linked_this_run:
+                                logger_storage.info(
+                                    "linked existing canonical document %s to product %s",
+                                    document.url,
+                                    source_product_id,
+                                )
+
+                        metadata_str = f"|{document.title}|{document.doc_type}|{document.locale}|{','.join(document.regions)}|{document.effective_date}|"
+                        current_hash = hashlib.sha256(
+                            (document.text + metadata_str).encode()
+                        ).hexdigest()
+
+                        existing_metadata_str = f"|{existing_doc.title}|{existing_doc.doc_type}|{existing_doc.locale}|{','.join(existing_doc.regions)}|{existing_doc.effective_date}|"
+                        existing_hash = hashlib.sha256(
+                            (existing_doc.text + existing_metadata_str).encode()
+                        ).hexdigest()
+
+                        if current_hash != existing_hash:
+                            if not document.text.strip() and existing_doc.text.strip():
+                                logger_storage.warning(
+                                    f"refusing to overwrite non-empty document with empty content: {document.url}"
+                                )
+                                self._stats.duplicates_skipped += 1
+                                duplicate_count += 1
+                                continue
+
+                            document.product_id = existing_doc.product_id
+                            document.product_ids = [
+                                *existing_doc.product_ids,
+                                *(
+                                    [source_product_id]
+                                    if source_product_id not in existing_doc.product_ids
+                                    else []
+                                ),
+                            ]
+                            changed = _diff_fields(existing_doc, document)
+                            await DocumentVersionRepository().archive(
+                                db, existing_doc, job_id=self._job_id, changed_fields=changed
+                            )
+
+                            logger_storage.info(
+                                f"updating existing document with changes: {document.url}"
+                            )
+                            document.id = existing_doc.id
+                            document.content_hash = _content_fingerprint(document.text)
+                            await document_service.update_document(db, document)
+                            stored_count += 1
+                            updated_count += 1
+                        else:
+                            if linked_this_run:
+                                stored_count += 1
+                                linked_count += 1
+                            else:
+                                logger_storage.debug(
+                                    f"skipping unchanged document (duplicate): {document.url}"
+                                )
+                                self._stats.duplicates_skipped += 1
+                                duplicate_count += 1
+                        if document.text and document.text.strip():
+                            seen_fingerprints[
+                                (source_product_id, _content_fingerprint(document.text))
+                            ] = document.url
+                    else:
+                        if document.text and document.text.strip():
+                            fp_key = (
+                                source_product_id,
+                                _content_fingerprint(document.text),
+                            )
+                            kept_url = seen_fingerprints.get(fp_key)
+                            if kept_url and kept_url != document.url:
+                                logger_storage.info(
+                                    f"collapsing same-content variant {document.url} "
+                                    f"(identical to {kept_url})"
+                                )
+                                self._stats.duplicates_skipped += 1
+                                duplicate_count += 1
+                                continue
+                            seen_fingerprints[fp_key] = document.url
+
+                        logger_storage.info(f"storing new document: {document.url}")
+                        document.content_hash = _content_fingerprint(document.text)
+                        await document_service.store_document(db, document)
+                        stored_count += 1
+
+                except Exception as e:
+                    logger_storage.error(
+                        f"failed to store document {document.url}: {e}", exc_info=True
+                    )
+                    error_count += 1
+
+        if len(documents) > 0:
+            new_count = stored_count - updated_count - linked_count
+            logger_storage.info(
+                f"storage complete: {stored_count} stored "
+                f"({new_count} new, {updated_count} updated, {linked_count} linked), "
+                f"{duplicate_count} duplicates skipped, {error_count} errors"
+            )
+
+        return stored_count
+
+
+__all__ = ["DocumentStorer"]

@@ -46,8 +46,10 @@ async def test_collapses_same_content_locale_variants(monkeypatch):
     async def fake_db_session():
         yield MagicMock()
 
-    monkeypatch.setattr(pipeline_module, "db_session", fake_db_session)
-    monkeypatch.setattr(pipeline_module, "create_document_service", lambda: service)
+    monkeypatch.setattr(pipeline_module.pipeline, "db_session", fake_db_session)
+    monkeypatch.setattr(pipeline_module.pipeline, "create_document_service", lambda: service)
+    monkeypatch.setattr(pipeline_module.document_storer, "db_session", fake_db_session)
+    monkeypatch.setattr(pipeline_module.document_storer, "create_document_service", lambda: service)
 
     pipeline = PolicyDocumentPipeline()
 
@@ -92,8 +94,10 @@ async def test_reuses_canonical_document_across_products(monkeypatch):
     async def fake_db_session():
         yield MagicMock()
 
-    monkeypatch.setattr(pipeline_module, "db_session", fake_db_session)
-    monkeypatch.setattr(pipeline_module, "create_document_service", lambda: service)
+    monkeypatch.setattr(pipeline_module.pipeline, "db_session", fake_db_session)
+    monkeypatch.setattr(pipeline_module.pipeline, "create_document_service", lambda: service)
+    monkeypatch.setattr(pipeline_module.document_storer, "db_session", fake_db_session)
+    monkeypatch.setattr(pipeline_module.document_storer, "create_document_service", lambda: service)
 
     pipeline = PolicyDocumentPipeline()
     stored_count = await pipeline._store_documents([incoming])
