@@ -205,16 +205,16 @@ async def analyse_product_documents(
     sem = asyncio.Semaphore(3)
 
     failed_doc_ids: list[str] = []
-    # Mutable counter captured by _analyse_one closure.
-    skip_counter: list[int] = [0]
+    analyses_skipped = 0
 
     async def _analyse_one(index: int, doc: Document) -> None:
+        nonlocal analyses_skipped
         await token.check_cancellation()
         async with sem:
             # Skip LLM re-analysis when findings already exist for this document
             # and the document content has not changed since the last analysis run.
             if not force_reanalyze and _analysis_up_to_date(doc):
-                skip_counter[0] += 1
+                analyses_skipped += 1
                 logger.info(
                     f"⏭ Skipping re-analysis for document {doc.id} ({doc.url}) — "
                     "existing analysis is up-to-date (content unchanged)"
@@ -287,7 +287,6 @@ async def analyse_product_documents(
         if isinstance(result, BaseException):
             raise result
 
-    analyses_skipped = skip_counter[0]
     succeeded = total_docs - len(failed_doc_ids) - analyses_skipped
     if failed_doc_ids:
         logger.warning(
