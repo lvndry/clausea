@@ -105,9 +105,15 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
         return await self.locale_analyzer.detect_locale(text, metadata, url)
 
     async def classify_document(
-        self, url: str, text: str, metadata: dict[str, Any]
+        self,
+        url: str,
+        text: str,
+        metadata: dict[str, Any],
+        legal_score: float | None = None,
     ) -> dict[str, Any]:
-        return await self.document_classifier.classify_document(url, text, metadata)
+        return await self.document_classifier.classify_document(
+            url, text, metadata, legal_score=legal_score
+        )
 
     async def detect_regions(
         self, text: str, metadata: dict[str, Any], url: str | None = None

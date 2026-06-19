@@ -90,7 +90,7 @@ class CrawlResultProcessor:
                 return None
 
             classification = await self._analyzer.classify_document(
-                result.url, text_content, result.metadata
+                result.url, text_content, result.metadata, legal_score=result.legal_score
             )
 
             logger_analysis.debug(
