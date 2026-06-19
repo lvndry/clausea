@@ -1,5 +1,31 @@
-"""Merge helpers — accumulate chunk-level extraction results into final structures."""
+"""Accumulates chunk-level LLM extraction outputs into a single coherent ``ExtractionResult``.
 
+**What it does**
+The extraction service splits a policy document into chunks, sends each chunk to
+the LLM, and gets per-chunk JSON results.  This module merges those partial results
+across chunks using merge strategies that vary by field type:
+- Yes/no signals: ``_merge_privacy_signals`` — ``yes`` beats ``no`` beats ``unclear``.
+- Lists (data items, third parties, trackers): ``_merge_data_items`` — deduplicated
+  by value with evidence concatenated.
+- Text items (AI usage, children policy): ``_merge_text_items`` — concatenated with
+  separator, deduplicating near-identical statements.
+
+**What it contains**
+- ``_merge_privacy_signals(current, new_val, quote_field)``: yes/no/unclear merger.
+- ``_merge_data_items(current, new_items)``: list merger with dedup by ``value``.
+- ``_merge_third_parties``, ``_merge_cookie_trackers``, ``_merge_retention_rules``:
+  domain-specific list mergers with different dedup keys.
+- ``_merge_ai_usage``, ``_merge_children_policy``: text accumulation mergers.
+- ``_clean_raw(raw_text)``: post-merge cleanup of concatenated markdown quotes.
+- ``_add_evidence(quote_field)``: records a quote in the extraction metadata.
+
+**What it allows/prevents**
+Allows the extraction service to handle arbitrarily long documents by processing
+them in model-sized chunks.  Prevents duplicate extraction entries and ensures
+evidence quotes are preserved across chunk boundaries.
+"""
+
+import difflib
 import re
 from typing import Any, cast
 
@@ -60,6 +86,12 @@ _SYNONYM_MAP: dict[str, str] = {
     "full name": "name",
     "first name": "name",
     "last name": "name",
+    "firstname": "name",
+    "lastname": "name",
+    "given name": "name",
+    "family name": "name",
+    "forename": "name",
+    "surname": "name",
     "user name": "username",
     "biometric data": "biometrics",
     "biometric information": "biometrics",
@@ -70,12 +102,49 @@ _SYNONYM_MAP: dict[str, str] = {
     "financial information": "financial data",
     "payment information": "payment data",
     "credit card": "payment data",
+    "debit card": "payment data",
+    "billing info": "payment data",
+    "billing information": "payment data",
+    "device id": "device identifier",
+    "device information": "device identifier",
+    "unique device identifier": "device identifier",
+    "advertising id": "ad identifier",
+    "ad identifier": "ad identifier",
+    "idfa": "ad identifier",
+    "login info": "account credentials",
+    "login information": "account credentials",
+    "account credentials": "account credentials",
+    "social security number": "ssn",
+    "national id": "government id",
+    "passport number": "government id",
+    "drivers license": "government id",
+    "driver's license": "government id",
+    "purchase history": "transaction data",
+    "transaction history": "transaction data",
+    "shopping history": "transaction data",
+    "browsing history": "usage data",
+    "search history": "usage data",
+    "viewing history": "usage data",
+    "watch history": "usage data",
+    "click stream": "usage data",
+    "clickstream": "usage data",
 }
+
+_SYNONYM_KEYS: list[str] = sorted(_SYNONYM_MAP.keys(), key=len, reverse=True)
+_SYNONYM_CLOSE_MATCH_CUTOFF = 0.85
 
 
 def _dedupe_key(value: str) -> str:
     normalized = re.sub(r"\s+", " ", (value or "")).strip().lower()
-    return _SYNONYM_MAP.get(normalized, normalized)
+    exact = _SYNONYM_MAP.get(normalized)
+    if exact is not None:
+        return exact
+    close = difflib.get_close_matches(
+        normalized, _SYNONYM_KEYS, n=1, cutoff=_SYNONYM_CLOSE_MATCH_CUTOFF
+    )
+    if close:
+        return _SYNONYM_MAP[close[0]]
+    return normalized
 
 
 def _merge_text_items(

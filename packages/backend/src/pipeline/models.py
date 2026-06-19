@@ -1,4 +1,22 @@
-"""Pydantic models for the pipeline package."""
+"""Pipeline-specific Pydantic models for runtime statistics.
+
+**What it does**
+Defines ``ProcessingStats`` — a ``BaseModel`` with integer counters that the
+pipeline increments as it processes products.  Each pipeline run instantiates
+one ``ProcessingStats`` and passes it through to ``CrawlResultProcessor`` and
+``DocumentStorer`` so every sub-stage can record its activity.
+
+**What it contains**
+- ``ProcessingStats`` fields:
+  - ``products_processed`` / ``products_failed``
+  - ``urls_found`` / ``crawl_results`` / ``crawl_errors``
+  - ``documents_stored`` / ``documents_updated`` / ``documents_skipped``
+  - ``analysis_errors``
+
+**What it allows/prevents**
+Allows the pipeline to emit structured run summaries for monitoring dashboards.
+Prevents ad-hoc metric dicts with inconsistent key names across submodules.
+"""
 
 from typing import Any
 

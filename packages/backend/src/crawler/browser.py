@@ -1,7 +1,28 @@
-"""Shared headless-browser lifecycle management.
+"""Shared headless-browser lifecycle management for SPA/hydration-dependent pages.
 
-A single Camoufox/Firefox instance is shared by every crawler in the process.
-Keyed by the running event loop so asyncio primitives bind correctly.
+**What it does**
+Maintains a single ``AsyncCamoufox`` (Firefox) instance per running event loop.
+When ``ClauseaCrawler`` encounters a page that appears to be a JavaScript SPA
+(empty or very short text body after static fetch), it launches the browser,
+navigates, waits for network-idle, and re-extracts the page text after JS
+hydration.  The browser is lazy-started on first use and persisted across
+multiple URLs within the same crawl.
+
+**What it contains**
+- ``setup_browser()``: creates and returns an ``AsyncCamoufox`` context manager.
+- ``cleanup_browser()``: tears down the shared instance (called at crawl end).
+- ``_shared_browser_instances``, ``_shared_browser_contexts``: module-level dicts
+  keyed by event-loop id.
+- ``_shared_browser_locks``, ``_global_browser_semaphores``: asyncio primitives
+  for safe concurrent access to the shared instance.
+- ``_block_heavy_assets(route, request)``: CDP route handler that blocks images,
+  fonts, and media from loading inside the browser (saves bandwidth and time).
+
+**What it allows/prevents**
+Allows the crawler to extract content from JS-rendered policy pages that would
+otherwise appear blank.  Prevents launching a full browser per URL (only one
+instance per event loop) and prevents loading of non-essential assets during
+rendering.
 """
 
 import asyncio

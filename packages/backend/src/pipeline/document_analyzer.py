@@ -1,4 +1,25 @@
-"""AI-powered document analyzer for locale detection, legal classification, and region analysis."""
+"""AI-powered document analysis: locale detection, legal classification, date extraction, and region analysis.
+
+**What it does**
+After the crawler returns a ``CrawlResult``, ``DocumentAnalyzer`` runs four
+analyses in sequence, each calling an LLM-backed analyzer:
+1. ``LocaleAnalyzer`` — detects the document language (en/fr/de/…).
+2. ``DocumentClassifier`` — classifies the document type (privacy policy,
+   terms of service, cookie policy, etc.).
+3. ``DateExtractor`` — extracts effective/last-updated dates from the text.
+4. ``RegionDetector`` — determines which legal regimes apply (GDPR, CCPA, LGPD, …).
+
+**What it contains**
+- ``DocumentAnalyzer`` class that holds references to all four analyzer singletons.
+- ``analyze(crawl_result) -> dict``: runs all four analyzers, returns combined
+  analysis dict with confidence scores.
+
+**What it allows/prevents**
+Allows the pipeline to enrich crawl results with semantic metadata before
+storage.  Prevents non-English documents from being processed with wrong
+locale assumptions and prevents misclassification of document type (critical
+for choosing the right extraction clusters).
+"""
 
 import re
 from datetime import datetime
@@ -16,7 +37,6 @@ logger = get_logger(__name__)
 
 
 class DocumentAnalyzer(LLMUsageTrackingMixin):
-
     def __init__(
         self,
         model_name: SupportedModel | None = None,
@@ -125,9 +145,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
         logger.debug(f"extracted title from fallback: '{title}'")
         return {"title": title, "source": source, "confidence": 0.5}
 
-    async def extract_effective_date(
-        self, content: str, metadata: dict[str, Any]
-    ) -> str | None:
+    async def extract_effective_date(self, content: str, metadata: dict[str, Any]) -> str | None:
         result = await self._extract_effective_date_static(content, metadata)
         if result:
             return result
@@ -196,12 +214,12 @@ Rules:
 4. Look for dates in headers, footers, and introductory paragraphs first
 5. Be thorough — check multiple locations in the text"""
 
-        text_sample = content[:min(len(content), self.max_content_length)]
+        text_sample = content[: min(len(content), self.max_content_length)]
 
         user_prompt = f"""Find the effective date or last updated date in this policy document.
 
-Document URL: {metadata.get('url', 'unknown')}
-Document type: {metadata.get('doc_type', 'unknown')}
+Document URL: {metadata.get("url", "unknown")}
+Document type: {metadata.get("doc_type", "unknown")}
 
 Text:
 {text_sample}
@@ -229,7 +247,7 @@ Return only the date in YYYY-MM-DD format, or "null" if no date is found."""
         return None
 
     def _parse_date_string(self, date_str: str) -> str | None:
-        date_str = date_str.strip().strip('.,;:)')
+        date_str = date_str.strip().strip(".,;:)")
         if not date_str:
             return None
 

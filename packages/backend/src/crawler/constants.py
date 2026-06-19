@@ -1,4 +1,21 @@
-"""Module-level constants and helper functions used across the crawler package."""
+"""Crawler-wide constants, compiled regexes, and locale-canonicalisation functions.
+
+**What it contains**
+- Default ``User-Agent`` and ``Accept`` header values sent on every HTTP request.
+- Timeout/env-or-default integers controlling browser launch, navigation, SPA hydration, etc.
+- Pre-compiled regexes for asset blocking (``_BLOCKED_ASSETS_RE``), mirror/staging subdomain
+  detection (``_MIRROR_SUBDOMAIN_RE``), policy-sitemap heuristics (``_POLICY_SITEMAP_RE``),
+  and consent-banner container elements (``_CONSENT_CONTAINER_RE``).
+- Tracking-query-param filter set (``_TRACKING_QUERY_PARAMS``), locale-language code sets,
+  and consent-banner text markers.
+- ``locale_canonical_key`` and ``english_locale_canonical_key`` — URL canonicalisers that
+  strip locale-path segments and locale-query params so the same document in different
+  languages maps to one crawl result.
+
+**What it prevents**
+Importing magic numbers or duplicated regexes across the nine crawler submodules.
+All tunable crawler parameters live here, sourced from env vars with sensible defaults.
+"""
 
 import os
 import re

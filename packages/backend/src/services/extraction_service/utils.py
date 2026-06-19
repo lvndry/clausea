@@ -1,4 +1,27 @@
-"""Utility functions for extraction: validation, chunking, evidence construction."""
+"""Utilities that support the chunked extraction pipeline: validation, chunking, evidence.
+
+**What it does**
+- ``_extraction_validator(result)``: validates the shape of an LLM extraction response
+  (must be a dict with ``privacy_signals``, ``data_items``, etc.), returning the
+  parsed ``ExtractionResult`` or raising a clear error.
+- ``_chunk_text(text, max_chunk_size, overlap)``: splits a long document into
+  overlapping chunks that fit within the LLM context window, preserving sentence
+  boundaries where possible.
+- ``resolve_quote_offsets(document_text, quotes)``: maps extracted quote strings
+  back to byte/character offsets in the original document for evidence rendering.
+
+**What it contains**
+- ``_extraction_validator`` function.
+- ``_chunk_text`` function.
+- ``_add_evidence`` helper that records which quote contributed to each merged
+  signal (called from ``merging.py``).
+- Imports from ``src.utils.quotes`` for offset resolution.
+
+**What it allows/prevents**
+Allows the extraction service to handle documents of arbitrary length by splitting
+into model-sized chunks.  Prevents malformed LLM output from propagating silently
+into the merge stage.
+"""
 
 import hashlib
 import json

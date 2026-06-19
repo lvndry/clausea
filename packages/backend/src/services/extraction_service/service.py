@@ -1,7 +1,23 @@
-"""Evidence-first extraction for policy documents (v4).
+"""Evidence-first structured extraction engine for policy documents (v4 architecture).
 
-Extracts structured facts from a document WITH evidence (exact quotes),
-so downstream summaries can be generated from extracted facts only.
+**What it does**
+Takes a ``Document`` (with cleaned text), splits it into overlapping chunks,
+sends each chunk through the LLM with a structured JSON extraction prompt,
+parses the per-chunk results, merges them across chunks, and returns a complete
+``ExtractionResult`` with evidence quotes and confidence scores.
+
+**What it contains**
+- ``extract_document_facts(document, …)``: the main entry point, called by the pipeline.
+- ``_extract_chunk(chunk_text, document_type, cluster_keys)``: sends one chunk to
+  the LLM and parses the response.
+- ``_merge_all(results)``: invokes all ``_merge_*`` functions from ``merging.py``.
+- ``_EXTRACTION_PRIMARY``: cluster key for the primary extraction pass.
+
+**What it allows/prevents**
+Allows the pipeline to turn a raw policy document into a structured fact set
+suitable for summarisation and comparison.  Prevents hallucinations by requiring
+every extracted fact to include a supporting quote from the source text.
+Prevents context-window overflow by chunking long documents.
 """
 
 from __future__ import annotations

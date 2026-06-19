@@ -1,4 +1,26 @@
-"""Main pipeline orchestrator for policy document crawling and processing."""
+"""Main pipeline orchestrator — drives crawl → analyse → store for every product.
+
+**What it does**
+``PolicyDocumentPipeline`` is the top-level coordinator.  For each product:
+1. Calls ``ClauseaCrawler.crawl_for_policy_documents(product)`` to discover
+   and fetch policy pages.
+2. Iterates over ``CrawlResult`` objects, passing each to ``CrawlResultProcessor``
+   for validation and ``Document`` creation.
+3. Passes each ``Document`` to ``DocumentStorer`` for deduplicated persistence.
+4. Logs run statistics and returns ``ProcessingStats``.
+
+**What it contains**
+- ``PolicyDocumentPipeline`` class with ``run()`` method.
+- ``_normalize_url(url)``: pipeline-level URL normaliser (``https://`` prefix, no trailing slash).
+- ``_check_trusted_urls(result, trusted)``: bypass logic for pre-approved policy URLs.
+- ``main()``: CLI entry point.
+
+**What it allows/prevents**
+Allows a single ``run()`` call to process hundreds of products without manual
+intervention.  Prevents crawl results from bypassing analysis or storage (every
+result flows through the full pipeline).  Prevents the pipeline from crashing
+on individual product failures (catches and logs, continues to next product).
+"""
 
 from __future__ import annotations
 
@@ -37,7 +59,6 @@ load_dotenv()
 
 
 class PolicyDocumentPipeline:
-
     def __init__(
         self,
         max_depth: int | None = None,
@@ -81,11 +102,17 @@ class PolicyDocumentPipeline:
         self.use_browser = _resolve(use_browser, c.use_browser)
         self.browser_concurrency = c.browser_concurrency
         self.proxy = _resolve(proxy, c.proxy)
-        self.fallback_min_legal_score = _resolve(fallback_min_legal_score, c.fallback_min_legal_score)
-        self.discovery_min_legal_score = _resolve(discovery_min_legal_score, c.discovery_min_legal_score)
+        self.fallback_min_legal_score = _resolve(
+            fallback_min_legal_score, c.fallback_min_legal_score
+        )
+        self.discovery_min_legal_score = _resolve(
+            discovery_min_legal_score, c.discovery_min_legal_score
+        )
         self.discovery_strategy = _resolve(discovery_strategy, c.discovery_strategy)
         self.fallback_strategy = _resolve(fallback_strategy, c.fallback_strategy)
-        self.min_docs_before_fallback = _resolve(min_docs_before_fallback, c.min_docs_before_fallback)
+        self.min_docs_before_fallback = _resolve(
+            min_docs_before_fallback, c.min_docs_before_fallback
+        )
         self.required_doc_types = (
             required_doc_types if required_doc_types is not None else list(c.required_doc_types)
         )
@@ -160,6 +187,7 @@ class PolicyDocumentPipeline:
                 assert self.progress_callback is not None
                 callback_result = self.progress_callback(progress_phase, current, total)
                 if callback_result is not None:
+
                     async def _wrap():
                         await callback_result
 
@@ -234,9 +262,7 @@ class PolicyDocumentPipeline:
 
         return urls
 
-    async def _start_crawl_session(
-        self, product: Product, crawl_urls: list[str]
-    ) -> CrawlSession:
+    async def _start_crawl_session(self, product: Product, crawl_urls: list[str]) -> CrawlSession:
         session = CrawlSession(
             product_id=product.id,
             job_id=self._job_id,
@@ -269,9 +295,7 @@ class PolicyDocumentPipeline:
             found_types = {d.doc_type for d in documents if d.doc_type}
             missing = set(self.required_doc_types) - found_types
             if missing:
-                logger_discovery.info(
-                    f"🔍 Fallback needed — missing required types: {missing}"
-                )
+                logger_discovery.info(f"🔍 Fallback needed — missing required types: {missing}")
                 return True
         return False
 
@@ -304,9 +328,7 @@ class PolicyDocumentPipeline:
                 if document is not None:
                     documents.append(document)
             else:
-                logger_discovery.warning(
-                    f"Failed to crawl {result.url}: {result.error_message}"
-                )
+                logger_discovery.warning(f"Failed to crawl {result.url}: {result.error_message}")
                 self.stats.crawl_errors.append(
                     {
                         "url": result.url,
@@ -355,6 +377,7 @@ class PolicyDocumentPipeline:
         total_results = 0
 
         try:
+
             async def result_callback(result: CrawlResult) -> None:
                 docs = await self._classify_results(
                     [result],
@@ -387,8 +410,7 @@ class PolicyDocumentPipeline:
             total_results += len(discovery_results)
 
             logger_discovery.info(
-                f"📄 [{product.name}] Discovery pass complete: "
-                f"{len(discovery_results)} pages"
+                f"📄 [{product.name}] Discovery pass complete: {len(discovery_results)} pages"
             )
 
             if self._should_fallback_crawl(processed_documents):
@@ -410,8 +432,7 @@ class PolicyDocumentPipeline:
                 total_results += len(fallback_results)
 
                 logger_discovery.info(
-                    f"📄 [{product.name}] Fallback pass complete: "
-                    f"{len(fallback_results)} pages"
+                    f"📄 [{product.name}] Fallback pass complete: {len(fallback_results)} pages"
                 )
             else:
                 logger_discovery.info(
@@ -422,9 +443,7 @@ class PolicyDocumentPipeline:
             self.stats.total_urls_crawled += total_results
             self.stats.total_documents_found += total_results
 
-            logger.info(
-                f"💾 [{product.name}] Stored {len(processed_documents)} policy documents"
-            )
+            logger.info(f"💾 [{product.name}] Stored {len(processed_documents)} policy documents")
 
             self.stats.products_processed += 1
             await self._finish_crawl_session(session, self.stats)

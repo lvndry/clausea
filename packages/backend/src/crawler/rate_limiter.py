@@ -1,4 +1,23 @@
-"""Per-domain rate limiting for concurrent crawling."""
+"""Per-domain concurrency gate that enforces crawl-delay between requests to the same origin.
+
+**What it does**
+Maintains a dict of ``domain → (asyncio.Lock, last_request_timestamp)`` so that
+concurrent ``ClauseaCrawler`` workers serialise requests to the same domain.
+The ``acquire`` method computes a jittered sleep duration from the domain's
+robots.txt crawl-delay (or a default 1 s) and the elapsed time since the last
+request to that domain.
+
+**What it contains**
+- ``DomainRateLimiter`` with ``acquire(domain)`` async context manager.
+- ``self.domain_locks``: ``dict[str, asyncio.Lock]`` — one lock per domain.
+- ``self.domain_last_request``: ``dict[str, float]`` — monotonic timestamps.
+- ``_jitter(min_delay)``: adds ±25 % random jitter to de-synchronise workers.
+
+**What it allows/prevents**
+Allows multiple crawler workers to run concurrently without hammering a single
+origin.  Prevents HTTP 429 responses, connection resets, and IP-based blocking
+by the target server.
+"""
 
 import asyncio
 import random

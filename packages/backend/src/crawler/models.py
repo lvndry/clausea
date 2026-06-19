@@ -1,4 +1,20 @@
-"""Data models and containers for the crawler package."""
+"""Data containers that flow through the crawler and into the pipeline.
+
+**What it contains**
+- ``CrawlResult``: outcome of one crawled URL — raw HTML, extracted text, HTTP metadata,
+  policy-score, doc-type classification, and error info.  This is the primary output
+  of the crawler and input to the pipeline.
+- ``CrawlStats``: aggregate counters (pages visited, errors, cache hits, robots-blocked)
+  accumulated during a crawl iteration for logging and monitoring.
+- ``PageContent``: intermediate container holding cleaned text, title, and content hash
+  after HTML-to-text extraction but before classification.
+- ``StaticFetchResult``: low-level HTTP fetch result with status, headers, body bytes,
+  and redirect chain — used internally by the HTTP stack.
+
+**What it prevents**
+Ad-hoc dicts or unstructured tuples being passed between crawler internals.
+Pydantic/dataclass validation ensures every field has the expected type.
+"""
 
 import time
 from dataclasses import dataclass

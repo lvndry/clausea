@@ -1,4 +1,25 @@
-"""Robots.txt compliance checking."""
+"""Robots.txt fetcher, parser, and compliance checker for the crawl frontier.
+
+**What it does**
+For every domain the crawler encounters, ``RobotsTxtChecker`` retrieves
+``/robots.txt`` (once, then cached), parses it into:
+- A list of ``(user_agent_pattern, path_regex, allow)`` tuples.
+- An extracted ``crawl_delay`` in seconds for that user agent.
+
+The ``is_allowed(url, user_agent)`` method iterates rule tuples in reverse order
+(robots.txt priority — last matching rule wins) and returns ``True``/``False``.
+
+**What it contains**
+- ``RobotsTxtChecker`` with ``is_allowed``, ``fetch_robots``, and ``parse_robots``.
+- ``_parse_robots_txt(text, user_agent)``: returns ``(rules, crawl_delay)``.
+- ``_wildcard_to_regex(pattern)``: converts robots.txt wildcard to Python regex.
+- ``self._cache: dict[str, RobotsTxtEntry]`` — per-domain parsed results.
+
+**What it allows/prevents**
+Allows the crawler to respect site operator crawl policies.  Prevents crawling
+directories the site explicitly disallows (e.g. ``/login``, ``/admin``, API
+endpoints) and enforces ``Crawl-delay`` directives.
+"""
 
 import re
 from collections import OrderedDict

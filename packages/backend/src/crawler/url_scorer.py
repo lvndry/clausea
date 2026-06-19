@@ -1,4 +1,24 @@
-"""URL relevance scoring for policy document discovery."""
+"""Heuristic URL scorer that ranks candidate URLs by policy-document relevance.
+
+**What it does**
+Assigns a score (0–1) to each URL the crawler discovers based on path tokens,
+domain suffix, query parameters, and sitemap membership.  URLs containing tokens
+like ``privacy``, ``terms``, ``gdpr``, ``legal``, or ``cookie`` score higher.
+Redirect query params (``?return_to=…``, ``?redirect=…``) boost score because they
+often point to a login wall masking the real policy page.
+
+**What it contains**
+- ``URLScorer`` class with ``score_url`` and ``score_urls`` methods.
+- ``_POLICY_PATH_RE``: compiled regex matching known policy-path tokens.
+- ``_policy_domain_suffixes``: domain TLD/subdomain heuristics (``/legal``, ``/privacy``, …).
+- LRU-cached helpers (``_domain_score``, ``_path_score``, ``_query_score``) so
+  repeated scoring of the same URL is O(1).
+
+**What it allows/prevents**
+Allows the crawl frontier to prioritise high-value URLs when the page budget is
+exhausted.  Prevents the crawler from wasting requests on unlikely pages (login,
+admin, CDN assets) before the content-classifier gets to see them.
+"""
 
 import re
 from functools import lru_cache

@@ -1,4 +1,26 @@
-"""Module-level helpers and constants for the pipeline package."""
+"""Shared helpers, constants, and loggers used by pipeline submodules.
+
+**What it does**
+Provides:
+- ``_content_fingerprint(content)``: SHA-256 hash of document text for change detection.
+- ``_canonical_rank(canonical_url)``: numeric priority for locale-dedup (English first).
+- ``_diff_fields(old, new)``: field-level diff between two ``ExtractionResult`` objects
+  (used by ``DocumentStorer`` to decide whether an update is substantive).
+- ``RESUME_FRESH_HOURS``: env-configurable time window for pipeline resume behaviour.
+- ``MIN_LEGAL_SCORE_THRESHOLD``: minimum policy score for a result to enter storage.
+- ``_LOCALE_HOST_RE``, ``_LOCALE_PATH_RE``: pre-compiled locale-detection regexes.
+- ``_TLD_EXTRACT``: shared ``tldextract`` instance (cached suffix list).
+- Package-level loggers (``logger``, ``logger_analysis``, ``logger_discovery``,
+  ``logger_storage``) so all submodules use the same named loggers.
+
+**What it contains**
+Pure functions and module-level constants — no classes, no mutable state.
+
+**What it allows/prevents**
+Allows pipeline submodules to share fingerprinting, diffing, and logging
+without circular imports.  Prevents repeated ``tldextract`` instantiation and
+regex compilation across modules.
+"""
 
 from __future__ import annotations
 

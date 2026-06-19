@@ -1,4 +1,16 @@
-"""Policy document crawler — re-exports for backward compatibility."""
+"""Re-export shim so ``from src.crawler import …`` works as it did from the monolithic ``crawler.py``.
+
+**What it contains**
+Every public symbol once defined in ``src/crawler.py`` — the main
+``ClauseaCrawler`` class, helper types, constants, and internal utilities
+that test monkeypatches rely on.
+
+**What it prevents**
+Consumers importing directly from submodules (``src.crawler.client``,
+``src.crawler.robots``, etc.).  All access goes through this single
+``__init__`` so the internal module structure can be reorganised without
+touching callers.
+"""
 
 from src.crawler.browser import (
     _block_heavy_assets,
@@ -12,6 +24,7 @@ from src.crawler.client import (
     ClauseaCrawler,
     crawl_for_policy_documents,
     main,
+    needs_browser_fallback,
     test_specific_url,
 )
 from src.crawler.constants import (
@@ -86,6 +99,7 @@ __all__ = [
     "get_global_browser_slot",
     "locale_canonical_key",
     "main",
+    "needs_browser_fallback",
     "setup_browser",
     "test_specific_url",
 ]

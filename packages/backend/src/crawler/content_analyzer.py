@@ -1,4 +1,24 @@
-"""Content-based policy document analysis."""
+"""Content-level heuristic classifier that decides whether a scraped page is a policy document.
+
+**What it does**
+After a page is fetched and its HTML is cleaned to text, ``ContentAnalyzer`` checks
+the text for:
+- Density of legal-phrase matches (``by using this service you agree to``,
+  ``we collect your personal data``, … — 28 compiled regexes in ``_legal_phrases``).
+- Presence of consent-banner markers (``manage consent``, ``reject all``, …).
+- Existence of ``<dt>/<dd>`` definition lists (common in policy tables).
+
+**What it contains**
+- ``ContentAnalyzer`` class with ``analyze`` and ``is_likely_policy`` methods.
+- ``_compiled_legal_phrases``: list of 28 ``re.compile(…, IGNORECASE)`` patterns.
+- ``_CONSENT_TEXT_MARKERS``: tuple of literal consent-banner text substrings.
+- ``_DT_DD_RE``: regex for ``<dt>/<dd>`` block detection.
+
+**What it allows/prevents**
+Allows the pipeline to skip non-policy pages before spending LLM analysis budget.
+Prevents downstream extraction from being invoked on blog posts, landing pages, or
+error pages that happen to be on the same domain as policy content.
+"""
 
 import re
 from typing import Any

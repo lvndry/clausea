@@ -1,4 +1,25 @@
-"""Policy document crawling pipeline — re-exports for backward compatibility."""
+"""Re-export shim for the monolithic ``pipeline`` module.
+
+**What it does**
+Re-exports every symbol previously importable from ``src.pipeline`` so that
+existing imports and test monkeypatches continue working after the split into
+six submodules.
+
+**What it contains**
+- ``PolicyDocumentPipeline``: the main pipeline orchestrator class.
+- ``CrawlResultProcessor``: per-crawl-result validation and document creation.
+- ``DocumentAnalyzer``: AI-powered locale/date/region analysis.
+- ``DocumentStorer``: deduplicated storage with versioning.
+- ``db_session``, ``create_document_service``: framework dependencies
+  (re-exported so tests can monkeypatch them).
+- ``ProcessingStats``: aggregate run statistics.
+- ``logger``, ``logger_analysis``, ``logger_discovery``, ``logger_storage``:
+  package-level loggers (re-exported for test assertions).
+
+**What it prevents**
+Consumers importing from submodules directly.  All pipeline symbols remain
+accessible at ``src.pipeline``.
+"""
 
 from src.core.database import db_session
 from src.pipeline.crawl_result_processor import CrawlResultProcessor

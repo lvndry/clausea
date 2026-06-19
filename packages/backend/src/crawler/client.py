@@ -1,4 +1,29 @@
-"""Policy document crawler — the main ClauseaCrawler class."""
+"""Policy-document crawler — the main ``ClauseaCrawler`` class and its entry points.
+
+**What it does**
+Orchestrates the full crawl lifecycle for a given seed URL or product:
+1. Sitemap discovery — fetches and parses ``/sitemap.xml`` (and child sitemaps),
+   aggregates candidate URLs from sitemap entries and on-page ``<a>`` links.
+2. URL frontier — a priority queue ordered by ``URLScorer`` score; exhausted
+   when budget is met or no high-value URLs remain.
+3. Per-URL pipeline — robots.txt check, rate-limit acquire, static HTTP fetch,
+   SPA re-fetch via headless browser if needed, content classification, locale
+   deduplication, convergence check.
+4. Returns a list of ``CrawlResult`` objects to the pipeline caller.
+
+**What it contains**
+- ``ClauseaCrawler``: the main class (~700 lines) with ``crawl``, ``_fetch_url``,
+  ``_process_crawl_result``, and the sitemap-parsing / link-extraction machinery.
+- ``crawl_for_policy_documents(product, max_pages, …)``: top-level convenience wrapper.
+- ``test_specific_url(url)``: debug entry point that crawls one URL with full logging.
+- ``main()``: CLI entry point invoked by ``python -m src.crawler``.
+
+**What it allows/prevents**
+Allows the pipeline to submit a company/product name and receive a set of
+classified policy documents in return.  Prevents duplicate processing of the
+same URL (via a ``seen`` set), prevents crawling beyond configurable page
+and time budgets, and stops when crawl convergence criteria are met.
+"""
 
 from __future__ import annotations
 
@@ -64,6 +89,61 @@ from src.crawler.robots import RobotsTxtChecker
 from src.crawler.url_scorer import URLScorer
 
 logger = get_logger(__name__, component="crawler")
+
+# ---- Browser-fallback heuristic ----------------------------------------------------
+
+_SPA_CONTAINER_IDS: frozenset[str] = frozenset(
+    {"root", "app", "__next", "__nuxt", "react-root", "ember-application"}
+)
+
+_RENDERABLE_CONTENT_TYPES: tuple[str, ...] = (
+    "text/html",
+    "text/markdown",
+    "text/x-markdown",
+    "text/plain",
+)
+
+
+def needs_browser_fallback(raw: StaticFetchResult) -> bool:
+    """Return True when a plain-HTTP response is a JS shell warranting headless browser fallback.
+
+    Triggers True when any of these hold:
+    - HTTP 4xx (except 429, which is a rate-limit hard block the browser cannot bypass)
+    - Missing or non-HTML/text/markdown Content-Type
+    - HTML body containing a known SPA root element (div#root, div#app, div#__next, …)
+      with fewer than MIN_CONTENT_LENGTH_FOR_SPA_CHECK characters of inner text
+    - Fewer than MIN_CONTENT_LENGTH_FOR_SPA_CHECK visible characters overall
+
+    Returns False unconditionally for HTTP 429.
+    """
+    if raw.status_code == 429:
+        return False
+
+    if 400 <= raw.status_code < 500:
+        return True
+
+    content_type = (raw.content_type or "").lower().split(";")[0].strip()
+    if not any(content_type.startswith(ct) for ct in _RENDERABLE_CONTENT_TYPES):
+        return True
+
+    body = raw.body or ""
+
+    # Non-HTML renderable types (plain text, markdown) can't be SPA shells; just check length.
+    if not content_type.startswith("text/html"):
+        return len(body.strip()) < MIN_CONTENT_LENGTH_FOR_SPA_CHECK
+
+    # Parse HTML once for both SPA-skeleton detection and overall visible-text check.
+    soup = BeautifulSoup(body, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    for spa_id in _SPA_CONTAINER_IDS:
+        el = soup.find(id=spa_id)
+        if el is not None and len(el.get_text(" ", strip=True)) < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
+            return True
+
+    return len(soup.get_text(" ", strip=True)) < MIN_CONTENT_LENGTH_FOR_SPA_CHECK
+
 
 # ---- ClauseaCrawler ----------------------------------------------------------------
 
@@ -1436,7 +1516,11 @@ class ClauseaCrawler:
 
             page = await self._extract_page_content(raw, effective_url)
 
-            static_unusable = page is None or not self._content_is_sufficient(page, effective_url)
+            static_unusable = (
+                needs_browser_fallback(raw)
+                or page is None
+                or not self._content_is_sufficient(page, effective_url)
+            )
 
             is_speculative = self.normalize_url(url) in self._speculative_urls
 
@@ -1687,18 +1771,21 @@ class ClauseaCrawler:
 
         return potential_urls
 
-    _LEGAL_HUB_KEYWORDS = frozenset(
-        [
-            "terms",
-            "privacy",
-            "policy",
-            "legal",
-            "cookie",
-            "agreement",
-            "gdpr",
-            "compliance",
-            "data protection",
-        ]
+    _LEGAL_HUB_RE = re.compile(
+        r"\b(?:"
+        r"gdpr|ccpa|lgpd|pipeda|hipaa|"
+        r"terms?|privacy|cookie|legal|"
+        r"trust|transparency|compliance|"
+        r"agreement|policy|disclaimer|"
+        r"eula|dpa|aup|tos|"
+        r"data\s+(?:protection|processing|sharing|policy)|"
+        r"acceptable\s+use|"
+        r"community\s+guidelines|"
+        r"safety\s+policy|"
+        r"security\s+policy|"
+        r"responsible\s+disclosure"
+        r")\b",
+        re.IGNORECASE,
     )
 
     def _compute_parent_page_boost(self, page_metadata: dict[str, Any] | None) -> float:
@@ -1712,7 +1799,7 @@ class ClauseaCrawler:
         ]
 
         for text in texts_to_check:
-            if any(kw in text for kw in self._LEGAL_HUB_KEYWORDS):
+            if self._LEGAL_HUB_RE.search(text):
                 return 3.0
 
         return 0.0

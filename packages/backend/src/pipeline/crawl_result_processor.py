@@ -1,4 +1,23 @@
-"""Per-result crawl processing: validation, classification, enrichment, and Document creation."""
+"""Validates, classifies, and enriches a single ``CrawlResult`` into a ``Document``.
+
+**What it does**
+For each ``CrawlResult`` produced by the crawler:
+1. Validates that the result has sufficient content and a high enough policy score.
+2. Runs ``DocumentAnalyzer`` to get locale, doc-type classification, dates, and regions.
+3. Normalises the result URL (strips trailing slash, enforces https).
+4. Builds a ``Document`` Pydantic model with all metadata, analysis, and the cleaned text.
+5. Returns the ``Document`` (or ``None`` if the result should be skipped).
+
+**What it contains**
+- ``CrawlResultProcessor`` class.
+- ``process_crawl_result(crawl_result, product) -> Document | None``.
+- Internal helpers for URL normalisation and content validation.
+
+**What it allows/prevents**
+Allows the pipeline to convert raw crawl results into persisted ``Document``
+records.  Prevents low-quality or irrelevant pages from entering the database
+(bypasses storage entirely if policy score is below threshold or content is empty).
+"""
 
 from __future__ import annotations
 
@@ -18,7 +37,6 @@ from src.utils.markdown import markdown_to_text
 
 
 class CrawlResultProcessor:
-
     def __init__(self, analyzer: DocumentAnalyzer, stats: ProcessingStats) -> None:
         self._analyzer = analyzer
         self._stats = stats

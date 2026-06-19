@@ -1,4 +1,23 @@
-"""HTTP response cache (ETag/Last-Modified) and async file logging."""
+"""Conditional-GET cache + async-aware log handler for crawl HTTP traffic.
+
+**What it does**
+Wraps ``aiohttp.ClientSession.get`` so that every outgoing request carries
+``If-None-Match`` and/or ``If-Modified-Since`` headers from the previous
+response to that URL.  When the server replies 304, the cached response body
+is returned instead of re-downloading.  The cache is an LRU dict (``OrderedDict``)
+bounded at 8192 entries.
+
+**What it contains**
+- ``HTTPCache``: the cache dict + ``get`` / ``put`` / ``check`` methods.
+- ``AsyncFileLogHandler``: a ``logging.Handler`` that writes log records to a file
+  via a ``ThreadPoolExecutor`` so the event loop is never blocked on I/O.
+- ``_fetch_with_cache(session, url, headers, cache)``: the core conditional-GET wrapper.
+
+**What it allows/prevents**
+Allows the crawler to re-crawl known URLs cheaply (body is preserved across
+runs within the same process).  Prevents redundant bandwidth usage and
+unnecessary load on target origins for unchanged pages.
+"""
 
 import logging
 from collections import OrderedDict

@@ -1,4 +1,20 @@
-"""Extraction service — re-exports for backward compatibility."""
+"""Re-export shim for the monolithic ``extraction_service`` module.
+
+**What it does**
+Re-exports every symbol that was previously importable from
+``src.services.extraction_service`` so all existing imports and test
+monkeypatches continue working.
+
+**What it contains**
+- ``extract_document_facts``: the main extraction entry point.
+- ``_EXTRACTION_PRIMARY``: default extraction cluster key.
+- ``_clean_raw``, ``_merge_*`` functions used by the merge pipeline.
+- ``_PrivacySignals``, ``_DataItem``, ``_ThirdParty``, … internal models.
+
+**What it prevents**
+Consumers reaching into submodules (``from src.services.extraction_service.merging import …``).
+All symbols stay accessible at the package level.
+"""
 
 from src.services.extraction_service.merging import (
     _clean_raw,

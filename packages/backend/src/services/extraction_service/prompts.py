@@ -1,4 +1,25 @@
-"""Extraction prompts and cluster specification builders."""
+"""LLM system prompt and per-chunk instruction builders for structured extraction.
+
+**What it does**
+Builds the prompt sent to the LLM for each chunk of a policy document.
+``EXTRACTION_SYSTEM_PROMPT`` is the static preamble that defines the extraction
+task and output schema.  ``build_cluster_spec(document_type)`` returns a
+JSON schema snippet that tells the LLM which extraction clusters apply to the
+current document type (privacy policy vs. ToS vs. cookie policy, etc.).
+
+**What it contains**
+- ``EXTRACTION_SYSTEM_PROMPT`` (~200 lines of markdown instructions with few-shot
+  examples and output format specification).
+- ``build_cluster_spec(document_type)``: returns a JSON dict enumerating the
+  fields to extract for that document type.
+- ``_PRIVACY_CLUSTERS``, ``_TOS_CLUSTERS``, ``_COOKIE_CLUSTERS``: cluster
+  definitions keyed by document type.
+
+**What it allows/prevents**
+Allows the same extraction engine to handle different policy document types with
+the correct field set.  Prevents the LLM from inventing its own output schema
+(``response_format`` enforces structured JSON).
+"""
 
 import json
 from typing import Any

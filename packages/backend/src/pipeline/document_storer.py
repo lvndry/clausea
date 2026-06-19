@@ -1,4 +1,24 @@
-"""Document storage with deduplication, update detection, and versioning."""
+"""Deduplicated ``Document`` storage with content-change detection and versioning.
+
+**What it does**
+Handles the final storage phase of the pipeline:
+1. Looks up an existing document by canonical URL in the database.
+2. Compares the new document's content fingerprint (SHA-256) with the stored version.
+   - Identical content → skip update (``documents_skipped++``).
+   - Different content → update the stored document and increment version (``documents_updated++``).
+   - No existing document → insert new record (``documents_stored++``).
+
+**What it contains**
+- ``DocumentStorer`` class.
+- ``store_document(document, product, stats)``: the main store-or-update method.
+- ``_compute_fingerprint(content)``: SHA-256 of the cleaned text.
+- ``_check_existing(canonical_url)``: database lookup by canonical URL.
+
+**What it allows/prevents**
+Allows the pipeline to re-crawl the same product periodically without creating
+duplicate records.  Prevents redundant DB writes when content hasn't changed
+and ensures every content change is tracked with a version increment.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +38,6 @@ from src.services.service_factory import create_document_service
 
 
 class DocumentStorer:
-
     def __init__(self, stats: ProcessingStats, job_id: str | None = None) -> None:
         self._stats = stats
         self._job_id = job_id

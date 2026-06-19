@@ -1,4 +1,26 @@
-"""Internal Pydantic models — LLM response shapes per cluster."""
+"""Pydantic models that define the expected JSON structure of each LLM extraction cluster.
+
+**What it does**
+Each model mirrors one section of the structured extraction prompt.  After the
+LLM returns a JSON object for a document chunk, the response is parsed into
+these models so the merge layer (``merging.py``) can accumulate results across
+chunks in a type-safe way.
+
+**What it contains**
+- ``_PrivacySignals``: ``data_sharing``, ``data_collection``, ``data_retention``,
+  ``user_rights``, ``policy_changes`` — each a yes/no/unclear with quote.
+- ``_DataItem``: a single data category being collected/shared.
+- ``_ThirdParty``: third-party recipient with purpose.
+- ``_CookieTracker``: cookie/tracker name, category, purpose, duration.
+- ``_RetentionRule``: data type + retention period.
+- ``_AIUsage``: AI/automated decision-making disclosure.
+- ``_ChildrenPolicy``: children's data handling statements.
+- ``_Item``: generic (value, quote) pair used as a building block.
+
+**What it prevents**
+Unstructured dict access and key-name typos when handling LLM responses.
+Pydantic validation catches missing fields and type mismatches at parse time.
+"""
 
 from pydantic import BaseModel, Field
 
