@@ -179,9 +179,8 @@ class ContentAnalyzer:
         min_score_threshold = 2.0
 
         is_policy = (
-            (legal_density >= min_density_threshold and normalized_score >= min_score_threshold)
-            or title_bonus >= 6.0
-        )
+            legal_density >= min_density_threshold and normalized_score >= min_score_threshold
+        ) or title_bonus >= 6.0
 
         matched_indicators.append(f"density:{legal_density:.3f}")
         matched_indicators.append(f"word_count:{word_count}")

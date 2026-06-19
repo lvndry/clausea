@@ -21,7 +21,16 @@ class RobotsTxtChecker:
         self.max_cache_size = max_cache_size
         self.user_agent = DEFAULT_USER_AGENT
         self.user_agent_patterns = [
-            "*", "all", "any", "bot", "crawler", "spider", "robot", "crawl", "spider", "bot",
+            "*",
+            "all",
+            "any",
+            "bot",
+            "crawler",
+            "spider",
+            "robot",
+            "crawl",
+            "spider",
+            "bot",
         ]
 
     async def can_fetch(self, session: aiohttp.ClientSession, url: str) -> tuple[bool, str]:
