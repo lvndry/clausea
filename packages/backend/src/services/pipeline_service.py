@@ -8,7 +8,7 @@ import asyncio
 import contextlib
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import shortuuid
 from motor.core import AgnosticDatabase
@@ -230,7 +230,7 @@ class PipelineService:
         db: AgnosticDatabase,
         job: PipelineJob,
         step_name: str,
-        status: str,
+        status: Literal["pending", "running", "completed", "failed"],
         message: str | None = None,
     ) -> None:
         """Update a specific step in the pipeline job."""
@@ -241,7 +241,7 @@ class PipelineService:
         }
         for i, step in enumerate(job.steps):
             if step.name == step_name:
-                step.status = status  # ty: ignore[invalid-assignment]
+                step.status = status
                 step.message = message
 
                 update_data[f"steps.{i}.status"] = status
