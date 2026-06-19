@@ -35,6 +35,7 @@ from src.pipeline.helpers import (
 )
 from src.pipeline.models import ProcessingStats
 from src.repositories.document_version_repository import DocumentVersionRepository
+from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service
 
 
@@ -42,6 +43,7 @@ class DocumentStorer:
     def __init__(self, stats: ProcessingStats, job_id: str | None = None) -> None:
         self._stats = stats
         self._job_id = job_id
+        self._pipeline_repo = PipelineRepository() if job_id else None
 
     async def store_documents(self, documents: list[Document]) -> int:
         stored_count = 0
@@ -124,10 +126,18 @@ class DocumentStorer:
                             await document_service.update_document(db, document)
                             stored_count += 1
                             updated_count += 1
+                            if self._pipeline_repo and self._job_id:
+                                await self._pipeline_repo.inc_document_counters(
+                                    db, self._job_id, stored=1, found=1
+                                )
                         else:
                             if linked_this_run:
                                 stored_count += 1
                                 linked_count += 1
+                                if self._pipeline_repo and self._job_id:
+                                    await self._pipeline_repo.inc_document_counters(
+                                        db, self._job_id, stored=1, found=1
+                                    )
                             else:
                                 logger_storage.debug(
                                     f"skipping unchanged document (duplicate): {document.url}"
@@ -159,6 +169,10 @@ class DocumentStorer:
                         document.content_hash = _content_fingerprint(document.text)
                         await document_service.store_document(db, document)
                         stored_count += 1
+                        if self._pipeline_repo and self._job_id:
+                            await self._pipeline_repo.inc_document_counters(
+                                db, self._job_id, stored=1, found=1
+                            )
 
                 except Exception as e:
                     logger_storage.error(
