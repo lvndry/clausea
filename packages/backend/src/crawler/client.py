@@ -87,6 +87,7 @@ from src.crawler.models import CrawlResult, CrawlStats, PageContent, StaticFetch
 from src.crawler.rate_limiter import DomainRateLimiter
 from src.crawler.robots import RobotsTxtChecker
 from src.crawler.url_scorer import URLScorer
+from src.utils.perf import _log_browser_processes, _log_top_processes
 
 logger = get_logger(__name__, component="crawler")
 
@@ -807,6 +808,8 @@ class ClauseaCrawler:
         except Exception as e:
             error_str = str(e).lower()
             if any(marker in error_str for marker in self._BROWSER_CRASH_MARKERS):
+                _log_top_processes(logger)
+                _log_browser_processes(logger)
                 await self._cleanup_browser()
             else:
                 logger.warning(f"Browser fetch failed for {url}: {e}", exc_info=True)

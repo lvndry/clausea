@@ -34,6 +34,7 @@ from playwright.async_api import Browser, BrowserContext, Page, Route
 
 from src.core.logging import get_logger
 from src.crawler.constants import _BLOCKED_ASSETS_RE, BROWSER_LAUNCH_TIMEOUT_S
+from src.utils.perf import _log_browser_processes, _log_top_processes
 
 logger = get_logger(__name__, component="crawler:browser")
 
@@ -143,6 +144,8 @@ async def cleanup_browser() -> None:
                 _shared_browser_contexts.pop(loop, None)
 
             if graceful_close_failed:
+                _log_top_processes(logger)
+                _log_browser_processes(logger)
                 try:
                     result = subprocess.run(
                         ["pkill", "-TERM", "-f", "firefox"],
