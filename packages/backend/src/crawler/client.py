@@ -1379,7 +1379,7 @@ class ClauseaCrawler:
                 if attr_value:
                     add_url(str(attr_value), (el.get_text() or "").strip())
 
-        onclick_elements = soup.find_all(attrs={"onclick": True})
+        onclick_elements = soup.find_all(attrs={"onclick": True})  # ty: ignore[invalid-argument-type]
         for el in onclick_elements:
             onclick = str(el.get("onclick") or "")
             matches = re.findall(
@@ -1477,7 +1477,7 @@ class ClauseaCrawler:
             )
             if charset_equiv and charset_equiv.get("content"):
                 content = charset_equiv.get("content", "")
-                charset_match = re.search(r"charset=([^;]+)", content, re.I)
+                charset_match = re.search(r"charset=([^;]+)", str(content), re.I)
                 if charset_match:
                     metadata["charset"] = charset_match.group(1).strip()
 

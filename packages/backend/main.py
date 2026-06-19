@@ -57,11 +57,11 @@ app.add_exception_handler(
         content={"detail": "Too many requests. Please try again later."},
     ),
 )
-app.add_middleware(SlowAPIMiddleware)  # type: ignore
+app.add_middleware(SlowAPIMiddleware)
 
 
 app.add_middleware(
-    CORSMiddleware,  # type: ignore
+    CORSMiddleware,
     allow_origins=config.cors.origins,
     allow_methods=config.cors.methods,
     allow_headers=config.cors.headers,

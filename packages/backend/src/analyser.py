@@ -12,7 +12,7 @@ Flow for product overview (powers cached JSON on `/products/{slug}` in the app):
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any, Literal
 
@@ -1058,7 +1058,7 @@ def _validate_consumer_explainer_quotes(
        The model's grade is never trusted on its own.
     """
 
-    def _recite(cases: list[ConsumerCase]) -> None:
+    def _recite(cases: Sequence[ConsumerCase]) -> None:
         for case in cases:
             if not case.quote:
                 case.quote = None
@@ -1073,7 +1073,7 @@ def _validate_consumer_explainer_quotes(
 
     _recite(explainer.watch_out_for)
     _recite(explainer.who_gets_your_data)
-    _recite(explainer.what_they_collect)  # type: ignore[arg-type]
+    _recite(explainer.what_they_collect)
 
     critical_count = sum(
         1

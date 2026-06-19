@@ -123,6 +123,13 @@ class DashboardDB:
             self._client = await _get_dashboard_client()
             self._db = await _get_dashboard_database()
 
+    async def disconnect(self) -> None:
+        """Close the database connection and clean up."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+            self._db = None
+
     @property
     def db(self) -> AsyncIOMotorDatabase:
         """Get the database instance."""

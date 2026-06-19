@@ -235,7 +235,7 @@ Example output:
             logger.debug(
                 f"LLM locale detection result: {result['locale']} (confidence: {result['confidence']})"
             )
-            return result  # type: ignore
+            return result
 
         except Exception as e:
             logger.warning(f"locale detection process failed: {e}")

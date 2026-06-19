@@ -96,7 +96,7 @@ class PaddleService:
                 response.raise_for_status()
                 data = response.json()
                 logger.info(f"Created checkout session for {customer_email}")
-                return data  # type: ignore
+                return data
 
         except httpx.HTTPStatusError as e:
             logger.error(
@@ -126,7 +126,7 @@ class PaddleService:
                     timeout=30.0,
                 )
                 response.raise_for_status()
-                return response.json()  # type: ignore
+                return response.json()
 
         except Exception as e:
             logger.error(f"Error getting subscription {subscription_id}: {e}")
@@ -157,7 +157,7 @@ class PaddleService:
                 )
                 response.raise_for_status()
                 logger.info(f"Canceled subscription {subscription_id}")
-                return response.json()  # type: ignore
+                return response.json()
 
         except Exception as e:
             logger.error(f"Error canceling subscription {subscription_id}: {e}")
@@ -185,7 +185,7 @@ class PaddleService:
                 )
                 response.raise_for_status()
                 logger.info(f"Paused subscription {subscription_id}")
-                return response.json()  # type: ignore
+                return response.json()
 
         except Exception as e:
             logger.error(f"Error pausing subscription {subscription_id}: {e}")
@@ -213,7 +213,7 @@ class PaddleService:
                 )
                 response.raise_for_status()
                 logger.info(f"Resumed subscription {subscription_id}")
-                return response.json()  # type: ignore
+                return response.json()
 
         except Exception as e:
             logger.error(f"Error resuming subscription {subscription_id}: {e}")
@@ -241,7 +241,7 @@ class PaddleService:
                 )
                 response.raise_for_status()
                 logger.info(f"Created portal session for customer {customer_id}")
-                return response.json()  # type: ignore
+                return response.json()
 
         except Exception as e:
             logger.error(f"Error creating portal session for {customer_id}: {e}")
