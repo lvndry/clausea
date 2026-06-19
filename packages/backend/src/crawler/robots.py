@@ -112,12 +112,6 @@ class RobotsTxtChecker:
             if line.startswith("#") or not line:
                 continue
 
-            if line.startswith(" ") or line.startswith("\t"):
-                if current_user_agent:
-                    last_rule_type = list(user_agents[current_user_agent].keys())[-1]
-                    user_agents[current_user_agent][last_rule_type][-1] += line.strip()
-                continue
-
             if ":" in line:
                 directive, value = line.split(":", 1)
                 directive = directive.strip().lower()
@@ -200,7 +194,7 @@ class RobotsTxtChecker:
             return True
 
         if "*" in pattern:
-            regex_pattern = pattern.replace(".", "\\.").replace("*", ".*")
+            regex_pattern = re.escape(pattern).replace(r"\*", ".*")
             return bool(re.match(f"^{regex_pattern}$", path))
 
         if pattern.endswith("*"):

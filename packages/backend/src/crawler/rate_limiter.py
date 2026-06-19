@@ -37,7 +37,6 @@ class DomainRateLimiter:
         self.jitter = jitter
         self.domain_locks: dict[str, asyncio.Lock] = {}
         self.domain_last_request: dict[str, float] = {}
-        self.lock = asyncio.Lock()
 
     def _normalize_domain(self, url: str) -> str:
         parsed = urlparse(url)
@@ -49,10 +48,9 @@ class DomainRateLimiter:
     async def rate_limit(self, url: str) -> None:
         domain = self._normalize_domain(url)
 
-        async with self.lock:
-            if domain not in self.domain_locks:
-                self.domain_locks[domain] = asyncio.Lock()
-                self.domain_last_request[domain] = 0.0
+        if domain not in self.domain_locks:
+            self.domain_locks[domain] = asyncio.Lock()
+            self.domain_last_request[domain] = 0.0
 
         domain_lock = self.domain_locks[domain]
 

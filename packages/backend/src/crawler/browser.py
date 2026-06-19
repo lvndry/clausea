@@ -126,3 +126,5 @@ async def cleanup_browser() -> None:
                 _shared_browser_instances.pop(loop, None)
                 _shared_browser_contexts.pop(loop, None)
             logger.debug("Shared Camoufox browser closed")
+    _shared_browser_locks.pop(loop, None)
+    _global_browser_semaphores.pop(loop, None)

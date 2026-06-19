@@ -231,6 +231,9 @@ class PolicyDocumentPipeline:
         url = url_or_domain.strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
+        parsed = urlparse(url)
+        if url.endswith("/") and len(parsed.path) > 1:
+            url = url.rstrip("/")
         return url
 
     def _seed_dedupe_key(self, normalized_url: str) -> tuple[str, str, str, str]:

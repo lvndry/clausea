@@ -647,14 +647,16 @@ def _merge_privacy_signals(
         if quote and document:
             accumulated.evidence.append(_make_evidence(document, content_hash, quote))
 
-    def _merge_yes_no(current: str, new_val: str | None, quote_field: str | None) -> str:
+    def _merge_yes_no(
+        current: str | None, new_val: str | None, quote_field: str | None
+    ) -> str | None:
         if not new_val:
             return current
         val = new_val.strip().lower()
         if val == "yes":
             _add_evidence(quote_field)
             return "yes"
-        elif val == "no" and current == "unclear":
+        elif val == "no" and current in (None, "unclear"):
             _add_evidence(quote_field)
             return "no"
         return current
