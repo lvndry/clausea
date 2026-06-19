@@ -51,6 +51,8 @@ class DocumentStorer:
         updated_count = 0
         duplicate_count = 0
         error_count = 0
+        stored_delta = 0
+        found_delta = 0
 
         documents = sorted(documents, key=lambda d: _canonical_rank(d.url))
         seen_fingerprints: dict[tuple[str | None, str], str] = {}
@@ -126,18 +128,14 @@ class DocumentStorer:
                             await document_service.update_document(db, document)
                             stored_count += 1
                             updated_count += 1
-                            if self._pipeline_repo and self._job_id:
-                                await self._pipeline_repo.inc_document_counters(
-                                    db, self._job_id, stored=1, found=1
-                                )
+                            stored_delta += 1
+                            found_delta += 1
                         else:
                             if linked_this_run:
                                 stored_count += 1
                                 linked_count += 1
-                                if self._pipeline_repo and self._job_id:
-                                    await self._pipeline_repo.inc_document_counters(
-                                        db, self._job_id, stored=1, found=1
-                                    )
+                                stored_delta += 1
+                                found_delta += 1
                             else:
                                 logger_storage.debug(
                                     f"skipping unchanged document (duplicate): {document.url}"
@@ -169,16 +167,19 @@ class DocumentStorer:
                         document.content_hash = _content_fingerprint(document.text)
                         await document_service.store_document(db, document)
                         stored_count += 1
-                        if self._pipeline_repo and self._job_id:
-                            await self._pipeline_repo.inc_document_counters(
-                                db, self._job_id, stored=1, found=1
-                            )
+                        stored_delta += 1
+                        found_delta += 1
 
                 except Exception as e:
                     logger_storage.error(
                         f"failed to store document {document.url}: {e}", exc_info=True
                     )
                     error_count += 1
+
+            if self._pipeline_repo and self._job_id and (stored_delta or found_delta):
+                await self._pipeline_repo.inc_document_counters(
+                    db, self._job_id, stored=stored_delta, found=found_delta
+                )
 
         if len(documents) > 0:
             new_count = stored_count - updated_count - linked_count
