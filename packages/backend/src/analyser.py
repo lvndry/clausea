@@ -14,7 +14,7 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
@@ -116,6 +116,19 @@ ProgressCallback = Callable[[int, int, Document], Awaitable[None] | None]
 HeartbeatCallback = Callable[[], Awaitable[None] | None]
 
 
+class AnalysisResult(NamedTuple):
+    """Return value from :func:`analyse_product_documents`.
+
+    Attributes:
+        documents: Every policy document for the product (analyzed or skipped).
+        analyses_skipped: Count of documents whose LLM analysis was reused from
+            a prior run because content had not changed since the last extraction.
+    """
+
+    documents: list[Document]
+    analyses_skipped: int
+
+
 async def _maybe_await(result: Awaitable[None] | None) -> None:
     if asyncio.iscoroutine(result):
         await result
@@ -135,17 +148,46 @@ async def _stamp_analysis_error(
         logger.warning(f"could not stamp analysis_error for document {doc.id}: {exc}")
 
 
+def _analysis_up_to_date(doc: Document) -> bool:
+    """Return True when the document has valid analysis for its current content.
+
+    Checks that:
+    1. The document already has analysis (was analyzed in a prior run).
+    2. The stored extraction was built from the same content currently in the DB
+       (source_content_hash matches the hash used by the extraction service).
+
+    Uses the same SHA-256 hash function the extraction service uses
+    (_compute_document_hash = SHA256(text + doc_type)) so the comparison is
+    consistent with the extraction-layer cache.
+    """
+    if doc.analysis is None:
+        return False
+    if doc.extraction is None:
+        return False
+    return doc.extraction.source_content_hash == _compute_document_hash(doc)
+
+
 async def analyse_product_documents(
     db: AgnosticDatabase,
     product_slug: str,
     document_svc: DocumentService,
     cancellation_token: CancellationToken | None = None,
     progress_callback: ProgressCallback | None = None,
-) -> list[Document]:
+    force_reanalyze: bool = False,
+) -> AnalysisResult:
     """Analyse all documents for a product concurrently (up to 3 at once).
 
     Each document analysis itself runs 4 parallel extraction clusters, so capping at 3
     concurrent documents balances throughput against LLM rate limits.
+
+    Args:
+        force_reanalyze: When True, bypass the content-hash cache and re-run LLM
+            analysis on every document regardless of whether findings already exist.
+            Defaults to False (skip-by-default behaviour).
+
+    Returns:
+        An :class:`AnalysisResult` named tuple containing the list of documents and
+        the count of analyses that were reused without an LLM call.
     """
     token = cancellation_token or CancellationToken()
     all_documents: list[Document] = await document_svc.get_product_documents_by_slug(
@@ -163,10 +205,22 @@ async def analyse_product_documents(
     sem = asyncio.Semaphore(3)
 
     failed_doc_ids: list[str] = []
+    # Mutable counter captured by _analyse_one closure.
+    skip_counter: list[int] = [0]
 
     async def _analyse_one(index: int, doc: Document) -> None:
         await token.check_cancellation()
         async with sem:
+            # Skip LLM re-analysis when findings already exist for this document
+            # and the document content has not changed since the last analysis run.
+            if not force_reanalyze and _analysis_up_to_date(doc):
+                skip_counter[0] += 1
+                logger.info(
+                    f"⏭ Skipping re-analysis for document {doc.id} ({doc.url}) — "
+                    "existing analysis is up-to-date (content unchanged)"
+                )
+                return
+
             logger.info(f"Processing document {index}/{total_docs}: {doc.title}")
             if progress_callback:
                 await _maybe_await(progress_callback(index, total_docs, doc))
@@ -233,15 +287,20 @@ async def analyse_product_documents(
         if isinstance(result, BaseException):
             raise result
 
-    succeeded = total_docs - len(failed_doc_ids)
+    analyses_skipped = skip_counter[0]
+    succeeded = total_docs - len(failed_doc_ids) - analyses_skipped
     if failed_doc_ids:
         logger.warning(
             f"⚠ Analysed {succeeded}/{total_docs} documents for {product_slug}; "
-            f"{len(failed_doc_ids)} failed: {failed_doc_ids}"
+            f"{len(failed_doc_ids)} failed, {analyses_skipped} reused (unchanged): "
+            f"{failed_doc_ids}"
         )
     else:
-        logger.info(f"✓ Successfully analysed all {total_docs} documents for {product_slug}")
-    return documents
+        logger.info(
+            f"✓ Analysed {product_slug}: {succeeded} new/updated, "
+            f"{analyses_skipped} reused (content unchanged), 0 failed"
+        )
+    return AnalysisResult(documents=documents, analyses_skipped=analyses_skipped)
 
 
 def _compute_document_hash(document: Document) -> str:
@@ -1105,6 +1164,10 @@ def _validate_consumer_explainer_quotes(
                 critical_count,
             )
             explainer.grade = floor
+            explainer.grade_reason = (
+                f"Grade adjusted to {floor}: {critical_count} critical "
+                f"finding{'s' if critical_count != 1 else ''}."
+            )
 
     return explainer
 
@@ -1850,6 +1913,7 @@ Per-document analyses and extractions:
             product_slug=product_slug,
             meta_summary=meta_summary,
             job_id=job_id,
+            product_id=product.id,
         )
         logger.info(f"✓ Saved product overview for {product_slug}")
 

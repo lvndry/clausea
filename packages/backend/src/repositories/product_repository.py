@@ -271,6 +271,7 @@ class ProductRepository(BaseRepository):
         product_slug: str,
         meta_summary: MetaSummary,
         job_id: str | None = None,
+        product_id: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -279,9 +280,12 @@ class ProductRepository(BaseRepository):
             product_slug: Product slug
             meta_summary: Overview payload (MetaSummary shape)
             job_id: Optional pipeline job that produced this overview
+            product_id: Product identifier for the owning product record
         """
         summary_data = meta_summary.model_dump()
         summary_data["product_slug"] = product_slug
+        if product_id is not None:
+            summary_data["product_id"] = product_id
         summary_data["updated_at"] = datetime.now()
 
         existing = await db.product_overviews.find_one({"product_slug": product_slug})
@@ -339,16 +343,24 @@ class ProductRepository(BaseRepository):
         return result.matched_count > 0 or result.upserted_id is not None
 
     async def update_product_explainer_grade(
-        self, db: AgnosticDatabase, product_slug: str, grade: str
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        grade: str,
+        *,
+        grade_reason: str | None = None,
     ) -> None:
-        """Update only the stored explainer grade for a product.
+        """Update the stored explainer grade (and optional grade_reason) for a product.
 
         Used by the service layer when reconciling legacy explainer rows against
         the canonical overview score, without rewriting the entire explainer.
         """
+        update_fields: dict[str, Any] = {"grade": grade, "updated_at": datetime.now()}
+        if grade_reason is not None:
+            update_fields["grade_reason"] = grade_reason
         await db.product_explainers.update_one(
             {"product_slug": product_slug},
-            {"$set": {"grade": grade, "updated_at": datetime.now()}},
+            {"$set": update_fields},
         )
 
     # ============================================================================
