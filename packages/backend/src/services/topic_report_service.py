@@ -77,7 +77,6 @@ def build_product_topic_report(
     documents_by_id = {document.id: document for document in documents}
 
     topics_by_category: dict[InsightCategory, TopicReportItem] = {}
-    ordered_categories: list[InsightCategory] = []
 
     if aggregation.coverage:
         for item in aggregation.coverage:
@@ -85,7 +84,6 @@ def build_product_topic_report(
                 topic=item.category,
                 coverage_status=item.status,
             )
-            ordered_categories.append(item.category)
 
     stance_rows = evaluate_topic_stances(
         findings=aggregation.findings,
@@ -102,7 +100,6 @@ def build_product_topic_report(
                 stance="moderate_risk",
                 topic_score=5,
             )
-            ordered_categories.append(finding.category)
 
         topic_item = topics_by_category[finding.category]
         if topic_item.coverage_status in {"missing", "not_analyzed"}:
@@ -134,7 +131,6 @@ def build_product_topic_report(
                 stance="mixed",
                 topic_score=6,
             )
-            ordered_categories.append(conflict.category)
         topic_item = topics_by_category[conflict.category]
         topic_item.coverage_status = "ambiguous"
 
@@ -174,10 +170,8 @@ def build_product_topic_report(
         item.findings.sort(key=lambda finding: finding.value)
         item.conflicts.sort(key=lambda conflict: conflict.description)
 
-    ordered_categories = sorted(topics_by_category.keys())
-
     return ProductTopicReport(
         product_slug=product_slug,
         generated_at=aggregation.generated_at,
-        topics=[topics_by_category[category] for category in ordered_categories],
+        topics=sorted(topics_by_category.values(), key=lambda item: item.topic),
     )
