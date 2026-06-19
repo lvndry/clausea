@@ -121,7 +121,10 @@ async def test_get_product_explainer_uses_canonical_overview_grade(
     assert explainer is not None
     assert explainer["grade"] == "C"
     mock_product_repo.update_product_explainer_grade.assert_awaited_once_with(
-        mock_db, "test-product", "C"
+        mock_db,
+        "test-product",
+        "C",
+        grade_reason="Moderate risk: notable concerns around data sharing, limited user controls, or vague language.",
     )
 
 
@@ -140,7 +143,10 @@ async def test_get_product_explainer_derives_grade_from_risk_score_when_missing_
     assert explainer is not None
     assert explainer["grade"] == "D"
     mock_product_repo.update_product_explainer_grade.assert_awaited_once_with(
-        mock_db, "test-product", "D"
+        mock_db,
+        "test-product",
+        "D",
+        grade_reason="Pervasive risk: significant issues with data practices, limited user rights, or broad data sharing.",
     )
 
 
@@ -164,6 +170,10 @@ async def test_save_product_explainer_overrides_grade_with_canonical_overview(
     saved_explainer = mock_product_repo.save_product_explainer.await_args.args[2]
     assert isinstance(saved_explainer, ConsumerExplainer)
     assert saved_explainer.grade == "C"
+    assert (
+        saved_explainer.grade_reason
+        == "Moderate risk: notable concerns around data sharing, limited user controls, or vague language."
+    )
 
 
 @pytest.mark.asyncio
