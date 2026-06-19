@@ -67,6 +67,7 @@ logger = get_logger(__name__, component="crawler")
 
 # ---- ClauseaCrawler ----------------------------------------------------------------
 
+
 class ClauseaCrawler:
     """Powerful policy document crawler."""
 
@@ -323,7 +324,10 @@ class ClauseaCrawler:
             if not is_allowed:
                 logger.warning(f"URL blocked by robots.txt: {url} - Reason: {reason}")
                 return StaticFetchResult(
-                    url=url, status_code=403, content_type="", body="",
+                    url=url,
+                    status_code=403,
+                    content_type="",
+                    body="",
                     blocked_by_robots_txt=True,
                     error_message=f"Blocked by robots.txt: {reason}",
                 )
@@ -346,8 +350,12 @@ class ClauseaCrawler:
 
             if response.status == 304:
                 return StaticFetchResult(
-                    url=url, status_code=304, content_type="", body="",
-                    cached=True, resolved_url=final_url,
+                    url=url,
+                    status_code=304,
+                    content_type="",
+                    body="",
+                    cached=True,
+                    resolved_url=final_url,
                 )
 
             if response.status == 200:
@@ -359,16 +367,26 @@ class ClauseaCrawler:
             is_text = any(
                 ct in content_type
                 for ct in (
-                    "text/html", "text/markdown", "text/x-markdown", "text/plain",
-                    "text/xml", "application/xml", "application/rss+xml", "application/atom+xml",
+                    "text/html",
+                    "text/markdown",
+                    "text/x-markdown",
+                    "text/plain",
+                    "text/xml",
+                    "application/xml",
+                    "application/rss+xml",
+                    "application/atom+xml",
                 )
             )
 
             declared_length = response.headers.get("Content-Length")
             if declared_length and int(declared_length) > MAX_RESPONSE_BYTES:
                 return StaticFetchResult(
-                    url=url, status_code=response.status, content_type=content_type,
-                    body="", headers=resp_headers, resolved_url=final_url,
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body="",
+                    headers=resp_headers,
+                    resolved_url=final_url,
                     error_message=f"Response too large ({declared_length} bytes)",
                 )
 
@@ -378,23 +396,34 @@ class ClauseaCrawler:
                     raw = raw[:MAX_RESPONSE_BYTES]
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
-                    url=url, status_code=response.status, content_type=content_type,
-                    body=body, headers=resp_headers, resolved_url=final_url,
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body=body,
+                    headers=resp_headers,
+                    resolved_url=final_url,
                 )
             else:
                 raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw_bytes) > MAX_RESPONSE_BYTES:
                     raw_bytes = raw_bytes[:MAX_RESPONSE_BYTES]
                 return StaticFetchResult(
-                    url=url, status_code=response.status, content_type=content_type,
-                    body="", raw_bytes=raw_bytes, headers=resp_headers, resolved_url=final_url,
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body="",
+                    raw_bytes=raw_bytes,
+                    headers=resp_headers,
+                    resolved_url=final_url,
                 )
 
     async def _extract_page_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
         ct = raw.content_type
         if raw.cached:
             return PageContent(
-                text="", markdown="", title="",
+                text="",
+                markdown="",
+                title="",
                 metadata={"cached": True, "status": "not_modified"},
                 status_code=raw.status_code,
             )
@@ -402,8 +431,14 @@ class ClauseaCrawler:
         is_text_type = any(
             t in ct
             for t in (
-                "text/html", "text/markdown", "text/x-markdown", "text/plain",
-                "text/xml", "application/xml", "application/rss+xml", "application/atom+xml",
+                "text/html",
+                "text/markdown",
+                "text/x-markdown",
+                "text/plain",
+                "text/xml",
+                "application/xml",
+                "application/rss+xml",
+                "application/atom+xml",
             )
         )
         if not is_text_type:
@@ -436,8 +471,11 @@ class ClauseaCrawler:
             raw.body, url
         )
         return PageContent(
-            text=text_content, markdown=markdown_content, title=title,
-            metadata=metadata, discovered_links=discovered_links,
+            text=text_content,
+            markdown=markdown_content,
+            title=title,
+            metadata=metadata,
+            discovered_links=discovered_links,
             status_code=raw.status_code,
         )
 
@@ -490,9 +528,12 @@ class ClauseaCrawler:
             title = url.rstrip("/").split("/")[-1].replace("-", " ").replace("_", " ").title()
 
         return PageContent(
-            text=self._markdown_to_text(body), markdown=body, title=title,
+            text=self._markdown_to_text(body),
+            markdown=body,
+            title=title,
             metadata={"content-type": raw.content_type, "estimated_title": title},
-            discovered_links=discovered_links, status_code=raw.status_code,
+            discovered_links=discovered_links,
+            status_code=raw.status_code,
         )
 
     def _extract_plain_text_content(self, raw: StaticFetchResult, url: str) -> PageContent:
@@ -502,9 +543,18 @@ class ClauseaCrawler:
         for line in lines[:5]:
             line = line.strip()
             if line and (
-                any(kw in line.lower() for kw in [
-                    "privacy", "terms", "policy", "agreement", "license", "legal", "notice",
-                ])
+                any(
+                    kw in line.lower()
+                    for kw in [
+                        "privacy",
+                        "terms",
+                        "policy",
+                        "agreement",
+                        "license",
+                        "legal",
+                        "notice",
+                    ]
+                )
                 or len(line) < 100
             ):
                 title_text = line
@@ -514,12 +564,17 @@ class ClauseaCrawler:
             if url_parts:
                 title_text = url_parts[-1].replace("-", " ").replace("_", " ").title()
         return PageContent(
-            text=text_content, markdown=text_content, title=title_text,
+            text=text_content,
+            markdown=text_content,
+            title=title_text,
             metadata={
-                "content-type": raw.content_type, "estimated_title": title_text,
-                "line_count": len(lines), "character_count": len(text_content),
+                "content-type": raw.content_type,
+                "estimated_title": title_text,
+                "line_count": len(lines),
+                "character_count": len(text_content),
             },
-            discovered_links=[], status_code=raw.status_code,
+            discovered_links=[],
+            status_code=raw.status_code,
         )
 
     def _extract_xml_content(self, raw: StaticFetchResult, url: str) -> PageContent:
@@ -539,12 +594,16 @@ class ClauseaCrawler:
             text_content = raw.body.strip()
             title_text = "XML Document"
         return PageContent(
-            text=text_content, markdown=text_content, title=title_text,
+            text=text_content,
+            markdown=text_content,
+            title=title_text,
             metadata={
-                "content-type": raw.content_type, "estimated_title": title_text,
+                "content-type": raw.content_type,
+                "estimated_title": title_text,
                 "link_count": len(discovered_links),
             },
-            discovered_links=discovered_links, status_code=raw.status_code,
+            discovered_links=discovered_links,
+            status_code=raw.status_code,
         )
 
     async def _extract_binary_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
@@ -560,7 +619,8 @@ class ClauseaCrawler:
         from src.document_processor import DocumentProcessor
 
         processor = DocumentProcessor(
-            max_content_length=5000, enable_binary_parsing=True,
+            max_content_length=5000,
+            enable_binary_parsing=True,
             prefer_tika=self.use_tika_for_binaries,
             prefer_pdfminer=self.use_pdfminer_for_pdf,
         )
@@ -571,18 +631,25 @@ class ClauseaCrawler:
             return None
 
         return PageContent(
-            text=text_content, markdown=text_content, title=filename,
+            text=text_content,
+            markdown=text_content,
+            title=filename,
             metadata={
-                "content-type": raw.content_type, "estimated_title": filename,
+                "content-type": raw.content_type,
+                "estimated_title": filename,
                 "line_count": len(text_content.splitlines()),
                 "character_count": len(text_content),
             },
-            discovered_links=[], status_code=raw.status_code,
+            discovered_links=[],
+            status_code=raw.status_code,
         )
 
     _BROWSER_CRASH_MARKERS = (
-        "browser has been closed", "target closed", "connection closed",
-        "context or browser has been closed", "browser closed",
+        "browser has been closed",
+        "target closed",
+        "connection closed",
+        "context or browser has been closed",
+        "browser closed",
     )
 
     def _browser_render_slot(self) -> asyncio.Semaphore:
@@ -649,8 +716,11 @@ class ClauseaCrawler:
             metadata["_browser_resolved_url"] = final_url
 
             return PageContent(
-                text=text_content, markdown=markdown_content, title=title,
-                metadata=metadata, discovered_links=discovered_links,
+                text=text_content,
+                markdown=markdown_content,
+                title=title,
+                metadata=metadata,
+                discovered_links=discovered_links,
                 status_code=response.status,
             )
 
@@ -674,9 +744,13 @@ class ClauseaCrawler:
             url = resolved_url
 
         result = CrawlResult(
-            url=url, title=page.title, content=page.text,
-            markdown=page.markdown, metadata=page.metadata,
-            status_code=page.status_code, success=True,
+            url=url,
+            title=page.title,
+            content=page.text,
+            markdown=page.markdown,
+            metadata=page.metadata,
+            status_code=page.status_code,
+            success=True,
             discovered_links=page.discovered_links,
         )
         if self.content_analyzer:
@@ -696,16 +770,23 @@ class ClauseaCrawler:
 
     def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
         selectors = (
-            "main", "article",
+            "main",
+            "article",
             '[role="main"]',
-            '[id*="content" i]', '[class*="content" i]',
-            '[data-testid*="content" i]', '[data-testid*="article" i]',
+            '[id*="content" i]',
+            '[class*="content" i]',
+            '[data-testid*="content" i]',
+            '[data-testid*="article" i]',
             '[data-testid="CEPHtmlSection"]',
             '[data-qa*="content" i]',
-            '[id*="legal" i]', '[class*="legal" i]',
-            '[id*="privacy" i]', '[class*="privacy" i]',
-            '[id*="terms" i]', '[class*="terms" i]',
-            '[id*="policy" i]', '[class*="policy" i]',
+            '[id*="legal" i]',
+            '[class*="legal" i]',
+            '[id*="privacy" i]',
+            '[class*="privacy" i]',
+            '[id*="terms" i]',
+            '[class*="terms" i]',
+            '[id*="policy" i]',
+            '[class*="policy" i]',
         )
 
         best_html: str | None = None
@@ -795,9 +876,17 @@ class ClauseaCrawler:
         text_lower = text.lower()
 
         legal_attr_keywords = (
-            "legal", "privacy", "policy", "terms", "gdpr", "ccpa",
-            "data-protection", "data_protection", "dpa",
-            "cookie-policy", "cookie_policy",
+            "legal",
+            "privacy",
+            "policy",
+            "terms",
+            "gdpr",
+            "ccpa",
+            "data-protection",
+            "data_protection",
+            "dpa",
+            "cookie-policy",
+            "cookie_policy",
         )
         if not any(keyword in attrs_lower for keyword in legal_attr_keywords):
             return False
@@ -820,7 +909,7 @@ class ClauseaCrawler:
         return text_content.strip()
 
     @staticmethod
-    @lru_cache(maxsize=50000)
+    @lru_cache(maxsize=50000)  # noqa: B019 - Static method cache is safe
     def _parse_url(url: str) -> ParseResult:
         return urlparse(url)
 
@@ -855,8 +944,12 @@ class ClauseaCrawler:
 
         normalized = urlunparse(
             (
-                parsed.scheme, parsed.netloc, parsed.path, parsed.params,
-                self._strip_tracking_params(parsed.query), "",
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                self._strip_tracking_params(parsed.query),
+                "",
             )
         )
 
@@ -926,7 +1019,10 @@ class ClauseaCrawler:
         return urls
 
     _WELL_KNOWN_SITEMAP_PATHS = [
-        "/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml", "/sitemaps.xml",
+        "/sitemap.xml",
+        "/sitemap_index.xml",
+        "/sitemap-index.xml",
+        "/sitemaps.xml",
     ]
 
     async def _discover_sitemap_urls(
@@ -1328,8 +1424,13 @@ class ClauseaCrawler:
 
             if raw.status_code == 404 or self._url_looks_like_not_found_landing(effective_url):
                 return CrawlResult(
-                    url=effective_url, title="", content="", markdown="",
-                    metadata={}, status_code=raw.status_code, success=False,
+                    url=effective_url,
+                    title="",
+                    content="",
+                    markdown="",
+                    metadata={},
+                    status_code=raw.status_code,
+                    success=False,
                     error_message="Not found (404)",
                 )
 
@@ -1369,7 +1470,8 @@ class ClauseaCrawler:
                     return CrawlResult(
                         url=effective_url,
                         title=(browser_page.title if browser_page else ""),
-                        content="", markdown="",
+                        content="",
+                        markdown="",
                         metadata=(browser_page.metadata if browser_page else {}),
                         status_code=(browser_page.status_code if browser_page else raw.status_code),
                         success=False,
@@ -1382,9 +1484,13 @@ class ClauseaCrawler:
 
             if page is None:
                 return CrawlResult(
-                    url=effective_url, title="", content="", markdown="",
+                    url=effective_url,
+                    title="",
+                    content="",
+                    markdown="",
                     metadata={"content-type": raw.content_type},
-                    status_code=raw.status_code, success=False,
+                    status_code=raw.status_code,
+                    success=False,
                     error_message=f"Unsupported content type: {raw.content_type}",
                 )
 
@@ -1394,8 +1500,13 @@ class ClauseaCrawler:
             if e.status >= 500 or e.status == 429:
                 raise
             return CrawlResult(
-                url=url, title="", content="", markdown="", metadata={},
-                status_code=e.status, success=False,
+                url=url,
+                title="",
+                content="",
+                markdown="",
+                metadata={},
+                status_code=e.status,
+                success=False,
                 error_message=f"HTTP {e.status}: {e.message}",
             )
         except (aiohttp.ClientError, TimeoutError):
@@ -1403,8 +1514,14 @@ class ClauseaCrawler:
         except Exception as e:
             logger.error(f"Unexpected error fetching {url}: {e}", exc_info=True)
             return CrawlResult(
-                url=url, title="", content="", markdown="", metadata={},
-                status_code=0, success=False, error_message=str(e),
+                url=url,
+                title="",
+                content="",
+                markdown="",
+                metadata={},
+                status_code=0,
+                success=False,
+                error_message=str(e),
             )
 
     async def fetch_page(self, session: aiohttp.ClientSession, url: str) -> CrawlResult:
@@ -1424,20 +1541,35 @@ class ClauseaCrawler:
         except aiohttp.ClientResponseError as e:
             if e.status >= 500 or e.status == 429:
                 return CrawlResult(
-                    url=url, title="", content="", markdown="", metadata={},
-                    status_code=e.status, success=False,
+                    url=url,
+                    title="",
+                    content="",
+                    markdown="",
+                    metadata={},
+                    status_code=e.status,
+                    success=False,
                     error_message=f"HTTP {e.status}: {e.message} (retries exhausted)",
                 )
             else:
                 return CrawlResult(
-                    url=url, title="", content="", markdown="", metadata={},
-                    status_code=e.status, success=False,
+                    url=url,
+                    title="",
+                    content="",
+                    markdown="",
+                    metadata={},
+                    status_code=e.status,
+                    success=False,
                     error_message=f"HTTP {e.status}: {e.message}",
                 )
         except (aiohttp.ClientError, TimeoutError) as e:
             return CrawlResult(
-                url=url, title="", content="", markdown="", metadata={},
-                status_code=0, success=False,
+                url=url,
+                title="",
+                content="",
+                markdown="",
+                metadata={},
+                status_code=0,
+                success=False,
                 error_message=f"{type(e).__name__}: {str(e)} (retries exhausted)",
             )
 
@@ -1448,32 +1580,82 @@ class ClauseaCrawler:
         domain = parsed.netloc
 
         legal_paths = [
-            "/legal", "/legal/privacy", "/legal/terms", "/legal/cookies",
-            "/legal/tos", "/privacy", "/privacy-policy", "/terms",
-            "/terms-of-service", "/terms-of-use", "/tos", "/cookies",
-            "/gdpr", "/cookie-policy", "/legal/privacy-policy",
-            "/legal/terms-of-service", "/legal/terms-of-use",
-            "/legal/cookie-policy", "/company/legal", "/company/privacy",
-            "/company/terms", "/company/tos", "/company/cookies",
-            "/about/legal", "/about/privacy", "/about/terms",
-            "/about/tos", "/support/legal", "/support/privacy",
-            "/support/terms", "/help/legal", "/help/privacy",
-            "/help/terms", "/policies", "/policies/privacy",
-            "/policies/terms", "/policies/cookies", "/legal/policies",
-            "/legal/policies/privacy", "/legal/policies/terms",
-            "/legal/policies/cookies", "/policy", "/policy/privacy",
-            "/policy/terms", "/policy/terms-of-service",
-            "/policy/terms-of-use", "/policy/cookies", "/policy/cookie",
-            "/policy/data", "/policy/gdpr", "/policy/ccpa",
-            "/policy/community", "/policy/safety", "/policy/copyright",
-            "/trust", "/trust/legal", "/trust/privacy",
+            "/legal",
+            "/legal/privacy",
+            "/legal/terms",
+            "/legal/cookies",
+            "/legal/tos",
+            "/privacy",
+            "/privacy-policy",
+            "/terms",
+            "/terms-of-service",
+            "/terms-of-use",
+            "/tos",
+            "/cookies",
+            "/gdpr",
+            "/cookie-policy",
+            "/legal/privacy-policy",
+            "/legal/terms-of-service",
+            "/legal/terms-of-use",
+            "/legal/cookie-policy",
+            "/company/legal",
+            "/company/privacy",
+            "/company/terms",
+            "/company/tos",
+            "/company/cookies",
+            "/about/legal",
+            "/about/privacy",
+            "/about/terms",
+            "/about/tos",
+            "/support/legal",
+            "/support/privacy",
+            "/support/terms",
+            "/help/legal",
+            "/help/privacy",
+            "/help/terms",
+            "/policies",
+            "/policies/privacy",
+            "/policies/terms",
+            "/policies/cookies",
+            "/legal/policies",
+            "/legal/policies/privacy",
+            "/legal/policies/terms",
+            "/legal/policies/cookies",
+            "/policy",
+            "/policy/privacy",
+            "/policy/terms",
+            "/policy/terms-of-service",
+            "/policy/terms-of-use",
+            "/policy/cookies",
+            "/policy/cookie",
+            "/policy/data",
+            "/policy/gdpr",
+            "/policy/ccpa",
+            "/policy/community",
+            "/policy/safety",
+            "/policy/copyright",
+            "/trust",
+            "/trust/legal",
+            "/trust/privacy",
         ]
 
         hub_paths = [
-            "/articles", "/collections", "/categories", "/sections",
-            "/docs", "/help", "/help/articles", "/help/collections",
-            "/support", "/support/articles", "/support/solutions",
-            "/knowledge", "/knowledge-base", "/kb", "/faq", "/hc",
+            "/articles",
+            "/collections",
+            "/categories",
+            "/sections",
+            "/docs",
+            "/help",
+            "/help/articles",
+            "/help/collections",
+            "/support",
+            "/support/articles",
+            "/support/solutions",
+            "/knowledge",
+            "/knowledge-base",
+            "/kb",
+            "/faq",
+            "/hc",
         ]
 
         base_path = parsed.path.rstrip("/")
@@ -1507,8 +1689,15 @@ class ClauseaCrawler:
 
     _LEGAL_HUB_KEYWORDS = frozenset(
         [
-            "terms", "privacy", "policy", "legal", "cookie",
-            "agreement", "gdpr", "compliance", "data protection",
+            "terms",
+            "privacy",
+            "policy",
+            "legal",
+            "cookie",
+            "agreement",
+            "gdpr",
+            "compliance",
+            "data protection",
         ]
     )
 
@@ -1731,8 +1920,10 @@ class ClauseaCrawler:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
 
             async with aiohttp.ClientSession(
-                connector=connector, timeout=timeout,
-                max_line_size=MAX_HEADER_BYTES, max_field_size=MAX_HEADER_BYTES,
+                connector=connector,
+                timeout=timeout,
+                max_line_size=MAX_HEADER_BYTES,
+                max_field_size=MAX_HEADER_BYTES,
                 headers={"Accept-Language": "en-US,en;q=0.9"},
             ) as session:
                 try:
@@ -1814,7 +2005,9 @@ class ClauseaCrawler:
 
                         if depth < self.max_depth and result.discovered_links:
                             self.add_urls_to_queue(
-                                result.discovered_links, base_url, depth,
+                                result.discovered_links,
+                                base_url,
+                                depth,
                                 page_metadata=result.metadata,
                             )
 
@@ -1886,6 +2079,7 @@ class ClauseaCrawler:
 
 # ---- Convenience functions ---------------------------------------------------------
 
+
 async def crawl_for_policy_documents(
     base_url: str,
     max_depth: int = 4,
@@ -1905,8 +2099,10 @@ async def test_specific_url(url: str) -> CrawlResult:
     timeout = aiohttp.ClientTimeout(total=30)
 
     async with aiohttp.ClientSession(
-        connector=connector, timeout=timeout,
-        max_line_size=MAX_HEADER_BYTES, max_field_size=MAX_HEADER_BYTES,
+        connector=connector,
+        timeout=timeout,
+        max_line_size=MAX_HEADER_BYTES,
+        max_field_size=MAX_HEADER_BYTES,
     ) as session:
         result = await crawler.fetch_page(session, url)
 
@@ -1926,9 +2122,7 @@ async def main() -> None:
         return
 
     base_url = sys.argv[1]
-    await crawl_for_policy_documents(
-        base_url=base_url, max_depth=4, max_pages=200, strategy="bfs"
-    )
+    await crawl_for_policy_documents(base_url=base_url, max_depth=4, max_pages=200, strategy="bfs")
 
 
 if __name__ == "__main__":

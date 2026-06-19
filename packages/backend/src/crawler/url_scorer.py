@@ -173,7 +173,7 @@ class URLScorer:
             "news": -1.0,
         }
 
-    @lru_cache(maxsize=10000)
+    @lru_cache(maxsize=10000)  # noqa: B019 - Cache is bounded and per-instance
     def score_url(self, url: str, anchor_text: str | None = None) -> float:
         url_lower = url.lower()
         parsed = urlparse(url_lower)
@@ -252,6 +252,6 @@ class URLScorer:
     def is_non_policy_section(self, url: str) -> bool:
         return bool(self._non_policy_section_re.search(urlparse(url.lower()).path))
 
-    @lru_cache(maxsize=10000)
+    @lru_cache(maxsize=10000)  # noqa: B019
     def is_strong_policy_path(self, url: str) -> bool:
         return bool(self._strong_policy_path_re.search(urlparse(url.lower()).path))
