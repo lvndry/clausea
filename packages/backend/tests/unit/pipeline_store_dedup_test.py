@@ -33,6 +33,7 @@ async def test_collapses_same_content_locale_variants(monkeypatch):
     service = MagicMock()
     # all URLs are new for this product
     service.get_document_by_url = AsyncMock(return_value=None)
+    service.find_existing_by_content_hash = AsyncMock(return_value=None)
     service.link_document_to_product = AsyncMock(return_value=True)
     service.update_document = AsyncMock(return_value=True)
 
@@ -86,6 +87,7 @@ async def test_reuses_canonical_document_across_products(monkeypatch):
     incoming.product_id = "prod-b"
 
     service.get_document_by_url = AsyncMock(return_value=existing)
+    service.find_existing_by_content_hash = AsyncMock(return_value=None)
     service.link_document_to_product = AsyncMock(return_value=True)
     service.store_document = AsyncMock()
     service.update_document = AsyncMock()

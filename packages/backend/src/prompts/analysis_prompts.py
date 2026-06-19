@@ -138,6 +138,7 @@ Return valid JSON matching this schema:
 
 PRODUCT_OVERVIEW_JSON_SCHEMA = """{
   "summary": string,
+  "headline_claim": string | null,
   "scores": {
     "transparency":          {"score": int (0-10), "justification": string},
     "data_collection_scope": {"score": int (0-10), "justification": string},
@@ -215,6 +216,12 @@ Explicitly surface, when the inputs support it: children's or teens' data, sale 
 - If a field cannot be filled from the evidence, use "Not specified in documents" — never invent.
 - Be honest: if the company collects a lot of data, do not soften it; but do not invent or exaggerate risks beyond what the documents support.
 - Distinguish *absent* from *vague*. "Mentioned but unspecified" and "not mentioned at all" are different findings — never collapse the former into the latter. If a document addresses a topic only with boilerplate or without naming a concrete mechanism (e.g. "we apply appropriate safeguards" for international transfers, with no Standard Contractual Clauses / adequacy decision / BCRs named), describe it as **vague or unspecified** (e.g. "transfer safeguards are claimed but unspecified — no mechanism named"), not as missing or non-existent. Flagging vague boilerplate as a weakness is correct; stating that none exists when the document claims otherwise is not.
+
+## HEADLINE CLAIM
+One plain-English sentence (max 25 words) that captures the single most important fact about this product's privacy posture. It must be specific enough that it could not apply to any other product.
+- Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
+- Bad: "This service collects some data and shares it with third parties."
+Return null only if the evidence is genuinely insufficient to make a specific claim.
 
 ## SUMMARY
 One sentence (max 20 words) that tells a non-technical user the single most important thing about this service's data practices. Start with the service name. Be specific — name the actual risk or strength, not generic labels.

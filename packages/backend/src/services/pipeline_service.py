@@ -8,7 +8,7 @@ import asyncio
 import contextlib
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import shortuuid
 from motor.core import AgnosticDatabase
@@ -230,7 +230,7 @@ class PipelineService:
         db: AgnosticDatabase,
         job: PipelineJob,
         step_name: str,
-        status: str,
+        status: Literal["pending", "running", "completed", "failed"],
         message: str | None = None,
     ) -> None:
         """Update a specific step in the pipeline job."""
@@ -241,7 +241,7 @@ class PipelineService:
         }
         for i, step in enumerate(job.steps):
             if step.name == step_name:
-                step.status = status  # ty: ignore[invalid-assignment]
+                step.status = status
                 step.message = message
 
                 update_data[f"steps.{i}.status"] = status
@@ -581,12 +581,15 @@ class PipelineService:
                             message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
                         )
 
-                    analysed_docs = await analyse_product_documents(
+                    analysis_result = await analyse_product_documents(
                         db,
                         job.product_slug,
                         doc_svc,
                         progress_callback=_on_synthesise_progress,
+                        force_reanalyze=job.force_reanalyze,
                     )
+                    analysed_docs = analysis_result.documents
+                    job.analyses_skipped = analysis_result.analyses_skipped
 
                     # Update to total docs in product (not just newly stored this run).
                     # documents_stored was set from crawl stats which only counts new/changed

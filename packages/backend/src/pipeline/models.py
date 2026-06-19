@@ -34,6 +34,8 @@ class ProcessingStats(BaseModel):
     english_documents: int = 0
     non_english_skipped: int = 0
     duplicates_skipped: int = 0
+    # Documents whose LLM analysis was reused from a prior run (content unchanged).
+    analyses_skipped: int = 0
     processing_time_seconds: float = 0.0
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0

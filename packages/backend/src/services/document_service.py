@@ -79,6 +79,27 @@ class DocumentService:
         """
         return await self._document_repo.find_by_url(db, url)
 
+    async def find_existing_by_content_hash(
+        self, db: AgnosticDatabase, product_id: str, content_hash: str
+    ) -> Document | None:
+        """Find an existing document for the same product with identical content.
+
+        Used for cross-run deduplication: when a newly crawled URL is unknown
+        but its content matches a document already stored under the same product,
+        we link instead of creating a duplicate.
+
+        Args:
+            db: Database instance
+            product_id: Product ID to scope the search
+            content_hash: The content fingerprint to match on
+
+        Returns:
+            Document or None if no match found
+        """
+        return await self._document_repo.find_by_product_and_content_hash(
+            db, product_id, content_hash
+        )
+
     async def get_product_document_by_url(
         self, db: AgnosticDatabase, product_id: str, url: str
     ) -> Document | None:

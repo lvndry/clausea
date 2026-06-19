@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from motor.core import AgnosticDatabase
@@ -294,6 +294,7 @@ class ProductService:
         product_slug: str,
         meta_summary: MetaSummary,
         job_id: str | None = None,
+        product_id: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -302,9 +303,10 @@ class ProductService:
             product_slug: Product slug
             meta_summary: Overview payload (MetaSummary shape)
             job_id: Optional pipeline job that produced this overview
+            product_id: Product identifier for the owning product record
         """
         await self._product_repo.save_product_overview(
-            db, product_slug, meta_summary, job_id=job_id
+            db, product_slug, meta_summary, job_id=job_id, product_id=product_id
         )
 
     # ============================================================================
@@ -338,12 +340,14 @@ class ProductService:
             current_grade or "unknown",
             canonical_grade,
         )
+        canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
         repaired = dict(explainer)
         repaired["grade"] = canonical_grade
+        repaired["grade_reason"] = canonical_reason
 
         try:
             await self._product_repo.update_product_explainer_grade(
-                db, product_slug, canonical_grade
+                db, product_slug, canonical_grade, grade_reason=canonical_reason
             )
         except Exception as exc:  # noqa: BLE001 - best-effort repair
             logger.warning(
@@ -367,13 +371,16 @@ class ProductService:
         if canonical_grade is not None:
             current_grade = self._coerce_grade(explainer.grade)
             if current_grade != canonical_grade:
+                canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
                 logger.info(
                     "Overriding explainer grade with canonical overview grade for %s: %s -> %s",
                     product_slug,
                     current_grade or "unknown",
                     canonical_grade,
                 )
-                payload = explainer.model_copy(update={"grade": canonical_grade})
+                payload = explainer.model_copy(
+                    update={"grade": canonical_grade, "grade_reason": canonical_reason}
+                )
 
         return await self._product_repo.save_product_explainer(db, product_slug, payload)
 
@@ -628,6 +635,7 @@ class ProductService:
             verdict=meta.verdict,
             risk_score=meta.risk_score,
             one_line_summary=meta.summary,
+            headline_claim=meta.headline_claim,
             data_collected=meta.data_collected,
             data_purposes=meta.data_purposes,
             your_rights=meta.your_rights,
@@ -684,6 +692,37 @@ class ProductService:
             clamped = max(0, min(10, round(risk_score)))
             return self._grade_from_risk_score(clamped)
         return self._coerce_grade(overview.get("grade"))
+
+    _GRADE_REASONS: ClassVar[dict[str, str]] = {
+        "A": "Very user-friendly: minimal data collection, strong user controls, no major concerns.",
+        "B": "Generally user-friendly: some concerns but good transparency and user rights overall.",
+        "C": "Moderate risk: notable concerns around data sharing, limited user controls, or vague language.",
+        "D": "Pervasive risk: significant issues with data practices, limited user rights, or broad data sharing.",
+        "E": "Very pervasive risk: critical concerns such as forced arbitration, broad data selling, or severe opacity.",
+    }
+
+    @classmethod
+    def _grade_reason_from_overview(
+        cls, canonical_grade: str, explainer: ConsumerExplainer | dict
+    ) -> str:
+        """Build a canonical grade_reason that explains the overview-derived grade.
+
+        Replaces the LLM-emitted grade_reason which may describe a different grade
+        after reconciliation stomps the grade to the canonical value.
+        Preserves the original LLM reasoning as context when available, prefixed
+        with the canonical justification for the actual grade.
+        """
+        canonical_justification = cls._GRADE_REASONS.get(
+            canonical_grade, "Risk assessment based on structured policy analysis."
+        )
+        original_reason = (
+            explainer.grade_reason
+            if isinstance(explainer, ConsumerExplainer)
+            else explainer.get("grade_reason", "")
+        )
+        if original_reason and original_reason != canonical_justification:
+            return f"{canonical_justification} Original assessment: {original_reason}"
+        return canonical_justification
 
     @staticmethod
     def _normalize_domain(domain: str) -> str:

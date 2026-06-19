@@ -217,6 +217,32 @@ class DocumentRepository(BaseRepository):
             return None
         return Document(**_contextualize_document_for_product(document, product_id))
 
+    async def find_by_product_and_content_hash(
+        self, db: AgnosticDatabase, product_id: str, content_hash: str
+    ) -> Document | None:
+        """Find an existing document for the same product with matching content hash.
+
+        Used for cross-run deduplication of regional URL variants that serve
+        identical content (e.g. apple.com/au/legal vs apple.com/ca/legal).
+        Prefers the most-canonical URL (non-locale first).
+        """
+        from src.pipeline.helpers import _canonical_rank
+
+        query = {
+            "$or": [
+                {"product_id": product_id},
+                {"product_ids": product_id},
+            ],
+            "content_hash": content_hash,
+            "text": {"$ne": ""},
+        }
+        cursor = db.documents.find(query).sort("url", 1)
+        candidates = await cursor.to_list(length=10)
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda d: _canonical_rank(d.get("url", "")))
+        return Document(**_normalize_document_record(best))
+
     async def find_by_product_id(self, db: AgnosticDatabase, product_id: str) -> list[Document]:
         """Get all documents for a specific product (listing / light reads).
 
