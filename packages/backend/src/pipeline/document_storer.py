@@ -30,6 +30,7 @@ from src.pipeline.helpers import (
     _canonical_rank,
     _content_fingerprint,
     _diff_fields,
+    canonicalize_url,
     logger_storage,
 )
 from src.pipeline.models import ProcessingStats
@@ -59,6 +60,16 @@ class DocumentStorer:
                 try:
                     source_product_id = document.product_id
                     existing_doc = await document_service.get_document_by_url(db, document.url)
+                    if not existing_doc:
+                        canonical = canonicalize_url(document.url)
+                        if canonical != document.url:
+                            existing_doc = await document_service.get_document_by_url(db, canonical)
+                            if existing_doc:
+                                logger_storage.debug(
+                                    "matched locale variant %s to canonical document %s",
+                                    document.url,
+                                    canonical,
+                                )
                     if existing_doc:
                         linked_this_run = False
                         if not existing_doc.is_linked_to_product(source_product_id):
