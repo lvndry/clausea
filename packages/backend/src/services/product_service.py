@@ -371,9 +371,7 @@ class ProductService:
         if canonical_grade is not None:
             current_grade = self._coerce_grade(explainer.grade)
             if current_grade != canonical_grade:
-                canonical_reason = self._grade_reason_from_overview(
-                    canonical_grade, explainer.model_dump()
-                )
+                canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
                 logger.info(
                     "Overriding explainer grade with canonical overview grade for %s: %s -> %s",
                     product_slug,
