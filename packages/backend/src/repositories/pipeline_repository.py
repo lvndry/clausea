@@ -11,8 +11,14 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from src.core.logging import get_logger
-from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES, PipelineErrorCode, PipelineJob
+from src.models.pipeline_job import (
+    TERMINAL_PIPELINE_STATUSES,
+    PipelineErrorCode,
+    PipelineJob,
+    is_hard_crawl_error,
+)
 from src.repositories.base_repository import BaseRepository
+from src.utils.domain import extract_domain as _extract_domain
 
 _TERMINAL_STATUSES = list(TERMINAL_PIPELINE_STATUSES)
 
@@ -36,6 +42,7 @@ _NON_RETRYABLE_PIPELINE_ERRORS = {
     PipelineErrorCode.product_not_found.value,
     PipelineErrorCode.crawl_robots_blocked.value,
     PipelineErrorCode.no_documents_found.value,
+    PipelineErrorCode.domain_circuit_breaker.value,
 }
 
 
@@ -54,6 +61,14 @@ def _read_positive_int_env(name: str, default: int) -> int:
 # crawler/render/LLM failures before quarantining a job as poison.
 MAX_AUTO_RETRY_ATTEMPTS = _read_positive_int_env("PIPELINE_MAX_AUTO_RETRY_ATTEMPTS", 12)
 MAX_REQUEUE_BATCH_SIZE = _read_positive_int_env("PIPELINE_REQUEUE_BATCH_SIZE", 200)
+
+# Domain circuit breaker: stop claiming jobs for a domain once this many hard
+# crawl failures (bot detection, 403s, anti-scrape blocks) have accumulated across
+# retries of the same pipeline job.  Scoped per job document — resets when a brand
+# new job is created for the product (monitoring re-crawl, manual trigger, etc.).
+DOMAIN_CIRCUIT_BREAKER_THRESHOLD = _read_positive_int_env(
+    "PIPELINE_DOMAIN_CIRCUIT_BREAKER_THRESHOLD", 5
+)
 
 
 def _is_auto_retryable_failure(error_code: Any) -> bool:
@@ -157,14 +172,65 @@ class PipelineRepository(BaseRepository):
 
         Flips status pending -> crawling in one step so two workers (or concurrent claim
         loops) never pick up the same job. Returns the claimed job, or None if none pending.
+
+        Before claiming, checks the domain circuit breaker: if the job's accumulated hard
+        failure count (bot detection, 403s, persistent access blocks) has reached
+        DOMAIN_CIRCUIT_BREAKER_THRESHOLD, the job is marked as failed with
+        PipelineErrorCode.domain_circuit_breaker (non-retryable) and None is returned.
+        The worker will poll again on the next cycle.
         """
-        data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
+        # Peek at the next candidate without claiming, so we can check the circuit
+        # breaker first.  Uses the same sort as the eventual claim so we always inspect
+        # the job that *would* be claimed.
+        candidate: dict[str, Any] | None = await db[self.COLLECTION].find_one(
             {"status": "pending"},
+            sort=[("created_at", 1)],
+        )
+        if not candidate:
+            return None
+
+        hard_count = int(candidate.get("accumulated_hard_failure_count") or 0)
+        if hard_count >= DOMAIN_CIRCUIT_BREAKER_THRESHOLD:
+            domain = _extract_domain(candidate.get("url", ""))
+            logger.warning(
+                "Domain circuit breaker tripped — job=%s product=%s domain=%r "
+                "accumulated_hard_failures=%d threshold=%d; marking non-retryable.",
+                candidate.get("id"),
+                candidate.get("product_slug"),
+                domain,
+                hard_count,
+                DOMAIN_CIRCUIT_BREAKER_THRESHOLD,
+            )
+            await db[self.COLLECTION].update_one(
+                {"id": candidate["id"], "status": "pending"},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "active": False,
+                        "error": PipelineErrorCode.domain_circuit_breaker.value,
+                        "error_detail": (
+                            f"Domain {domain!r} accumulated {hard_count} hard failure(s) "
+                            f"(threshold={DOMAIN_CIRCUIT_BREAKER_THRESHOLD}). "
+                            "Stopping retries to avoid wasting browser concurrency on a "
+                            "site that blocks automated access."
+                        ),
+                        "auto_retry_disabled": True,
+                        "auto_retry_disabled_reason": (
+                            f"domain_circuit_breaker: {hard_count} hard failure(s) on {domain!r}"
+                        ),
+                        "completed_at": datetime.now(),
+                        "updated_at": datetime.now(),
+                    }
+                },
+            )
+            return None
+
+        data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
+            {"id": candidate["id"], "status": "pending"},
             {
                 "$set": {"status": "crawling", "started_at": datetime.now(), "active": True},
                 "$inc": {"attempts": 1},
             },
-            sort=[("created_at", 1)],
             return_document=ReturnDocument.AFTER,
         )
         if not data:
@@ -304,6 +370,23 @@ class PipelineRepository(BaseRepository):
             if slug in claimed_slugs:  # product already has (or just got) an active job
                 continue
             claimed_slugs.add(slug)
+
+            # Accumulate hard crawl failures from this attempt before wiping crawl_errors.
+            # The counter persists across retries (NOT reset here) so the circuit breaker
+            # has a cumulative signal even though per-attempt crawl_errors are cleared.
+            hard_failures_this_attempt = sum(
+                1
+                for err in (job.get("crawl_errors") or [])
+                if is_hard_crawl_error(
+                    err.get("error_type", ""),
+                    int(err.get("status_code") or 0),
+                    err.get("error_message"),
+                )
+            )
+            new_hard_failure_count = (
+                int(job.get("accumulated_hard_failure_count") or 0) + hard_failures_this_attempt
+            )
+
             try:
                 result = await db[self.COLLECTION].update_one(
                     {
@@ -328,6 +411,9 @@ class PipelineRepository(BaseRepository):
                             "crawl_skip_reasons": [],
                             "auto_retry_disabled": False,
                             "auto_retry_disabled_reason": None,
+                            # Preserve the accumulated hard failure count — it must survive
+                            # retries so the circuit breaker can trip after enough attempts.
+                            "accumulated_hard_failure_count": new_hard_failure_count,
                             "updated_at": datetime.now(),
                         }
                     },

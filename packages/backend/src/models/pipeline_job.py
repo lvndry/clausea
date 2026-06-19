@@ -26,6 +26,9 @@ class PipelineErrorCode(StrEnum):
     internal_error = "internal_error"
     timed_out = "timed_out"
     stalled = "stalled"
+    # Hard anti-bot/access block accumulated over retries — domain is skipped
+    # for the remainder of this pipeline run to avoid wasting browser concurrency.
+    domain_circuit_breaker = "domain_circuit_breaker"
 
 
 PipelineJobStatus = Literal[
@@ -59,6 +62,42 @@ CrawlErrorType = Literal[
     "content_error",
     "unknown",
 ]
+
+
+# HTTP status codes that indicate a hard anti-bot/access block (not transient errors).
+# 403 Forbidden, 401 Unauthorized, 407 Proxy Auth Required, 451 Unavailable For Legal Reasons.
+_HARD_HTTP_STATUS_CODES: frozenset[int] = frozenset({401, 403, 407, 451})
+
+# Keywords in error messages that signal bot-detection or active access blocks.
+_BOT_DETECTION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "captcha",
+        "cloudflare",
+        "access denied",
+        "bot detection",
+        "bot-detection",
+        "challenge",
+        "security check",
+        "ddos protection",
+        "anti-bot",
+    }
+)
+
+
+def is_hard_crawl_error(error_type: str, status_code: int, error_message: str | None) -> bool:
+    """Return True if this crawl error signals a hard anti-bot or access block.
+
+    Hard failures = bot detection (CAPTCHA, Cloudflare, 403 Forbidden, "Access Denied").
+    Transient failures = network timeouts, DNS errors, 5xx server errors — these should
+    still be retried.
+    """
+    if error_type == "http_error" and status_code in _HARD_HTTP_STATUS_CODES:
+        return True
+    if error_message:
+        msg = error_message.lower()
+        if any(kw in msg for kw in _BOT_DETECTION_KEYWORDS):
+            return True
+    return False
 
 
 def classify_crawl_error(error_message: str | None, status_code: int) -> "CrawlErrorType":
@@ -160,6 +199,12 @@ class PipelineJob(BaseModel):
     # Sticky auto-retry guard: when true, stale sweeps won't re-queue this failed job.
     auto_retry_disabled: bool = False
     auto_retry_disabled_reason: str | None = None
+
+    # Cumulative count of hard crawl errors (bot detection, 403s, anti-scrape blocks)
+    # accumulated across retries. NOT reset on requeue so the circuit breaker has a
+    # persistent signal. Reaches PIPELINE_DOMAIN_CIRCUIT_BREAKER_THRESHOLD before
+    # the next claim attempt skips the job instead of running it again.
+    accumulated_hard_failure_count: int = 0
 
     # Stats from the crawl phase
     documents_found: int = 0
