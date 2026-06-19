@@ -314,6 +314,22 @@ class PipelineRepository(BaseRepository):
         )
         logger.debug(f"Partially updated pipeline job {job_id}: {list(fields.keys())}")
 
+    async def inc_document_counters(
+        self, db: AgnosticDatabase, job_id: str, *, stored: int = 0, found: int = 0
+    ) -> None:
+        """Atomically increment live document counters on an in-flight job.
+
+        Keeps ``documents_found`` and ``documents_stored`` current during crawling
+        so real-time monitoring shows live progress instead of 0/0 until the crawl
+        phase ends.  Uses ``$inc`` — does not reload the full job document.
+        """
+        if not job_id or (stored == 0 and found == 0):
+            return
+        await db[self.COLLECTION].update_one(
+            {"id": job_id},
+            {"$inc": {"documents_stored": stored, "documents_found": found}},
+        )
+
     async def requeue_failed_jobs(self, db: AgnosticDatabase) -> int:
         """Re-queue retryable failed jobs for another attempt.
 
