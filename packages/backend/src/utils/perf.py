@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import resource
 from pathlib import Path
 
 import psutil
@@ -51,12 +52,10 @@ def _get_proc_self_memory_bytes() -> int | None:
 def _get_rlimit_memory_bytes() -> int | None:
     """Return RLIMIT_AS soft limit as a proxy for the container memory ceiling."""
     try:
-        import resource  # noqa: PLC0415 (Unix-only; import guarded by try/except)
-
         soft, _ = resource.getrlimit(resource.RLIMIT_AS)
         if soft != resource.RLIM_INFINITY and soft > 0:
             return soft
-    except (ImportError, Exception):
+    except Exception:
         pass
     return None
 
