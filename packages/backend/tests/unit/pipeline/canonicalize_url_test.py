@@ -1,9 +1,12 @@
 """canonicalize_url strips locale signals for deduplication comparison.
 
 The function must:
-- Strip known ISO 639-1 language-code path segments (/en/, /fr/, /de/, /en-US/, etc.).
-- Strip locale query params (?lang=, ?locale=, ?hl=, ?language=).
-- Preserve path segments that are NOT language codes (/uk/, /us/, /eu/ are regions).
+- Strip bare ISO 639-1 2-letter language-code path segments (/en/, /fr/, /de/)
+  but NOT IETF regional tags (/en-US/, /pt-BR/, /en-GB/) — region subtags encode
+  legal jurisdiction and must be preserved as separate documents.
+- Strip display-language-only query params (?lang=, ?hl=, ?language=).
+- NOT strip ?locale= params — these frequently encode jurisdiction, not just language.
+- Preserve region/jurisdiction path segments (/us/, /uk/, /eu/, /eea/, /row/).
 - Preserve all other query params.
 - Be idempotent.
 """
@@ -13,20 +16,12 @@ import pytest
 from src.pipeline.helpers import canonicalize_url
 
 # ---------------------------------------------------------------------------
-# Locale path prefix stripping
+# Bare language code path prefix stripping (safe — no region component)
 # ---------------------------------------------------------------------------
 
 
 def test_strips_bare_2_letter_locale_prefix():
     assert canonicalize_url("https://example.com/en/privacy") == "https://example.com/privacy"
-
-
-def test_strips_ietf_locale_prefix_uppercase_region():
-    assert canonicalize_url("https://example.com/en-US/terms") == "https://example.com/terms"
-
-
-def test_strips_ietf_locale_prefix_lowercase_region():
-    assert canonicalize_url("https://example.com/pt-br/cookies") == "https://example.com/cookies"
 
 
 def test_strips_fr_locale_prefix():
@@ -49,14 +44,6 @@ def test_strips_es_locale_prefix():
     assert canonicalize_url("https://example.com/es/privacy") == "https://example.com/privacy"
 
 
-def test_strips_zh_locale_prefix():
-    assert canonicalize_url("https://example.com/zh/privacy") == "https://example.com/privacy"
-
-
-def test_strips_en_gb_locale_prefix():
-    assert canonicalize_url("https://example.com/en-GB/terms") == "https://example.com/terms"
-
-
 def test_strips_locale_prefix_preserves_remaining_path():
     assert (
         canonicalize_url("https://example.com/en/legal/privacy-policy")
@@ -73,16 +60,82 @@ def test_strips_locale_in_middle_of_path():
 
 
 # ---------------------------------------------------------------------------
+# IETF regional tags MUST be preserved (region encodes legal jurisdiction)
+# ---------------------------------------------------------------------------
+
+
+def test_preserves_ietf_regional_tag_en_us():
+    # en-US may carry CCPA obligations that are legally distinct from en-GB (GDPR).
+    assert canonicalize_url("https://example.com/en-US/terms") == "https://example.com/en-US/terms"
+
+
+def test_preserves_ietf_regional_tag_pt_br():
+    # pt-BR (Brazilian law) and pt-PT (EU law) are legally distinct documents.
+    assert (
+        canonicalize_url("https://example.com/pt-BR/cookies") == "https://example.com/pt-BR/cookies"
+    )
+
+
+def test_preserves_ietf_regional_tag_pt_br_lowercase():
+    assert (
+        canonicalize_url("https://example.com/pt-br/cookies") == "https://example.com/pt-br/cookies"
+    )
+
+
+def test_preserves_ietf_regional_tag_en_gb():
+    # en-GB may have materially different arbitration clauses and governing law.
+    assert canonicalize_url("https://example.com/en-GB/terms") == "https://example.com/en-GB/terms"
+
+
+def test_preserves_zh_not_in_allowlist():
+    # zh is omitted from the safe-to-strip allowlist because zh-CN vs zh-TW are
+    # legally distinct jurisdictions (Mainland China vs Taiwan).
+    assert canonicalize_url("https://example.com/zh/privacy") == "https://example.com/zh/privacy"
+
+
+# ---------------------------------------------------------------------------
+# Jurisdiction / region path segments must be preserved
+# ---------------------------------------------------------------------------
+
+
+def test_preserves_eea_jurisdiction_path():
+    # /eea/ is a jurisdiction segment (GDPR scope), not a display-language code.
+    url = "https://example.com/eea/privacy-policy"
+    assert canonicalize_url(url) == url
+
+
+def test_preserves_us_jurisdiction_path():
+    # /us/ is a geographic region identifier, not a language code.
+    url = "https://example.com/us/privacy-policy"
+    assert canonicalize_url(url) == url
+
+
+def test_preserves_row_jurisdiction_path():
+    url = "https://example.com/row/terms"
+    assert canonicalize_url(url) == url
+
+
+def test_eea_and_us_remain_distinct_documents():
+    # GDPR-scoped and CCPA-scoped variants must NOT collapse to the same canonical URL.
+    assert canonicalize_url("https://example.com/eea/privacy-policy") != canonicalize_url(
+        "https://example.com/us/privacy-policy"
+    )
+
+
+def test_en_us_and_en_gb_remain_distinct_documents():
+    # Jurisdiction-specific variants must survive canonicalization as separate documents.
+    assert canonicalize_url("https://example.com/en-US/terms") != canonicalize_url(
+        "https://example.com/en-GB/terms"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Locale query param stripping
 # ---------------------------------------------------------------------------
 
 
 def test_strips_lang_query_param():
     assert canonicalize_url("https://example.com/privacy?lang=en") == "https://example.com/privacy"
-
-
-def test_strips_locale_query_param():
-    assert canonicalize_url("https://example.com/terms?locale=en-US") == "https://example.com/terms"
 
 
 def test_strips_hl_query_param():
@@ -112,6 +165,22 @@ def test_strips_both_path_and_query_locale():
 
 
 # ---------------------------------------------------------------------------
+# ?locale= must NOT be stripped (encodes jurisdiction, not just display language)
+# ---------------------------------------------------------------------------
+
+
+def test_preserves_locale_query_param():
+    # ?locale= can encode legal jurisdiction (GDPR vs CCPA variant selection).
+    url = "https://example.com/terms?locale=en-US"
+    assert canonicalize_url(url) == url
+
+
+def test_preserves_locale_query_param_alongside_other_params():
+    result = canonicalize_url("https://example.com/legal?locale=en-US&id=42")
+    assert result == "https://example.com/legal?locale=en-US&id=42"
+
+
+# ---------------------------------------------------------------------------
 # URLs that must NOT be affected
 # ---------------------------------------------------------------------------
 
@@ -122,13 +191,25 @@ def test_strips_both_path_and_query_locale():
         # Full words — not 2-letter ISO codes.
         "https://example.com/english-law/privacy",
         "https://example.com/french-press/policy",
-        # Region codes that are NOT in the ISO 639-1 language code list.
+        # Region codes not in the ISO 639-1 language code allowlist.
         "https://example.com/uk/privacy",
         "https://example.com/us/terms",
         "https://example.com/eu/policy",
         "https://example.com/au/cookies",
-        # Deep path where non-locale segments surround a region code.
+        # IETF regional tags preserved (region = jurisdiction).
+        "https://example.com/en-US/terms",
+        "https://example.com/pt-BR/cookies",
+        "https://example.com/en-GB/legal",
+        "https://example.com/zh-CN/privacy",
+        "https://example.com/zh-TW/privacy",
+        # Bare language code not in the safe-to-strip allowlist.
+        "https://example.com/zh/privacy",
+        # Jurisdiction segments in deeper paths.
         "https://example.com/legal/eu/gdpr",
+        "https://example.com/eea/privacy-policy",
+        "https://example.com/row/terms",
+        # ?locale= preserved.
+        "https://example.com/terms?locale=en-US",
         # No locale at all.
         "https://example.com/privacy",
         "https://example.com/legal/terms-of-service",
@@ -159,6 +240,8 @@ def test_non_locale_query_params_preserved():
         "https://example.com/privacy?locale=en-US",
         "https://example.com/privacy",
         "https://example.com/uk/legal",
+        "https://example.com/eea/privacy-policy",
+        "https://example.com/zh/privacy",
     ],
 )
 def test_idempotent(url: str):

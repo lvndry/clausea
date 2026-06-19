@@ -48,58 +48,53 @@ RESUME_FRESH_HOURS = float(os.getenv("PIPELINE_RESUME_FRESH_HOURS", "24"))
 _LOCALE_PATH_RE = re.compile(r"^/[a-z]{2}([-_][a-z]{2})?(/|$)", re.IGNORECASE)
 _LOCALE_HOST_RE = re.compile(r"^[a-z]{2}([-_][a-z]{2})?\.", re.IGNORECASE)
 
-# ISO 639-1 language codes used to distinguish locale path segments from region codes.
-# Deliberately excludes ambiguous two-letter strings that denote geographic regions
-# rather than languages (e.g. "uk", "us", "eu", "au", "hr") to avoid false-positive
-# dedup collapses for regionally-distinct policy documents.
+# Conservative explicit allowlist of ISO 639-1 language codes safe to strip from URL
+# paths during deduplication.  Only includes codes that are unambiguously display-
+# language identifiers with no common geographic interpretation.  Deliberately omits:
+#   - "zh": zh-CN vs zh-TW are legally distinct (Mainland vs Taiwan jurisdiction)
+#   - "pt": pt-BR vs pt-PT differ by applicable law (Brazilian vs EU)
+#   - "uk": collides with United Kingdom country code
+#   - low-frequency codes that could cause false-positive dedup collapses
 _ISO_LANGUAGE_CODES: frozenset[str] = frozenset(
     {
         "ar",
-        "bg",
         "cs",
         "da",
         "de",
-        "el",
         "en",
         "es",
-        "et",
-        "fa",
         "fi",
         "fr",
-        "he",
-        "hi",
         "hu",
         "id",
         "it",
         "ja",
         "ko",
-        "lt",
-        "lv",
         "ms",
         "nl",
         "no",
         "pl",
-        "pt",
         "ro",
         "ru",
-        "sk",
-        "sl",
         "sv",
         "th",
         "tr",
         "vi",
-        "zh",
     }
 )
 
-# Query-param keys that exclusively carry locale information — safe to strip for
-# canonical comparison.  Deliberately excludes ambiguous shorthands like "l" and
-# "lr" that double as pagination/layout params on many sites.
-_LOCALE_QUERY_KEYS: frozenset[str] = frozenset({"lang", "language", "locale", "hl"})
+# Query-param keys that exclusively carry display-language information — safe to
+# strip for canonical comparison.  Deliberately excludes:
+#   - "locale": often encodes legal jurisdiction (e.g. ?locale=en-US on a site that
+#     serves GDPR vs CCPA variants), not just a display preference
+#   - ambiguous shorthands like "l" and "lr" that double as pagination/layout params
+_LOCALE_QUERY_KEYS: frozenset[str] = frozenset({"lang", "language", "hl"})
 
-# Matches a path segment that is a bare ISO language code optionally followed by a
-# BCP 47 region subtag (e.g. "en", "en-US", "pt-BR", "zh-hans").
-_LOCALE_SEGMENT_RE = re.compile(r"^([a-z]{2})(?:-[a-zA-Z]{2,4})?$", re.IGNORECASE)
+# Matches a path segment that is a bare ISO 639-1 2-letter language code only.
+# IETF regional tags (e.g. en-US, pt-BR, zh-TW) are intentionally NOT matched
+# because the region subtag carries legal-jurisdiction information that must be
+# preserved for deduplication to treat regional variants as distinct documents.
+_LOCALE_SEGMENT_RE = re.compile(r"^[a-z]{2}$", re.IGNORECASE)
 
 
 def _content_fingerprint(text: str) -> str:
@@ -110,10 +105,18 @@ def _content_fingerprint(text: str) -> str:
 def canonicalize_url(url: str) -> str:
     """Return a locale-stripped canonical URL for deduplication comparison.
 
-    Strips locale path segments (e.g. ``/en/``, ``/en-US/``, ``/fr/``) and
-    locale query params (e.g. ``?lang=en``, ``?locale=fr``, ``?hl=de``) so that
-    URL variants of the same document in different languages produce the same
+    Strips **bare** ISO 639-1 2-letter language-code path segments (e.g. ``/en/``,
+    ``/fr/``, ``/de/``) and display-language query params (e.g. ``?lang=en``,
+    ``?hl=de``) so that language variants of the same document collapse to one
     canonical key.
+
+    **Preserved** (not stripped):
+
+    * IETF regional tags such as ``/en-US/``, ``/pt-BR/``, ``/zh-TW/`` — the
+      region subtag encodes legal jurisdiction and makes documents legally distinct.
+    * Region / jurisdiction path segments such as ``/us/``, ``/eea/``, ``/row/``.
+    * ``?locale=`` query params — these frequently encode jurisdiction, not just
+      display language.
 
     The canonical URL is used **only** for dedup comparison — the original URL
     is always stored in the database.  The function is idempotent: applying it
@@ -123,19 +126,19 @@ def canonicalize_url(url: str) -> str:
         url: The raw document URL.
 
     Returns:
-        A canonical URL string with locale signals removed.
+        A canonical URL string with display-language signals removed.
     """
     parsed = urlparse(url)
 
-    # Drop path segments that look like locale codes (e.g. /en/, /en-US/, /fr/).
-    # We only strip segments whose 2-letter language part is in the known ISO
-    # language-code allowlist so that region codes (/uk/, /us/, /eu/) are
-    # preserved — those carry legally-distinct content.
+    # Drop path segments that are bare ISO 639-1 2-letter language codes
+    # (e.g. /en/, /fr/).  IETF regional tags (/en-US/, /pt-BR/) do NOT match
+    # the regex and are always kept.  Country/region codes (/us/, /eu/, /eea/)
+    # are kept either because they fail the regex or are absent from the allowlist.
     segments = [seg for seg in parsed.path.split("/") if seg]
     kept_segments = [
         seg
         for seg in segments
-        if not ((m := _LOCALE_SEGMENT_RE.match(seg)) and m.group(1).lower() in _ISO_LANGUAGE_CODES)
+        if not (_LOCALE_SEGMENT_RE.match(seg) and seg.lower() in _ISO_LANGUAGE_CODES)
     ]
     canonical_path = ("/" + "/".join(kept_segments)) if kept_segments else "/"
 
