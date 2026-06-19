@@ -30,14 +30,18 @@ export default function ComplexityToClarity() {
       if (!isDesktop) return;
       const scramble = containerRef.current?.querySelector(".scramble-text");
       const clear = containerRef.current?.querySelector(".clear-text");
-      const beams = containerRef.current?.querySelectorAll(".beam") || [];
+      const beams = gsap.utils.toArray<HTMLElement>(
+        containerRef.current?.querySelectorAll(".beam") ?? [],
+      );
 
       if (!scramble || !clear) return;
 
       // Set initial states
       gsap.set(clear, { opacity: 0, scale: 0.95 });
       gsap.set(".clarity-badge", { y: 20, opacity: 0 });
-      gsap.set(beams, { opacity: 0, scaleY: 0.5 });
+      if (beams.length > 0) {
+        gsap.set(beams, { opacity: 0, scaleY: 0.5 });
+      }
 
       const tl = gsap.timeline({
         scrollTrigger: {
@@ -85,16 +89,18 @@ export default function ComplexityToClarity() {
         );
 
       // Animate beams - start with the transition
-      tl.to(
-        beams,
-        {
-          opacity: 0.08,
-          scaleY: 1.5,
-          stagger: 0.15,
-          duration: 1.2,
-        },
-        0.5,
-      );
+      if (beams.length > 0) {
+        tl.to(
+          beams,
+          {
+            opacity: 0.08,
+            scaleY: 1.5,
+            stagger: 0.15,
+            duration: 1.2,
+          },
+          0.5,
+        );
+      }
 
       ScrollTrigger.refresh();
 
@@ -197,9 +203,9 @@ export default function ComplexityToClarity() {
 
       {/* Decorative vertical lines */}
       <div className="absolute inset-0 pointer-events-none -z-10 flex justify-between px-6 md:px-10 opacity-10">
-        <div className="w-px h-full bg-foreground" />
-        <div className="hidden md:block w-px h-full bg-foreground" />
-        <div className="w-px h-full bg-foreground" />
+        <div className="beam w-px h-full bg-foreground origin-top" />
+        <div className="beam hidden md:block w-px h-full bg-foreground origin-top" />
+        <div className="beam w-px h-full bg-foreground origin-top" />
       </div>
     </section>
   );
