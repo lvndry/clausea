@@ -1,4 +1,5 @@
 import asyncio
+import resource
 from pathlib import Path
 
 import psutil
@@ -36,6 +37,28 @@ def _get_cgroup_memory_usage_bytes() -> int | None:
     return None
 
 
+def _get_proc_self_memory_bytes() -> int | None:
+    """Read process RSS from /proc/self/status (portable; works in Railway containers)."""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024  # kB → bytes
+    except Exception:
+        pass
+    return None
+
+
+def _get_rlimit_memory_bytes() -> int | None:
+    """Return RLIMIT_AS soft limit as a proxy for the container memory ceiling."""
+    try:
+        soft, _ = resource.getrlimit(resource.RLIMIT_AS)
+        if soft != resource.RLIM_INFINITY and soft > 0:
+            return soft
+    except Exception:
+        pass
+    return None
+
+
 def get_memory_usage() -> dict[str, float]:
     """Get current memory usage statistics."""
     process = psutil.Process()
@@ -48,9 +71,18 @@ def get_memory_usage() -> dict[str, float]:
         system_used_percent = (cgroup_usage / cgroup_limit) * 100
         system_available_gb = (cgroup_limit - cgroup_usage) / 1024 / 1024 / 1024
     else:
-        system_memory = psutil.virtual_memory()
-        system_used_percent = system_memory.percent
-        system_available_gb = system_memory.available / 1024 / 1024 / 1024
+        # Fallback: per-process memory from /proc/self/status + RLIMIT_AS.
+        # These are always correct inside Railway containers where /sys/fs/cgroup
+        # is absent or read-only.
+        proc_rss = _get_proc_self_memory_bytes()
+        rlimit = _get_rlimit_memory_bytes()
+        if proc_rss is not None and rlimit is not None:
+            system_used_percent = (proc_rss / rlimit) * 100
+            system_available_gb = (rlimit - proc_rss) / 1024 / 1024 / 1024
+        else:
+            system_memory = psutil.virtual_memory()
+            system_used_percent = system_memory.percent
+            system_available_gb = system_memory.available / 1024 / 1024 / 1024
 
     return {
         "process_memory_mb": memory_info.rss / 1024 / 1024,
