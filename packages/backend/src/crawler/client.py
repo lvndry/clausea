@@ -744,6 +744,7 @@ class ClauseaCrawler:
             return None
 
         page = None
+        _browser_cleaned_up = False
         try:
             page = await context.new_page()
             await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
@@ -808,14 +809,15 @@ class ClauseaCrawler:
         except Exception as e:
             error_str = str(e).lower()
             if any(marker in error_str for marker in self._BROWSER_CRASH_MARKERS):
-                _log_top_processes(logger)
-                _log_browser_processes(logger)
+                await _log_top_processes(logger)
+                await _log_browser_processes(logger)
+                _browser_cleaned_up = True
                 await self._cleanup_browser()
             else:
                 logger.warning(f"Browser fetch failed for {url}: {e}", exc_info=True)
             return None
         finally:
-            if page is not None:
+            if page is not None and not _browser_cleaned_up:
                 try:
                     await asyncio.wait_for(page.close(), timeout=10.0)
                 except Exception:

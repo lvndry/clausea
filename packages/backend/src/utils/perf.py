@@ -114,19 +114,23 @@ async def memory_monitor_task(interval: int = 30) -> None:
         await asyncio.sleep(interval)
 
 
-def _log_top_processes(log: logging.Logger, *, top_n: int = 10) -> None:
+async def _log_top_processes(log: logging.Logger, *, top_n: int = 10) -> None:
     """Log top memory-consuming processes for diagnostics."""
-    import subprocess
-
     try:
-        result = subprocess.run(
-            ["ps", "aux", "--sort=-%mem"],
-            capture_output=True,
-            text=True,
-            timeout=5,
+        proc = await asyncio.create_subprocess_exec(
+            "ps",
+            "aux",
+            "--sort=-%mem",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        if result.returncode == 0:
-            lines = result.stdout.strip().split("\n")
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        except TimeoutError:
+            proc.kill()
+            return
+        if proc.returncode == 0:
+            lines = stdout.decode().strip().split("\n")
             header = lines[0] if lines else ""
             top_lines = lines[1 : top_n + 1] if len(lines) > 1 else []
             log.warning(
@@ -139,10 +143,8 @@ def _log_top_processes(log: logging.Logger, *, top_n: int = 10) -> None:
         log.debug("Could not get process list: %s", exc)
 
 
-def _log_browser_processes(log: logging.Logger) -> None:
+async def _log_browser_processes(log: logging.Logger) -> None:
     """Log specifically browser-related processes."""
-    import subprocess
-
     try:
         for name in [
             "firefox",
@@ -153,13 +155,23 @@ def _log_browser_processes(log: logging.Logger) -> None:
             "geckodriver",
             "chromedriver",
         ]:
-            result = subprocess.run(
-                ["pgrep", "-a", "-f", name],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                log.warning("Found '%s' processes:\n%s", name, result.stdout.strip()[:500])
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "pgrep",
+                    "-a",
+                    "-f",
+                    name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                try:
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+                except TimeoutError:
+                    proc.kill()
+                    continue
+                if proc.returncode == 0 and stdout.strip():
+                    log.warning("Found '%s' processes:\n%s", name, stdout.decode().strip()[:500])
+            except Exception as exc:
+                log.debug("Could not check browser processes: %s", exc)
     except Exception as exc:
         log.debug("Could not check browser processes: %s", exc)
