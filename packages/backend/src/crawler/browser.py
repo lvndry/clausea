@@ -144,8 +144,8 @@ async def cleanup_browser() -> None:
                 _shared_browser_contexts.pop(loop, None)
 
             if graceful_close_failed:
-                _log_top_processes(logger)
-                _log_browser_processes(logger)
+                await _log_top_processes(logger)
+                await _log_browser_processes(logger)
                 try:
                     result = subprocess.run(
                         ["pkill", "-TERM", "-f", "firefox"],
