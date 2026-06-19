@@ -581,12 +581,15 @@ class PipelineService:
                             message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
                         )
 
-                    analysed_docs = await analyse_product_documents(
+                    analysis_result = await analyse_product_documents(
                         db,
                         job.product_slug,
                         doc_svc,
                         progress_callback=_on_synthesise_progress,
+                        force_reanalyze=job.force_reanalyze,
                     )
+                    analysed_docs = analysis_result.documents
+                    job.analyses_skipped = analysis_result.analyses_skipped
 
                     # Update to total docs in product (not just newly stored this run).
                     # documents_stored was set from crawl stats which only counts new/changed

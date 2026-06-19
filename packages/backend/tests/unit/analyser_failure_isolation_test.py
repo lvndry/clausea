@@ -69,16 +69,16 @@ async def test_one_failing_document_does_not_fail_the_product() -> None:
         return _stub_analysis()
 
     with patch("src.analyser.analyse_document", side_effect=fake_analyse):
-        returned = await analyse_product_documents(
+        result = await analyse_product_documents(
             db=AsyncMock(), product_slug="example", document_svc=document_svc
         )
 
     # All three docs come back (we operate on whatever was loaded).
-    ids = sorted(d.id for d in returned)
+    ids = sorted(d.id for d in result.documents)
     assert ids == ["a", "b", "c"]
 
     # The failing doc has no analysis attached; the others do.
-    by_id = {d.id: d for d in returned}
+    by_id = {d.id: d for d in result.documents}
     assert by_id["a"].analysis is not None
     assert by_id["b"].analysis is None
     assert by_id["c"].analysis is not None
@@ -104,11 +104,11 @@ async def test_dropped_analysis_is_stamped_for_visibility() -> None:
         return None
 
     with patch("src.analyser.analyse_document", side_effect=fake_analyse):
-        returned = await analyse_product_documents(
+        result = await analyse_product_documents(
             db=AsyncMock(), product_slug="example", document_svc=document_svc
         )
 
-    doc = returned[0]
+    doc = result.documents[0]
     assert doc.analysis is None
     assert doc.analysis_error == "analyse_document returned no result after retries"
     document_svc.update_document.assert_awaited()

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.analyser import AnalysisResult
 from src.models.pipeline_job import PipelineErrorCode, PipelineJob, PipelineStep
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services import pipeline_service as ps
@@ -228,7 +229,9 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
 
     # Analysis returns the documents, but none got an `.analysis` (all failed).
     unanalysed_docs = [SimpleNamespace(analysis=None, doc_type="privacy_policy") for _ in range(3)]
-    analyse_mock = AsyncMock(return_value=unanalysed_docs)
+    analyse_mock = AsyncMock(
+        return_value=AnalysisResult(documents=unanalysed_docs, analyses_skipped=0)  # ty: ignore[invalid-argument-type]
+    )
     overview_mock = AsyncMock()
 
     @asynccontextmanager
@@ -442,7 +445,9 @@ async def test_overview_stage_heartbeats_during_synthesis(mock_db):
     fake_pipeline.run = AsyncMock(return_value=crawl_stats)
 
     analysed_docs = [SimpleNamespace(analysis=object(), doc_type="privacy_policy")]
-    analyse_mock = AsyncMock(return_value=analysed_docs)
+    analyse_mock = AsyncMock(
+        return_value=AnalysisResult(documents=analysed_docs, analyses_skipped=0)  # ty: ignore[invalid-argument-type]
+    )
 
     # Stand in for the real generator: fire the threaded heartbeat callback the same number of
     # times the real one does (once per long sub-step) so the assertion exercises the wiring.

@@ -24,3 +24,8 @@ class FindingRepository(BaseRepository):
     async def delete_findings_for_document(self, db: AgnosticDatabase, document_id: str) -> int:
         result = await db.findings.delete_many({"document_id": document_id})
         return result.deleted_count
+
+    async def has_findings_for_document(self, db: AgnosticDatabase, document_id: str) -> bool:
+        """Return True if at least one finding exists for the given document_id."""
+        doc = await db.findings.find_one({"document_id": document_id}, projection={"_id": 1})
+        return doc is not None

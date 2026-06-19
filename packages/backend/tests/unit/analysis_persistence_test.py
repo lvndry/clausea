@@ -78,7 +78,7 @@ async def test_analysis_is_persisted_via_surgical_path() -> None:
         return _stub_analysis()
 
     with patch("src.analyser.analyse_document", side_effect=fake_analyse):
-        returned = await analyse_product_documents(
+        result = await analyse_product_documents(
             db=AsyncMock(), product_slug="example", document_svc=document_svc
         )
 
@@ -87,7 +87,7 @@ async def test_analysis_is_persisted_via_surgical_path() -> None:
         call.args[1] for call in document_svc.update_document_analysis.call_args_list
     )
     assert persisted_ids == ["a", "b"]
-    assert all(doc.analysis is not None for doc in returned)
+    assert all(doc.analysis is not None for doc in result.documents)
 
 
 @pytest.mark.asyncio
@@ -110,12 +110,12 @@ async def test_unpersisted_analysis_is_reported_as_failure_not_masked() -> None:
         return _stub_analysis()
 
     with patch("src.analyser.analyse_document", side_effect=fake_analyse):
-        returned = await analyse_product_documents(
+        result = await analyse_product_documents(
             db=AsyncMock(), product_slug="example", document_svc=document_svc
         )
 
     # In-memory analysis must be cleared so the pipeline's analysed_count is honest.
-    assert returned[0].analysis is None
+    assert result.documents[0].analysis is None
 
 
 def _fake_db_with_existing(stored: dict[str, Any]) -> tuple[Any, AsyncMock]:

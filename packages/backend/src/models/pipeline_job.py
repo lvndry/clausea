@@ -223,3 +223,10 @@ class PipelineJob(BaseModel):
     # (footer links the server crawler cannot reach due to anti-bot walls).
     # Injected as high-priority seeds at the start of the crawl.
     seed_urls: list[str] = Field(default_factory=list)
+
+    # When True, the analysis phase skips the content-hash cache and re-runs
+    # LLM analysis on every document even if findings already exist in the DB.
+    force_reanalyze: bool = False
+
+    # Number of documents whose analysis was reused from a prior run (skipped LLM).
+    analyses_skipped: int = 0
