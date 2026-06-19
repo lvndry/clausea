@@ -130,8 +130,8 @@ async def test_get_recently_stored_urls_queries_with_freshness_cutoff(monkeypatc
         async def __aexit__(self, *_args):
             return False
 
-    monkeypatch.setattr(pipeline_module, "db_session", lambda: _FakeDbCtx())
-    monkeypatch.setattr(pipeline_module, "create_document_service", lambda: _FakeService())
+    monkeypatch.setattr(pipeline_module.pipeline, "db_session", lambda: _FakeDbCtx())
+    monkeypatch.setattr(pipeline_module.pipeline, "create_document_service", lambda: _FakeService())
 
     before = datetime.now() - timedelta(hours=pipeline_module.RESUME_FRESH_HOURS)
     urls = await pipeline._get_recently_stored_urls(product)
@@ -151,7 +151,7 @@ async def test_query_failure_disables_skip_but_does_not_crash(monkeypatch):
     def _boom():
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(pipeline_module, "db_session", lambda: _boom())
+    monkeypatch.setattr(pipeline_module.pipeline, "db_session", lambda: _boom())
 
     urls = await pipeline._get_recently_stored_urls(product)
     assert urls == []
