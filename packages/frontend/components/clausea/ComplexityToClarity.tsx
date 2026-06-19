@@ -30,11 +30,11 @@ export default function ComplexityToClarity() {
       if (!isDesktop) return;
       const scramble = containerRef.current?.querySelector(".scramble-text");
       const clear = containerRef.current?.querySelector(".clear-text");
-      const beams = gsap.utils.toArray<HTMLElement>(
-        containerRef.current?.querySelectorAll(".beam") ?? [],
-      );
+      if (!scramble || !clear || !containerRef.current) return;
 
-      if (!scramble || !clear) return;
+      const beams = gsap.utils.toArray<HTMLElement>(
+        containerRef.current.querySelectorAll(".beam"),
+      );
 
       // Set initial states
       gsap.set(clear, { opacity: 0, scale: 0.95 });
