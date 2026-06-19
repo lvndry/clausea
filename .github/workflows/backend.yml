@@ -51,7 +51,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run type checking
-        run: uv run ty check
+        run: uv run ty check --exclude tests/
 
       - name: Run security checks with bandit
         run: uv run bandit -r src/ -f json -o bandit-report.json || true

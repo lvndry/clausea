@@ -694,7 +694,7 @@ Security practices / trust pages (encryption, audits, incident response, certifi
                         f"{prev} {suffix}".strip() if prev else suffix
                     )
 
-            return result  # type: ignore
+            return result
 
         except Exception as e:
             logger.warning(f"classification process failed: {e}")

@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from threading import Event
+from typing import Any
 
 import streamlit as st
 
@@ -355,7 +356,7 @@ def show_complete_workflow() -> None:
             "current_step": None,
         }
 
-    batch_workflow_state = st.session_state.batch_workflow
+    batch_workflow_state: dict[str, Any] = st.session_state.batch_workflow
 
     workflow_state = st.session_state[workflow_key]
 

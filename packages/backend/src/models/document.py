@@ -848,7 +848,7 @@ def coerce_doc_type_from_classifier(raw: str | None) -> DocType:
     """
     key = (raw or "other").strip()
     if key in _VALID_DOC_TYPE_VALUES:
-        return key  # type: ignore[return-value]
+        return key  # ty: ignore[invalid-return-type]
     return "other"
 
 
@@ -1205,7 +1205,7 @@ class CrossDocumentAnalysis(BaseModel):
         if not v:
             return []
         result = []
-        for item in v:  # type: ignore[union-attr]
+        for item in v:  # ty: ignore[not-iterable]
             if isinstance(item, str):
                 result.append({"topic": item, "severity": "medium"})
             else:

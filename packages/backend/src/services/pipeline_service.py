@@ -241,7 +241,7 @@ class PipelineService:
         }
         for i, step in enumerate(job.steps):
             if step.name == step_name:
-                step.status = status  # type: ignore[assignment]
+                step.status = status  # ty: ignore[invalid-assignment]
                 step.message = message
 
                 update_data[f"steps.{i}.status"] = status
