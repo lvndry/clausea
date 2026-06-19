@@ -127,6 +127,10 @@ class DashboardDB:
         """Close the database connection and clean up."""
         if self._client is not None:
             self._client.close()
+            loop = _get_current_loop()
+            if loop is not None:
+                _loop_clients.pop(loop, None)
+                _loop_dbs.pop(loop, None)
             self._client = None
             self._db = None
 
