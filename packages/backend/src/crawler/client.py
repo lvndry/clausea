@@ -742,10 +742,10 @@ class ClauseaCrawler:
             logger.warning("Browser setup failed for %s: %s", url, e)
             return None
 
-        page = await context.new_page()
-        await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
-
+        page = None
         try:
+            page = await context.new_page()
+            await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
             await _block_heavy_assets(page)
 
             nav_timeout_ms = min(self.timeout * 1000, BROWSER_NAV_TIMEOUT_MS)
@@ -812,10 +812,15 @@ class ClauseaCrawler:
                 logger.warning(f"Browser fetch failed for {url}: {e}", exc_info=True)
             return None
         finally:
-            try:
-                await page.close()
-            except Exception:
-                pass
+            if page is not None:
+                try:
+                    await asyncio.wait_for(page.close(), timeout=10.0)
+                except Exception:
+                    logger.warning("page.close() failed or timed out; triggering browser cleanup")
+                    try:
+                        await self._cleanup_browser()
+                    except Exception:
+                        pass
 
     def _build_crawl_result(self, url: str, page: PageContent) -> CrawlResult:
         resolved_url = self._choose_effective_url(url, page.metadata)
