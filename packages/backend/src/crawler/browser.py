@@ -26,6 +26,7 @@ rendering.
 """
 
 import asyncio
+import subprocess
 from typing import Any
 
 from camoufox import AsyncCamoufox
@@ -88,6 +89,19 @@ async def setup_browser(
             if proxy:
                 init_kwargs["proxy"] = {"server": proxy}
 
+            try:
+                check = subprocess.run(["pgrep", "-f", "firefox"], capture_output=True, timeout=3)
+                if check.returncode == 0:
+                    subprocess.run(
+                        ["pkill", "-TERM", "-f", "firefox"], timeout=5, capture_output=True
+                    )
+                    logger.info(
+                        "Cleaned up orphaned Firefox processes before launching new browser"
+                    )
+                    await asyncio.sleep(1)
+            except Exception:
+                pass
+
             logger.debug("Launching shared Camoufox browser with kwargs: %s", init_kwargs)
             instance = AsyncCamoufox(**init_kwargs)
             try:
@@ -118,13 +132,33 @@ async def cleanup_browser() -> None:
     async with _get_shared_browser_lock():
         instance = _shared_browser_instances.get(loop)
         if instance is not None:
+            graceful_close_failed = False
             try:
-                await instance.__aexit__(None, None, None)
+                await asyncio.wait_for(instance.__aexit__(None, None, None), timeout=10.0)
             except Exception:
                 logger.warning("Error while closing Camoufox browser", exc_info=True)
+                graceful_close_failed = True
             finally:
                 _shared_browser_instances.pop(loop, None)
                 _shared_browser_contexts.pop(loop, None)
+
+            if graceful_close_failed:
+                try:
+                    result = subprocess.run(
+                        ["pkill", "-TERM", "-f", "firefox"],
+                        timeout=5,
+                        capture_output=True,
+                    )
+                    if result.returncode == 0:
+                        logger.info(
+                            "Force-killed lingering Firefox processes after browser close failure"
+                        )
+                except Exception:
+                    logger.debug(
+                        "pkill firefox failed (may not be installed or no process found)",
+                        exc_info=True,
+                    )
+
             logger.debug("Shared Camoufox browser closed")
     _shared_browser_locks.pop(loop, None)
     _global_browser_semaphores.pop(loop, None)
