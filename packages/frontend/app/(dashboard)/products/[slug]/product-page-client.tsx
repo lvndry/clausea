@@ -67,6 +67,28 @@ function derivePipelineUrl(product: Product): string | null {
   return null;
 }
 
+function deriveLimitReachedDisplayName(
+  productName: string | null | undefined,
+  productSlug: string,
+): string {
+  const normalizedName = productName?.trim();
+  if (normalizedName) return normalizedName;
+
+  const normalizedSlug = productSlug
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalizedSlug) {
+    return "this company";
+  }
+
+  return normalizedSlug
+    .split(" ")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 interface CompanyPageProps {
   initialProduct?: Product | null;
   initialData?: ProductOverview | null;
@@ -144,14 +166,16 @@ export default function CompanyPage({
           setTopics((await topicsRes.json()) as ProductTopicReport);
         }
 
-        if (!prodRes.ok) {
-          setProduct(null);
-          setData(null);
-          setDocumentsLoading(false);
-          setIndexationMode("ready"); // render not-found
-          return;
-        }
-        const prodJson = (await prodRes.json()) as Product;
+        const overviewState = deriveProductPageOverviewState({
+          overviewOk: overviewRes.ok,
+          overviewStatus: overviewRes.status,
+          explainerStatus: explainerRes.status,
+          topicsStatus: topicsRes.status,
+        });
+
+        const prodJson = prodRes.ok
+          ? ((await prodRes.json()) as Product)
+          : null;
         setProduct(prodJson);
 
         const docsJson = docsRes.ok
@@ -160,12 +184,20 @@ export default function CompanyPage({
         setDocuments(docsJson);
         setDocumentsLoading(false);
 
-        const overviewState = deriveProductPageOverviewState({
-          overviewOk: overviewRes.ok,
-          overviewStatus: overviewRes.status,
-          explainerStatus: explainerRes.status,
-          topicsStatus: topicsRes.status,
-        });
+        if (overviewState === "limit_reached") {
+          setData(null);
+          setActiveJobId(null);
+          setFailedJob(null);
+          setEmptyJob(null);
+          setIndexationMode("limit_reached");
+          return;
+        }
+
+        if (!prodJson) {
+          setData(null);
+          setIndexationMode("ready"); // render not-found
+          return;
+        }
 
         // Overview was fetched in parallel — use the result immediately.
         if (overviewState === "ready") {
@@ -176,15 +208,6 @@ export default function CompanyPage({
 
         if (overviewState === "unauthorized") {
           setIndexationMode("ready");
-          return;
-        }
-
-        if (overviewState === "limit_reached") {
-          setData(null);
-          setActiveJobId(null);
-          setFailedJob(null);
-          setEmptyJob(null);
-          setIndexationMode("limit_reached");
           return;
         }
 
@@ -341,13 +364,18 @@ export default function CompanyPage({
     );
   }
 
+  const limitReachedDisplayName = deriveLimitReachedDisplayName(
+    product?.name,
+    slug,
+  );
+
   if (!data) {
-    if (product && indexationMode === "limit_reached") {
+    if (indexationMode === "limit_reached") {
       return (
         <div className="space-y-6">
           <div className="border-b border-border pb-8">
             <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
-              {product.name}
+              {limitReachedDisplayName}
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
               You have reached your current plan&apos;s analysis limit for
