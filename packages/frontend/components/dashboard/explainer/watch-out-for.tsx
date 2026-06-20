@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChevronDown, Quote } from "lucide-react";
+import { AlertTriangle, ChevronDown, ExternalLink, Quote } from "lucide-react";
 
 import { useState } from "react";
 
@@ -51,12 +51,24 @@ const severityStyle: Record<
   },
 };
 
+function humanizeSource(value: string | null | undefined): string | null {
+  const cleaned = value?.trim();
+  if (!cleaned) return null;
+  return cleaned.replace(/_/g, " ");
+}
+
 function WatchOutCard({ item, index }: { item: ConsumerCase; index: number }) {
   const [showQuote, setShowQuote] = useState(false);
   const severity = normalizeSeverity(item.severity);
   const style = severityStyle[severity];
   const citationVisible = hasCitation(item.quote_status) && Boolean(item.quote);
   const quoteId = `watch-out-quote-${index}`;
+  const citation = item.citation;
+  const sourceLabel =
+    humanizeSource(citation?.document_title) ??
+    humanizeSource(citation?.document_type) ??
+    "the source document";
+  const displayedQuote = citation?.quote || item.quote;
 
   return (
     <div className="group grid grid-cols-1 md:grid-cols-12">
@@ -125,11 +137,27 @@ function WatchOutCard({ item, index }: { item: ConsumerCase; index: number }) {
                 className="mt-4 border-l-2 border-border bg-muted/5 p-5"
               >
                 <p className="text-sm text-foreground/80 leading-relaxed font-serif italic">
-                  &ldquo;{item.quote}&rdquo;
+                  &ldquo;{displayedQuote}&rdquo;
                 </p>
-                <p className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Quoted from the source document
-                </p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                    Source: {sourceLabel}
+                    {citation?.section_title
+                      ? ` - ${citation.section_title}`
+                      : ""}
+                  </p>
+                  {citation?.document_url && (
+                    <a
+                      href={citation.document_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Open source
+                      <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
               </div>
             )}
           </div>

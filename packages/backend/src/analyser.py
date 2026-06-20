@@ -55,6 +55,7 @@ from src.models.document import (
     RemediationItem,
     RiskRegisterItem,
     SecurityPosture,
+    SourceCitation,
     TopicStanceBreakdown,
     TopicSupportCitation,
     WorkforceDataAssessment,
@@ -1060,27 +1061,80 @@ Document content:
 # ---------------------------------------------------------------------------
 
 
-def _collect_extraction_quotes(extraction: DocumentExtraction) -> list[str]:
-    """Collect every verbatim evidence ``quote`` string across the extraction.
+def _collect_extraction_citations(
+    extraction: DocumentExtraction, document: Document | None = None
+) -> list[SourceCitation]:
+    """Collect every verbatim evidence quote with source document metadata.
 
     The validator uses these as the allow-list for explainer citations: an
     explainer quote is only kept (cited) when it is a substring of one of these.
+    Source identity comes from stored extraction evidence and document metadata,
+    never from the LLM response.
     """
-    quotes: list[str] = []
+    citations: list[SourceCitation] = []
+    seen: set[tuple[str, str, int | None, int | None]] = set()
 
     def _walk(node: Any) -> None:
         if isinstance(node, dict):
-            for key, value in node.items():
-                if key == "quote" and isinstance(value, str) and value.strip():
-                    quotes.append(value)
-                else:
-                    _walk(value)
+            quote = node.get("quote")
+            if isinstance(quote, str) and quote.strip():
+                document_id = str(node.get("document_id") or (document.id if document else "")).strip()
+                document_url = str(node.get("url") or (document.url if document else "")).strip()
+                if document_id and document_url:
+                    start_char = node.get("start_char")
+                    end_char = node.get("end_char")
+                    key = (
+                        document_id,
+                        quote.strip(),
+                        start_char if isinstance(start_char, int) else None,
+                        end_char if isinstance(end_char, int) else None,
+                    )
+                    if key not in seen:
+                        seen.add(key)
+                        citations.append(
+                            SourceCitation(
+                                document_id=document_id,
+                                document_title=document.title if document else None,
+                                document_type=str(document.doc_type) if document else None,
+                                document_url=document_url,
+                                quote=quote,
+                                section_title=node.get("section_title")
+                                if isinstance(node.get("section_title"), str)
+                                else None,
+                                start_char=start_char if isinstance(start_char, int) else None,
+                                end_char=end_char if isinstance(end_char, int) else None,
+                                content_hash=node.get("content_hash")
+                                if isinstance(node.get("content_hash"), str)
+                                else None,
+                                verified=bool(node.get("verified", True)),
+                            )
+                        )
+            for value in node.values():
+                _walk(value)
         elif isinstance(node, list):
             for item in node:
                 _walk(item)
 
     _walk(extraction.model_dump())
-    return quotes
+    return citations
+
+
+def _collect_extraction_quotes(extraction: DocumentExtraction) -> list[str]:
+    """Backward-compatible quote-only allow-list for existing tests/callers."""
+    return [citation.quote for citation in _collect_extraction_citations(extraction)]
+
+
+def _match_source_citation(
+    quote: str | None, allowed_citations: Sequence[SourceCitation]
+) -> SourceCitation | None:
+    """Return the first source citation whose verified quote contains ``quote``."""
+    needle = (quote or "").strip()
+    if not needle:
+        return None
+    for citation in allowed_citations:
+        if needle in citation.quote:
+            return citation
+    return None
 
 
 def _strip_json_fences(content: str) -> str:
@@ -1096,14 +1150,18 @@ def _strip_json_fences(content: str) -> str:
 
 
 def _validate_consumer_explainer(
-    explainer: ConsumerExplainer, extraction: DocumentExtraction
+    explainer: ConsumerExplainer,
+    extraction: DocumentExtraction,
+    document: Document | None = None,
 ) -> ConsumerExplainer:
     """Validate a per-document explainer against that document's extraction."""
-    return _validate_consumer_explainer_quotes(explainer, _collect_extraction_quotes(extraction))
+    return _validate_consumer_explainer_quotes(
+        explainer, _collect_extraction_citations(extraction, document)
+    )
 
 
 def _validate_consumer_explainer_quotes(
-    explainer: ConsumerExplainer, allowed_quotes: list[str]
+    explainer: ConsumerExplainer, allowed_quotes: Sequence[str | SourceCitation]
 ) -> ConsumerExplainer:
     """Server-side validator the finalized prompt explicitly depends on.
 
@@ -1116,18 +1174,34 @@ def _validate_consumer_explainer_quotes(
        The model's grade is never trusted on its own.
     """
 
+    allowed_citations = [
+        item
+        if isinstance(item, SourceCitation)
+        else SourceCitation(
+            document_id="unknown",
+            document_url="",
+            quote=item,
+            verified=False,
+        )
+        for item in allowed_quotes
+        if isinstance(item, SourceCitation) or (isinstance(item, str) and item.strip())
+    ]
+
     def _recite(cases: Sequence[ConsumerCase]) -> None:
         for case in cases:
             if not case.quote:
                 case.quote = None
                 case.quote_status = "none"
+                case.citation = None
                 continue
-            is_cited = any(case.quote in haystack for haystack in allowed_quotes)
-            if is_cited:
+            citation = _match_source_citation(case.quote, allowed_citations)
+            if citation:
                 case.quote_status = "from_extraction"
+                case.citation = citation if citation.document_id != "unknown" else None
             else:
                 case.quote = None
                 case.quote_status = "none"
+                case.citation = None
 
     _recite(explainer.watch_out_for)
     _recite(explainer.who_gets_your_data)
@@ -1231,7 +1305,7 @@ async def generate_consumer_explainer(
                 raise ValueError("Consumer explainer response was not a JSON object")
 
             explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
-            explainer = _validate_consumer_explainer(explainer, extraction)
+            explainer = _validate_consumer_explainer(explainer, extraction, document)
 
             summary, records = usage_tracker.consume_summary()
             log_usage_summary(
@@ -1301,14 +1375,14 @@ async def generate_product_consumer_explainer(
         )
         return None
 
-    allowed_quotes: list[str] = []
+    allowed_citations: list[SourceCitation] = []
     doc_inputs: list[dict[str, Any]] = []
     regions: set[str] = set()
     for doc in core_docs:
         extraction = doc.extraction
         if extraction is None:
             continue
-        allowed_quotes.extend(_collect_extraction_quotes(extraction))
+        allowed_citations.extend(_collect_extraction_citations(extraction, doc))
         regions.update(doc.regions or [])
         doc_inputs.append(
             {
@@ -1352,7 +1426,7 @@ async def generate_product_consumer_explainer(
                 raise ValueError("Product consumer explainer response was not a JSON object")
             explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
             explainer.is_product_rollup = True
-            explainer = _validate_consumer_explainer_quotes(explainer, allowed_quotes)
+            explainer = _validate_consumer_explainer_quotes(explainer, allowed_citations)
 
             summary, records = usage_tracker.consume_summary()
             log_usage_summary(

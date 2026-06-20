@@ -60,6 +60,21 @@ class EvidenceSpan(BaseModel):
         return self
 
 
+class SourceCitation(BaseModel):
+    """User-facing source metadata for a verified evidence quote."""
+
+    document_id: str
+    document_title: str | None = None
+    document_type: str | None = None
+    document_url: str
+    quote: str
+    section_title: str | None = None
+    start_char: int | None = None
+    end_char: int | None = None
+    content_hash: str | None = None
+    verified: bool = True
+
+
 class ExtractedTextItem(BaseModel):
     """An extracted, normalized text item with evidence."""
 
@@ -691,6 +706,7 @@ class ConsumerCase(BaseModel):
     )
     quote: str | None = None
     quote_status: str = "none"
+    citation: SourceCitation | None = None
 
     @field_validator("severity", mode="before")
     @classmethod
