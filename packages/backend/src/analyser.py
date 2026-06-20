@@ -12,6 +12,7 @@ Flow for product overview (powers cached JSON on `/products/{slug}` in the app):
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any, Literal, NamedTuple
@@ -403,10 +404,10 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
 
     meta_summary.grade = final_grade
     base_risk = grade_to_risk_score(final_grade)
-    floored = _apply_signal_floors(base_risk, meta_summary.privacy_signals)
-    adjusted = _apply_positive_risk_adjustment(floored, meta_summary)
-    meta_summary.risk_score = adjusted
-    meta_summary.verdict = risk_score_to_verdict(adjusted)
+    adjusted = _apply_positive_risk_adjustment(base_risk, meta_summary)
+    floored = _apply_signal_floors(adjusted, meta_summary.privacy_signals)
+    meta_summary.risk_score = floored
+    meta_summary.verdict = risk_score_to_verdict(floored)
 
 
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
@@ -592,10 +593,13 @@ def _is_protective_finding_value(topic: str, value: str | None) -> bool:
     if topic in _PROTECTIVE_HEADLINE_TOPICS:
         if topic in {"benefits", "security", "user_rights", "breach_notification"}:
             return True
-        if topic == "data_sale" and ("no" in normalized or "not sell" in normalized):
+        if topic == "data_sale" and (
+            re.search(r"\bno\b", normalized) is not None or "not sell" in normalized
+        ):
             return True
-        if topic == "ai_training" and any(
-            marker in normalized for marker in ("no", "not train", "does not use", "opt out")
+        if topic == "ai_training" and (
+            re.search(r"\bno\b", normalized) is not None
+            or any(marker in normalized for marker in ("not train", "does not use", "opt out"))
         ):
             return True
     return any(marker in normalized for marker in _PROTECTIVE_VALUE_MARKERS)

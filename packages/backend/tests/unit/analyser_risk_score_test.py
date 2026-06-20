@@ -4,6 +4,7 @@ from src.analyser import (
     _calculate_overview_risk_score,
     _calculate_risk_score,
     _ensure_required_scores,
+    _is_protective_finding_value,
     _reconcile_meta_summary_risk,
     _weighted_product_risk_score,
 )
@@ -14,6 +15,8 @@ from src.models.document import (
     MetaSummary,
     MetaSummaryScore,
     MetaSummaryScores,
+    PrivacySignals,
+    TopicStanceBreakdown,
 )
 
 
@@ -140,3 +143,36 @@ def test_overview_risk_from_dimension_grades() -> None:
     )
     risk = _calculate_overview_risk_score(scores)
     assert risk in {5, 7}
+
+
+def test_protective_finding_rejects_no_substring_false_positives() -> None:
+    assert not _is_protective_finding_value("data_sale", "We provide notice of data practices")
+    assert not _is_protective_finding_value(
+        "data_sale", "Information is not shared with third parties"
+    )
+    assert _is_protective_finding_value("data_sale", "sells_data: no")
+    assert _is_protective_finding_value("data_sale", "does not sell personal data")
+    assert not _is_protective_finding_value("ai_training", "We provide notification of updates")
+    assert _is_protective_finding_value("ai_training", "no ai training on user content")
+
+
+def test_signal_floor_holds_after_positive_adjustment() -> None:
+    meta = MetaSummary(
+        summary="ok",
+        grade="B",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Clear"),
+            data_collection_scope=MetaSummaryScore(grade="B", justification="Limited"),
+            user_control=MetaSummaryScore(grade="B", justification="Controls"),
+            third_party_sharing=MetaSummaryScore(grade="B", justification="Limited sharing"),
+        ),
+        privacy_signals=PrivacySignals(sells_data="yes"),
+        benefits=["encryption at rest", "self-service deletion"],
+        topic_stances=[
+            TopicStanceBreakdown(topic="data_sale", status="found", stance="low_risk"),
+            TopicStanceBreakdown(topic="ai_training", status="found", stance="low_risk"),
+            TopicStanceBreakdown(topic="security", status="found", stance="low_risk"),
+        ],
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.risk_score == 6
