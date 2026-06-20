@@ -215,10 +215,10 @@ def _merge_purpose_links(
             existing[key] = ExtractedDataPurposeLink(
                 data_type=item.data_type.strip(), purposes=[], evidence=[]
             )
-        for p in item.purposes or []:
-            p_norm = re.sub(r"\s+", " ", p).strip()
-            if p_norm and p_norm not in existing[key].purposes:
-                existing[key].purposes.append(p_norm)
+        for purpose in item.purposes or []:
+            purpose_norm = re.sub(r"\s+", " ", purpose).strip()
+            if purpose_norm and purpose_norm not in existing[key].purposes:
+                existing[key].purposes.append(purpose_norm)
         if item.quote:
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 

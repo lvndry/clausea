@@ -78,8 +78,8 @@ export interface ProductOverview {
   product_slug: string;
   company_name?: string | null;
   last_updated: string;
-  verdict: Verdict;
-  risk_score: number;
+  verdict?: Verdict | null;
+  risk_score?: number | null;
   one_line_summary: string;
   data_collected?: string[] | null;
   data_purposes?: string[] | null;

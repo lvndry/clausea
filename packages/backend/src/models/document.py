@@ -434,10 +434,13 @@ class DocumentAnalysis(BaseModel):
     # Narrative and scoring
     summary: str
     scores: dict[str, DocumentAnalysisScores]
-    risk_score: int = Field(default=5, ge=0, le=10, description="Overall risk score from 0-10")
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ] = Field(default="moderate", description="Privacy friendliness level based on risk score")
+    risk_score: int | None = Field(
+        default=None, ge=0, le=10, description="Overall risk score from 0-10; computed server-side"
+    )
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = Field(default=None, description="Privacy friendliness level based on risk score")
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
         default=None, description="A-E grade derived deterministically from risk_score"
     )
@@ -554,16 +557,17 @@ class MetaSummary(BaseModel):
         ),
     )
     scores: MetaSummaryScores
-    risk_score: int = Field(
-        default=5,
+    risk_score: int | None = Field(
+        default=None,
         ge=0,
         le=10,
         description="Overall risk 0-10; computed server-side from scores, not from LLM",
     )
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ] = Field(
-        default="moderate",
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = Field(
+        default=None,
         description="Privacy friendliness; computed server-side from risk_score",
     )
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
@@ -934,10 +938,11 @@ class ProductOverview(BaseModel):
     last_updated: datetime | None = None
 
     # Decision Support
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ]
-    risk_score: int = Field(ge=0, le=10)
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = None
+    risk_score: int | None = Field(default=None, ge=0, le=10)
     one_line_summary: str = Field(
         examples=["Spotify collects extensive data for ads but offers strong user rights"]
     )
@@ -1154,7 +1159,7 @@ class DocumentSection(BaseModel):
 class DocumentRiskBreakdown(BaseModel):
     """Detailed risk assessment for a document."""
 
-    overall_risk: int = Field(ge=0, le=10)
+    overall_risk: int | None = Field(default=None, ge=0, le=10)
     risk_by_category: dict[str, int] = Field(
         default_factory=dict,
         examples=[{"data_sharing": 8, "retention": 5}],
@@ -1167,12 +1172,13 @@ class DocumentRiskBreakdown(BaseModel):
 
         Without this, a single missing nested field discards the entire document
         analysis. When overall_risk is absent we derive it from risk_by_category
-        (mean), falling back to a neutral 5 only when no category signal exists.
+        (mean). When no category signal exists, overall_risk stays unset.
         """
         if isinstance(data, dict) and data.get("overall_risk") in (None, ""):
             categories = data.get("risk_by_category") or {}
             values = [v for v in categories.values() if isinstance(v, int | float)]
-            data["overall_risk"] = round(sum(values) / len(values)) if values else 5
+            if values:
+                data["overall_risk"] = round(sum(values) / len(values))
         return data
 
     top_concerns: list[str] = Field(default_factory=list, description="Specific concerns.")

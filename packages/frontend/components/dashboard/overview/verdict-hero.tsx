@@ -19,13 +19,14 @@ import { cn } from "@/lib/utils";
 interface VerdictHeroProps {
   productName: string;
   companyName?: string | null;
-  verdict:
+  verdict?:
     | "very_user_friendly"
     | "user_friendly"
     | "moderate"
     | "pervasive"
-    | "very_pervasive";
-  riskScore: number;
+    | "very_pervasive"
+    | null;
+  riskScore?: number | null;
   summary: string;
   keypoints?: string[] | null;
 }
@@ -83,18 +84,22 @@ export function VerdictHero({
 }: VerdictHeroProps) {
   const params = useParams();
   const slug = params.slug as string;
-  const config = verdictConfig[verdict];
-  const Icon = config.icon;
+  const hasRiskScore = riskScore != null;
+  const verdictDisplay =
+    hasRiskScore && verdict ? verdictConfig[verdict] : null;
+  const Icon = verdictDisplay?.icon ?? Shield;
   const topKeypoints = keypoints?.slice(0, 3) || [];
   const [shareText, setShareText] = useState("Share");
 
   const getRiskLabel = () => {
+    if (!hasRiskScore) return "Unavailable";
     if (riskScore <= 3) return "Low";
     if (riskScore <= 6) return "Moderate";
     return "High";
   };
 
   const getRiskColor = () => {
+    if (!hasRiskScore) return "text-muted-foreground";
     if (riskScore <= 3) return "text-risk-low";
     if (riskScore <= 6) return "text-risk-medium";
     return "text-risk-high";
@@ -102,7 +107,10 @@ export function VerdictHero({
 
   const handleShare = async () => {
     const shareUrl = `https://clausea.co/products/${slug}`;
-    const shareMessage = `${productName} is rated "${config.label}" for privacy (${riskScore}/10 risk). Check out the full analysis:`;
+    const shareMessage =
+      hasRiskScore && verdictDisplay
+        ? `${productName} is rated "${verdictDisplay.label}" for privacy (${riskScore}/10 risk). Check out the full analysis:`
+        : `${productName} privacy analysis on Clausea — risk score pending:`;
 
     // Try native share API first (mobile)
     if (navigator.share) {
@@ -147,19 +155,27 @@ export function VerdictHero({
           <h1
             className={cn(
               "text-5xl md:text-6xl font-display font-medium leading-[0.9] tracking-tight mb-4",
-              config.color,
+              hasRiskScore && verdictDisplay
+                ? verdictDisplay.color
+                : "text-muted-foreground",
             )}
           >
-            {config.label}
+            {hasRiskScore && verdictDisplay ? verdictDisplay.label : "UNSCORED"}
           </h1>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-display font-medium text-foreground">
-              {riskScore}
+              {hasRiskScore ? riskScore : "—"}
             </span>
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
               Risk Score
             </span>
           </div>
+          {!hasRiskScore && (
+            <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+              No risk score is available yet. Re-run analysis after policy
+              documents are indexed, or check back once scoring completes.
+            </p>
+          )}
         </div>
 
         <div className="mt-12">
@@ -169,12 +185,16 @@ export function VerdictHero({
           <div
             className={cn(
               "inline-flex items-center gap-2 px-3 py-1.5 border border-border text-[10px] uppercase tracking-widest font-bold",
-              config.color,
-              config.bg,
+              hasRiskScore && verdictDisplay
+                ? verdictDisplay.color
+                : "text-muted-foreground",
+              hasRiskScore && verdictDisplay ? verdictDisplay.bg : "bg-muted/5",
             )}
           >
             <Icon className="h-3 w-3" />
-            {config.label}
+            {hasRiskScore && verdictDisplay
+              ? verdictDisplay.label
+              : getRiskLabel()}
           </div>
         </div>
       </div>
@@ -213,7 +233,9 @@ export function VerdictHero({
                   <div
                     className={cn(
                       "h-px w-8",
-                      config.color.replace("text-", "bg-"),
+                      hasRiskScore && verdictDisplay
+                        ? verdictDisplay.color.replace("text-", "bg-")
+                        : "bg-muted-foreground/30",
                     )}
                   />
                   <p className="text-xs text-muted-foreground leading-relaxed">

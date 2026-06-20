@@ -347,7 +347,7 @@ def _compute_document_signature(documents: list[Document]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
-def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int:
+def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
     """Derive product headline risk from overview dimension scores.
 
     Dimension scores are 0-10 where higher is better for the user; the returned
@@ -372,6 +372,11 @@ def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int:
 def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
     """Set headline risk, verdict, and grade from dimension scores (+ signal floors)."""
     base = _calculate_overview_risk_score(meta_summary.scores)
+    if base is None:
+        meta_summary.risk_score = None
+        meta_summary.verdict = None
+        meta_summary.grade = None
+        return
     floored = _apply_signal_floors(base, meta_summary.privacy_signals)
     adjusted = _apply_positive_risk_adjustment(floored, meta_summary)
     meta_summary.risk_score = adjusted
@@ -379,7 +384,7 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
     meta_summary.grade = _calculate_grade(meta_summary.risk_score)
 
 
-def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
+def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
     """
     Calculate overall risk score from component scores.
 
@@ -390,8 +395,10 @@ def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
     Weights (sum 1.0): data_collection_scope and third_party_sharing dominate;
     transparency, user_control, retention, and security add nuance (e.g. E2EE).
 
-    Any absent score is filled with neutral (5) so the full weight set is always
-    applied — a missing dimension is unknown, not perfectly scored.
+    Returns None when no weighted dimensions are present — callers must not
+    invent a neutral headline score. Optional dimensions (retention, security)
+    that are absent while core dimensions exist are treated as unknown (5) so
+    partial extractions can still produce a score.
     """
     weights = {
         "transparency": 0.14,
@@ -402,7 +409,11 @@ def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
         "security_score": 0.08,
     }
 
-    effective = dict(scores)
+    present = {k: v for k, v in scores.items() if k in weights}
+    if not present:
+        return None
+
+    effective = dict(present)
     for key in weights:
         if key not in effective:
             effective[key] = DocumentAnalysisScores(score=5, justification="not assessed")
@@ -691,10 +702,16 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     parsed.scores = calibrate_document_scores(parsed.scores)
 
     # Recalculate risk_score and verdict deterministically from whatever scores the LLM
-    # returned. _calculate_risk_score handles partial score sets by normalising weights.
-    parsed.risk_score = _calculate_risk_score(parsed.scores)
-    parsed.verdict = _calculate_verdict(parsed.risk_score)
-    parsed.grade = _calculate_grade(parsed.risk_score)
+    # returned. _calculate_risk_score returns None when no weighted dimensions exist.
+    risk = _calculate_risk_score(parsed.scores)
+    if risk is None:
+        parsed.risk_score = None
+        parsed.verdict = None
+        parsed.grade = None
+    else:
+        parsed.risk_score = risk
+        parsed.verdict = _calculate_verdict(parsed.risk_score)
+        parsed.grade = _calculate_grade(parsed.risk_score)
 
     return parsed
 
@@ -842,7 +859,7 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
 
     risk_breakdown_raw = data.get("document_risk_breakdown", {})
     if isinstance(risk_breakdown_raw, dict):
-        if "overall_risk" not in risk_breakdown_raw:
+        if "overall_risk" not in risk_breakdown_raw and analysis.risk_score is not None:
             risk_breakdown_raw["overall_risk"] = analysis.risk_score
         try:
             analysis.document_risk_breakdown = DocumentRiskBreakdown(**risk_breakdown_raw)
@@ -1051,10 +1068,10 @@ Document content:
                 )
 
                 # Cancel pending tasks
-                for p in pending:
-                    p.cancel()
+                for pending_task in pending:
+                    pending_task.cancel()
                     try:
-                        await p
+                        await pending_task
                     except asyncio.CancelledError:
                         pass
 
@@ -1959,8 +1976,8 @@ async def generate_product_overview(
                     for d in doc.extraction.data_collected
                 ],
                 "data_purposes": [
-                    {"data_type": p.data_type, "purposes": p.purposes}
-                    for p in doc.extraction.data_purposes
+                    {"data_type": data_purpose.data_type, "purposes": data_purpose.purposes}
+                    for data_purpose in doc.extraction.data_purposes
                 ],
                 "third_party_details": [
                     {
@@ -2071,10 +2088,10 @@ Per-document analyses and extractions:
             )
 
             # Cancel pending tasks
-            for p in pending:
-                p.cancel()
+            for pending_task in pending:
+                pending_task.cancel()
                 try:
-                    await p
+                    await pending_task
                 except asyncio.CancelledError:
                     pass
 
@@ -2448,8 +2465,8 @@ async def generate_product_deep_analysis(
                     for d in doc.extraction.data_collected[:20]
                 ],
                 "data_purposes": [
-                    {"data_type": p.data_type, "purposes": p.purposes}
-                    for p in doc.extraction.data_purposes[:20]
+                    {"data_type": data_purpose.data_type, "purposes": data_purpose.purposes}
+                    for data_purpose in doc.extraction.data_purposes[:20]
                 ],
                 "third_party_details": [
                     {

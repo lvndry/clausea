@@ -108,10 +108,10 @@ async def cancellable_acompletion(
         )
 
         # Cancel pending tasks
-        for p in pending:
-            p.cancel()
+        for pending_task in pending:
+            pending_task.cancel()
             try:
-                await p
+                await pending_task
             except asyncio.CancelledError:
                 pass
 

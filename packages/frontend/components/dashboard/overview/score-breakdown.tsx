@@ -14,7 +14,7 @@ import type { DetailedScores } from "@/types";
 
 interface ScoreBreakdownProps {
   detailedScores: DetailedScores;
-  riskScore: number;
+  riskScore?: number | null;
 }
 
 const scoreConfig = {
@@ -55,8 +55,9 @@ export function ScoreBreakdown({
     };
   });
 
-  const riskGrade = scoreToGrade(riskScore, { invert: true });
-  const riskStyle = gradeToneStyle(riskGrade.tone);
+  const riskGrade =
+    riskScore != null ? scoreToGrade(riskScore, { invert: true }) : null;
+  const riskStyle = riskGrade ? gradeToneStyle(riskGrade.tone) : null;
 
   return (
     <div className="border border-border bg-background">
@@ -72,22 +73,34 @@ export function ScoreBreakdown({
         </div>
         <div className="flex items-center gap-3">
           <ShieldAlert
-            className={cn("h-4 w-4", riskStyle.color)}
+            className={cn(
+              "h-4 w-4",
+              riskStyle ? riskStyle.color : "text-muted-foreground",
+            )}
             strokeWidth={1.5}
           />
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
             Overall Risk
           </span>
-          <div
-            className={cn(
-              "px-2.5 py-1 border font-display font-medium text-base leading-none",
-              riskStyle.color,
-              riskStyle.bg,
-              riskStyle.border,
-            )}
-          >
-            {riskGrade.letter}
-          </div>
+          {riskGrade && riskStyle ? (
+            <div
+              className={cn(
+                "px-2.5 py-1 border font-display font-medium text-base leading-none",
+                riskStyle.color,
+                riskStyle.bg,
+                riskStyle.border,
+              )}
+            >
+              {riskGrade.letter}
+            </div>
+          ) : (
+            <div
+              className="px-2.5 py-1 border border-border font-display font-medium text-base leading-none text-muted-foreground"
+              title="Insufficient dimension scores for an overall grade"
+            >
+              —
+            </div>
+          )}
         </div>
       </div>
 

@@ -105,6 +105,15 @@ def test_other_docs_excluded_from_weighted_score() -> None:
     assert score == 8  # only privacy_policy contributes
 
 
+def test_no_weighted_dimensions_returns_none() -> None:
+    """Unrecognized or empty score sets must not produce a fake neutral headline."""
+    assert _calculate_risk_score({}) is None
+    assert (
+        _calculate_risk_score({"unknown": DocumentAnalysisScores(score=5, justification="")})
+        is None
+    )
+
+
 def test_missing_optional_scores_filled_with_neutral() -> None:
     """Absent optional scores must not distort the weighted average."""
     # Only security_score present — should not produce an extreme result.

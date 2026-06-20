@@ -221,9 +221,11 @@ class ClauseaCrawler:
         self._last_progress_report = 0
 
         self.compiled_allowed_paths = (
-            [re.compile(p) for p in allowed_paths] if allowed_paths else []
+            [re.compile(path_pattern) for path_pattern in allowed_paths] if allowed_paths else []
         )
-        self.compiled_denied_paths = [re.compile(p) for p in denied_paths] if denied_paths else []
+        self.compiled_denied_paths = (
+            [re.compile(path_pattern) for path_pattern in denied_paths] if denied_paths else []
+        )
 
         self.url_scorer = URLScorer()
         self.content_analyzer = ContentAnalyzer()

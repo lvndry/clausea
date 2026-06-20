@@ -227,7 +227,7 @@ class ProductRepository(BaseRepository):
                 db.products.estimated_document_count(),
                 db.products.find().sort("name", 1).skip(skip).limit(limit).to_list(length=limit),
             )
-        return [Product(**p) for p in items_data], total
+        return [Product(**item) for item in items_data], total
 
     # ============================================================================
     # Product Overview Storage Operations

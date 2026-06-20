@@ -48,8 +48,8 @@ _CAVEAT = re.compile(
 )
 
 _USER_CONTROL_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"cookie consent",
         r"cookie (?:banner|preferences|settings|tool|manager)",
         r"manage cookies",
@@ -73,8 +73,8 @@ _USER_CONTROL_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _USER_CONTROL_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"no (?:opt[- ]?out|control|choice|self[- ]service)",
         r"cannot (?:delete|opt[- ]?out|remove|disable)",
         r"no way to",
@@ -86,8 +86,8 @@ _USER_CONTROL_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _TRANSPARENCY_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"clear(?:ly)? (?:explain(?:s)?|state(?:s)?|describe(?:s)?|disclos(?:es)?)",
         r"plain (?:english|language)",
         r"specific(?:ally)? (?:name(?:s)?|list(?:s)?|identif(?:y|ies))",
@@ -100,16 +100,16 @@ _TRANSPARENCY_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _TRANSPARENCY_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"vague|opaque|unclear|boilerplate|not specified|does not explain",
         r"deliberately (?:vague|opaque|hidden)",
     )
 )
 
 _COLLECTION_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"minimal (?:collection|data)",
         r"only (?:necessary|required|what is needed)",
         r"limited (?:collection|to)",
@@ -119,8 +119,8 @@ _COLLECTION_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _COLLECTION_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"extensive|broad(?:ly)?|sweeping|all (?:data|information)",
         r"biometric|precise location|gps|browsing history",
         r"across (?:devices|sites|apps)",
@@ -129,8 +129,8 @@ _COLLECTION_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _SHARING_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"does not (?:sell|share)",
         r"no (?:sale|selling) (?:of )?(?:personal )?data",
         r"not sold",
@@ -140,8 +140,8 @@ _SHARING_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _SHARING_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"sell(?:s|ing)? (?:personal )?data",
         r"data broker",
         r"unrestricted|wide(?:ly)? shared",
@@ -151,8 +151,8 @@ _SHARING_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _RETENTION_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"\d+ (?:day|month|year)s? (?:after|retention|period)",
         r"delete(?:s|d)? (?:after|within)",
         r"short (?:retention|period)",
@@ -161,16 +161,16 @@ _RETENTION_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _RETENTION_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"indefinite|in perpetuity|as long as",
         r"no (?:specific )?(?:retention|deletion) (?:period|timeframe)",
     )
 )
 
 _SECURITY_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I)
-    for p in (
+    re.compile(pattern, re.I)
+    for pattern in (
         r"\be2ee\b|end[- ]to[- ]end encrypt",
         r"soc 2|iso 27001|penetration test",
         r"encrypt(?:ion|ed)? (?:at rest|in transit)",
@@ -178,7 +178,7 @@ _SECURITY_POSITIVE: tuple[re.Pattern[str], ...] = tuple(
 )
 
 _SECURITY_NEGATIVE: tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.I) for p in (r"no encrypt|weak security|not encrypt",)
+    re.compile(pattern, re.I) for pattern in (r"no encrypt|weak security|not encrypt",)
 )
 
 _DIMENSION_SIGNALS: dict[str, tuple[tuple[re.Pattern[str], ...], tuple[re.Pattern[str], ...]]] = {

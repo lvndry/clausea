@@ -485,13 +485,13 @@ export function EvidenceList({
                                         <ul className="space-y-1">
                                           {riskBreakdown.positive_protections
                                             .slice(0, 4)
-                                            .map((p, i) => (
+                                            .map((protection, i) => (
                                               <li
                                                 key={i}
                                                 className="text-xs text-foreground/80 flex items-start gap-1.5"
                                               >
                                                 <span className="mt-1 h-1.5 w-1.5 rounded-full bg-risk-low shrink-0" />
-                                                {p}
+                                                {protection}
                                               </li>
                                             ))}
                                         </ul>
