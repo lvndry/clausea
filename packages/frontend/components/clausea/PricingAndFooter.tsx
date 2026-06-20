@@ -246,38 +246,52 @@ export function Pricing() {
               })}
             </ul>
 
-            <Button
-              variant={tier.popular ? "default" : "outline"}
-              disabled={
-                (isLoading && tier.popular) ||
-                (tier.popular && !checkoutAvailable)
+            {(() => {
+              const showCheckoutTooltip =
+                tier.popular && checkoutUnavailableMessage != null;
+              const ctaButton = (
+                <Button
+                  variant={tier.popular ? "default" : "outline"}
+                  disabled={
+                    (isLoading && tier.popular) ||
+                    (tier.popular && !checkoutAvailable)
+                  }
+                  className={cn(
+                    "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
+                    tier.popular
+                      ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
+                      : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
+                  )}
+                  onClick={() => {
+                    posthog.capture("pricing_plan_clicked", {
+                      plan_name: tier.name,
+                      plan_price: tier.price,
+                      is_popular: tier.popular,
+                      cta_text: tier.cta,
+                    });
+                    tier.action();
+                  }}
+                >
+                  {isLoading && tier.popular ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  {tier.cta}
+                </Button>
+              );
+
+              if (showCheckoutTooltip) {
+                return (
+                  <span
+                    title={checkoutUnavailableMessage}
+                    className="inline-block w-full"
+                  >
+                    {ctaButton}
+                  </span>
+                );
               }
-              title={
-                tier.popular && checkoutUnavailableMessage
-                  ? checkoutUnavailableMessage
-                  : undefined
-              }
-              className={cn(
-                "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
-                tier.popular
-                  ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
-                  : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
-              )}
-              onClick={() => {
-                posthog.capture("pricing_plan_clicked", {
-                  plan_name: tier.name,
-                  plan_price: tier.price,
-                  is_popular: tier.popular,
-                  cta_text: tier.cta,
-                });
-                tier.action();
-              }}
-            >
-              {isLoading && tier.popular ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : null}
-              {tier.cta}
-            </Button>
+
+              return ctaButton;
+            })()}
           </motion.div>
         ))}
       </div>

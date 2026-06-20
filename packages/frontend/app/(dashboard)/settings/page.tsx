@@ -330,21 +330,37 @@ export default function SettingsPage() {
                   Annual
                 </button>
               </div>
-              <Button
-                onClick={() => {
-                  if (checkoutAvailable && proPriceId) {
-                    startCheckout(proPriceId);
-                  }
-                }}
-                disabled={checkoutLoading || !checkoutAvailable}
-                title={checkoutUnavailableMessage ?? undefined}
-                className="gap-2"
-              >
-                {checkoutLoading && (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                )}
-                Upgrade to Pro - {proDisplayPrice.label}
-              </Button>
+              {(() => {
+                const upgradeButton = (
+                  <Button
+                    onClick={() => {
+                      if (checkoutAvailable && proPriceId) {
+                        startCheckout(proPriceId);
+                      }
+                    }}
+                    disabled={checkoutLoading || !checkoutAvailable}
+                    className="gap-2"
+                  >
+                    {checkoutLoading && (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    )}
+                    Upgrade to Pro - {proDisplayPrice.label}
+                  </Button>
+                );
+
+                if (checkoutUnavailableMessage) {
+                  return (
+                    <span
+                      title={checkoutUnavailableMessage}
+                      className="inline-block"
+                    >
+                      {upgradeButton}
+                    </span>
+                  );
+                }
+
+                return upgradeButton;
+              })()}
               {checkoutUnavailableMessage && (
                 <p className="text-sm text-muted-foreground">
                   {checkoutUnavailableMessage}
