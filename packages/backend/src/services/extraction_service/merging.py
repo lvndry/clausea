@@ -183,7 +183,9 @@ def _merge_text_items(
             existing[key] = ExtractedTextItem(value=item.value.strip(), evidence=[])
         label = coerce_term_materiality(getattr(item, "materiality", None))
         if label is not None:
-            existing[key].materiality = _merge_materiality(existing[key].materiality, label)
+            current = coerce_term_materiality(existing[key].materiality)
+            merged = _merge_materiality(current, label)
+            existing[key].materiality = merged.value if merged is not None else None
         if item.quote:
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 
