@@ -88,3 +88,48 @@ def test_calibrate_explainer_removes_boilerplate_and_downgrades_arbitration() ->
     assert calibrated.watch_out_for[0].severity == "medium"
     assert calibrated.watch_out_for[1].title == "Sells data"
     assert calibrated.watch_out_for[1].severity == "critical"
+
+
+def test_ai_training_not_filtered_as_boilerplate() -> None:
+    case = ConsumerCase(
+        title="AI training on your content",
+        means_for_you="Your uploads may be used for machine learning model training.",
+        severity="critical",
+    )
+    assert is_standard_legal_mechanic(case) is False
+    assert calibrate_watch_out_case(case) is not None
+    assert calibrate_watch_out_case(case).severity == "critical"
+
+
+def test_auto_renewal_not_filtered() -> None:
+    case = ConsumerCase(
+        title="Automatic renewal",
+        means_for_you="Subscription includes automatic renewal with recurring charges.",
+        severity="high",
+    )
+    assert calibrate_watch_out_case(case) is not None
+    assert calibrate_watch_out_case(case).severity == "high"
+
+
+def test_indemnification_without_all_claims_stays_material() -> None:
+    case = ConsumerCase(
+        title="Broad indemnification",
+        means_for_you="You agree to indemnify and hold harmless the company.",
+        severity="critical",
+    )
+    assert is_standard_legal_mechanic(case) is False
+    assert calibrate_watch_out_case(case) is not None
+
+
+def test_mixed_arbitration_and_data_sale_keeps_data_sale() -> None:
+    """Material risk in dispute text must not be downgraded to informational."""
+    case = ConsumerCase(
+        title="Arbitration and data sale",
+        means_for_you="Binding arbitration applies. We may sell your personal information.",
+        severity="critical",
+        quote="sell your personal information",
+    )
+    assert is_informational_dispute_term(case) is False
+    adjusted = calibrate_watch_out_case(case)
+    assert adjusted is not None
+    assert adjusted.severity == "critical"

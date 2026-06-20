@@ -1,9 +1,19 @@
 """Classify legal/policy terms for consumer-facing risk surfacing.
 
-Standard industry boilerplate (DMCA repeat-infringer policies, assignment
-restrictions, routine arbitration clauses) should not appear as consumer
-"dangers" or drive high topic scores. Material risks (data selling, AI
-training on user content, broad indemnification) should remain prominent.
+Three-tier materiality drives every consumer danger filter, watch-out
+calibration, and topic signal score. This module is the single source of
+truth — do not duplicate pattern lists elsewhere.
+
+Tiers (checked in order):
+  MATERIAL_RISK   — genuine consumer harm (data sale, AI training, broad
+                    indemnification, hidden billing, retention without opt-out)
+  STANDARD_INDUSTRY — routine boilerplate (DMCA, assignment, governing law)
+  NOTABLE         — dispute-resolution terms worth a medium note (arbitration,
+                    class-action waiver) but not headline dangers
+
+Heuristic limits: classification is regex-based on free text. Novel phrasing
+or combined clauses may misclassify until patterns are updated. Unknown text
+defaults to MATERIAL_RISK (conservative — prefer surfacing over hiding).
 """
 
 from __future__ import annotations
@@ -69,19 +79,41 @@ _NOTABLE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 _MATERIAL_RISK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
+        # Data sale / monetization
         r"sell\s+(?:your|user|personal)\s+(?:data|information)",
-        r"train\w*\s+(?:on|with|using)\s+(?:your|user)\s+(?:data|content|prompts|messages|photos|uploads)",
+        r"sell\s+.*personal\s+information",
+        r"sale\s+of\s+(?:your|personal)\s+(?:data|information)",
+        r"data\s+broker",
+        r"monetiz\w*",
+        # AI / model training on user content
+        r"train\w*\s+(?:on|with|using)\s+(?:your|user|customer)\s+(?:data|content|prompts|messages|photos|uploads)",
+        r"(?:ai|model|machine learning)\s+(?:training|train)",
+        r"train\w*\s+(?:ai|models?|machine learning)",
+        # Broad license grants
+        r"(?:perpetual|irrevocable|sublicens(?:able|e))\s+license",
         r"perpetual.*(?:irrevocable|license)",
         r"irrevocable.*(?:perpetual|license)",
-        r"indemnif\w+.*(?:all|any)\s+claims",
-        r"hold\s+harmless.*(?:all|any)",
+        r"sublicens(?:able|e)",
+        # Indemnification / liability
+        r"indemnif\w+",
+        r"hold\s+harmless",
         r"unlimited\s+liability",
         r"no\s+cap\s+on\s+liability",
+        # Sensitive data collection
         r"biometric",
         r"precise\s+location",
-        r"children.*(?:under|below)\s+(?:13|16)",
-        r"data\s+broker",
-        r"sell\s+.*personal\s+information",
+        r"gps\s+coordinates?",
+        r"(?:children\s+)?(?:under|below)\s+(?:13|16)",
+        # Tracking / retention / user control gaps
+        r"cross[- ]site\s+track",
+        r"track\w*\s+across\s+third[- ]party",
+        r"indefinite(?:ly)?\s+retain",
+        r"no\s+opt[- ]?out",
+        r"cannot\s+(?:delete|remove|opt[- ]?out)",
+        # Billing traps
+        r"(?:automatic|auto[- ]?)renew(?:al)?",
+        r"recurring\s+charge",
+        r"hidden\s+fee",
     )
 )
 
@@ -106,6 +138,11 @@ def classify_term_materiality(text: str) -> TermMateriality:
 
 def is_standard_industry_term(text: str) -> bool:
     return classify_term_materiality(text) == TermMateriality.STANDARD_INDUSTRY
+
+
+def is_material_risk(text: str) -> bool:
+    """True when a term is a genuine consumer danger, not routine boilerplate."""
+    return classify_term_materiality(text) == TermMateriality.MATERIAL_RISK
 
 
 def should_exclude_from_dangers(text: str) -> bool:
@@ -173,6 +210,7 @@ __all__ = [
     "calibrate_consumer_severity",
     "classify_term_materiality",
     "filter_danger_strings",
+    "is_material_risk",
     "is_standard_industry_term",
     "should_exclude_from_dangers",
     "topic_signal_score",
