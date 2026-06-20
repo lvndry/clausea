@@ -22,6 +22,7 @@ from litellm import ModelResponse
 
 from src.analyser import (
     _validate_consumer_explainer,
+    _validate_consumer_explainer_quotes,
     generate_consumer_explainer,
 )
 from src.models.document import (
@@ -31,6 +32,7 @@ from src.models.document import (
     DocumentExtraction,
     EvidenceSpan,
     ExtractedDataItem,
+    SourceCitation,
 )
 from src.repositories.document_repository import DocumentRepository
 
@@ -73,6 +75,7 @@ def _make_document(extraction: DocumentExtraction | None) -> Document:
         url="https://example.com/policy",
         product_id="prod-1",
         doc_type="privacy_policy",
+        title="Privacy Policy",
         markdown="# policy",
         text="policy body",
         extraction=extraction,
@@ -178,6 +181,68 @@ def test_quote_present_in_extraction_is_kept_and_cited() -> None:
     case = validated.watch_out_for[0]
     assert case.quote == "sell your personal information"
     assert case.quote_status == "from_extraction"
+
+
+def test_verified_quote_attaches_source_citation_metadata() -> None:
+    extraction = _extraction_with_quotes("We may sell your personal information to advertisers.")
+    document = _make_document(extraction)
+    explainer = ConsumerExplainer(
+        watch_out_for=[
+            ConsumerCase(
+                title="Sells data",
+                severity="high",
+                quote="sell your personal information",
+                quote_status="from_extraction",
+            )
+        ],
+    )
+
+    validated = _validate_consumer_explainer(explainer, extraction, document)
+
+    citation = validated.watch_out_for[0].citation
+    assert citation is not None
+    assert citation.document_id == "doc-1"
+    assert citation.document_title == "Privacy Policy"
+    assert citation.document_type == "privacy_policy"
+    assert citation.document_url == "https://example.com/policy"
+    assert citation.quote == "We may sell your personal information to advertisers."
+
+
+def test_product_rollup_quote_resolves_to_matching_source_document() -> None:
+    explainer = ConsumerExplainer(
+        watch_out_for=[
+            ConsumerCase(
+                title="AI training",
+                severity="critical",
+                quote="customer content for model training",
+                quote_status="from_extraction",
+            )
+        ],
+    )
+    citations = [
+        SourceCitation(
+            document_id="doc-privacy",
+            document_title="Privacy Policy",
+            document_type="privacy_policy",
+            document_url="https://example.com/privacy",
+            quote="We collect your email address.",
+        ),
+        SourceCitation(
+            document_id="doc-terms",
+            document_title="Terms of Service",
+            document_type="terms_of_service",
+            document_url="https://example.com/terms",
+            quote="We may use customer content for model training.",
+        ),
+    ]
+
+    validated = _validate_consumer_explainer_quotes(explainer, citations)
+
+    citation = validated.watch_out_for[0].citation
+    assert citation is not None
+    assert citation.document_id == "doc-terms"
+    assert citation.document_title == "Terms of Service"
+    assert validated.watch_out_for[0].quote_status == "from_extraction"
 
 
 def test_quote_absent_from_extraction_is_decited_but_finding_kept() -> None:
@@ -408,7 +473,9 @@ async def test_repository_update_guards_explainer_against_none_wipe() -> None:
 
     await repo.update(db, partial_doc)
 
-    set_payload = documents_collection.update_one.await_args.args[1]["$set"]
+    await_args = documents_collection.update_one.await_args
+    assert await_args is not None
+    set_payload = await_args.args[1]["$set"]
     assert "consumer_explainer" not in set_payload  # guarded out
     assert "text" not in set_payload
     assert "markdown" not in set_payload

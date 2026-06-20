@@ -9,6 +9,19 @@ export type ConsumerSeverity = "critical" | "high" | "medium" | "low";
 
 export type ConsumerConfidence = "high" | "medium" | "low";
 
+export interface SourceCitation {
+  document_id: string;
+  document_title?: string | null;
+  document_type?: string | null;
+  document_url: string;
+  quote: string;
+  section_title?: string | null;
+  start_char?: number | null;
+  end_char?: number | null;
+  content_hash?: string | null;
+  verified: boolean;
+}
+
 // One model backs watch_out_for and who_gets_your_data on the backend, so the
 // shape is shared: `title` is the risk label or recipient name, `what_they_get`
 // is set for recipients, `why` is the purpose for collected data.
@@ -21,6 +34,7 @@ export interface ConsumerCase {
   why?: string | null;
   quote?: string | null;
   quote_status?: string | null;
+  citation?: SourceCitation | null;
 }
 
 export interface ConsumerDataItem extends ConsumerCase {
