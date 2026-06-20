@@ -38,7 +38,8 @@ _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
 _MONITORING_SWEEP_SECONDS = float(os.getenv("PIPELINE_MONITORING_SWEEP_SECONDS", "3600"))
 _SHUTDOWN_GRACE_SECONDS = float(os.getenv("PIPELINE_WORKER_SHUTDOWN_GRACE", "20"))
-_HEALTH_PORT = int(os.getenv("PORT", "8000"))
+_PORT_ENV = os.getenv("PORT", "8000")
+_HEALTH_PORT = int(_PORT_ENV) if _PORT_ENV.isdigit() else 8000
 
 
 async def _health(_request: web.Request) -> web.Response:
@@ -140,17 +141,17 @@ async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:
 async def main() -> None:
     setup_logging()
     health_runner = await _start_health_server()
-    repo = PipelineRepository()
-
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:
-            pass  # add_signal_handler is unavailable on Windows; signals are a Unix/prod concern
-
     try:
+        repo = PipelineRepository()
+
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except NotImplementedError:
+                pass  # add_signal_handler is unavailable on Windows; signals are a Unix/prod concern
+
         await _run_worker_loop(repo, stop, loop)
     finally:
         await health_runner.cleanup()
