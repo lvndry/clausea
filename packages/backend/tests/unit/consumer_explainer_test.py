@@ -473,7 +473,9 @@ async def test_repository_update_guards_explainer_against_none_wipe() -> None:
 
     await repo.update(db, partial_doc)
 
-    set_payload = documents_collection.update_one.await_args.args[1]["$set"]
+    await_args = documents_collection.update_one.await_args
+    assert await_args is not None
+    set_payload = await_args.args[1]["$set"]
     assert "consumer_explainer" not in set_payload  # guarded out
     assert "text" not in set_payload
     assert "markdown" not in set_payload
