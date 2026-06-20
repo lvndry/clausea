@@ -102,16 +102,40 @@ Use `http_request` to consult authoritative sources when you are not confident i
 
 6. **Run engineering quality check by area** (see detailed checklists below)
 
-7. **De-duplicate and calibrate**
+7. **Spawn expert subagents when warranted**
+   - Large PR → batch parallelism (see Parallel and Expert Subagents).
+   - Specialized diff → delegate to a focused reviewer for that domain before finalizing.
+   - If you skipped delegation and the diff clearly needed it, you did not finish the review.
+
+8. **De-duplicate and calibrate**
    - Do not repeat issues already clearly raised in human review comments unless unresolved and still important.
    - Keep findings that have concrete improvement paths — including maintainability, typing, a11y, and performance.
 
-8. **Emit final output in required format**
+9. **Emit final output in required format**
    - Exactly two fenced blocks in the required order (see Output Format).
 
-### Large PR Handling
+### Parallel and Expert Subagents
 
-If the PR is large (10+ files or 500+ changed lines), use subagents to review file batches in parallel, then merge findings into one final output.
+Spawn subagents when that makes the review more complete. Do not limit subagents to large PRs — delegate when a specialist pass will catch issues a general review might miss.
+
+**Large PRs (10+ files or 500+ changed lines):** Split the diff into file batches, review batches in parallel via subagents, then merge findings into one final output.
+
+**Expert subagents (any PR size):** When the diff touches a domain that needs depth beyond a single pass, spawn a focused reviewer before emitting output. Examples:
+
+- **Security** — auth/authz, secrets, LLM injection, XSS, upload validation
+- **Accessibility** — WCAG 2.1 AA, keyboard operability, ARIA, form semantics
+- **Next.js / RSC** — server vs client boundaries, caching, Server Actions, route structure
+- **Python async / FastAPI** — blocking I/O in async paths, motor/Mongo patterns, service boundaries
+- **LLM / prompt safety** — prompt construction, untrusted model output, input sanitization
+- **Tailwind / design systems** — `@theme` tokens, CVA variants, contrast, token drift
+- **Performance** — bundle size, N+1 queries, missing indexes, Core Web Vitals risks
+
+When delegating:
+
+1. Scope each subagent narrowly (specific files + checklist focus).
+2. Require evidence-backed findings with line numbers and severity.
+3. Merge into one deduplicated output — drop duplicate comments on the same issue.
+4. Note in the verdict which specialists ran and what they covered.
 
 ## Engineering Quality Checklists
 
@@ -271,9 +295,10 @@ Reviewed 6 files. The diff meets ambitious standards: behavior matches intent, t
 3. For unfamiliar patterns or "better practice" recommendations, did you verify against authoritative sources when doubt remained?
 4. Did every comment include severity, concrete lines, and a concrete fix or best practice?
 5. Did you run the TypeScript, Next.js, Tailwind, React, a11y, performance, and security checklists for touched areas?
-6. Did you emit exactly two blocks in order: `markdown`, then `json`?
-7. Did both outer blocks use four backticks?
-8. Did you avoid any trailing output after the JSON block?
+6. For large or specialized diffs, did you spawn subagents (batch or expert) instead of stopping at a shallow pass?
+7. Did you emit exactly two blocks in order: `markdown`, then `json`?
+8. Did both outer blocks use four backticks?
+9. Did you avoid any trailing output after the JSON block?
 
 ## Inline Comment Line Accuracy (critical)
 
