@@ -209,20 +209,15 @@
 ### FastAPI Service
 
 ```toml
-# railway.toml (or Railway dashboard settings)
+# railway.toml (API service — see docs/RAILWAY.md for worker/streamlit overrides)
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+# Do NOT set startCommand — use Dockerfile CMD with ${PORT:-8000}
 healthcheckPath = "/health"
 healthcheckTimeout = 100
-
-# Resource limits
-[resources]
-memory = 512  # MB
-cpu = 0.5     # vCPU
 ```
 
 ### Streamlit Service

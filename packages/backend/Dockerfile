@@ -93,8 +93,9 @@ COPY . .
 # Cap glibc arenas so freed memory returns to the OS instead of being hoarded per thread.
 ENV MALLOC_ARENA_MAX=2
 
+# Informational for local `docker run -p 8000:8000`; Railway routes via $PORT (often 8080).
 EXPOSE 8000
 
 # Shell wrapper so Railway's $PORT is honored when no startCommand override is set.
 # uvicorn remains PID 1 for clean SIGTERM handling.
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "echo \"Binding uvicorn to 0.0.0.0:${PORT:-8000}\" && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

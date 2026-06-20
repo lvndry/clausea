@@ -41,6 +41,9 @@ Only one `railway.toml` can live at the service root (`packages/backend`). **Eve
 | Builder        | Dockerfile (from `railway.toml`)                |
 | Start command  | *(empty — image CMD binds `${PORT}` via shell)* |
 | Health check   | `/health`                                       |
+| **Port**       | *(leave unset — Railway injects `$PORT` automatically)* |
+
+> **502 / port mismatch:** Railway assigns `$PORT` at runtime (commonly `8080`, not `8000`). The app **must** listen on that value. If deploy logs show `Uvicorn running on http://0.0.0.0:8000` while Railway sets `PORT=8080`, the public domain returns **502 Bad Gateway**. Fix: clear any dashboard **Start Command** override, redeploy the latest image (Dockerfile CMD uses `${PORT:-8000}`), and **do not** set a manual `PORT=8000` variable on the service.
 
 `railway.toml` sets `watchPatterns = ["packages/backend/**"]` so monorepo pushes only redeploy when backend files change.
 
@@ -128,7 +131,7 @@ Set variables on the **API** and **worker** services (share via Railway shared v
 | `SERVICE_API_KEY`  | Service-to-service auth (Streamlit → API)        |
 | `CRAWLER_*`        | Crawler tuning (see `src/core/config.py`)        |
 
-Railway sets `PORT` automatically — do not hardcode it. **Do not** set `startCommand` in shared `railway.toml`: Railway passes it to the process without shell expansion, so `--port $PORT` becomes the literal string `$PORT` and uvicorn crashloops. Each service Dockerfile CMD uses `sh -c` with `${PORT:-8000}` instead.
+Railway sets `PORT` automatically — do not hardcode it and **do not** override `PORT` in service variables unless debugging locally. **Do not** set `startCommand` in shared `railway.toml` or the Railway dashboard: Railway passes it to uvicorn without shell expansion, so `--port $PORT` becomes the literal string `$PORT` and uvicorn crashloops. A dashboard start command of `--port 8000` causes the same 502 when Railway assigns a different port. Each service Dockerfile CMD uses `sh -c` with `${PORT:-8000}` instead.
 
 ### Wiring frontend to API
 
@@ -185,6 +188,7 @@ curl http://localhost:8000/health
 
 | Symptom                      | Fix                                                                 |
 | ---------------------------- | ------------------------------------------------------------------- |
+| **502 Bad Gateway** on `api.clausea.co` | Deploy logs show uvicorn on `:8000` but Railway `PORT=8080` (or vice versa). Clear **Deploy → Start Command**, remove manual `PORT=8000` env var, redeploy. Confirm log line `Binding uvicorn to 0.0.0.0:8080` matches Railway's `$PORT`. |
 | **"N/N replicas never became healthy"** + `/health` + `service unavailable`, build uses `Dockerfile` not `Dockerfile.worker` | **Worker misconfiguration.** Set Dockerfile to `Dockerfile.worker`, clear start command (no uvicorn). Reduce replicas to 1 until deploy passes. Not a MongoDB issue. |
 | Worker deploy OK but runs API instead of crawls | Dockerfile path still `Dockerfile` (uvicorn CMD). Set `Dockerfile.worker` and clear start command. |
 | API health check fails       | Deploy logs show `Invalid value for '--port': '$PORT'` → remove `startCommand` from `railway.toml` / dashboard; use Dockerfile CMD with `${PORT}`. `/health` is liveness-only. Check `MONGO_URI` for `/health/ready`. |
