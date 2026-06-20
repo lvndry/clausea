@@ -23,6 +23,7 @@ WHITELISTED_ROUTES = {
     "/openapi.json",
     "/users/tier-limits",
     "/subscriptions/plans",
+    "/subscriptions/checkout-config",
     "/products/stats",
     "/webhooks/paddle",
     "/contact",
