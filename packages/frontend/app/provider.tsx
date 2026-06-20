@@ -13,7 +13,6 @@ export function Provider(props: {
     <ClerkProvider
       publishableKey={props.publishableKey}
       afterSignOutUrl="/"
-      prefetchUI={false}
       ui={ui}
     >
       <ThemeProvider
