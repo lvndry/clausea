@@ -7,7 +7,7 @@ This guide covers deploying `packages/backend` services to Railway. See also [Fr
 | Service            | Path               | Dockerfile           | Config              | Port / health        |
 | ------------------ | ------------------ | -------------------- | ------------------- | -------------------- |
 | API (FastAPI)      | `packages/backend` | `Dockerfile`         | `railway.toml`      | `$PORT`, `/health`   |
-| Worker (crawler)   | `packages/backend` | `Dockerfile.worker`  | Dashboard overrides | No HTTP (no probe)   |
+| Worker (crawler)   | `packages/backend` | `Dockerfile.worker`  | Dashboard overrides | `$PORT`, `/health`   |
 | Streamlit (optional) | `packages/backend` | `Dockerfile.streamlit` | Dashboard overrides | `$PORT`, `/_stcore/health` |
 
 The API serves user-facing requests. The worker runs pipeline jobs (crawls, parsing, LLM calls) out of process so heavy work never blocks the API. Streamlit is an optional internal admin dashboard.
@@ -25,7 +25,7 @@ The API serves user-facing requests. The worker runs pipeline jobs (crawls, pars
                     └─────────────┘
 ```
 
-Only one `railway.toml` can live at the service root. The API service uses it; the worker and Streamlit services configure their Dockerfile in the Railway dashboard.
+Only one `railway.toml` can live at the service root (`packages/backend`). **Every service that shares this root reads the same file** — including its `dockerfilePath = "Dockerfile"` and `healthcheckPath = "/health"`. The API service uses these defaults; the worker and Streamlit services **must override the Dockerfile path in the Railway dashboard** (worker can keep `/health` when using `Dockerfile.worker`).
 
 ## Railway setup (dashboard)
 
@@ -39,7 +39,7 @@ Only one `railway.toml` can live at the service root. The API service uses it; t
 | -------------- | ----------------------------------------------- |
 | Root Directory | `packages/backend`                              |
 | Builder        | Dockerfile (from `railway.toml`)                |
-| Start command  | From `railway.toml` (`uvicorn … --port $PORT`)  |
+| Start command  | *(empty — image CMD binds `${PORT}` via shell)* |
 | Health check   | `/health`                                       |
 
 `railway.toml` sets `watchPatterns = ["packages/backend/**"]` so monorepo pushes only redeploy when backend files change.
@@ -51,11 +51,20 @@ Create a **separate service** in the same project (recommended for shared variab
 | Setting        | Value                                              |
 | -------------- | -------------------------------------------------- |
 | Root Directory | `packages/backend`                                 |
-| Dockerfile     | `Dockerfile.worker` (override in dashboard)        |
+| Dockerfile     | `Dockerfile.worker` (**override in dashboard**)    |
 | Start command  | *(empty — use image CMD `python worker.py`)*       |
-| Health check   | **Disabled** (worker has no HTTP endpoint)         |
+| Health check   | `/health` (liveness-only; optional — can disable)  |
+| Replicas       | Start with **1**; scale up only after deploy succeeds |
 
-Railway cannot read a second `railway.toml` at the same root. Set **Settings → Build → Dockerfile Path** to `Dockerfile.worker` manually.
+Railway cannot read a second `railway.toml` at the same root. In the worker service dashboard:
+
+1. **Settings → Build → Dockerfile Path** → `Dockerfile.worker` (not `Dockerfile`)
+2. **Settings → Deploy → Start Command** → leave empty (image CMD `python worker.py`)
+3. **Settings → Deploy → Health Check Path** → `/health` (inherits from shared `railway.toml`) or leave blank to disable
+
+> **Common failure:** Build log shows `load build definition from packages/backend/Dockerfile` (not `Dockerfile.worker`), and deploy fails with **"N/N replicas never became healthy!"** and **"service unavailable"** on every attempt. That usually means the worker is still using the API Dockerfile/start command (uvicorn) or the wrong entrypoint — not a MongoDB issue. Fix the Dockerfile path and clear the start command. Also verify replica count: nothing in this repo sets replicas; that is a dashboard setting.
+
+The worker image serves `GET /health` on `$PORT` (liveness-only, like the API — no MongoDB check). Railway health checks are optional; you can disable them on the worker if preferred.
 
 The worker image is identical to the API image except for the entrypoint. It needs Camoufox/Firefox runtime libraries for headless crawls.
 
@@ -119,7 +128,7 @@ Set variables on the **API** and **worker** services (share via Railway shared v
 | `SERVICE_API_KEY`  | Service-to-service auth (Streamlit → API)        |
 | `CRAWLER_*`        | Crawler tuning (see `src/core/config.py`)        |
 
-Railway sets `PORT` automatically — do not hardcode it. The API `railway.toml` start command binds to `$PORT`.
+Railway sets `PORT` automatically — do not hardcode it. **Do not** set `startCommand` in shared `railway.toml`: Railway passes it to the process without shell expansion, so `--port $PORT` becomes the literal string `$PORT` and uvicorn crashloops. Each service Dockerfile CMD uses `sh -c` with `${PORT:-8000}` instead.
 
 ### Wiring frontend to API
 
@@ -163,20 +172,28 @@ curl http://localhost:8000/health
 ```bash
 cd packages/backend
 docker build -f Dockerfile.worker -t clausea-worker .
-docker run --rm \
+docker run --rm -p 8000:8000 \
+  -e PORT=8000 \
   -e MONGO_URI=mongodb://host.docker.internal:27017/clausea \
   -e ENVIRONMENT=development \
   -e OPENAI_API_KEY=sk-... \
   clausea-worker
+curl http://localhost:8000/health
 ```
 
 ## Troubleshooting
 
 | Symptom                      | Fix                                                                 |
 | ---------------------------- | ------------------------------------------------------------------- |
-| API health check fails       | Confirm start command uses `$PORT`; `/health` is liveness-only (200 even while DB warms up). Check deploy logs for missing `MONGO_URI` or MongoDB connectivity; use `/health/ready` for readiness. |
-| Worker OOM / crashloops      | Lower `PIPELINE_WORKER_CONCURRENCY`; increase memory; add replicas  |
+| **"N/N replicas never became healthy"** + `/health` + `service unavailable`, build uses `Dockerfile` not `Dockerfile.worker` | **Worker misconfiguration.** Set Dockerfile to `Dockerfile.worker`, clear start command (no uvicorn). Reduce replicas to 1 until deploy passes. Not a MongoDB issue. |
+| Worker deploy OK but runs API instead of crawls | Dockerfile path still `Dockerfile` (uvicorn CMD). Set `Dockerfile.worker` and clear start command. |
+| API health check fails       | Deploy logs show `Invalid value for '--port': '$PORT'` → remove `startCommand` from `railway.toml` / dashboard; use Dockerfile CMD with `${PORT}`. `/health` is liveness-only. Check `MONGO_URI` for `/health/ready`. |
+| Worker OOM / crashloops      | Lower `PIPELINE_WORKER_CONCURRENCY`; increase memory; add replicas after deploy succeeds |
 | Worker redeploys on API push | Expected if both share root — use watch paths or separate triggers  |
 | Crawls fail in worker        | Verify Camoufox libs in image; check `CRAWLER_USE_BROWSER=true`     |
 | CORS errors from frontend    | Set `CORS_ORIGINS` on API to include frontend URL                   |
 | Auth fails                   | Verify `CLERK_JWKS_URL` matches your Clerk instance                 |
+
+### Why regular `Dockerfile` + `python worker.py` fails health
+
+If the worker service still builds from the API `Dockerfile` (uvicorn entrypoint) or the start command is overridden to `python worker.py` while Railway probes a port nothing is listening on, health checks fail until timeout. Use `Dockerfile.worker` (which runs `worker.py` and serves `/health` on `$PORT`) and leave the start command empty.

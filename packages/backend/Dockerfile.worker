@@ -1,3 +1,9 @@
+# Pipeline worker — serves GET /health on $PORT for Railway liveness probes.
+# Railway dashboard MUST set:
+#   Build → Dockerfile Path: Dockerfile.worker
+#   Deploy → Start command: (empty — use this CMD)
+#   Deploy → Health check: /health (optional; can disable if preferred)
+
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 # Installs build-time tools, compiles Python dependencies, and fetches the
 # Camoufox Firefox binary. Nothing from this stage leaks into the final image.
@@ -93,5 +99,8 @@ COPY . .
 # Cap glibc arenas so freed memory returns to the OS instead of being hoarded per thread.
 ENV MALLOC_ARENA_MAX=2
 
+EXPOSE 8000
+
 # Exec form: worker runs as PID 1 so Railway's SIGTERM is delivered directly.
+# worker.py binds $PORT (default 8000) for GET /health liveness probes.
 CMD ["python", "worker.py"]

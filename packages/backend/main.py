@@ -132,7 +132,7 @@ async def readiness_check() -> JSONResponse:
 
     try:
         async with db_session() as db:
-            await db.command("ping")
+            await asyncio.wait_for(db.command("ping"), timeout=3.0)
     except Exception as exc:
         logger.warning("Readiness ping failed", error=str(exc))
         return JSONResponse(
