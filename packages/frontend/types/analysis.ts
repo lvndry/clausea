@@ -70,6 +70,7 @@ export interface ComplianceBreakdown {
   status: "Compliant" | "Partially Compliant" | "Non-Compliant" | "Unknown";
   strengths: string[];
   gaps: string[];
+  assessment_notes?: string | null;
 }
 
 export interface ProductOverview {

@@ -1667,6 +1667,19 @@ async def generate_product_consumer_explainer(
     return None
 
 
+def _normalize_compliance_regime_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Coerce LLM compliance regime fields before model validation."""
+    normalized = dict(payload)
+    rationale = normalized.pop("rationale", None)
+    if rationale is not None and not normalized.get("assessment_notes"):
+        normalized["assessment_notes"] = rationale
+    for key in ("strengths", "gaps"):
+        value = normalized.get(key)
+        if isinstance(value, str):
+            normalized[key] = [value] if value.strip() else []
+    return normalized
+
+
 async def generate_product_compliance(
     db: AgnosticDatabase,
     product_slug: str,
@@ -1754,7 +1767,7 @@ async def generate_product_compliance(
                     continue
                 try:
                     breakdowns[str(regime)] = ComplianceBreakdown.model_validate(
-                        payload, strict=False
+                        _normalize_compliance_regime_payload(payload), strict=False
                     )
                 except Exception as item_error:  # noqa: BLE001 - skip one bad regime, keep the rest
                     logger.debug(

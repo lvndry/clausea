@@ -909,6 +909,16 @@ class ComplianceBreakdown(BaseModel):
     status: Literal["Compliant", "Partially Compliant", "Non-Compliant", "Unknown"]
     strengths: list[str] = Field(description="What they do well.")
     gaps: list[str] = Field(description="What is missing or unclear.")
+    assessment_notes: str | None = Field(
+        default=None,
+        description="Brief summary of the evidence basis for this grade.",
+    )
+
+    def has_rationale(self) -> bool:
+        """True when the grade is backed by visible assessment notes."""
+        if self.assessment_notes and self.assessment_notes.strip():
+            return True
+        return bool(self.strengths or self.gaps)
 
 
 class ProductOverview(BaseModel):
@@ -970,6 +980,12 @@ class ProductOverview(BaseModel):
 
     # Compliance status per regulation (e.g., {"GDPR": 8, "CCPA": 7})
     compliance_status: dict[str, int] | None = None
+
+    # Justified per-regime compliance (score + strengths/gaps from product_compliance store)
+    compliance: dict[str, ComplianceBreakdown] | None = Field(
+        default=None,
+        description="Evidence-backed compliance breakdown keyed by regulation.",
+    )
 
     # Quick-scan privacy signals
     privacy_signals: PrivacySignals | None = None

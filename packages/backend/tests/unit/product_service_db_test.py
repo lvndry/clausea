@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.models.document import (
+    ComplianceBreakdown,
     ConsumerExplainer,
     Document,
     DocumentAnalysis,
@@ -100,12 +101,59 @@ async def test_get_product_overview(
     mock_product_repo.find_by_slug.return_value = None
     mock_product_repo.get_document_counts.return_value = {"total": 1, "analyzed": 1}
     mock_product_repo.get_document_types.return_value = {"privacy_policy": 1}
+    mock_product_repo.get_product_compliance = AsyncMock(return_value=None)
 
     overview = await product_service.get_product_overview(mock_db, "test-product")
     assert overview is not None
     assert overview.product_slug == "test-product"
     assert overview.risk_score == 5
     mock_product_repo.get_product_overview.assert_called_once_with(mock_db, "test-product")
+
+
+@pytest.mark.asyncio
+async def test_get_product_overview_includes_compliance_breakdown(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    mock_product_repo.get_product_overview.return_value = {
+        "overview": {
+            "summary": "Test summary",
+            "scores": {
+                "transparency": {"score": 8, "justification": "Good"},
+                "data_collection_scope": {"score": 5, "justification": "Medium"},
+                "user_control": {"score": 7, "justification": "Okay"},
+                "third_party_sharing": {"score": 3, "justification": "Bad"},
+            },
+            "risk_score": 5,
+            "verdict": "moderate",
+            "compliance_status": {"GDPR": 7},
+        }
+    }
+    mock_product_repo.find_by_slug.return_value = None
+    mock_product_repo.get_document_counts.return_value = {"total": 1, "analyzed": 1}
+    mock_product_repo.get_document_types.return_value = {"privacy_policy": 1}
+    mock_product_repo.get_product_compliance = AsyncMock(
+        return_value={
+            "GDPR": {
+                "score": 7,
+                "status": "Partially Compliant",
+                "assessment_notes": "Privacy Policy describes EU data subject rights.",
+                "strengths": ["Lawful basis for processing stated"],
+                "gaps": ["Retention periods not specified"],
+            }
+        }
+    )
+
+    overview = await product_service.get_product_overview(mock_db, "test-product")
+
+    assert overview is not None
+    assert overview.compliance is not None
+    assert "GDPR" in overview.compliance
+    gdpr = overview.compliance["GDPR"]
+    assert isinstance(gdpr, ComplianceBreakdown)
+    assert gdpr.assessment_notes == "Privacy Policy describes EU data subject rights."
+    assert gdpr.strengths == ["Lawful basis for processing stated"]
+    assert gdpr.gaps == ["Retention periods not specified"]
+    assert gdpr.has_rationale() is True
 
 
 @pytest.mark.asyncio

@@ -558,6 +558,18 @@ class ProductService:
                     for reg, scores in aggregated_compliance.items()
                 }
 
+        stored_compliance = await self._product_repo.get_product_compliance(db, slug)
+        if stored_compliance:
+            parsed: dict[str, ComplianceBreakdown] = {}
+            for regime, payload in stored_compliance.items():
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    parsed[str(regime)] = ComplianceBreakdown.model_validate(payload, strict=False)
+                except Exception:
+                    continue
+            overview.compliance = parsed or None
+
         return overview
 
     async def get_product_analysis(self, db: AgnosticDatabase, slug: str) -> ProductAnalysis | None:

@@ -349,8 +349,19 @@ class TestComplianceBreakdown:
             status="Compliant",
             strengths=["Good encryption"],
             gaps=["Missing DPO info"],
+            assessment_notes="Privacy Policy describes security measures.",
         )
         assert breakdown.score == 8
+        assert breakdown.has_rationale() is True
+
+    def test_has_rationale_false_when_empty(self) -> None:
+        breakdown = ComplianceBreakdown(
+            score=7,
+            status="Partially Compliant",
+            strengths=[],
+            gaps=[],
+        )
+        assert breakdown.has_rationale() is False
 
     def test_score_out_of_range(self) -> None:
         with pytest.raises(ValidationError):
