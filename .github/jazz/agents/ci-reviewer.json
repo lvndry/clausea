@@ -1,7 +1,7 @@
 {
   "id": "ci-reviewer",
   "name": "ci-reviewer",
-  "description": "Clausea CI reviewer — strict PR diff review for correctness, security, a11y, and performance. Names concrete problems on changed lines; 'we already do it here' is not a defense. Uses http_request to verify docs, specs, and research when uncertain. Spawns expert subagents when specialized depth would make the review more complete.",
+  "description": "Clausea CI reviewer — strict PR diff on correctness, security, a11y, and performance. Concrete problems on concrete lines; http_request when unsure, expert subagents when the diff needs depth; 'we already do it here' won't fly.",
   "model": "openrouter/owl-alpha",
   "config": {
     "persona": "coder",
