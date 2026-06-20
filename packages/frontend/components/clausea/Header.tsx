@@ -6,7 +6,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { startTransition, useEffect, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  startTransition,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +23,29 @@ export function Header() {
   const pathname = usePathname();
   const { isSignedIn, isLoaded } = useAuth();
   const prevPathnameRef = useRef(pathname);
+
+  const ctaHref = isSignedIn
+    ? "/products"
+    : "/sign-in?redirect_url=%2Fproducts";
+  const ctaLabel = !isLoaded
+    ? "Loading..."
+    : isSignedIn
+      ? "Dashboard"
+      : "Get Started";
+  const showSignIn = isLoaded && !isSignedIn;
+
+  const handleAuthNavigation = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isLoaded) {
+      event.preventDefault();
+    }
+  };
+
+  const ctaButtonClassName = cn(
+    "border border-foreground text-foreground transition-colors",
+    isLoaded
+      ? "hover:bg-foreground hover:text-background cursor-pointer"
+      : "opacity-50 cursor-not-allowed",
+  );
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -57,22 +86,24 @@ export function Header() {
               {link.name}
             </Link>
           ))}
-          {isLoaded && !isSignedIn && (
+          {showSignIn && (
             <Link
               href="/sign-in"
               className="text-muted-foreground hover:text-foreground transition-colors"
             >
-              Login
+              Sign In
             </Link>
           )}
 
-          {isLoaded && (
-            <Link href={isSignedIn ? "/products" : "/sign-up"}>
-              <button className="px-5 py-2.5 md:px-7 md:py-3 border border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors cursor-pointer">
-                {isSignedIn ? "Dashboard" : "New Analysis"}
-              </button>
-            </Link>
-          )}
+          <Link href={ctaHref} onClick={handleAuthNavigation}>
+            <button
+              type="button"
+              disabled={!isLoaded}
+              className={cn("px-5 py-2.5 md:px-7 md:py-3", ctaButtonClassName)}
+            >
+              {ctaLabel}
+            </button>
+          </Link>
         </div>
 
         {/* Mobile Menu Toggle */}
@@ -134,7 +165,7 @@ export function Header() {
               </motion.div>
             ))}
 
-            {isLoaded && !isSignedIn && (
+            {showSignIn && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -145,7 +176,7 @@ export function Header() {
                   onClick={() => setIsOpen(false)}
                   className="text-sm uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Login
+                  Sign In
                 </Link>
               </motion.div>
             )}
@@ -156,16 +187,26 @@ export function Header() {
               transition={{ delay: (navLinks.length + 1) * 0.1 }}
               className="mt-8 w-full max-w-xs"
             >
-              {isLoaded && (
-                <Link
-                  href={isSignedIn ? "/products" : "/sign-up"}
-                  onClick={() => setIsOpen(false)}
+              <Link
+                href={ctaHref}
+                onClick={(event) => {
+                  handleAuthNavigation(event);
+                  if (isLoaded) {
+                    setIsOpen(false);
+                  }
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={!isLoaded}
+                  className={cn(
+                    "w-full py-4 text-sm uppercase tracking-widest font-medium",
+                    ctaButtonClassName,
+                  )}
                 >
-                  <button className="w-full py-4 border border-foreground text-sm uppercase tracking-widest font-medium text-foreground hover:bg-foreground hover:text-background transition-colors">
-                    {isSignedIn ? "Dashboard" : "New Analysis"}
-                  </button>
-                </Link>
-              )}
+                  {ctaLabel}
+                </button>
+              </Link>
             </motion.div>
           </motion.div>
         )}

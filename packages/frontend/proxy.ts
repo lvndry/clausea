@@ -30,6 +30,13 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
     return NextResponse.redirect(signInUrl);
   }
 
+  // Products list requires auth — backend returns 401 without a token
+  if ((pathname === "/products" || pathname === "/products/") && !userId) {
+    const signInUrl = new URL("/sign-in", request.url);
+    signInUrl.searchParams.set("redirect_url", request.url);
+    return NextResponse.redirect(signInUrl);
+  }
+
   // Product detail pages: crawlers pass freely (OG scraping), humans get metered access
   if (PRODUCT_DETAIL_RE.test(pathname)) {
     const ua = request.headers.get("user-agent") ?? "";
