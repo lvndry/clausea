@@ -1,3 +1,4 @@
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -30,6 +31,11 @@ WHITELISTED_ROUTES = {
     "/extension/subscribe",
     "/extension/domains",
 }
+
+# Public GET routes for product detail pages (shared links, crawlers, incognito).
+_PUBLIC_PRODUCT_GET_RE = re.compile(
+    r"^/products/(?:sitemap|[A-Za-z0-9][A-Za-z0-9_-]*(?:/(?:overview|documents|explainer|topics))?)$"
+)
 
 # Localhost addresses that are considered safe for development
 LOCALHOST_ADDRESSES = ("127.0.0.1", "localhost", "::1")
@@ -69,11 +75,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
     def _is_whitelisted(self, request: Request) -> bool:
         """Check if the request path is whitelisted"""
         path = request.url.path
-        return (
-            path in WHITELISTED_ROUTES
-            or path.startswith("/extension/status/")
-            or request.method == "OPTIONS"
-        )
+        if path in WHITELISTED_ROUTES or path.startswith("/extension/status/"):
+            return True
+        if request.method == "OPTIONS":
+            return True
+        if request.method == "GET" and _PUBLIC_PRODUCT_GET_RE.match(path):
+            return True
+        return False
 
     async def _authenticate(self, request: Request) -> dict[str, Any] | None:
         """Try to authenticate the request using available methods"""

@@ -125,9 +125,8 @@ async def test_require_pro_rejects_unauthenticated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_check_usage_limit_rejects_unauthenticated() -> None:
+async def test_check_usage_limit_allows_unauthenticated() -> None:
     request = _mock_request(None)
     db = AsyncMock()
-    with pytest.raises(HTTPException) as exc_info:
-        await check_usage_limit(request=request, db=db)
-    assert exc_info.value.status_code == 401
+    result = await check_usage_limit(request=request, db=db)
+    assert result is None

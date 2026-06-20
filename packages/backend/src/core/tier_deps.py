@@ -43,12 +43,16 @@ async def check_usage_limit(
     request: Request,
     db: AgnosticDatabase = Depends(get_db),
 ) -> None:
-    """Dependency that enforces monthly usage limits per tier. Unauthenticated → HTTP 401."""
+    """Dependency that enforces monthly usage limits per tier for signed-in users.
+
+    Anonymous reads are allowed so public product pages work in incognito; the
+    frontend meters page views via the __pv cookie before prompting sign-in.
+    """
     user_id = _get_user_id(request)
     if user_id in _BYPASS_USER_IDS:
         return
     if user_id is None:
-        raise HTTPException(status_code=401, detail="Authentication required.")
+        return
 
     allowed, _ = await UsageService.check_usage_limit(db, user_id)
     if not allowed:
