@@ -18,7 +18,7 @@ from src.models.finding import AggregatedFinding, Aggregation, Finding, FindingC
 from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
-from src.services.evidence_relevance import filter_evidence_spans, infer_insight_category
+from src.services.evidence_relevance import filter_evidence_spans
 from src.services.extraction_service import extract_document_facts
 from src.utils.standard_terms import should_exclude_from_dangers
 
@@ -59,15 +59,12 @@ class AggregationService:
             if not value.strip():
                 continue
             evidence = getattr(item, "evidence", None) or []
-            quote = evidence[0].quote if evidence else None
             item_materiality = getattr(item, "materiality", None)
             target_category = category
-            if category == "dangers":
-                target_category = infer_insight_category(value, quote=quote, default="dangers")
-                if target_category == "dangers" and should_exclude_from_dangers(
-                    value, materiality=item_materiality
-                ):
-                    continue
+            if category == "dangers" and should_exclude_from_dangers(
+                value, materiality=item_materiality
+            ):
+                continue
             attrs: dict = {}
             if item_materiality:
                 attrs["materiality"] = item_materiality

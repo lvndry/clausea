@@ -20,7 +20,7 @@ def _documents() -> list[DocumentSummary]:
     ]
 
 
-def test_build_product_topic_report_filters_weak_cookie_boilerplate() -> None:
+def test_build_product_topic_report_keeps_all_non_empty_citations() -> None:
     aggregation = Aggregation(
         product_id="product_1",
         product_slug="example",
@@ -58,11 +58,10 @@ def test_build_product_topic_report_filters_weak_cookie_boilerplate() -> None:
 
     data_sharing = next(topic for topic in report.topics if topic.topic == "data_sharing")
     assert len(data_sharing.findings) == 1
-    assert len(data_sharing.findings[0].citations) == 1
-    assert "advertising partners" in data_sharing.findings[0].citations[0].quote.lower()
+    assert len(data_sharing.findings[0].citations) == 3
 
 
-def test_build_product_topic_report_filters_off_topic_arbitration_and_ip_quotes() -> None:
+def test_build_product_topic_report_keeps_off_topic_quotes_without_pattern_filter() -> None:
     aggregation = Aggregation(
         product_id="product_1",
         product_slug="figma",
@@ -106,11 +105,10 @@ def test_build_product_topic_report_filters_off_topic_arbitration_and_ip_quotes(
 
     data_sharing = next(topic for topic in report.topics if topic.topic == "data_sharing")
     assert len(data_sharing.findings) == 1
-    assert len(data_sharing.findings[0].citations) == 1
-    assert "advertising partners" in data_sharing.findings[0].citations[0].quote.lower()
+    assert len(data_sharing.findings[0].citations) == 3
 
 
-def test_build_product_topic_report_drops_finding_when_only_boilerplate_remains() -> None:
+def test_build_product_topic_report_drops_finding_when_only_empty_evidence() -> None:
     aggregation = Aggregation(
         product_id="product_1",
         product_slug="example",
@@ -123,7 +121,7 @@ def test_build_product_topic_report_drops_finding_when_only_boilerplate_remains(
                     EvidenceSpan(
                         document_id="doc_1",
                         url="https://example.com/privacy",
-                        quote="Use the Manage cookies link in the footer to update preferences.",
+                        quote="",
                     ),
                 ],
             )
@@ -192,7 +190,7 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
     assert data_collection.rationale_key == "topic.findings_summary"
     assert len(data_collection.findings) == 1
     assert data_collection.findings[0].document_ids == ["doc_1", "doc_2"]
-    assert len(data_collection.findings[0].citations) == 3
+    assert len(data_collection.findings[0].citations) == 4
     assert {citation.document_title for citation in data_collection.findings[0].citations} == {
         "Privacy Policy",
         "Security Policy",
@@ -268,7 +266,7 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
     assert len(ai_training.conflicts[0].citations) == 2
 
 
-def test_build_product_topic_report_drops_irrelevant_citations() -> None:
+def test_build_product_topic_report_keeps_all_linked_citations() -> None:
     aggregation = Aggregation(
         product_id="product_1",
         product_slug="example",
@@ -301,8 +299,7 @@ def test_build_product_topic_report_drops_irrelevant_citations() -> None:
 
     retention = next(topic for topic in report.topics if topic.topic == "retention")
     assert len(retention.findings) == 1
-    assert len(retention.findings[0].citations) == 1
-    assert "retain account data" in retention.findings[0].citations[0].quote.lower()
+    assert len(retention.findings[0].citations) == 2
 
 
 def test_build_product_topic_report_filters_standard_danger_findings() -> None:
@@ -314,6 +311,7 @@ def test_build_product_topic_report_filters_standard_danger_findings() -> None:
                 category="dangers",
                 value="Accounts may be disabled for repeated infringement",
                 documents=["doc_1"],
+                attributes=[{"materiality": "standard_industry"}],
                 evidence=[
                     EvidenceSpan(
                         document_id="doc_1",
@@ -431,7 +429,7 @@ def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_c
     assert topic.status == "ambiguous"
 
 
-def test_build_product_topic_report_skips_miscategorized_dangers_findings() -> None:
+def test_build_product_topic_report_filters_dangers_via_materiality_labels() -> None:
     aggregation = Aggregation(
         product_id="product_1",
         product_slug="example",
@@ -440,6 +438,7 @@ def test_build_product_topic_report_skips_miscategorized_dangers_findings() -> N
                 category="dangers",
                 value="Binding arbitration / class action waiver",
                 documents=["doc_1"],
+                attributes=[{"materiality": "notable"}],
                 evidence=[
                     EvidenceSpan(
                         document_id="doc_1",

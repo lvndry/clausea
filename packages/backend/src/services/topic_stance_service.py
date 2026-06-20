@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import json
 from collections import defaultdict
 from typing import Any
 
@@ -23,15 +23,6 @@ _YES_TOKENS = {"yes", "true", "1"}
 _NO_TOKENS = {"no", "false", "0"}
 _UNCLEAR_TOKENS = {"unclear", "unknown", "null", "none", ""}
 
-_AI_TRAINING_FLAG_PATTERN = re.compile(
-    r"""
-    ["']?(?:ai_training_on_user_data|training_on_user_data|ai-training-on-user-data)["']?
-    \s*[:=]\s*
-    ["']?(yes|no|true|false|1|0|unclear|null|unknown|none)["']?
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
 
 def _coerce_yes_no_unclear(value: object) -> str | None:
     normalized = str(value or "").strip().lower()
@@ -41,6 +32,23 @@ def _coerce_yes_no_unclear(value: object) -> str | None:
         return "no"
     if normalized in _UNCLEAR_TOKENS:
         return "unclear"
+    return None
+
+
+def _ai_training_signal_from_value(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw.startswith("{"):
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in ("ai_training_on_user_data", "training_on_user_data", "AI_TRAINING_ON_USER_DATA"):
+        parsed = _coerce_yes_no_unclear(payload.get(key))
+        if parsed in {"yes", "no"}:
+            return parsed
     return None
 
 
@@ -59,16 +67,6 @@ def _ai_training_signal_from_attributes(attributes: list[dict[str, Any]]) -> str
             return "yes"
 
     return None
-
-
-def _ai_training_signal_from_value(value: str) -> str | None:
-    match = _AI_TRAINING_FLAG_PATTERN.search(value or "")
-    if not match:
-        return None
-    parsed = _coerce_yes_no_unclear(match.group(1))
-    if parsed in {"yes", "no"}:
-        return parsed
-    return "unclear"
 
 
 def _resolve_ai_training_signal(*, value: str, attributes: list[dict[str, Any]]) -> str | None:
@@ -143,21 +141,8 @@ def _map_sharing_risk_level(value: str | None) -> int:
 
 
 def _parse_duration_risk(text: str) -> int:
-    lower = text.lower()
-    if any(term in lower for term in ("indefinite", "forever", "permanent", "as long as")):
-        return 8
-    if any(term in lower for term in ("delete", "deletion", "remove")) and any(
-        term in lower for term in ("30 day", "60 day", "90 day", "month")
-    ):
-        return 3
-    year_match = re.search(r"(\d+)\s*year", lower)
-    if year_match:
-        years = int(year_match.group(1))
-        if years >= 5:
-            return 8
-        if years >= 2:
-            return 6
-        return 5
+    """Conservative default when retention duration is not structured in attributes."""
+    _ = text
     return 5
 
 

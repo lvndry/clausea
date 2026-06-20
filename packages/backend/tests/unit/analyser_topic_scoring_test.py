@@ -162,8 +162,9 @@ async def test_generate_product_overview_uses_dimension_scoring() -> None:
     assert result.topic_stances[0].rationale_key == "topic.findings_summary"
     assert result.topic_stances[0].headline_claim is not None
     assert result.topic_stances[0].supporting_citations
-    assert len(result.topic_stances[0].supporting_citations) == 3
+    assert len(result.topic_stances[0].supporting_citations) == 4
     quotes = {citation.quote for citation in result.topic_stances[0].supporting_citations}
     assert "We may sell data to advertising partners." in quotes
+    assert "Users can opt out in account settings." in quotes
     assert result.topic_stances[0].why_it_matters is not None
     assert result.topic_stances[0].recommended_action is not None
