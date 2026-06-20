@@ -442,7 +442,13 @@ class DocumentAnalysis(BaseModel):
     summary: str
     scores: dict[str, DocumentAnalysisScores]
     risk_score: int | None = Field(
-        default=None, ge=0, le=10, description="Overall risk score from 0-10; computed server-side"
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
     )
     verdict: (
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
@@ -568,14 +574,17 @@ class MetaSummary(BaseModel):
         default=None,
         ge=0,
         le=10,
-        description="Overall risk 0-10; computed server-side from scores, not from LLM",
+        description=(
+            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
     )
     verdict: (
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = Field(
         default=None,
-        description="Privacy friendliness; computed server-side from risk_score",
+        description="Privacy friendliness; derived deterministically from risk_score",
     )
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
         default=None, description="A-E grade derived deterministically from risk_score"
@@ -953,7 +962,15 @@ class ProductOverview(BaseModel):
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = None
-    risk_score: int | None = Field(default=None, ge=0, le=10)
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
     one_line_summary: str = Field(
         examples=["Spotify collects extensive data for ads but offers strong user rights"]
     )
@@ -1054,7 +1071,15 @@ class DocumentSummary(BaseModel):
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = None
-    risk_score: int | None = Field(default=None, ge=0, le=10)
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
     top_concerns: list[str] | None = Field(default=None, description="Top 3 concerns.")
     summary: str | None = Field(
         default=None, description="User-oriented explanation from analysis."

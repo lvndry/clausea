@@ -348,11 +348,11 @@ def _compute_document_signature(documents: list[Document]) -> str:
 
 
 def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
-    """Derive product headline risk from overview dimension scores.
+    """Derive product headline risk from LLM-assessed overview dimension scores.
 
     Dimension scores are 0-10 where higher is better for the user; the returned
-    risk score is 0-10 where higher is worse — same inversion as per-document
-    ``_calculate_risk_score``.
+    risk score is 0-10 where higher is worse — same weighted inversion as per-document
+    ``_calculate_risk_score``. This is deterministic aggregation, not an LLM headline.
     """
     doc_scores = {
         key: DocumentAnalysisScores(
@@ -370,7 +370,12 @@ def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
 
 
 def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
-    """Set headline risk, verdict, and grade from dimension scores (+ signal floors)."""
+    """Overwrite headline risk, verdict, and grade from LLM dimension scores.
+
+    Any ``risk_score`` / ``verdict`` / ``grade`` emitted by the overview LLM is ignored.
+    Base risk comes from ``_calculate_overview_risk_score``; privacy signal floors and
+    positive adjustments may raise it before verdict and grade are assigned.
+    """
     base = _calculate_overview_risk_score(meta_summary.scores)
     if base is None:
         meta_summary.risk_score = None
@@ -386,7 +391,7 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
 
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
     """
-    Calculate overall risk score from component scores.
+    Calculate overall risk from LLM-assessed dimension scores (deterministic aggregation).
 
     Higher component scores = better for the user. Risk is the inverse of that
     weighted blend so minimal-data / low-sharing / strong-security policies
@@ -686,11 +691,12 @@ def _weighted_product_risk_score(docs: list[Document]) -> int | None:
 
 def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     """
-    Validate scores returned by the LLM and recalculate the headline risk.
+    Validate LLM dimension scores and derive headline risk, verdict, and grade.
 
     Missing score keys are left absent — the LLM is instructed to omit scores it
     cannot assess from the extraction. Invalid values (out-of-range or wrong type)
-    are dropped so they don't distort the weighted risk formula.
+    are dropped so they don't distort the weighted risk formula. Any LLM-emitted
+    ``risk_score``, ``verdict``, or ``grade`` is overwritten.
     """
     cleaned: dict[str, DocumentAnalysisScores] = {}
     for score_name, score_obj in parsed.scores.items():
@@ -701,8 +707,8 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     parsed.scores = cleaned
     parsed.scores = calibrate_document_scores(parsed.scores)
 
-    # Recalculate risk_score and verdict deterministically from whatever scores the LLM
-    # returned. _calculate_risk_score returns None when no weighted dimensions exist.
+    # Overwrite any LLM-emitted headline fields; derive them from dimension scores only.
+    # _calculate_risk_score returns None when no weighted dimensions exist.
     risk = _calculate_risk_score(parsed.scores)
     if risk is None:
         parsed.risk_score = None
