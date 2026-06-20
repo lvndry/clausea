@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from src.utils.grading import GradeLetter, coerce_grade, score_to_grade
+
 logger = logging.getLogger(__name__)
 
 TierRelevance = Literal["core", "extended"]
@@ -35,8 +37,33 @@ CORE_DOC_TYPES = {
 
 
 class DocumentAnalysisScores(BaseModel):
-    score: int
+    """Per-dimension A–E grade with mandatory LLM justification."""
+
+    grade: GradeLetter
     justification: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_score(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "grade" not in data and "score" in data:
+            try:
+                data = dict(data)
+                data["grade"] = score_to_grade(int(data["score"]))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(data.get("grade"), str):
+            data = dict(data)
+            data["grade"] = coerce_grade(data["grade"])
+        return data
+
+    @property
+    def score(self) -> int:
+        """Legacy user-friendliness proxy (0–10) derived from letter grade."""
+        from src.utils.grading import grade_to_user_score
+
+        return grade_to_user_score(self.grade)
 
 
 class EvidenceSpan(BaseModel):
@@ -440,13 +467,13 @@ class DocumentAnalysis(BaseModel):
 
     # Narrative and scoring
     summary: str
-    scores: dict[str, DocumentAnalysisScores]
+    scores: dict[str, DocumentAnalysisScores] = Field(default_factory=dict)
     risk_score: int | None = Field(
         default=None,
         ge=0,
         le=10,
         description=(
-            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
             "(not a separate LLM risk assignment)"
         ),
     )
@@ -455,7 +482,11 @@ class DocumentAnalysis(BaseModel):
         | None
     ) = Field(default=None, description="Privacy friendliness level based on risk score")
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
-        default=None, description="A-E grade derived deterministically from risk_score"
+        default=None, description="Overall A–E grade from LLM with server-side validation"
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="Mandatory LLM reasoning for the overall grade",
     )
     liability_risk: int | None = Field(
         default=None, ge=0, le=10, description="Liability risk score (0-10, for business users)"
@@ -524,8 +555,30 @@ class DocumentAnalysis(BaseModel):
 
 
 class MetaSummaryScore(BaseModel):
-    score: int
+    grade: GradeLetter
     justification: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_score(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "grade" not in data and "score" in data:
+            try:
+                data = dict(data)
+                data["grade"] = score_to_grade(int(data["score"]))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(data.get("grade"), str):
+            data = dict(data)
+            data["grade"] = coerce_grade(data["grade"])
+        return data
+
+    @property
+    def score(self) -> int:
+        from src.utils.grading import grade_to_user_score
+
+        return grade_to_user_score(self.grade)
 
 
 class MetaSummaryScores(BaseModel):
@@ -575,7 +628,7 @@ class MetaSummary(BaseModel):
         ge=0,
         le=10,
         description=(
-            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
             "(not a separate LLM risk assignment)"
         ),
     )
@@ -587,7 +640,11 @@ class MetaSummary(BaseModel):
         description="Privacy friendliness; derived deterministically from risk_score",
     )
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
-        default=None, description="A-E grade derived deterministically from risk_score"
+        default=None, description="Overall A–E grade from LLM with server-side validation"
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="Mandatory LLM reasoning for the overall grade",
     )
     keypoints: list[str] = Field(default_factory=list)
     data_collected: list[str] | None = None
@@ -967,7 +1024,7 @@ class ProductOverview(BaseModel):
         ge=0,
         le=10,
         description=(
-            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
             "(not a separate LLM risk assignment)"
         ),
     )
@@ -980,6 +1037,14 @@ class ProductOverview(BaseModel):
             "One human-friendly sentence summarising the product's single most important "
             "privacy posture, as generated by the LLM."
         ),
+    )
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None,
+        description="Overall A–E privacy grade from LLM",
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="LLM reasoning for the overall grade",
     )
 
     # Core Insights (what users most want to know)
@@ -1076,7 +1141,7 @@ class DocumentSummary(BaseModel):
         ge=0,
         le=10,
         description=(
-            "Overall risk 0-10; derived deterministically from LLM dimension scores "
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
             "(not a separate LLM risk assignment)"
         ),
     )

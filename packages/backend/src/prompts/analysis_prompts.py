@@ -39,61 +39,35 @@ OVERVIEW_CORE_DOC_TYPES: frozenset[str] = frozenset(
 
 # ─── 1. DOCUMENT ANALYSIS (deep by default) ────────────────────────────────────
 
-DIMENSION_SCORE_RUBRIC = """### Dimension score rubric (0-10, higher = better for the user)
-Score each dimension independently. Be fair and balanced: reward documented protections; note limitations in the justification without over-penalizing the numeric score.
+DIMENSION_GRADE_RUBRIC = """### Dimension grades (A–E — higher letter = better for the user)
+Assign each dimension an **A to E letter grade** with a **mandatory justification** (1–3 sentences). Do NOT output numeric scores or ranks.
 
-Letter-grade anchors (shown to users from these scores):
-- **8-10 (A range)**: Strong — multiple real protections or clearly minimal practice; minor caveats only.
-- **6-7 (B range)**: Good — meaningful controls or moderate practice with some gaps.
-- **4-5 (C range)**: Mixed/typical — some controls but material gaps, OR invasive practice with partial mitigation.
-- **2-3 (D range)**: Weak — one important gap or mostly user-hostile on this dimension.
-- **0-1 (E range)**: Very weak — explicitly worst-case on this dimension.
+- **A**: Strong — multiple real protections or clearly minimal practice; minor caveats only.
+- **B**: Good — meaningful controls or moderate practice with some gaps.
+- **C**: Mixed/typical — some controls but material gaps, OR invasive practice with partial mitigation.
+- **D**: Weak — one important gap or mostly user-hostile on this dimension.
+- **E**: Very weak — explicitly worst-case on this dimension.
 
-**user_control** — self-service opt-outs, deletion, portability, consent tools:
-- **8-10**: Multiple documented controls (cookie/consent tool, GPC/Do Not Sell signal, AI/training opt-out, marketing unsubscribe, self-service account deletion). Score **B or A even when** caveats exist (mobile-only opt-out, org-level admin toggle, all-or-nothing deletion) — mention caveats in justification, deduct at most 1-2 points total, not a full letter grade per caveat.
-- **6-7**: Two or three real controls with clear paths; or many controls with one serious gap (e.g. deletion requires a request).
-- **4-5**: One meaningful control OR controls exist but are vague/hard to find.
-- **0-3**: No meaningful self-service controls stated, or explicitly none.
+**transparency** — clarity of what is collected, why, and by whom.
+**data_collection_scope** — breadth of collection (A = minimal/necessary only).
+**user_control** — self-service opt-outs, deletion, portability, consent tools.
+**third_party_sharing** — breadth of sharing (A = no sharing / not sold).
+**data_retention_score** — retention specificity (document analysis only).
+**security_score** — stated security measures (document analysis only).
 
-**transparency** — clarity of what is collected, why, and by whom:
-- **8-10**: Names specific data types, recipients, and purposes in plain language.
-- **6-7**: Mostly clear with some vague sections.
-- **4-5**: Boilerplate-heavy or important details missing.
-- **0-3**: Deliberately opaque or contradictory.
-
-**data_collection_scope** — breadth of collection (10 = minimal/necessary only):
-- **8-10**: Minimal/necessary collection; sensitive categories excluded or tightly limited.
-- **6-7**: Moderate collection with stated limits.
-- **4-5**: Broad but not extreme; typical ad-tech profile.
-- **0-3**: Sweeping, sensitive categories, or cross-site tracking without limits.
-
-**third_party_sharing** — breadth of sharing (10 = no sharing / not sold):
-- **8-10**: No sale; limited service-provider sharing only.
-- **6-7**: Some third parties named with purposes; no data sale.
-- **4-5**: Many partners or broad advertising/analytics sharing.
-- **0-3**: Data sale, brokers, or unrestricted sharing.
-
-**data_retention_score** — retention specificity (10 = short, specific periods):
-- **8-10**: Named retention windows; deletion after account closure.
-- **4-5**: General statements without periods.
-- **0-3**: Indefinite or "as long as needed" with no limits.
-
-**security_score** — stated security measures (10 = E2EE, SOC2, pen-tests):
-- **8-10**: Named certifications or strong technical measures.
-- **4-5**: Generic "industry standard" security language.
-- **0-3**: No meaningful security claims or explicitly weak.
-
-Fairness rule: If the justification lists multiple genuine user controls or protections, the score MUST be at least 6 (B- floor). Caveats and limitations reduce slightly (1-2 points), never tank an otherwise strong dimension from A/B to C."""
+Be fair: reward documented protections; note caveats in justification without downgrading more than one letter grade. If the justification lists multiple genuine controls, grade MUST be at least B."""
 
 DOCUMENT_ANALYSIS_JSON_SCHEMA = """{
   "summary": string (3-5 concrete sentences),
+  "grade": "A" | "B" | "C" | "D" | "E",
+  "grade_justification": string (2-4 sentences explaining the overall grade),
   "scores": {
-    "transparency":          {"score": int 0-10, "justification": string},
-    "data_collection_scope": {"score": int 0-10, "justification": string},
-    "user_control":          {"score": int 0-10, "justification": string},
-    "third_party_sharing":   {"score": int 0-10, "justification": string},
-    "data_retention_score":  {"score": int 0-10, "justification": string},
-    "security_score":        {"score": int 0-10, "justification": string}
+    "transparency":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "data_collection_scope": {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "user_control":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "third_party_sharing":   {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "data_retention_score":  {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "security_score":        {"grade": "A"|"B"|"C"|"D"|"E", "justification": string}
   },
   "liability_risk": int 0-10 | null,
   "compliance_status": {"GDPR": int|null, "CCPA": int|null, "PIPEDA": int|null, "LGPD": int|null} | null,
@@ -132,18 +106,20 @@ DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evid
 ## Rules (non-negotiable)
 - Use ONLY facts from the extraction below. If absent, state "Not specified in document".
 - Every critical clause quote must be an exact substring from the extraction evidence.
-- Never output `risk_score` or `verdict` — the platform computes them deterministically from your scores.
+- Never output numeric dimension scores, `risk_score`, or `verdict` — assign letter grades A–E with justifications only.
 - If the extraction is partial, set analysis_completeness to "partial".
+
+## OVERALL GRADE
+Assign an overall **grade** (A–E) for this document's privacy posture and **grade_justification** (2–4 sentences) explaining why.
 
 ## SUMMARY
 3-5 concrete sentences. Name exact data types ("precise GPS", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics"), exact rights paths ("Settings > Privacy > Delete"). Start with the service/product name, never with "This document" or "This policy".
 
-## SCORES
-Each dimension is 0-10 (higher = better for the user). Include a dimension ONLY when the document substantively addresses it. If the document is silent on a dimension — e.g. a security/trust page that says nothing about data collection — OMIT that key. A score of 0 means the document EXPLICITLY describes the worst-case practice; silence or "not mentioned" is NEVER 0, omit instead.
+## DIMENSION GRADES
+Provide `scores` with a letter grade and justification for each dimension the document substantively addresses.
+If silent on a dimension, omit that key. Silence is not a worst-case finding — never assign E for silence.
 
-{DIMENSION_SCORE_RUBRIC}
-
-Calibration: minimal-collection + E2EE → high collection/sharing scores (7-10). Ad-tech ecosystem + AI training on user content → low (0-4). Clear disclosure of invasive practices does NOT raise scores — transparency reflects clarity, not virtue.
+{DIMENSION_GRADE_RUBRIC}
 
 ## KEYPOINTS
 5-10 specific, concrete bullets (fewer acceptable when extraction is thin). Prioritize: AI training on user data, biometrics/health, arbitration waivers, content licenses, government access, cross-entity binding, liability caps.
@@ -180,11 +156,13 @@ Return valid JSON matching this schema:
 PRODUCT_OVERVIEW_JSON_SCHEMA = """{
   "summary": string,
   "headline_claim": string | null,
+  "grade": "A" | "B" | "C" | "D" | "E",
+  "grade_justification": string (2-4 sentences explaining the overall grade),
   "scores": {
-    "transparency":          {"score": int (0-10), "justification": string},
-    "data_collection_scope": {"score": int (0-10), "justification": string},
-    "user_control":          {"score": int (0-10), "justification": string},
-    "third_party_sharing":   {"score": int (0-10), "justification": string}
+    "transparency":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "data_collection_scope": {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "user_control":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "third_party_sharing":   {"grade": "A"|"B"|"C"|"D"|"E", "justification": string}
   },
   "keypoints": [string],
   "data_collected": [string],
@@ -271,16 +249,16 @@ Then a markdown bullet list titled "Key Takeaways" — 6-10 specific cross-docum
 
 Rules: be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
 
-## SCORES
-Synthesize from all document analyses and extractions. Where documents conflict on **facts**, use the conservative reading for factual claims — but score each dimension **fairly**: reward documented controls and protections; note caveats in the justification without over-penalizing the numeric score.
+## OVERALL GRADE
+Assign an overall **grade** (A–E) for this product's privacy posture and **grade_justification** (2–4 sentences) explaining why. Be specific about the single biggest factor driving your judgment.
 
-{DIMENSION_SCORE_RUBRIC}
+## DIMENSION GRADES
+Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for:
+transparency, data_collection_scope, user_control, third_party_sharing.
 
-Provide only: transparency, data_collection_scope, user_control, third_party_sharing.
+{DIMENSION_GRADE_RUBRIC}
 
-Do NOT output `risk_score` or `verdict` — the platform computes the headline risk deterministically from these four dimension scores (weighted average, inverted to a 0-10 risk scale). The overall grade shown to users must align with this breakdown.
-
-Apply spread across the 0-10 scale: minimal-data / low-sharing → high collection/sharing scores; ad-tech-scale collection, many recipients, tracking, training on user content → low collection/sharing scores.
+Do NOT output numeric dimension scores, `risk_score`, or `verdict` — letter grades with justifications only.
 
 ## DATA COLLECTED
 10-20 specific data types. Be precise: "device fingerprint", "precise GPS coordinates", "browsing history across third-party sites" — not "device information" or "usage data".

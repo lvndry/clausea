@@ -13,12 +13,12 @@ def _core_doc() -> Document:
     analysis = DocumentAnalysis(
         summary="x",
         scores={
-            "transparency": DocumentAnalysisScores(score=5, justification=""),
-            "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-            "user_control": DocumentAnalysisScores(score=5, justification=""),
-            "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-            "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-            "security_score": DocumentAnalysisScores(score=5, justification=""),
+            "transparency": DocumentAnalysisScores(grade="C", justification=""),
+            "data_collection_scope": DocumentAnalysisScores(grade="C", justification=""),
+            "user_control": DocumentAnalysisScores(grade="C", justification=""),
+            "third_party_sharing": DocumentAnalysisScores(grade="C", justification=""),
+            "data_retention_score": DocumentAnalysisScores(grade="C", justification=""),
+            "security_score": DocumentAnalysisScores(grade="C", justification=""),
         },
         risk_score=4,
         verdict="moderate",
@@ -40,14 +40,14 @@ def _core_doc() -> Document:
 def _overview_response() -> ModelResponse:
     payload = {
         "summary": "ok",
+        "grade": "C",
+        "grade_justification": "Mixed practices across documents.",
         "scores": {
-            "transparency": {"score": 5, "justification": ""},
-            "data_collection_scope": {"score": 5, "justification": ""},
-            "user_control": {"score": 5, "justification": ""},
-            "third_party_sharing": {"score": 5, "justification": ""},
+            "transparency": {"grade": "C", "justification": ""},
+            "data_collection_scope": {"grade": "C", "justification": ""},
+            "user_control": {"grade": "C", "justification": ""},
+            "third_party_sharing": {"grade": "C", "justification": ""},
         },
-        "risk_score": 5,
-        "verdict": "moderate",
     }
     response = MagicMock(spec=ModelResponse)
     response.model = "test-model"
@@ -134,7 +134,7 @@ async def test_generate_product_overview_llm_call_is_temperature_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_product_overview_uses_dimension_scoring() -> None:
+async def test_generate_product_overview_uses_llm_grades() -> None:
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
     aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
@@ -156,7 +156,8 @@ async def test_generate_product_overview_uses_dimension_scoring() -> None:
             document_svc=document_svc,
         )
 
-    # All dimension scores are neutral (5) → risk 5, not topic-composed 9.
+    # LLM grade C → risk 5 after reconciliation.
+    assert result.grade == "C"
     assert result.risk_score == 5
     assert result.topic_stances
     assert result.topic_stances[0].rationale_key == "topic.findings_summary"

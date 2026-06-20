@@ -18,8 +18,10 @@ export interface ThirdPartyRecipient {
 }
 
 export interface DetailedScore {
-  score: number;
+  grade: "A" | "B" | "C" | "D" | "E";
   justification: string;
+  /** @deprecated Legacy numeric proxy — prefer `grade`. */
+  score?: number;
 }
 
 export interface DetailedScores {
@@ -80,6 +82,8 @@ export interface ProductOverview {
   last_updated: string;
   verdict?: Verdict | null;
   risk_score?: number | null;
+  grade?: "A" | "B" | "C" | "D" | "E" | null;
+  grade_justification?: string | null;
   one_line_summary: string;
   data_collected?: string[] | null;
   data_purposes?: string[] | null;

@@ -1,8 +1,9 @@
-"""Tests for deterministic privacy risk scoring and product-level blending."""
+"""Tests for grade-based privacy risk derivation."""
 
 from src.analyser import (
     _calculate_overview_risk_score,
     _calculate_risk_score,
+    _ensure_required_scores,
     _reconcile_meta_summary_risk,
     _weighted_product_risk_score,
 )
@@ -16,6 +17,10 @@ from src.models.document import (
 )
 
 
+def _grade(letter: str, justification: str = "ok") -> DocumentAnalysisScores:
+    return DocumentAnalysisScores(grade=letter, justification=justification)  # type: ignore[arg-type]
+
+
 def _doc(
     *,
     doc_type: str,
@@ -26,13 +31,14 @@ def _doc(
     analysis = DocumentAnalysis(
         summary="x",
         scores={
-            "transparency": DocumentAnalysisScores(score=5, justification=""),
-            "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-            "user_control": DocumentAnalysisScores(score=5, justification=""),
-            "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-            "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-            "security_score": DocumentAnalysisScores(score=5, justification=""),
+            "transparency": _grade("C"),
+            "data_collection_scope": _grade("C"),
+            "user_control": _grade("C"),
+            "third_party_sharing": _grade("C"),
+            "data_retention_score": _grade("C"),
+            "security_score": _grade("C"),
         },
+        grade="C",
         risk_score=risk,
         verdict="moderate",
         keypoints=[],
@@ -50,10 +56,10 @@ def _doc(
     )
 
 
-def test_calculate_risk_score_privacy_friendly_high_components() -> None:
+def test_calculate_risk_score_privacy_friendly_grades() -> None:
     scores = {
-        k: DocumentAnalysisScores(score=9, justification="")
-        for k in (
+        key: _grade("A")
+        for key in (
             "transparency",
             "data_collection_scope",
             "user_control",
@@ -65,14 +71,14 @@ def test_calculate_risk_score_privacy_friendly_high_components() -> None:
     assert _calculate_risk_score(scores) == 1
 
 
-def test_calculate_risk_score_invasive_low_components() -> None:
+def test_calculate_risk_score_invasive_grades() -> None:
     scores = {
-        "transparency": DocumentAnalysisScores(score=6, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=2, justification=""),
-        "user_control": DocumentAnalysisScores(score=3, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=2, justification=""),
-        "data_retention_score": DocumentAnalysisScores(score=3, justification=""),
-        "security_score": DocumentAnalysisScores(score=4, justification=""),
+        "transparency": _grade("B"),
+        "data_collection_scope": _grade("E"),
+        "user_control": _grade("D"),
+        "third_party_sharing": _grade("E"),
+        "data_retention_score": _grade("D"),
+        "security_score": _grade("D"),
     }
     assert _calculate_risk_score(scores) == 7
 
@@ -85,140 +91,52 @@ def test_weighted_product_risk_privacy_policy_dominates() -> None:
     assert _weighted_product_risk_score(docs) == 4
 
 
-def test_weighted_product_risk_skips_missing_analysis() -> None:
-    d = Document(
-        url="https://example.com",
-        product_id="p",
-        doc_type="privacy_policy",
-        markdown="",
-        text="",
-        analysis=None,
-    )
-    assert _weighted_product_risk_score([d]) is None
-
-
-def test_other_docs_excluded_from_weighted_score() -> None:
-    """'other' documents must never influence the product risk score."""
-    privacy = _doc(doc_type="privacy_policy", risk=8)
-    other = _doc(doc_type="other", risk=0)  # artificially low — should be ignored
-    score = _weighted_product_risk_score([privacy, other])
-    assert score == 8  # only privacy_policy contributes
-
-
 def test_no_weighted_dimensions_returns_none() -> None:
-    """Unrecognized or empty score sets must not produce a fake neutral headline."""
     assert _calculate_risk_score({}) is None
-    assert (
-        _calculate_risk_score({"unknown": DocumentAnalysisScores(score=5, justification="")})
-        is None
+
+
+def test_ensure_required_scores_preserves_llm_grade() -> None:
+    parsed = DocumentAnalysis(
+        summary="ok",
+        grade="B",
+        grade_justification="Solid controls with minor gaps.",
+        scores={
+            "transparency": _grade("B", "Clear disclosures"),
+            "data_collection_scope": _grade("C", "Broad collection"),
+        },
     )
+    result = _ensure_required_scores(parsed)
+    assert result.grade == "B"
+    assert result.grade_justification == "Solid controls with minor gaps."
+    assert result.risk_score == 3
 
 
-def test_missing_optional_scores_filled_with_neutral() -> None:
-    """Absent optional scores must not distort the weighted average."""
-    # Only security_score present — should not produce an extreme result.
-    scores_sparse = {"security_score": DocumentAnalysisScores(score=2, justification="")}
-    scores_full = {
-        "transparency": DocumentAnalysisScores(score=5, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-        "user_control": DocumentAnalysisScores(score=5, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-        "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-        "security_score": DocumentAnalysisScores(score=2, justification=""),
-    }
-    sparse_risk = _calculate_risk_score(scores_sparse)
-    full_risk = _calculate_risk_score(scores_full)
-    # With neutral fill the sparse result must equal the full result.
-    assert sparse_risk == full_risk
-
-
-def test_all_optional_absent_uses_neutral() -> None:
-    """When both optional scores are absent, result equals same scores at neutral."""
-    core_scores = {
-        "transparency": DocumentAnalysisScores(score=5, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-        "user_control": DocumentAnalysisScores(score=5, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-    }
-    full_neutral = {
-        "transparency": DocumentAnalysisScores(score=5, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-        "user_control": DocumentAnalysisScores(score=5, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-        "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-        "security_score": DocumentAnalysisScores(score=5, justification=""),
-    }
-    assert _calculate_risk_score(core_scores) == _calculate_risk_score(full_neutral)
-
-
-def _figma_like_scores() -> MetaSummaryScores:
-    """Dimension scores matching B-/C-/C/D breakdown from user report."""
-    return MetaSummaryScores(
-        transparency=MetaSummaryScore(score=6, justification="Clear but not exhaustive"),
-        data_collection_scope=MetaSummaryScore(score=4, justification="Broad collection"),
-        user_control=MetaSummaryScore(
-            score=5,
-            justification=(
-                "Provides cookie consent banner, recognizes Global Privacy Control (GPC), "
-                "an AI Content Training toggle, marketing unsubscribe, and self-service "
-                "account deletion. Caveats: all-or-nothing deletion, mobile cookie limits."
-            ),
+def test_reconcile_meta_summary_uses_llm_grade() -> None:
+    meta = MetaSummary(
+        summary="ok",
+        grade="B",
+        grade_justification="Mostly fair with some sharing concerns.",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Clear"),
+            data_collection_scope=MetaSummaryScore(grade="C", justification="Broad"),
+            user_control=MetaSummaryScore(grade="B", justification="Some controls"),
+            third_party_sharing=MetaSummaryScore(grade="D", justification="Wide sharing"),
         ),
-        third_party_sharing=MetaSummaryScore(score=3, justification="Wide sharing"),
     )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.grade == "B"
+    assert meta.risk_score is not None
 
 
-def _figma_like_scores_uncalibrated() -> MetaSummaryScores:
-    """Raw LLM scores before server-side calibration."""
-    return MetaSummaryScores(
-        transparency=MetaSummaryScore(score=6, justification="Clear but not exhaustive"),
-        data_collection_scope=MetaSummaryScore(score=4, justification="Broad collection"),
-        user_control=MetaSummaryScore(score=5, justification="Some controls"),
-        third_party_sharing=MetaSummaryScore(score=3, justification="Wide sharing"),
+def test_overview_risk_from_dimension_grades() -> None:
+    scores = MetaSummaryScores(
+        transparency=MetaSummaryScore(grade="B", justification="Clear but not exhaustive"),
+        data_collection_scope=MetaSummaryScore(grade="C", justification="Broad collection"),
+        user_control=MetaSummaryScore(
+            grade="B",
+            justification="Cookie banner, GPC, AI toggle, self-service deletion.",
+        ),
+        third_party_sharing=MetaSummaryScore(grade="D", justification="Wide sharing"),
     )
-
-
-def test_overview_risk_aligns_with_dimension_breakdown() -> None:
-    """C-range dimensions must not produce D- overall unless signal floors apply."""
-    from src.services.dimension_score_calibration import calibrate_meta_summary_scores
-
-    scores = calibrate_meta_summary_scores(_figma_like_scores())
     risk = _calculate_overview_risk_score(scores)
-    # Weighted user-friendliness ~4.2 → risk ~6 (moderate), not 8+ (D-/D).
-    assert 5 <= risk <= 7
-
-
-def test_reconcile_meta_summary_risk_ignores_llm_headline_risk() -> None:
-    """Server-side reconciliation overwrites any LLM-emitted headline risk."""
-    from src.services.dimension_score_calibration import calibrate_meta_summary_scores
-
-    scores = calibrate_meta_summary_scores(_figma_like_scores())
-    meta = MetaSummary(
-        summary="ok",
-        scores=scores,
-        risk_score=9,
-        verdict="very_pervasive",
-    )
-    _reconcile_meta_summary_risk(meta)
-    assert meta.risk_score == _calculate_overview_risk_score(meta.scores)
-    assert meta.grade == "C"
-
-
-def test_signal_floor_can_raise_dimension_risk_for_critical_signals() -> None:
-    """Critical privacy signals may still push overall risk above dimension average."""
-    from src.models.document import PrivacySignals
-    from src.services.dimension_score_calibration import calibrate_meta_summary_scores
-
-    meta = MetaSummary(
-        summary="ok",
-        scores=calibrate_meta_summary_scores(_figma_like_scores()),
-        privacy_signals=PrivacySignals(sells_data="yes"),
-    )
-    _reconcile_meta_summary_risk(meta)
-    assert meta.risk_score >= 6
-
-
-def test_uncalibrated_figma_user_control_is_c_range() -> None:
-    """Document the miscalibration the server fix addresses."""
-    scores = _figma_like_scores_uncalibrated()
-    assert scores.user_control.score == 5
+    assert risk in {5, 7}

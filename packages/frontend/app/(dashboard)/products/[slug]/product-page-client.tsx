@@ -832,6 +832,8 @@ export default function CompanyPage({
             productName={data.product_name}
             companyName={data.company_name}
             verdict={data.verdict}
+            grade={data.grade}
+            gradeJustification={data.grade_justification}
             riskScore={data.risk_score}
             summary={data.one_line_summary}
             keypoints={data.keypoints}
@@ -846,7 +848,7 @@ export default function CompanyPage({
           {data.detailed_scores && (
             <ScoreBreakdown
               detailedScores={data.detailed_scores}
-              riskScore={data.risk_score}
+              overallGrade={data.grade}
             />
           )}
 

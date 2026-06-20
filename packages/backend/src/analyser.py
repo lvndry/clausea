@@ -76,10 +76,6 @@ from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
 from src.services.aggregation_service import AggregationService
-from src.services.dimension_score_calibration import (
-    calibrate_document_scores,
-    calibrate_meta_summary,
-)
 from src.services.document_service import DocumentService
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
@@ -89,6 +85,12 @@ from src.services.topic_report_service import build_product_topic_report
 from src.services.topic_stance_service import compose_product_risk_from_topics
 from src.services.watch_out_calibration import calibrate_consumer_explainer
 from src.utils.cancellation import CancellationToken
+from src.utils.grading import (
+    aggregate_dimension_grades,
+    coerce_grade,
+    grade_to_risk_score,
+    risk_score_to_verdict,
+)
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
 load_dotenv()
@@ -105,14 +107,27 @@ def _analysis_validator(content: str) -> bool:
             return False
         if not isinstance(data.get("summary"), str) or not data["summary"].strip():
             return False
+        grade = data.get("grade")
+        if not isinstance(grade, str) or grade.strip().upper()[:1] not in {"A", "B", "C", "D", "E"}:
+            return False
         scores = data.get("scores")
-        if not isinstance(scores, dict) or len(scores) == 0:
+        if not isinstance(scores, dict) or not scores:
             return False
-        # At least one score entry must be a dict with a numeric score field
-        if not any(
-            isinstance(v, dict) and isinstance(v.get("score"), int) for v in scores.values()
-        ):
-            return False
+        for value in scores.values():
+            if not isinstance(value, dict):
+                return False
+            dim_grade = value.get("grade")
+            justification = value.get("justification")
+            if not isinstance(dim_grade, str) or dim_grade.strip().upper()[:1] not in {
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+            }:
+                return False
+            if not isinstance(justification, str) or not justification.strip():
+                return False
         return True
     except (json.JSONDecodeError, AttributeError):
         return False
@@ -348,83 +363,58 @@ def _compute_document_signature(documents: list[Document]) -> str:
 
 
 def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
-    """Derive product headline risk from LLM-assessed overview dimension scores.
-
-    Dimension scores are 0-10 where higher is better for the user; the returned
-    risk score is 0-10 where higher is worse — same weighted inversion as per-document
-    ``_calculate_risk_score``. This is deterministic aggregation, not an LLM headline.
-    """
-    doc_scores = {
-        key: DocumentAnalysisScores(
-            score=getattr(scores, key).score,
-            justification=getattr(scores, key).justification,
-        )
-        for key in (
-            "transparency",
-            "data_collection_scope",
-            "user_control",
-            "third_party_sharing",
-        )
-    }
-    return _calculate_risk_score(doc_scores)
+    """Derive product headline risk from LLM-assessed overview dimension grades."""
+    return _calculate_risk_score(
+        {
+            key: DocumentAnalysisScores(
+                grade=getattr(scores, key).grade,
+                justification=getattr(scores, key).justification,
+            )
+            for key in (
+                "transparency",
+                "data_collection_scope",
+                "user_control",
+                "third_party_sharing",
+            )
+        }
+    )
 
 
 def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
-    """Overwrite headline risk, verdict, and grade from LLM dimension scores.
-
-    Any ``risk_score`` / ``verdict`` / ``grade`` emitted by the overview LLM is ignored.
-    Base risk comes from ``_calculate_overview_risk_score``; privacy signal floors and
-    positive adjustments may raise it before verdict and grade are assigned.
-    """
-    base = _calculate_overview_risk_score(meta_summary.scores)
-    if base is None:
+    """Set headline risk and verdict from LLM grade; apply signal floors to risk only."""
+    llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
+    derived_grade = aggregate_dimension_grades(
+        {
+            key: getattr(meta_summary.scores, key).grade
+            for key in (
+                "transparency",
+                "data_collection_scope",
+                "user_control",
+                "third_party_sharing",
+            )
+        }
+    )
+    final_grade = llm_grade or derived_grade
+    if final_grade is None:
         meta_summary.risk_score = None
         meta_summary.verdict = None
         meta_summary.grade = None
         return
-    floored = _apply_signal_floors(base, meta_summary.privacy_signals)
+
+    meta_summary.grade = final_grade
+    base_risk = grade_to_risk_score(final_grade)
+    floored = _apply_signal_floors(base_risk, meta_summary.privacy_signals)
     adjusted = _apply_positive_risk_adjustment(floored, meta_summary)
     meta_summary.risk_score = adjusted
-    meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
-    meta_summary.grade = _calculate_grade(meta_summary.risk_score)
+    meta_summary.verdict = risk_score_to_verdict(adjusted)
 
 
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
-    """
-    Calculate overall risk from LLM-assessed dimension scores (deterministic aggregation).
-
-    Higher component scores = better for the user. Risk is the inverse of that
-    weighted blend so minimal-data / low-sharing / strong-security policies
-    score clearly lower than ad-heavy, broadly shared data practices.
-
-    Weights (sum 1.0): data_collection_scope and third_party_sharing dominate;
-    transparency, user_control, retention, and security add nuance (e.g. E2EE).
-
-    Returns None when no weighted dimensions are present — callers must not
-    invent a neutral headline score. Optional dimensions (retention, security)
-    that are absent while core dimensions exist are treated as unknown (5) so
-    partial extractions can still produce a score.
-    """
-    weights = {
-        "transparency": 0.14,
-        "data_collection_scope": 0.26,
-        "user_control": 0.18,
-        "third_party_sharing": 0.24,
-        "data_retention_score": 0.10,
-        "security_score": 0.08,
-    }
-
-    present = {k: v for k, v in scores.items() if k in weights}
-    if not present:
+    """Map weighted dimension letter grades to an optional 0–10 risk score."""
+    grade = aggregate_dimension_grades({key: value.grade for key, value in scores.items()})
+    if grade is None:
         return None
-
-    effective = dict(present)
-    for key in weights:
-        if key not in effective:
-            effective[key] = DocumentAnalysisScores(score=5, justification="not assessed")
-
-    weighted_sum = sum(effective[k].score * w for k, w in weights.items())
-    return max(0, min(10, round(10 - weighted_sum)))
+    return grade_to_risk_score(grade)
 
 
 def _calculate_verdict(
@@ -689,36 +679,51 @@ def _weighted_product_risk_score(docs: list[Document]) -> int | None:
     return max(0, min(10, round(weighted_sum / weight_total)))
 
 
+def _merge_legacy_dimension_justifications(
+    parsed_dict: dict[str, Any],
+) -> None:
+    """Convert legacy dimension_justifications-only LLM output to grade scores."""
+    legacy = parsed_dict.pop("dimension_justifications", None)
+    if not isinstance(legacy, dict):
+        return
+    scores = parsed_dict.setdefault("scores", {})
+    if not isinstance(scores, dict):
+        scores = {}
+        parsed_dict["scores"] = scores
+    for key, justification in legacy.items():
+        if key in scores and isinstance(scores[key], dict):
+            continue
+        if isinstance(justification, str) and justification.strip():
+            scores[key] = {"grade": "C", "justification": justification.strip()}
+
+
 def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     """
-    Validate LLM dimension scores and derive headline risk, verdict, and grade.
+    Validate LLM dimension grades and derive optional headline risk and verdict.
 
-    Missing score keys are left absent — the LLM is instructed to omit scores it
-    cannot assess from the extraction. Invalid values (out-of-range or wrong type)
-    are dropped so they don't distort the weighted risk formula. Any LLM-emitted
-    ``risk_score``, ``verdict``, or ``grade`` is overwritten.
+    The LLM overall ``grade`` and ``grade_justification`` are preserved when present.
+    ``risk_score`` is derived from grades for legacy consumers only.
     """
     cleaned: dict[str, DocumentAnalysisScores] = {}
     for score_name, score_obj in parsed.scores.items():
-        score_value = getattr(score_obj, "score", None)
-        if score_value is not None and isinstance(score_value, int) and 0 <= score_value <= 10:
+        justification = (score_obj.justification or "").strip()
+        if score_obj.grade and justification:
             cleaned[score_name] = score_obj
 
     parsed.scores = cleaned
-    parsed.scores = calibrate_document_scores(parsed.scores)
 
-    # Overwrite any LLM-emitted headline fields; derive them from dimension scores only.
-    # _calculate_risk_score returns None when no weighted dimensions exist.
-    risk = _calculate_risk_score(parsed.scores)
-    if risk is None:
+    llm_grade = coerce_grade(parsed.grade) if parsed.grade else None
+    derived_grade = aggregate_dimension_grades({key: value.grade for key, value in cleaned.items()})
+    final_grade = llm_grade or derived_grade
+    if final_grade is None:
         parsed.risk_score = None
         parsed.verdict = None
         parsed.grade = None
-    else:
-        parsed.risk_score = risk
-        parsed.verdict = _calculate_verdict(parsed.risk_score)
-        parsed.grade = _calculate_grade(parsed.risk_score)
+        return parsed
 
+    parsed.grade = final_grade
+    parsed.risk_score = grade_to_risk_score(final_grade)
+    parsed.verdict = risk_score_to_verdict(parsed.risk_score)
     return parsed
 
 
@@ -977,6 +982,7 @@ async def analyse_document(
     # Fallback: raw text if extraction fails unexpectedly.
     extracted_prompt: str | None = None
     extraction_for_evidence: dict[str, Any] | None = None
+    extraction: DocumentExtraction | None = None
 
     try:
         await token.check_cancellation()
@@ -1008,6 +1014,7 @@ Extracted facts (evidence-backed JSON):
         logger.warning(
             f"Extraction failed for document {document.id}: {e}. Falling back to raw text."
         )
+        extraction = None
 
     if extracted_prompt is not None:
         prompt = extracted_prompt
@@ -1107,11 +1114,11 @@ Document content:
             # Parse and validate response
             try:
                 parsed_dict = json.loads(content)
+                _merge_legacy_dimension_justifications(parsed_dict)
 
                 parsed: DocumentAnalysis = DocumentAnalysis.model_validate(
                     parsed_dict, strict=False
                 )
-                # Ensure all required scores are present, normalize names, and calculate risk_score/verdict
                 parsed = _ensure_required_scores(parsed)
 
                 # Parse deep analysis fields (critical_clauses, risk_breakdown,
@@ -2128,6 +2135,7 @@ Per-document analyses and extractions:
 
         # Parse the product overview
         overview_dict = json.loads(content)
+        _merge_legacy_dimension_justifications(overview_dict)
 
         # Parse contradictions before model validation
         raw_contradictions = overview_dict.pop("contradictions", None)
@@ -2210,7 +2218,6 @@ Per-document analyses and extractions:
         }
         topic_blended = compose_product_risk_from_topics(topic_rows)
         legacy_blended = _weighted_product_risk_score(core_docs)
-        calibrate_meta_summary(meta_summary)
         dimension_risk = _calculate_overview_risk_score(meta_summary.scores)
         if legacy_blended is not None:
             logger.info(

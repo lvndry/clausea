@@ -685,6 +685,8 @@ class ProductService:
             last_updated=updated_at if updated_at else datetime.now(),
             verdict=meta.verdict,
             risk_score=meta.risk_score,
+            grade=meta.grade,
+            grade_justification=meta.grade_justification,
             one_line_summary=meta.summary,
             headline_claim=meta.headline_claim,
             data_collected=meta.data_collected,
@@ -734,6 +736,9 @@ class ProductService:
             return None
 
         risk_score = overview.get("risk_score")
+        stored_grade = self._coerce_grade(overview.get("grade"))
+        if stored_grade:
+            return stored_grade
         if isinstance(risk_score, bool):
             return None
         if isinstance(risk_score, int):
@@ -754,15 +759,16 @@ class ProductService:
 
     @classmethod
     def _grade_reason_from_overview(
-        cls, canonical_grade: str, explainer: ConsumerExplainer | dict
+        cls,
+        canonical_grade: str,
+        explainer: ConsumerExplainer | dict,
+        *,
+        overview_grade_justification: str | None = None,
     ) -> str:
-        """Build a canonical grade_reason that explains the overview-derived grade.
+        """Build a canonical grade_reason that explains the overview-derived grade."""
+        if overview_grade_justification and overview_grade_justification.strip():
+            return overview_grade_justification.strip()
 
-        Replaces the LLM-emitted grade_reason which may describe a different grade
-        after reconciliation stomps the grade to the canonical value.
-        Preserves the original LLM reasoning as context when available, prefixed
-        with the canonical justification for the actual grade.
-        """
         canonical_justification = cls._GRADE_REASONS.get(
             canonical_grade, "Risk assessment based on structured policy analysis."
         )

@@ -8,13 +8,13 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
-import { gradeToneStyle, gradeToneWord, scoreToGrade } from "@/lib/grade";
+import { gradeToneStyle, gradeToneWord, parseLetterGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
 import type { DetailedScores } from "@/types";
 
 interface ScoreBreakdownProps {
   detailedScores: DetailedScores;
-  riskScore?: number | null;
+  overallGrade?: "A" | "B" | "C" | "D" | "E" | null;
 }
 
 const scoreConfig = {
@@ -40,23 +40,31 @@ const scoreConfig = {
   },
 } as const;
 
+const GRADE_POSITION: Record<string, number> = {
+  A: 90,
+  B: 70,
+  C: 50,
+  D: 30,
+  E: 10,
+};
+
 export function ScoreBreakdown({
   detailedScores,
-  riskScore,
+  overallGrade,
 }: ScoreBreakdownProps) {
   const dimensions = Object.entries(scoreConfig).map(([key, config]) => {
     const detail = detailedScores[key as keyof DetailedScores];
+    const grade = parseLetterGrade(detail.grade);
     return {
       key,
       ...config,
-      score: detail.score,
+      grade,
       justification: detail.justification,
-      grade: scoreToGrade(detail.score),
+      position: GRADE_POSITION[grade.letter] ?? 50,
     };
   });
 
-  const riskGrade =
-    riskScore != null ? scoreToGrade(riskScore, { invert: true }) : null;
+  const riskGrade = overallGrade ? parseLetterGrade(overallGrade) : null;
   const riskStyle = riskGrade ? gradeToneStyle(riskGrade.tone) : null;
 
   return (
@@ -80,7 +88,7 @@ export function ScoreBreakdown({
             strokeWidth={1.5}
           />
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            Overall Risk
+            Overall Grade
           </span>
           {riskGrade && riskStyle ? (
             <div
@@ -96,7 +104,7 @@ export function ScoreBreakdown({
           ) : (
             <div
               className="px-2.5 py-1 border border-border font-display font-medium text-base leading-none text-muted-foreground"
-              title="Insufficient dimension scores for an overall grade"
+              title="Insufficient dimension grades for an overall grade"
             >
               —
             </div>
@@ -140,7 +148,7 @@ export function ScoreBreakdown({
                         style.bg,
                         style.border,
                       )}
-                      style={{ left: `${item.score * 10}%` }}
+                      style={{ left: `${item.position}%` }}
                     />
                   </div>
                   <div className="flex items-baseline justify-end w-12">
