@@ -14,7 +14,7 @@ function AuthProvider(props: { children: React.ReactNode }) {
   );
 }
 
-// Avoid SSR-injecting clerk-js before React can attach bundled UI (Clerk #8569).
+// Load Clerk client-only so React mounts bundled @clerk/ui before SSR-injected clerk-js.
 const ClientAuthProvider = dynamic(() => Promise.resolve(AuthProvider), {
   ssr: false,
 });
