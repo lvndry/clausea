@@ -75,5 +75,5 @@ COPY . .
 
 EXPOSE 8501
 
-# Exec form: streamlit runs as PID 1 so signals are delivered directly.
-CMD ["streamlit", "run", "src/dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+# Shell wrapper so Railway's $PORT is honored when no startCommand override is set.
+CMD ["sh", "-c", "exec streamlit run src/dashboard/app.py --server.port=${PORT:-8501} --server.address=0.0.0.0 --server.headless=true"]

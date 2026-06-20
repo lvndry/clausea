@@ -39,7 +39,7 @@ Only one `railway.toml` can live at the service root (`packages/backend`). **Eve
 | -------------- | ----------------------------------------------- |
 | Root Directory | `packages/backend`                              |
 | Builder        | Dockerfile (from `railway.toml`)                |
-| Start command  | From `railway.toml` (`uvicorn … --port $PORT`)  |
+| Start command  | *(empty — image CMD binds `${PORT}` via shell)* |
 | Health check   | `/health`                                       |
 
 `railway.toml` sets `watchPatterns = ["packages/backend/**"]` so monorepo pushes only redeploy when backend files change.
@@ -59,7 +59,7 @@ Create a **separate service** in the same project (recommended for shared variab
 Railway cannot read a second `railway.toml` at the same root. In the worker service dashboard:
 
 1. **Settings → Build → Dockerfile Path** → `Dockerfile.worker` (not `Dockerfile`)
-2. **Settings → Deploy → Start Command** → clear/empty (do not use the API uvicorn command)
+2. **Settings → Deploy → Start Command** → leave empty (image CMD `python worker.py`)
 3. **Settings → Deploy → Health Check Path** → `/health` (inherits from shared `railway.toml`) or leave blank to disable
 
 > **Common failure:** Build log shows `load build definition from packages/backend/Dockerfile` (not `Dockerfile.worker`), and deploy fails with **"N/N replicas never became healthy!"** and **"service unavailable"** on every attempt. That usually means the worker is still using the API Dockerfile/start command (uvicorn) or the wrong entrypoint — not a MongoDB issue. Fix the Dockerfile path and clear the start command. Also verify replica count: nothing in this repo sets replicas; that is a dashboard setting.
@@ -128,7 +128,7 @@ Set variables on the **API** and **worker** services (share via Railway shared v
 | `SERVICE_API_KEY`  | Service-to-service auth (Streamlit → API)        |
 | `CRAWLER_*`        | Crawler tuning (see `src/core/config.py`)        |
 
-Railway sets `PORT` automatically — do not hardcode it. The API `railway.toml` start command binds to `$PORT`.
+Railway sets `PORT` automatically — do not hardcode it. **Do not** set `startCommand` in shared `railway.toml`: Railway passes it to the process without shell expansion, so `--port $PORT` becomes the literal string `$PORT` and uvicorn crashloops. Each service Dockerfile CMD uses `sh -c` with `${PORT:-8000}` instead.
 
 ### Wiring frontend to API
 
@@ -187,7 +187,7 @@ curl http://localhost:8000/health
 | ---------------------------- | ------------------------------------------------------------------- |
 | **"N/N replicas never became healthy"** + `/health` + `service unavailable`, build uses `Dockerfile` not `Dockerfile.worker` | **Worker misconfiguration.** Set Dockerfile to `Dockerfile.worker`, clear start command (no uvicorn). Reduce replicas to 1 until deploy passes. Not a MongoDB issue. |
 | Worker deploy OK but runs API instead of crawls | Dockerfile path still `Dockerfile` (uvicorn CMD). Set `Dockerfile.worker` and clear start command. |
-| API health check fails       | Confirm start command uses `$PORT`; `/health` is liveness-only (200 even while DB warms up). Check deploy logs for missing `MONGO_URI` or MongoDB connectivity; use `/health/ready` for readiness. |
+| API health check fails       | Deploy logs show `Invalid value for '--port': '$PORT'` → remove `startCommand` from `railway.toml` / dashboard; use Dockerfile CMD with `${PORT}`. `/health` is liveness-only. Check `MONGO_URI` for `/health/ready`. |
 | Worker OOM / crashloops      | Lower `PIPELINE_WORKER_CONCURRENCY`; increase memory; add replicas after deploy succeeds |
 | Worker redeploys on API push | Expected if both share root — use watch paths or separate triggers  |
 | Crawls fail in worker        | Verify Camoufox libs in image; check `CRAWLER_USE_BROWSER=true`     |
