@@ -178,13 +178,15 @@ export function ProductsListClient({
   const { trackUserJourney, trackPageView } = useAnalytics();
 
   const [pageData, setPageData] = useState<ProductsPage>(initialData);
-  const [loading, setLoading] = useState(false);
-  const [initialLoad, setInitialLoad] = useState(false);
   const isFirstFetch = useRef(true);
-  const refetchEmptyCatalogOnMount = useRef(
-    !initialFetchError && initialData.total === 0,
+  const refetchOnMount = useRef(
+    initialData.total === 0 || Boolean(initialFetchError),
   );
-  const [error, setError] = useState<string | null>(initialFetchError);
+  const [loading, setLoading] = useState(refetchOnMount.current);
+  const [initialLoad, setInitialLoad] = useState(refetchOnMount.current);
+  const [error, setError] = useState<string | null>(
+    refetchOnMount.current ? null : initialFetchError,
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -227,11 +229,11 @@ export function ProductsListClient({
   }, [debouncedSearch, currentPage, searchParams, router]);
 
   // Fetch when page/search changes. Skip the first run when SSR already returned data;
-  // refetch immediately when the catalog is empty so client auth can recover from SSR misses.
+  // refetch on mount when the catalog is empty or SSR failed (client auth may recover).
   useEffect(() => {
     if (isFirstFetch.current) {
       isFirstFetch.current = false;
-      if (!refetchEmptyCatalogOnMount.current) return;
+      if (!refetchOnMount.current) return;
     }
     const controller = new AbortController();
     async function fetchProducts() {
