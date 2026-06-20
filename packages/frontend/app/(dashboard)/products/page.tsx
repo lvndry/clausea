@@ -13,6 +13,7 @@ async function fetchInitialProducts(page: number): Promise<{
 }> {
   try {
     const params = new URLSearchParams({ page: String(page), limit: "20" });
+    // httpJson attaches the Clerk Bearer token server-side via lib/http.
     const data = await httpJson(
       getBackendUrl(`/products?${params.toString()}`),
       {
@@ -20,7 +21,7 @@ async function fetchInitialProducts(page: number): Promise<{
         schema: productsPageSchema,
       },
     );
-    return { data: enrichLogos(data), error: null };
+    return { data: enrichLogos(data) as ProductsPage, error: null };
   } catch (err) {
     console.error("Failed to fetch initial products:", err);
     return {
