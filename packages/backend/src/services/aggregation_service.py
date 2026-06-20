@@ -502,89 +502,89 @@ class AggregationService:
     def _extraction_to_findings(
         self, *, product_id: str, document_id: str, extraction: DocumentExtraction
     ) -> list[Finding]:
-        f: list[Finding] = []
+        findings: list[Finding] = []
 
         # Cluster 1
-        f += self._findings_from_data_items(
+        findings += self._findings_from_data_items(
             product_id=product_id, document_id=document_id, items=extraction.data_collected
         )
-        f += self._findings_from_purpose_links(
+        findings += self._findings_from_purpose_links(
             product_id=product_id, document_id=document_id, items=extraction.data_purposes
         )
-        f += self._findings_from_retention_rules(
+        findings += self._findings_from_retention_rules(
             product_id=product_id, document_id=document_id, items=extraction.retention_policies
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="security",
             items=extraction.security_measures,
         )
-        f += self._findings_from_cookie_trackers(
+        findings += self._findings_from_cookie_trackers(
             product_id=product_id, document_id=document_id, items=extraction.cookies_and_trackers
         )
 
         # Cluster 2
-        f += self._findings_from_third_parties(
+        findings += self._findings_from_third_parties(
             product_id=product_id, document_id=document_id, items=extraction.third_party_details
         )
-        f += self._findings_from_international_transfers(
+        findings += self._findings_from_international_transfers(
             product_id=product_id, document_id=document_id, items=extraction.international_transfers
         )
-        f += self._findings_from_government_access(
+        findings += self._findings_from_government_access(
             product_id=product_id, document_id=document_id, items=extraction.government_access
         )
-        f += self._findings_from_corporate_family(
+        findings += self._findings_from_corporate_family(
             product_id=product_id,
             document_id=document_id,
             items=extraction.corporate_family_sharing,
         )
 
         # Cluster 3
-        f += self._findings_from_user_rights(
+        findings += self._findings_from_user_rights(
             product_id=product_id, document_id=document_id, items=extraction.user_rights
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="consent_mechanisms",
             items=extraction.consent_mechanisms,
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="account_lifecycle",
             items=extraction.account_lifecycle,
         )
-        f += self._findings_from_ai_usage(
+        findings += self._findings_from_ai_usage(
             product_id=product_id, document_id=document_id, items=extraction.ai_usage
         )
-        f += self._findings_from_children_policy(
+        findings += self._findings_from_children_policy(
             product_id=product_id,
             document_id=document_id,
             children_policy=extraction.children_policy,
         )
 
         # Cluster 4
-        f += self._findings_from_liability(
+        findings += self._findings_from_liability(
             product_id=product_id, document_id=document_id, items=extraction.liability
         )
-        f += self._findings_from_dispute_resolution(
+        findings += self._findings_from_dispute_resolution(
             product_id=product_id, document_id=document_id, items=extraction.dispute_resolution
         )
-        f += self._findings_from_content_ownership(
+        findings += self._findings_from_content_ownership(
             product_id=product_id, document_id=document_id, items=extraction.content_ownership
         )
-        f += self._findings_from_scope_expansion(
+        findings += self._findings_from_scope_expansion(
             product_id=product_id, document_id=document_id, items=extraction.scope_expansion
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="indemnification",
             items=extraction.indemnification,
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="termination_consequences",
@@ -592,38 +592,38 @@ class AggregationService:
         )
 
         # Cross-cutting
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="dangers",
             items=extraction.dangers,
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="benefits",
             items=extraction.benefits,
         )
-        f += self._findings_from_text_items(
+        findings += self._findings_from_text_items(
             product_id=product_id,
             document_id=document_id,
             category="recommended_actions",
             items=extraction.recommended_actions,
         )
-        f += self._findings_from_privacy_signals(
+        findings += self._findings_from_privacy_signals(
             product_id=product_id,
             document_id=document_id,
             privacy_signals=extraction.privacy_signals,
         )
 
-        for finding in f:
+        for finding in findings:
             finding.evidence = filter_evidence_spans(
                 finding.evidence,
                 category=finding.category,
                 finding_value=finding.value,
             )
 
-        return f
+        return findings
 
     # ------------------------------------------------------------------
     # Top-level operations
@@ -727,7 +727,7 @@ class AggregationService:
             "consent_mechanisms",
             "account_lifecycle",
         ]
-        category_set = {f.category for f in findings}
+        category_set = {finding.category for finding in findings}
         items: list[CoverageItem] = []
         for category in required_categories:
             status: CoverageStatus

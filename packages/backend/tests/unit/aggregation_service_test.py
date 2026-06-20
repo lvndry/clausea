@@ -202,7 +202,7 @@ class TestExtractionToFindings:
         findings = service._extraction_to_findings(
             product_id="p1", document_id="d1", extraction=extraction
         )
-        categories = {f.category for f in findings}
+        categories = {finding.category for finding in findings}
         assert "retention" in categories
         assert "cookies_tracking" in categories
 
@@ -216,7 +216,7 @@ class TestExtractionToFindings:
         findings = service._extraction_to_findings(
             product_id="p1", document_id="d1", extraction=extraction
         )
-        children_findings = [f for f in findings if f.category == "children"]
+        children_findings = [finding for finding in findings if finding.category == "children"]
         assert len(children_findings) >= 1
 
     def test_all_clusters_produce_findings(self) -> None:
@@ -284,7 +284,7 @@ class TestExtractionToFindings:
         findings = service._extraction_to_findings(
             product_id="p1", document_id="d1", extraction=extraction
         )
-        categories = {f.category for f in findings}
+        categories = {finding.category for finding in findings}
         expected = {
             "data_collection",
             "data_purposes",
