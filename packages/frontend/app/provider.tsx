@@ -6,7 +6,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 
 export function Provider(props: { children: React.ReactNode }) {
   return (
-    <ClerkProvider afterSignOutUrl="/">
+    <ClerkProvider afterSignOutUrl="/" prefetchUI={false}>
       <ThemeProvider
         attribute="class"
         defaultTheme="system"

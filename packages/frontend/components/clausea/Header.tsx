@@ -15,7 +15,7 @@ import { useAuth } from "@clerk/nextjs";
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
-  const { isSignedIn, isLoaded } = useAuth();
+  const { isSignedIn } = useAuth();
   const prevPathnameRef = useRef(pathname);
 
   // Close mobile menu on route change
@@ -57,22 +57,24 @@ export function Header() {
               {link.name}
             </Link>
           ))}
-          {isLoaded && !isSignedIn && (
+          {!isSignedIn && (
             <Link
               href="/sign-in"
               className="text-muted-foreground hover:text-foreground transition-colors"
             >
-              Login
+              Sign In
             </Link>
           )}
 
-          {isLoaded && (
-            <Link href={isSignedIn ? "/products" : "/sign-up"}>
-              <button className="px-5 py-2.5 md:px-7 md:py-3 border border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors cursor-pointer">
-                {isSignedIn ? "Dashboard" : "New Analysis"}
-              </button>
-            </Link>
-          )}
+          <Link
+            href={
+              isSignedIn ? "/products" : "/sign-in?redirect_url=%2Fproducts"
+            }
+          >
+            <button className="px-5 py-2.5 md:px-7 md:py-3 border border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors cursor-pointer">
+              {isSignedIn ? "Dashboard" : "Get Started"}
+            </button>
+          </Link>
         </div>
 
         {/* Mobile Menu Toggle */}
@@ -134,7 +136,7 @@ export function Header() {
               </motion.div>
             ))}
 
-            {isLoaded && !isSignedIn && (
+            {!isSignedIn && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -145,7 +147,7 @@ export function Header() {
                   onClick={() => setIsOpen(false)}
                   className="text-sm uppercase tracking-widest font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Login
+                  Sign In
                 </Link>
               </motion.div>
             )}
@@ -156,16 +158,16 @@ export function Header() {
               transition={{ delay: (navLinks.length + 1) * 0.1 }}
               className="mt-8 w-full max-w-xs"
             >
-              {isLoaded && (
-                <Link
-                  href={isSignedIn ? "/products" : "/sign-up"}
-                  onClick={() => setIsOpen(false)}
-                >
-                  <button className="w-full py-4 border border-foreground text-sm uppercase tracking-widest font-medium text-foreground hover:bg-foreground hover:text-background transition-colors">
-                    {isSignedIn ? "Dashboard" : "New Analysis"}
-                  </button>
-                </Link>
-              )}
+              <Link
+                href={
+                  isSignedIn ? "/products" : "/sign-in?redirect_url=%2Fproducts"
+                }
+                onClick={() => setIsOpen(false)}
+              >
+                <button className="w-full py-4 border border-foreground text-sm uppercase tracking-widest font-medium text-foreground hover:bg-foreground hover:text-background transition-colors">
+                  {isSignedIn ? "Dashboard" : "Get Started"}
+                </button>
+              </Link>
             </motion.div>
           </motion.div>
         )}
