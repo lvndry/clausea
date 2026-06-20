@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.6",
+    "@clerk/ui": "^1.20.0",
     "@gsap/react": "^2.1.2",
     "@hookform/resolvers": "^5.4.0",
     "@radix-ui/react-avatar": "^1.2.0",
