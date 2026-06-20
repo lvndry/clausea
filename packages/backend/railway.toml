@@ -1,3 +1,8 @@
+# API service config. Worker and Streamlit also use root packages/backend but
+# MUST override Dockerfile in the Railway dashboard — see docs/RAILWAY.md:
+#   Worker:    Dockerfile.worker, start command empty, health check /health (optional)
+#   Streamlit: Dockerfile.streamlit, health check /_stcore/health
+
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"

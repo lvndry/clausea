@@ -16,6 +16,8 @@ import asyncio
 import os
 import signal
 
+from aiohttp import web
+
 from src.core.database import close_motor_client, db_session
 from src.core.logging import get_logger, setup_logging
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
@@ -36,6 +38,23 @@ _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
 _MONITORING_SWEEP_SECONDS = float(os.getenv("PIPELINE_MONITORING_SWEEP_SECONDS", "3600"))
 _SHUTDOWN_GRACE_SECONDS = float(os.getenv("PIPELINE_WORKER_SHUTDOWN_GRACE", "20"))
+_HEALTH_PORT = int(os.getenv("PORT", "8000"))
+
+
+async def _health(_request: web.Request) -> web.Response:
+    """Liveness probe — returns 200 as soon as the process is serving HTTP."""
+    return web.json_response({"status": "healthy", "service": "worker"})
+
+
+async def _start_health_server() -> web.AppRunner:
+    app = web.Application()
+    app.router.add_get("/health", _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", _HEALTH_PORT)
+    await site.start()
+    logger.info("Health server listening on 0.0.0.0:%d/health", _HEALTH_PORT)
+    return runner
 
 
 async def _sweep_stale(repo: PipelineRepository) -> None:
@@ -120,6 +139,7 @@ async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:
 
 async def main() -> None:
     setup_logging()
+    health_runner = await _start_health_server()
     repo = PipelineRepository()
 
     stop = asyncio.Event()
@@ -130,6 +150,15 @@ async def main() -> None:
         except NotImplementedError:
             pass  # add_signal_handler is unavailable on Windows; signals are a Unix/prod concern
 
+    try:
+        await _run_worker_loop(repo, stop, loop)
+    finally:
+        await health_runner.cleanup()
+
+
+async def _run_worker_loop(
+    repo: PipelineRepository, stop: asyncio.Event, loop: asyncio.AbstractEventLoop
+) -> None:
     # Reap jobs orphaned by a previous crash/redeploy before claiming new work.
     # On boot we use threshold=0: any job still "crawling" when this process starts
     # was owned by a now-dead process and must be reset immediately. The periodic
