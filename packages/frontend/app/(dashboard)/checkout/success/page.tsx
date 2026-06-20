@@ -8,10 +8,8 @@ import { useEffect, useRef, useState } from "react";
 
 import type { SubscriptionResponse } from "@/lib/api/subscriptions";
 import { subscriptionApi } from "@/lib/api/subscriptions";
-import { useAuth } from "@clerk/nextjs";
 
 export default function CheckoutSuccessPage() {
-  const { getToken } = useAuth();
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
     null,
   );
@@ -21,11 +19,8 @@ export default function CheckoutSuccessPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      let token = await getToken({ template: "default" });
-      if (!token) token = await getToken();
-      if (cancelled) return;
       try {
-        const sub = await subscriptionApi.getSubscription(token);
+        const sub = await subscriptionApi.getSubscription();
         if (cancelled) return;
         setSubscription(sub);
         // Track checkout completed event only once when subscription is loaded
@@ -49,7 +44,7 @@ export default function CheckoutSuccessPage() {
     return () => {
       cancelled = true;
     };
-  }, [getToken]);
+  }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-white to-gray-50 px-4 dark:from-gray-950 dark:to-gray-900">

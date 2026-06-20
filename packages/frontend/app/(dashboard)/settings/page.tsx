@@ -22,11 +22,10 @@ import {
 } from "@/lib/api/subscriptions";
 import { type BillingInterval, getProDisplayPrice } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
-import { useAuth, useUser } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 
 export default function SettingsPage() {
   const { user } = useUser();
-  const { getToken } = useAuth();
   const {
     startCheckout,
     isLoading: checkoutLoading,
@@ -56,12 +55,7 @@ export default function SettingsPage() {
   const fetchSubscription = useCallback(async () => {
     try {
       setLoading(true);
-      // Get Clerk token - try template first, then default
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      const data = await subscriptionApi.getSubscription(token);
+      const data = await subscriptionApi.getSubscription();
       setSubscription(data);
     } catch {
       // User might not have a subscription yet
@@ -69,7 +63,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken]);
+  }, []);
 
   useEffect(() => {
     fetchSubscription();
@@ -86,11 +80,7 @@ export default function SettingsPage() {
     setActionLoading("cancel");
     setError(null);
     try {
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      await subscriptionApi.cancelSubscription(token);
+      await subscriptionApi.cancelSubscription();
       await fetchSubscription();
     } catch (err) {
       setError(
@@ -105,11 +95,7 @@ export default function SettingsPage() {
     setActionLoading("resume");
     setError(null);
     try {
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      await subscriptionApi.resumeSubscription(token);
+      await subscriptionApi.resumeSubscription();
       await fetchSubscription();
     } catch (err) {
       setError(
@@ -124,11 +110,7 @@ export default function SettingsPage() {
     setActionLoading("portal");
     setError(null);
     try {
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      const data = await subscriptionApi.getBillingPortal(token);
+      const data = await subscriptionApi.getBillingPortal();
       window.open(data.portal_url, "_blank");
     } catch (err) {
       setError(
