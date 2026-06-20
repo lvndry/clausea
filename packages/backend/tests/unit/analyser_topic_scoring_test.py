@@ -89,17 +89,17 @@ def _aggregation() -> Aggregation:
                     EvidenceSpan(
                         document_id="doc_1",
                         url="https://example.com/privacy",
-                        quote="A" * 320,
+                        quote="We may sell personal information to advertising partners.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="Sale of personal data may occur as described in this privacy policy.",
                     ),
                     EvidenceSpan(
                         document_id="doc_1",
                         url="https://example.com/privacy",
                         quote="Users can opt out in account settings.",
-                    ),
-                    EvidenceSpan(
-                        document_id="doc_1",
-                        url="https://example.com/privacy",
-                        quote="Additional disclosure for enterprise plans.",
                     ),
                 ],
             )
@@ -134,7 +134,7 @@ async def test_generate_product_overview_llm_call_is_temperature_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_product_overview_uses_topic_scoring() -> None:
+async def test_generate_product_overview_uses_dimension_scoring() -> None:
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
     aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
@@ -145,7 +145,7 @@ async def test_generate_product_overview_uses_topic_scoring() -> None:
         patch(
             "src.analyser.acompletion_with_fallback", AsyncMock(return_value=_overview_response())
         ),
-        patch("src.analyser.compose_product_risk_from_topics", return_value=7),
+        patch("src.analyser.compose_product_risk_from_topics", return_value=9),
         patch("src.analyser._weighted_product_risk_score", return_value=2),
     ):
         result = await generate_product_overview(
@@ -156,14 +156,14 @@ async def test_generate_product_overview_uses_topic_scoring() -> None:
             document_svc=document_svc,
         )
 
-    assert result.risk_score == 7
+    # All dimension scores are neutral (5) → risk 5, not topic-composed 9.
+    assert result.risk_score == 5
     assert result.topic_stances
     assert result.topic_stances[0].rationale_key == "topic.findings_summary"
     assert result.topic_stances[0].headline_claim is not None
     assert result.topic_stances[0].supporting_citations
-    assert len(result.topic_stances[0].supporting_citations) == 4
-    assert "A" * 320 in {
-        citation.quote for citation in result.topic_stances[0].supporting_citations
-    }
+    assert len(result.topic_stances[0].supporting_citations) == 3
+    quotes = {citation.quote for citation in result.topic_stances[0].supporting_citations}
+    assert "We may sell data to advertising partners." in quotes
     assert result.topic_stances[0].why_it_matters is not None
     assert result.topic_stances[0].recommended_action is not None

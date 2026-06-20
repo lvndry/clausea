@@ -20,6 +20,127 @@ def _documents() -> list[DocumentSummary]:
     ]
 
 
+def test_build_product_topic_report_filters_weak_cookie_boilerplate() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="data_sharing",
+                value="Advertising partners",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="Cookies are small text files placed in device browsers.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="Please note that cookie-based opt-outs are not effective on mobile applications.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We share personal information with advertising partners for targeted advertising.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+
+    data_sharing = next(topic for topic in report.topics if topic.topic == "data_sharing")
+    assert len(data_sharing.findings) == 1
+    assert len(data_sharing.findings[0].citations) == 1
+    assert "advertising partners" in data_sharing.findings[0].citations[0].quote.lower()
+
+
+def test_build_product_topic_report_filters_off_topic_arbitration_and_ip_quotes() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="figma",
+        findings=[
+            AggregatedFinding(
+                category="data_sharing",
+                value="Advertising partners",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/live-events",
+                        quote=(
+                            "Live Events disputes will be resolved through binding "
+                            "arbitration rather than in court."
+                        ),
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/creator",
+                        quote=(
+                            "Under the Creator Agreement, you hereby assign all "
+                            "intellectual property rights in your content to Figma."
+                        ),
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We share personal information with advertising partners.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="figma",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+
+    data_sharing = next(topic for topic in report.topics if topic.topic == "data_sharing")
+    assert len(data_sharing.findings) == 1
+    assert len(data_sharing.findings[0].citations) == 1
+    assert "advertising partners" in data_sharing.findings[0].citations[0].quote.lower()
+
+
+def test_build_product_topic_report_drops_finding_when_only_boilerplate_remains() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="retention",
+                value="Account data",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="Use the Manage cookies link in the footer to update preferences.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+
+    retention = next(topic for topic in report.topics if topic.topic == "retention")
+    assert retention.findings == []
+    assert retention.status == "not_disclosed"
+
+
 def test_build_product_topic_report_includes_cross_document_citations() -> None:
     aggregation = Aggregation(
         product_id="product_1",
@@ -37,12 +158,22 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
                     EvidenceSpan(
                         document_id="doc_1",
                         url="https://example.com/privacy",
+                        quote="We collect names and email addresses to create your account profile.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
                         quote="We collect your email address.",
                     ),
                     EvidenceSpan(
                         document_id="doc_2",
                         url="https://example.com/security",
-                        quote="We process account email for alerts.",
+                        quote="We collect email addresses for account alerts and notifications.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_2",
+                        url="https://example.com/security",
+                        quote="Account email addresses are processed to deliver security alerts.",
                     ),
                 ],
             )
@@ -61,7 +192,7 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
     assert data_collection.rationale_key == "topic.findings_summary"
     assert len(data_collection.findings) == 1
     assert data_collection.findings[0].document_ids == ["doc_1", "doc_2"]
-    assert len(data_collection.findings[0].citations) == 2
+    assert len(data_collection.findings[0].citations) == 3
     assert {citation.document_title for citation in data_collection.findings[0].citations} == {
         "Privacy Policy",
         "Security Policy",
@@ -135,6 +266,86 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
     assert len(ai_training.conflicts) == 1
     assert ai_training.conflicts[0].document_ids == ["doc_1", "doc_2"]
     assert len(ai_training.conflicts[0].citations) == 2
+
+
+def test_build_product_topic_report_drops_irrelevant_citations() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="retention",
+                value="Account data: 30 days",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="Repeat infringer accounts may be terminated without notice.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We retain account data for 30 days after account deletion.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+
+    retention = next(topic for topic in report.topics if topic.topic == "retention")
+    assert len(retention.findings) == 1
+    assert len(retention.findings[0].citations) == 1
+    assert "retain account data" in retention.findings[0].citations[0].quote.lower()
+
+
+def test_build_product_topic_report_filters_standard_danger_findings() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="dangers",
+                value="Accounts may be disabled for repeated infringement",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="We may terminate repeat infringers under our DMCA policy.",
+                    )
+                ],
+            ),
+            AggregatedFinding(
+                category="dangers",
+                value="We may sell your personal information to advertising partners",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We may sell your personal information to advertising partners.",
+                    )
+                ],
+            ),
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+
+    dangers = next(topic for topic in report.topics if topic.topic == "dangers")
+    assert len(dangers.findings) == 1
+    assert "sell your personal information" in dangers.findings[0].value.lower()
 
 
 def test_build_product_topic_report_is_deterministic() -> None:
@@ -218,3 +429,47 @@ def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_c
     topic = next(item for item in report.topics if item.topic == "data_collection")
     assert topic.coverage_status == "ambiguous"
     assert topic.status == "ambiguous"
+
+
+def test_build_product_topic_report_skips_miscategorized_dangers_findings() -> None:
+    aggregation = Aggregation(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="dangers",
+                value="Binding arbitration / class action waiver",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="Disputes will be resolved by binding arbitration on an individual basis.",
+                    )
+                ],
+            ),
+            AggregatedFinding(
+                category="dangers",
+                value="Company may sell your personal information",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/privacy",
+                        quote="We may sell your personal information to advertising partners.",
+                    )
+                ],
+            ),
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        aggregation=aggregation,
+        documents=_documents(),
+    )
+
+    dangers = next(topic for topic in report.topics if topic.topic == "dangers")
+    assert len(dangers.findings) == 1
+    assert "sell your personal information" in dangers.findings[0].value.lower()
+    assert all("arbitration" not in finding.value.lower() for finding in dangers.findings)

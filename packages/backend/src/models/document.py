@@ -554,10 +554,18 @@ class MetaSummary(BaseModel):
         ),
     )
     scores: MetaSummaryScores
-    risk_score: int
+    risk_score: int = Field(
+        default=5,
+        ge=0,
+        le=10,
+        description="Overall risk 0-10; computed server-side from scores, not from LLM",
+    )
     verdict: Literal[
         "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ]
+    ] = Field(
+        default="moderate",
+        description="Privacy friendliness; computed server-side from risk_score",
+    )
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
         default=None, description="A-E grade derived deterministically from risk_score"
     )
@@ -707,6 +715,7 @@ class ConsumerCase(BaseModel):
     quote: str | None = None
     quote_status: str = "none"
     citation: SourceCitation | None = None
+    citations: list[SourceCitation] = Field(default_factory=list)
 
     @field_validator("severity", mode="before")
     @classmethod

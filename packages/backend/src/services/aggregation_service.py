@@ -18,7 +18,9 @@ from src.models.finding import AggregatedFinding, Aggregation, Finding, FindingC
 from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
+from src.services.evidence_relevance import filter_evidence_spans, infer_insight_category
 from src.services.extraction_service import extract_document_facts
+from src.utils.standard_terms import should_exclude_from_dangers
 
 
 class AggregationService:
@@ -57,11 +59,17 @@ class AggregationService:
             if not value.strip():
                 continue
             evidence = getattr(item, "evidence", None) or []
+            quote = evidence[0].quote if evidence else None
+            target_category = category
+            if category == "dangers":
+                target_category = infer_insight_category(value, quote=quote, default="dangers")
+                if target_category == "dangers" and should_exclude_from_dangers(value):
+                    continue
             findings.append(
                 Finding(
                     product_id=product_id,
                     document_id=document_id,
-                    category=category,
+                    category=target_category,
                     value=value.strip(),
                     normalized_value=self._normalize_value(value),
                     evidence=evidence,
@@ -607,6 +615,13 @@ class AggregationService:
             document_id=document_id,
             privacy_signals=extraction.privacy_signals,
         )
+
+        for finding in f:
+            finding.evidence = filter_evidence_spans(
+                finding.evidence,
+                category=finding.category,
+                finding_value=finding.value,
+            )
 
         return f
 

@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Calendar,
   FileText,
-  LayoutDashboard,
   RotateCcw,
   Shield,
   ShieldBan,
@@ -28,7 +27,6 @@ import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown"
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
-import { TopicEvidencePanel } from "@/components/dashboard/topics/topic-evidence-panel";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,9 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
-import { cn } from "@/lib/utils";
 import type {
-  CoverageItem,
   DocumentSummary,
   FailedCrawlJob,
   Product,
@@ -846,82 +842,6 @@ export default function CompanyPage({
             <PrivacySignals signals={data.privacy_signals} />
           )}
 
-          {/* Topic-first stance layer (cross-document, evidence-backed) */}
-          <TopicEvidencePanel
-            title="Per-Topic Stances"
-            topicStances={data.topic_stances}
-            topicReport={topics}
-            showCitations={false}
-          />
-
-          {/* Coverage */}
-          {data.coverage && data.coverage.length > 0 && (
-            <div className="border border-border bg-background">
-              <div className="p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <LayoutDashboard
-                    className="h-5 w-5 text-foreground"
-                    strokeWidth={1.5}
-                  />
-                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                    Policy Coverage
-                  </h3>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4">
-                {data.coverage.map((item, idx) => {
-                  const coverageStyles: Record<
-                    CoverageItem["status"],
-                    { className: string; label: string }
-                  > = {
-                    found: {
-                      className:
-                        "border-risk-low/20 bg-risk-low/5 text-risk-low",
-                      label: "Found",
-                    },
-                    ambiguous: {
-                      className:
-                        "border-risk-medium/20 bg-risk-medium/5 text-risk-medium",
-                      label: "Ambiguous",
-                    },
-                    missing: {
-                      className:
-                        "border-risk-high/20 bg-risk-high/5 text-risk-high",
-                      label: "Missing",
-                    },
-                    not_analyzed: {
-                      className:
-                        "border-border bg-muted/5 text-muted-foreground",
-                      label: "Not Analyzed",
-                    },
-                  };
-                  const coverage = coverageStyles[item.status];
-                  return (
-                    <div
-                      key={`${item.category}-${item.status}`}
-                      className={cn(
-                        "p-6 flex flex-col gap-4 bg-background border-b border-border",
-                        idx % 4 !== 3 ? "md:border-r border-border" : "",
-                      )}
-                    >
-                      <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground capitalize">
-                        {item.category.replace(/_/g, " ")}
-                      </span>
-                      <div
-                        className={cn(
-                          "px-2 py-0.5 text-[8px] font-bold uppercase tracking-tighter border w-fit",
-                          coverage.className,
-                        )}
-                      >
-                        {coverage.label}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Score Breakdown - Why the score is what it is */}
           {data.detailed_scores && (
             <ScoreBreakdown
@@ -1004,6 +924,7 @@ export default function CompanyPage({
               productSlug={slug}
               documents={documents}
               topicReport={topics}
+              topicStances={data?.topic_stances}
             />
           )}
         </TabsContent>

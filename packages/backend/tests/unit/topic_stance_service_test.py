@@ -25,7 +25,17 @@ def test_evaluate_topic_stances_detects_yes_no_signals() -> None:
             value="sells_data: yes",
             documents=["doc_1"],
             evidence=[
-                EvidenceSpan(document_id="doc_1", url="https://x", quote="We may sell data.")
+                EvidenceSpan(document_id="doc_1", url="https://x", quote="We may sell data."),
+                EvidenceSpan(
+                    document_id="doc_1",
+                    url="https://x",
+                    quote="We may sell personal information to advertising partners.",
+                ),
+                EvidenceSpan(
+                    document_id="doc_1",
+                    url="https://x",
+                    quote="Sale of personal data may occur as described in this policy.",
+                ),
             ],
         ),
         AggregatedFinding(
@@ -33,7 +43,19 @@ def test_evaluate_topic_stances_detects_yes_no_signals() -> None:
             value="Encryption at rest",
             documents=["doc_1", "doc_2"],
             evidence=[
-                EvidenceSpan(document_id="doc_1", url="https://x", quote="We encrypt data at rest.")
+                EvidenceSpan(
+                    document_id="doc_1", url="https://x", quote="We encrypt data at rest."
+                ),
+                EvidenceSpan(
+                    document_id="doc_2",
+                    url="https://x",
+                    quote="All stored user data is encrypted at rest using industry standards.",
+                ),
+                EvidenceSpan(
+                    document_id="doc_2",
+                    url="https://x",
+                    quote="We use encryption to protect data at rest across our systems.",
+                ),
             ],
         ),
     ]
@@ -60,7 +82,17 @@ def test_evaluate_topic_stances_ai_training_uses_structured_attributes() -> None
                         document_id="doc_1",
                         url="https://x",
                         quote="We use customer prompts to improve our models.",
-                    )
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="Customer prompts may be used to improve and train our AI models.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We may use user content to train and improve machine learning models.",
+                    ),
                 ],
             )
         ],
@@ -122,13 +154,30 @@ def test_evaluate_topic_stances_counts_unique_documents_across_findings() -> Non
                 category="data_collection",
                 value="Email",
                 documents=["doc_1", "doc_2"],
-                evidence=[EvidenceSpan(document_id="doc_1", url="https://x", quote="Email.")],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We collect your email address for account communication.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_2",
+                        url="https://x",
+                        quote="Email addresses are collected to deliver account notifications.",
+                    ),
+                ],
             ),
             AggregatedFinding(
                 category="data_collection",
                 value="Name",
                 documents=["doc_1", "doc_3"],
-                evidence=[EvidenceSpan(document_id="doc_3", url="https://x", quote="Name.")],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_3",
+                        url="https://x",
+                        quote="We collect your name to personalize your profile.",
+                    )
+                ],
             ),
         ],
         conflicts=[],
@@ -160,3 +209,155 @@ def test_compose_product_risk_prioritizes_ai_training_signal() -> None:
     )
     # AI training must carry clearly stronger influence than tracking-only noise.
     assert score >= 6
+
+
+def test_evaluate_topic_stances_downgrades_standard_dangers() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="dangers",
+                value="Accounts may be disabled or terminated for repeated infringement",
+                documents=["doc_1"],
+                evidence=[],
+            ),
+            AggregatedFinding(
+                category="dangers",
+                value="We may sell your personal information to partners",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We may sell your personal information to advertising partners.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We may sell personal information to third-party partners.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="Sale of personal information may occur as described here.",
+                    ),
+                ],
+            ),
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    assert rows["dangers"]["topic_score"] == 8
+    assert rows["dangers"]["stance"] == "high_risk"
+
+
+def test_evaluate_topic_stances_omits_boilerplate_from_dangers_score() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="dangers",
+                value="Agreement is not assignable without prior written consent",
+                documents=["doc_1"],
+                evidence=[],
+            ),
+            AggregatedFinding(
+                category="dangers",
+                value="Binding arbitration with class action and jury trial waivers",
+                documents=["doc_1"],
+                evidence=[],
+            ),
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    # Both findings are excluded from dangers scoring — topic falls back to generic 5,
+    # then thin-evidence cap reduces it to low risk.
+    assert rows["dangers"]["topic_score"] == 3
+    assert rows["dangers"]["stance"] == "low_risk"
+
+
+def test_evaluate_topic_stances_dispute_resolution_moderate_for_arbitration() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="dispute_resolution",
+                value="Binding arbitration with class action waiver",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="Disputes will be resolved through binding arbitration on an individual basis.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="You agree to resolve disputes individually through binding arbitration.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="Class action and jury trial rights are waived in favor of arbitration.",
+                    ),
+                ],
+            )
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    assert rows["dispute_resolution"]["topic_score"] == 4
+    assert rows["dispute_resolution"]["stance"] == "moderate_risk"
+
+
+def test_evaluate_topic_stances_downgrades_thin_evidence_to_low_risk() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="data_sale",
+                value="sells_data: yes",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://x",
+                        quote="We may sell personal information to advertising partners.",
+                    )
+                ],
+            )
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    assert rows["data_sale"]["stance"] == "low_risk"
+    assert rows["data_sale"]["topic_score"] == 3
+    assert rows["data_sale"]["rationale_key"] == "topic.thin_evidence"
+
+
+def test_evaluate_topic_stances_marks_protective_security_as_positive_practice() -> None:
+    rows = evaluate_topic_stances(
+        findings=[
+            AggregatedFinding(
+                category="security",
+                value="Encryption at rest",
+                documents=["doc_1", "doc_2"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1", url="https://x", quote="We encrypt data at rest."
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_2",
+                        url="https://x",
+                        quote="Stored user data is encrypted at rest using industry standards.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_2",
+                        url="https://x",
+                        quote="We use encryption to protect data at rest across our systems.",
+                    ),
+                ],
+            )
+        ],
+        conflicts=[],
+        coverage=None,
+    )
+    assert rows["security"]["stance"] == "low_risk"
+    assert rows["security"]["rationale_key"] == "topic.positive_practice"

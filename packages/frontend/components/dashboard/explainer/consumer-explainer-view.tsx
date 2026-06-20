@@ -43,6 +43,8 @@ export function ConsumerExplainerView({
         </div>
       )}
 
+      <GoodToKnow items={explainer.good_to_know ?? []} />
+
       <WatchOutFor cases={watchOutFor} />
 
       <WhatTheyCollect items={explainer.what_they_collect ?? []} />
@@ -52,8 +54,6 @@ export function ConsumerExplainerView({
       <RightsByRegion verdicts={regionVerdicts} />
 
       <WhatYouCanDo items={explainer.what_you_can_do ?? []} />
-
-      <GoodToKnow items={explainer.good_to_know ?? []} />
 
       <SilentOn items={explainer.silent_on ?? []} />
 

@@ -1,7 +1,19 @@
 """Tests for deterministic privacy risk scoring and product-level blending."""
 
-from src.analyser import _calculate_risk_score, _weighted_product_risk_score
-from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores
+from src.analyser import (
+    _calculate_overview_risk_score,
+    _calculate_risk_score,
+    _reconcile_meta_summary_risk,
+    _weighted_product_risk_score,
+)
+from src.models.document import (
+    Document,
+    DocumentAnalysis,
+    DocumentAnalysisScores,
+    MetaSummary,
+    MetaSummaryScore,
+    MetaSummaryScores,
+)
 
 
 def _doc(
@@ -128,3 +140,46 @@ def test_all_optional_absent_uses_neutral() -> None:
         "security_score": DocumentAnalysisScores(score=5, justification=""),
     }
     assert _calculate_risk_score(core_scores) == _calculate_risk_score(full_neutral)
+
+
+def _figma_like_scores() -> MetaSummaryScores:
+    """Dimension scores matching B-/C-/C/D breakdown from user report."""
+    return MetaSummaryScores(
+        transparency=MetaSummaryScore(score=6, justification="Clear but not exhaustive"),
+        data_collection_scope=MetaSummaryScore(score=4, justification="Broad collection"),
+        user_control=MetaSummaryScore(score=5, justification="Some controls"),
+        third_party_sharing=MetaSummaryScore(score=3, justification="Wide sharing"),
+    )
+
+
+def test_overview_risk_aligns_with_dimension_breakdown() -> None:
+    """C-range dimensions must not produce D- overall unless signal floors apply."""
+    risk = _calculate_overview_risk_score(_figma_like_scores())
+    # Weighted user-friendliness ~4.2 → risk ~6 (moderate), not 8+ (D-/D).
+    assert 5 <= risk <= 7
+
+
+def test_reconcile_meta_summary_risk_ignores_llm_headline_risk() -> None:
+    """Server-side reconciliation overwrites any LLM-emitted headline risk."""
+    meta = MetaSummary(
+        summary="ok",
+        scores=_figma_like_scores(),
+        risk_score=9,
+        verdict="very_pervasive",
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.risk_score == _calculate_overview_risk_score(meta.scores)
+    assert meta.grade == "C"
+
+
+def test_signal_floor_can_raise_dimension_risk_for_critical_signals() -> None:
+    """Critical privacy signals may still push overall risk above dimension average."""
+    from src.models.document import PrivacySignals
+
+    meta = MetaSummary(
+        summary="ok",
+        scores=_figma_like_scores(),
+        privacy_signals=PrivacySignals(sells_data="yes"),
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.risk_score >= 6

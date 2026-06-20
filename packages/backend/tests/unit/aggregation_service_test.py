@@ -314,6 +314,36 @@ class TestExtractionToFindings:
         assert expected.issubset(categories), f"Missing: {expected - categories}"
 
 
+class TestDangersReclassification:
+    def test_miscategorized_dangers_routed_to_specific_topics(self) -> None:
+        service = _service()
+        extraction = DocumentExtraction(
+            source_content_hash="hash-1",
+            dangers=[
+                ExtractedTextItem(value="Binding arbitration / class action waiver"),
+                ExtractedTextItem(value="Repeat infringer account termination (DMCA-normal)"),
+                ExtractedTextItem(value="Non-assignable agreement clause"),
+                ExtractedTextItem(value="No cap on liability for user-generated content claims"),
+            ],
+        )
+        findings = service._extraction_to_findings(
+            product_id="p1", document_id="d1", extraction=extraction
+        )
+        by_value = {finding.value: finding.category for finding in findings}
+        assert by_value["Binding arbitration / class action waiver"] == "dispute_resolution"
+        assert (
+            by_value["Repeat infringer account termination (DMCA-normal)"]
+            == "termination_consequences"
+        )
+        assert by_value["Non-assignable agreement clause"] == "content_ownership"
+        assert by_value["No cap on liability for user-generated content claims"] == "dangers"
+        assert "dangers" not in {
+            category
+            for value, category in by_value.items()
+            if value != "No cap on liability for user-generated content claims"
+        }
+
+
 # ── _build_coverage no false "missing" ──────────────────────────────
 
 

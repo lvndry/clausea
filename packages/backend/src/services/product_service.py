@@ -25,6 +25,7 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 
@@ -321,10 +322,14 @@ class ProductService:
         Product pages treat overview scoring as the single source of truth.
         The explainer grade is therefore reconciled against product_overviews
         before returning, and legacy mismatches are repaired best-effort.
+        Stored explainers also get verified source citations backfilled on read
+        from the product's core document extractions when missing.
         """
         explainer = await self._product_repo.get_product_explainer(db, product_slug)
         if not explainer:
             return None
+
+        explainer = await self._enrich_product_explainer_citations(db, product_slug, explainer)
 
         canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
         if canonical_grade is None:
@@ -356,6 +361,40 @@ class ProductService:
                 exc,
             )
         return repaired
+
+    async def _enrich_product_explainer_citations(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        explainer: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Backfill missing source citations for legacy stored explainers."""
+        product = await self._product_repo.find_by_slug(db, product_slug)
+        if not product:
+            return explainer
+
+        documents = await self._document_repo.find_by_product_id_full(db, product.id)
+        core_docs = [
+            document
+            for document in documents
+            if document.doc_type in OVERVIEW_CORE_DOC_TYPES and document.extraction is not None
+        ]
+        if not core_docs:
+            return explainer
+
+        try:
+            from src.analyser import enrich_consumer_explainer_citations
+
+            explainer_model = ConsumerExplainer.model_validate(explainer)
+            enriched = enrich_consumer_explainer_citations(explainer_model, core_docs)
+            return enriched.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 - best-effort enrichment
+            logger.warning(
+                "Failed to enrich explainer citations for %s: %s",
+                product_slug,
+                exc,
+            )
+            return explainer
 
     async def save_product_explainer(
         self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer

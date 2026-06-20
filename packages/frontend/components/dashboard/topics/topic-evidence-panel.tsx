@@ -2,11 +2,16 @@
 
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Info,
   Shield,
   ShieldAlert,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+
+import { type KeyboardEvent, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -21,9 +26,34 @@ interface TopicEvidencePanelProps {
   topicReport?: ProductTopicReport | null;
   title?: string;
   showCitations?: boolean;
+  collapsibleTopics?: boolean;
 }
 
-const TOPIC_CITATION_PREVIEW_LIMIT = 3;
+const TOPIC_CITATION_PREVIEW_LIMIT = 5;
+
+function collectTopicPreviewCitations(
+  findings: Array<{ citations?: TopicCitation[] | null }>,
+  limit: number,
+): TopicCitation[] {
+  const selected: TopicCitation[] = [];
+  const seen = new Set<string>();
+
+  for (const finding of findings) {
+    for (const citation of finding.citations || []) {
+      const key = `${citation.document_id}:${citation.quote}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      selected.push(citation);
+      if (selected.length >= limit) {
+        return selected;
+      }
+    }
+  }
+
+  return selected;
+}
 
 const stanceStyles: Record<
   TopicStanceBreakdown["stance"],
@@ -123,7 +153,22 @@ export function TopicEvidencePanel({
   topicReport,
   title = "Topic Evidence",
   showCitations = true,
+  collapsibleTopics = false,
 }: TopicEvidencePanelProps) {
+  const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
+
+  function toggleTopicExpanded(topicKey: string) {
+    setExpandedTopics((prev) => {
+      const next = new Set(prev);
+      if (next.has(topicKey)) {
+        next.delete(topicKey);
+      } else {
+        next.add(topicKey);
+      }
+      return next;
+    });
+  }
+
   const stancesByTopic = new Map(
     (topicStances || []).map((stance) => [stance.topic, stance]),
   );
@@ -135,9 +180,6 @@ export function TopicEvidencePanel({
 
   const mergedTopics = reportItems.map((item) => {
     const stance = stancesByTopic.get(item.topic);
-    const reportCitations = item.findings.flatMap(
-      (finding) => finding.citations || [],
-    );
     return {
       topic: item.topic,
       status: stance?.status ?? item.status,
@@ -152,8 +194,11 @@ export function TopicEvidencePanel({
         item.conflicts[0]?.description,
       supporting_citations:
         stance?.supporting_citations && stance.supporting_citations.length > 0
-          ? stance.supporting_citations
-          : reportCitations,
+          ? stance.supporting_citations.slice(0, TOPIC_CITATION_PREVIEW_LIMIT)
+          : collectTopicPreviewCitations(
+              item.findings,
+              TOPIC_CITATION_PREVIEW_LIMIT,
+            ),
       conflict_note: stance?.conflict_note ?? item.conflicts[0]?.description,
       why_it_matters: stance?.why_it_matters,
       recommended_action: stance?.recommended_action,
@@ -214,52 +259,50 @@ export function TopicEvidencePanel({
         {allTopics.map((topic) => {
           const style = stanceStyles[topic.stance];
           const Icon = style.icon;
-          const previewCitations = (
-            showCitations
-              ? topic.findings.flatMap((finding) => finding.citations || [])
-              : topic.supporting_citations &&
-                  topic.supporting_citations.length > 0
-                ? topic.supporting_citations
-                : topic.findings.flatMap((finding) => finding.citations || [])
-          ).slice(0, TOPIC_CITATION_PREVIEW_LIMIT);
-          return (
-            <div key={topic.topic} className="p-5 space-y-3">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-foreground capitalize">
-                    {humanizeTopic(topic.topic)}
-                  </p>
-                  {topic.headline_claim && (
-                    <p className="text-sm text-foreground/90 leading-relaxed">
-                      {topic.headline_claim}
-                    </p>
+          const previewCitations = showCitations
+            ? collectTopicPreviewCitations(
+                topic.findings,
+                TOPIC_CITATION_PREVIEW_LIMIT,
+              )
+            : topic.supporting_citations &&
+                topic.supporting_citations.length > 0
+              ? topic.supporting_citations.slice(
+                  0,
+                  TOPIC_CITATION_PREVIEW_LIMIT,
+                )
+              : collectTopicPreviewCitations(
+                  topic.findings,
+                  TOPIC_CITATION_PREVIEW_LIMIT,
+                );
+          const isExpanded =
+            !collapsibleTopics || expandedTopics.has(topic.topic);
+          const panelId = `topic-evidence-${topic.topic}`;
+
+          const topicDetails = (
+            <>
+              {topic.headline_claim && (
+                <p
+                  className={cn(
+                    "text-sm leading-relaxed",
+                    topic.stance === "low_risk"
+                      ? "text-risk-low"
+                      : "text-foreground/90",
                   )}
-                  {topic.rationale && (
-                    <p className="text-xs text-muted-foreground">
-                      {topic.rationale}
-                    </p>
-                  )}
-                  {topic.why_it_matters && (
-                    <p className="text-xs text-muted-foreground">
-                      Why it matters: {topic.why_it_matters}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    size="sm"
-                    className={cn("gap-1.5 border", style.className)}
-                  >
-                    <Icon className="h-3 w-3" />
-                    {style.label}
-                  </Badge>
-                  {typeof topic.topic_score === "number" && (
-                    <Badge variant="outline" size="sm">
-                      Score: {topic.topic_score}/10
-                    </Badge>
-                  )}
-                </div>
-              </div>
+                >
+                  {topic.stance === "low_risk" ? "Good practice: " : ""}
+                  {topic.headline_claim}
+                </p>
+              )}
+              {topic.rationale && (
+                <p className="text-xs text-muted-foreground">
+                  {topic.rationale}
+                </p>
+              )}
+              {topic.why_it_matters && (
+                <p className="text-xs text-muted-foreground">
+                  Why it matters: {topic.why_it_matters}
+                </p>
+              )}
 
               {topic.recommended_action && (
                 <div className="rounded-none border border-border/60 bg-muted/20 p-2 text-xs text-foreground/85">
@@ -290,12 +333,18 @@ export function TopicEvidencePanel({
 
               {topic.findings.length > 0 && (
                 <div className="space-y-2">
-                  {topic.findings.slice(0, 3).map((finding, idx) => (
+                  {topic.findings.slice(0, 5).map((finding, idx) => (
                     <div
                       key={`${topic.topic}-f-${idx}`}
-                      className="text-xs text-foreground/80"
+                      className={cn(
+                        "text-xs leading-relaxed border-l pl-2",
+                        topic.stance === "low_risk"
+                          ? "text-risk-low border-risk-low/40"
+                          : "text-foreground/80 border-border/60",
+                      )}
                     >
-                      - {finding.value}
+                      {topic.stance === "low_risk" ? "+ " : "- "}
+                      {finding.value}
                     </div>
                   ))}
                 </div>
@@ -325,6 +374,113 @@ export function TopicEvidencePanel({
                     />
                   ))}
                 </div>
+              )}
+            </>
+          );
+
+          return (
+            <div key={topic.topic} className="p-5">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div
+                  className={cn(
+                    "flex min-w-0 flex-1 items-start gap-2",
+                    collapsibleTopics && "cursor-pointer",
+                  )}
+                  {...(collapsibleTopics
+                    ? {
+                        role: "button" as const,
+                        tabIndex: 0,
+                        onClick: () => toggleTopicExpanded(topic.topic),
+                        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            toggleTopicExpanded(topic.topic);
+                          }
+                        },
+                      }
+                    : {})}
+                >
+                  {collapsibleTopics &&
+                    (isExpanded ? (
+                      <ChevronDown
+                        className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <ChevronRight
+                        className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    ))}
+                  <p className="text-sm font-semibold text-foreground capitalize">
+                    {humanizeTopic(topic.topic)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    size="sm"
+                    className={cn("gap-1.5 border", style.className)}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {style.label}
+                  </Badge>
+                  {typeof topic.topic_score === "number" && (
+                    <Badge variant="outline" size="sm">
+                      Score: {topic.topic_score}/10
+                    </Badge>
+                  )}
+                  {collapsibleTopics && (
+                    <button
+                      type="button"
+                      onClick={() => toggleTopicExpanded(topic.topic)}
+                      aria-expanded={isExpanded}
+                      aria-controls={panelId}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-none px-2.5 py-1.5 text-xs font-medium transition-all shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                        isExpanded
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:bg-muted",
+                      )}
+                    >
+                      {isExpanded ? (
+                        <>
+                          <ChevronDown
+                            className="h-3.5 w-3.5"
+                            aria-hidden="true"
+                          />
+                          Close
+                        </>
+                      ) : (
+                        <>
+                          <ChevronRight
+                            className="h-3.5 w-3.5"
+                            aria-hidden="true"
+                          />
+                          Details
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {collapsibleTopics ? (
+                <AnimatePresence initial={false}>
+                  {isExpanded && (
+                    <motion.div
+                      id={panelId}
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="space-y-3 pt-3">{topicDetails}</div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              ) : (
+                <div className="space-y-3 pt-3">{topicDetails}</div>
               )}
             </div>
           );
