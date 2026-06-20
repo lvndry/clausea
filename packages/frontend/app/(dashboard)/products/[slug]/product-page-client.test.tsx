@@ -30,6 +30,10 @@ vi.mock("@/app/actions/products", () => ({
   subscribeIndexationNotify: vi.fn(),
 }));
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ isSignedIn: true }),
+}));
+
 function createJsonResponse(status: number, payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status,

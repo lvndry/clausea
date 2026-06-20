@@ -77,6 +77,29 @@ class TestWhitelisting:
             request = _make_request(path=path)
             assert middleware._is_whitelisted(request) is True, f"{path} should be whitelisted"
 
+    def test_public_product_detail_routes(self, middleware: AuthMiddleware) -> None:
+        for path in [
+            "/products/sitemap",
+            "/products/clausea",
+            "/products/clausea/overview",
+            "/products/clausea/documents",
+            "/products/clausea/explainer",
+            "/products/clausea/topics",
+            "/products/clausea/documents/doc123/extraction",
+            "/products/clausea/documents/doc123/deep-analysis",
+        ]:
+            request = _make_request(path=path, method="GET")
+            assert middleware._is_whitelisted(request) is True, f"{path} should be public"
+
+    def test_product_list_and_analysis_not_public(self, middleware: AuthMiddleware) -> None:
+        for path in [
+            "/products",
+            "/products/clausea/analysis",
+            "/products/clausea/deep-analysis",
+        ]:
+            request = _make_request(path=path, method="GET")
+            assert middleware._is_whitelisted(request) is False, f"{path} should require auth"
+
 
 # ── Service API key auth ────────────────────────────────────────────
 

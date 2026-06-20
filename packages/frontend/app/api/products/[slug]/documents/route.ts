@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiEndpoints } from "@lib/config";
-import { httpJson } from "@lib/http";
+import { http } from "@lib/http";
 
 export async function GET(
   request: NextRequest,
@@ -9,11 +9,21 @@ export async function GET(
 ) {
   const { slug } = await params;
   try {
-    const documents = await httpJson(
+    const response = await http(
       `${apiEndpoints.products()}/${slug}/documents`,
-      { method: "GET" },
+      {
+        method: "GET",
+      },
     );
-    return NextResponse.json(documents);
+
+    const body = await response.text();
+    return new NextResponse(body, {
+      status: response.status,
+      headers: {
+        "Content-Type":
+          response.headers.get("content-type") || "application/json",
+      },
+    });
   } catch (error) {
     console.error("Error fetching product documents:", error);
     return NextResponse.json(

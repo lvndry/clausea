@@ -9,6 +9,8 @@ interface ProductPageOverviewStateInput {
   overviewStatus: number;
   explainerStatus: number;
   topicsStatus: number;
+  productStatus?: number;
+  documentsStatus?: number;
 }
 
 const USAGE_LIMIT_HTTP_STATUS = 429;
@@ -19,6 +21,8 @@ export function deriveProductPageOverviewState({
   overviewStatus,
   explainerStatus,
   topicsStatus,
+  productStatus,
+  documentsStatus,
 }: ProductPageOverviewStateInput): ProductPageOverviewState {
   if (overviewOk) {
     return "ready";
@@ -32,6 +36,8 @@ export function deriveProductPageOverviewState({
     overviewStatus,
     explainerStatus,
     topicsStatus,
+    productStatus,
+    documentsStatus,
   ].some((status) => status === USAGE_LIMIT_HTTP_STATUS);
 
   if (hasUsageLimitResponse) {

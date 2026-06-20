@@ -1,5 +1,10 @@
+import { cookies } from "next/headers";
 import type { ZodType } from "zod";
 
+import {
+  PREVIEW_TOKEN_COOKIE,
+  PREVIEW_TOKEN_HEADER,
+} from "@/lib/preview-token";
 import { auth } from "@clerk/nextjs/server";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -57,6 +62,13 @@ export async function http(
   if (token) {
     (mergedHeaders as Record<string, string>)["Authorization"] =
       `Bearer ${token}`;
+  } else {
+    const cookieStore = await cookies();
+    const previewToken = cookieStore.get(PREVIEW_TOKEN_COOKIE)?.value;
+    if (previewToken) {
+      (mergedHeaders as Record<string, string>)[PREVIEW_TOKEN_HEADER] =
+        previewToken;
+    }
   }
 
   let attempt = 0;
