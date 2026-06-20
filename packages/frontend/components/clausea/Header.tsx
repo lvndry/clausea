@@ -2,19 +2,11 @@
 
 import { Menu, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import {
-  type MouseEvent,
-  startTransition,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@clerk/nextjs";
 
@@ -24,28 +16,16 @@ export function Header() {
   const { isSignedIn, isLoaded } = useAuth();
   const prevPathnameRef = useRef(pathname);
 
-  const ctaHref = isSignedIn
+  // Default to signed-out nav until Clerk confirms a session (safe for marketing pages).
+  const showSignedInCta = isLoaded && isSignedIn;
+  const ctaHref = showSignedInCta
     ? "/products"
     : "/sign-in?redirect_url=%2Fproducts";
-  const ctaLabel = !isLoaded
-    ? "Loading..."
-    : isSignedIn
-      ? "Dashboard"
-      : "Get Started";
-  const showSignIn = isLoaded && !isSignedIn;
+  const ctaLabel = showSignedInCta ? "Dashboard" : "Get Started";
+  const showSignIn = !showSignedInCta;
 
-  const handleAuthNavigation = (event: MouseEvent<HTMLAnchorElement>) => {
-    if (!isLoaded) {
-      event.preventDefault();
-    }
-  };
-
-  const ctaButtonClassName = cn(
-    "border border-foreground text-foreground transition-colors",
-    isLoaded
-      ? "hover:bg-foreground hover:text-background cursor-pointer"
-      : "opacity-50 cursor-not-allowed",
-  );
+  const ctaButtonClassName =
+    "border border-foreground text-foreground transition-colors hover:bg-foreground hover:text-background cursor-pointer";
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -95,10 +75,9 @@ export function Header() {
             </Link>
           )}
 
-          <Link href={ctaHref} onClick={handleAuthNavigation}>
+          <Link href={ctaHref}>
             <button
               type="button"
-              disabled={!isLoaded}
               className={cn("px-5 py-2.5 md:px-7 md:py-3", ctaButtonClassName)}
             >
               {ctaLabel}
@@ -187,18 +166,9 @@ export function Header() {
               transition={{ delay: (navLinks.length + 1) * 0.1 }}
               className="mt-8 w-full max-w-xs"
             >
-              <Link
-                href={ctaHref}
-                onClick={(event) => {
-                  handleAuthNavigation(event);
-                  if (isLoaded) {
-                    setIsOpen(false);
-                  }
-                }}
-              >
+              <Link href={ctaHref} onClick={() => setIsOpen(false)}>
                 <button
                   type="button"
-                  disabled={!isLoaded}
                   className={cn(
                     "w-full py-4 text-sm uppercase tracking-widest font-medium",
                     ctaButtonClassName,
