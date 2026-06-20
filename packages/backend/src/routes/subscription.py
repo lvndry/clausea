@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
+from src.core.config import config
 from src.core.database import get_db
 from src.core.jwt import get_current_user
 from src.core.logging import get_logger
@@ -24,6 +25,20 @@ class CheckoutRequest(BaseModel):
     """Request to create a checkout session."""
 
     price_id: str
+
+
+@router.get("/plans")
+async def get_subscription_plans() -> dict[str, str]:
+    """
+    Public Paddle price IDs for Pro plans.
+
+    Served at runtime from backend env (PADDLE_PRICE_*) so the frontend does not
+    depend on NEXT_PUBLIC_* build-time inlining on Railway.
+    """
+    return {
+        "pro_monthly": config.paddle.price_pro_monthly or "",
+        "pro_annual": config.paddle.price_pro_annual or "",
+    }
 
 
 @router.post("/checkout", status_code=201)

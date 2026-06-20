@@ -56,17 +56,19 @@ Set these in the Railway dashboard for the **frontend service**. Variables marke
 
 #### Optional
 
-| Variable                                      | Build | Description                                                         |
-| --------------------------------------------- | ----- | ------------------------------------------------------------------- |
-| `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN`             | Yes   | Paddle client-side token for checkout overlay (`/checkout`)         |
-| `NEXT_PUBLIC_PADDLE_ENVIRONMENT`              | Yes   | `sandbox` or `production` — must match backend `PADDLE_ENVIRONMENT` |
-| `NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY`        | Yes   | Paddle price ID for Pro monthly plan                                |
-| `NEXT_PUBLIC_PADDLE_PRICE_PRO_ANNUAL`         | Yes   | Paddle price ID for Pro annual plan                                 |
-| `NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY` | Yes   | Legacy alias for Pro monthly price ID                               |
-| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION`        | Yes   | Google Search Console meta tag                                      |
-| `NEXT_PUBLIC_BING_VERIFICATION`               | Yes   | Bing Webmaster meta tag                                             |
+| Variable                                      | Build | Description                                                            |
+| --------------------------------------------- | ----- | ---------------------------------------------------------------------- |
+| `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN`             | Yes   | Paddle client-side token for checkout overlay (`/checkout`)            |
+| `NEXT_PUBLIC_PADDLE_ENVIRONMENT`              | Yes   | `sandbox` or `production` — must match backend `PADDLE_ENVIRONMENT`    |
+| `NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY`        | Yes\* | Optional fallback; Pro price IDs are loaded at runtime from the API    |
+| `NEXT_PUBLIC_PADDLE_PRICE_PRO_ANNUAL`         | Yes\* | Optional fallback; set on **API** service as `PADDLE_PRICE_PRO_ANNUAL` |
+| `NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY` | Yes\* | Legacy alias for Pro monthly price ID                                  |
+| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION`        | Yes   | Google Search Console meta tag                                         |
+| `NEXT_PUBLIC_BING_VERIFICATION`               | Yes   | Bing Webmaster meta tag                                                |
 
 Railway sets `PORT`, `NODE_ENV`, and `RAILWAY_*` automatically — do not override `PORT`.
+
+**Pro checkout price IDs:** The pricing page and settings upgrade button fetch Paddle price IDs at runtime from `GET /subscriptions/plans` on the **API** service (`PADDLE_PRICE_PRO_MONTHLY`, `PADDLE_PRICE_PRO_ANNUAL`). You do **not** need `NEXT_PUBLIC_PADDLE_PRICE_*` on the frontend for checkout to work in production. Those `NEXT_PUBLIC_*` vars are only an optional local-dev fallback and are inlined at Docker **build** time if set.
 
 #### Wiring to the backend on Railway
 
@@ -142,11 +144,12 @@ docker run --rm -p 3000:3000 \
 
 ## Troubleshooting
 
-| Symptom                       | Fix                                                                                                                                                                                                                                                                                        |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth broken in production     | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` was set **before** build; redeploy after adding it                                                                                                                                                                                              |
-| API calls fail                | Check `BACKEND_BASE_URL` points to the live backend; verify backend CORS                                                                                                                                                                                                                   |
-| Empty products / ECONNREFUSED | Use `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}`, not `https://*.railway.internal` (HTTPS hits port 443 and fails). Set `PORT` on the API service. Redeploy API after uvicorn uses `--host ''` (dual-stack). Interim: set `BACKEND_BASE_URL=https://api.clausea.co` on frontend. |
-| Wrong canonical URLs in SEO   | Set `NEXT_PUBLIC_APP_URL` and redeploy                                                                                                                                                                                                                                                     |
-| Container exits immediately   | Check deploy logs; ensure `output: "standalone"` is in `next.config.mjs`                                                                                                                                                                                                                   |
-| Health check fails            | Railway probes `/`; ensure the app binds to `0.0.0.0` (handled by Dockerfile `HOSTNAME`)                                                                                                                                                                                                   |
+| Symptom                        | Fix                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth broken in production      | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` was set **before** build; redeploy after adding it                                                                                                                                                                                                                                                             |
+| API calls fail                 | Check `BACKEND_BASE_URL` points to the live backend; verify backend CORS                                                                                                                                                                                                                                                                                  |
+| Empty products / ECONNREFUSED  | Use `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}`, not `https://*.railway.internal` (HTTPS hits port 443 and fails). Set `PORT` on the API service. Redeploy API after uvicorn uses `--host ''` (dual-stack). Interim: set `BACKEND_BASE_URL=https://api.clausea.co` on frontend.                                                                |
+| Wrong canonical URLs in SEO    | Set `NEXT_PUBLIC_APP_URL` and redeploy                                                                                                                                                                                                                                                                                                                    |
+| Container exits immediately    | Check deploy logs; ensure `output: "standalone"` is in `next.config.mjs`                                                                                                                                                                                                                                                                                  |
+| Health check fails             | Railway probes `/`; ensure the app binds to `0.0.0.0` (handled by Dockerfile `HOSTNAME`)                                                                                                                                                                                                                                                                  |
+| Upgrade to Pro button disabled | Set `PADDLE_PRICE_PRO_MONTHLY` (and `PADDLE_PRICE_PRO_ANNUAL` for annual) on the **API** service, not only the frontend. Redeploy the API. Verify `GET /subscriptions/plans` returns non-empty IDs. `NEXT_PUBLIC_PADDLE_PRICE_*` on the frontend only works if present **before** the Docker build — runtime-only frontend vars will not enable checkout. |

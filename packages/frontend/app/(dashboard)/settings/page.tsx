@@ -15,23 +15,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCheckout } from "@/hooks/useCheckout";
+import { useProPricing } from "@/hooks/useProPricing";
 import {
   type SubscriptionResponse,
   subscriptionApi,
 } from "@/lib/api/subscriptions";
-import {
-  type BillingInterval,
-  getProDisplayPrice,
-  getProPriceId,
-  isAnnualCheckoutAvailable,
-} from "@/lib/pricing";
+import { type BillingInterval, getProDisplayPrice } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { useAuth, useUser } from "@clerk/nextjs";
 
 export default function SettingsPage() {
   const { user } = useUser();
   const { getToken } = useAuth();
-  const { startCheckout, isLoading: checkoutLoading } = useCheckout();
+  const {
+    startCheckout,
+    isLoading: checkoutLoading,
+    error: checkoutError,
+  } = useCheckout();
+  const {
+    getProPriceId,
+    isProCheckoutAvailable,
+    getCheckoutUnavailableMessage,
+  } = useProPricing();
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
@@ -43,7 +48,10 @@ export default function SettingsPage() {
 
   const proDisplayPrice = getProDisplayPrice(billingInterval);
   const proPriceId = getProPriceId(billingInterval);
-  const annualCheckoutAvailable = isAnnualCheckoutAvailable();
+  const checkoutAvailable = isProCheckoutAvailable(billingInterval);
+  const checkoutUnavailableMessage = checkoutAvailable
+    ? null
+    : getCheckoutUnavailableMessage(billingInterval);
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -322,24 +330,45 @@ export default function SettingsPage() {
                   Annual
                 </button>
               </div>
-              <Button
-                onClick={() => {
-                  if (proPriceId) {
-                    startCheckout(proPriceId);
-                  }
-                }}
-                disabled={
-                  checkoutLoading ||
-                  !proPriceId ||
-                  (billingInterval === "annual" && !annualCheckoutAvailable)
+              {(() => {
+                const upgradeButton = (
+                  <Button
+                    onClick={() => {
+                      if (checkoutAvailable && proPriceId) {
+                        startCheckout(proPriceId);
+                      }
+                    }}
+                    disabled={checkoutLoading || !checkoutAvailable}
+                    className="gap-2"
+                  >
+                    {checkoutLoading && (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    )}
+                    Upgrade to Pro - {proDisplayPrice.label}
+                  </Button>
+                );
+
+                if (checkoutUnavailableMessage) {
+                  return (
+                    <span
+                      title={checkoutUnavailableMessage}
+                      className="inline-block"
+                    >
+                      {upgradeButton}
+                    </span>
+                  );
                 }
-                className="gap-2"
-              >
-                {checkoutLoading && (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                )}
-                Upgrade to Pro - {proDisplayPrice.label}
-              </Button>
+
+                return upgradeButton;
+              })()}
+              {checkoutUnavailableMessage && (
+                <p className="text-sm text-muted-foreground">
+                  {checkoutUnavailableMessage}
+                </p>
+              )}
+              {checkoutError && (
+                <p className="text-sm text-destructive">{checkoutError}</p>
+              )}
             </div>
           )}
         </CardContent>

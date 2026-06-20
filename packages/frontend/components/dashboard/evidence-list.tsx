@@ -208,8 +208,8 @@ export function EvidenceList({
             No Evidence Available
           </h3>
           <p className="text-muted-foreground text-sm max-w-sm mx-auto">
-            We have not collected policy documents or supporting quotes for
-            this product yet.
+            We have not collected policy documents or supporting quotes for this
+            product yet.
           </p>
         </CardContent>
       </Card>
@@ -770,7 +770,8 @@ export function EvidenceList({
                                                                     rel="noopener noreferrer"
                                                                     className="inline-flex w-fit items-center gap-1 border border-border px-2 py-1 text-xs font-semibold text-foreground hover:bg-background"
                                                                   >
-                                                                    Open document
+                                                                    Open
+                                                                    document
                                                                     <ExternalLink className="h-3 w-3 opacity-60" />
                                                                   </a>
                                                                 </div>
@@ -783,7 +784,8 @@ export function EvidenceList({
                                                           <div className="text-xs text-muted-foreground">
                                                             No exact supporting
                                                             quote has been found
-                                                            for this insight yet.
+                                                            for this insight
+                                                            yet.
                                                           </div>
                                                         )}
                                                       </div>

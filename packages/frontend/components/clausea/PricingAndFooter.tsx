@@ -12,13 +12,12 @@ import { useRef, useState } from "react";
 import { GithubIcon } from "@/components/ui/brand-icons";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
+import { useProPricing } from "@/hooks/useProPricing";
 import {
   type BillingInterval,
   PRO_PRICE_ANNUAL,
   PRO_PRICE_MONTHLY,
   getProDisplayPrice,
-  getProPriceId,
-  isAnnualCheckoutAvailable,
 } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
@@ -32,12 +31,20 @@ export function Pricing() {
   const isInView = useInView(containerRef, { once: true, amount: 0.2 });
   const router = useRouter();
   const { startCheckout, isLoading, error } = useCheckout();
+  const {
+    getProPriceId,
+    isProCheckoutAvailable,
+    getCheckoutUnavailableMessage,
+  } = useProPricing();
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
 
   const proDisplayPrice = getProDisplayPrice(billingInterval);
   const proPriceId = getProPriceId(billingInterval);
-  const annualCheckoutAvailable = isAnnualCheckoutAvailable();
+  const checkoutAvailable = isProCheckoutAvailable(billingInterval);
+  const checkoutUnavailableMessage = checkoutAvailable
+    ? null
+    : getCheckoutUnavailableMessage(billingInterval);
   const annualSavings = PRO_PRICE_MONTHLY * 12 - PRO_PRICE_ANNUAL;
 
   const tiers: Array<{
@@ -88,10 +95,8 @@ export function Pricing() {
       cta: "Upgrade to Pro",
       popular: true,
       action: () => {
-        if (proPriceId) {
+        if (checkoutAvailable && proPriceId) {
           startCheckout(proPriceId);
-        } else {
-          router.push("/sign-up");
         }
       },
     },
@@ -151,7 +156,12 @@ export function Pricing() {
             Start free, upgrade when you need more. Pro is ${PRO_PRICE_MONTHLY}
             /month or ${PRO_PRICE_ANNUAL}/year.
           </p>
-          {/* Error message */}
+          {/* Checkout configuration / error messages */}
+          {checkoutUnavailableMessage && (
+            <div className="mt-6 p-4 border border-border bg-muted/30 text-xs leading-relaxed text-muted-foreground">
+              {checkoutUnavailableMessage}
+            </div>
+          )}
           {error && (
             <div className="mt-6 p-4 border border-foreground bg-foreground/5 text-xs font-medium text-foreground">
               {error}
@@ -236,36 +246,52 @@ export function Pricing() {
               })}
             </ul>
 
-            <Button
-              variant={tier.popular ? "default" : "outline"}
-              disabled={
-                (isLoading && tier.popular) ||
-                (tier.popular &&
-                  billingInterval === "annual" &&
-                  !annualCheckoutAvailable) ||
-                (tier.popular && !proPriceId)
+            {(() => {
+              const showCheckoutTooltip =
+                tier.popular && checkoutUnavailableMessage != null;
+              const ctaButton = (
+                <Button
+                  variant={tier.popular ? "default" : "outline"}
+                  disabled={
+                    (isLoading && tier.popular) ||
+                    (tier.popular && !checkoutAvailable)
+                  }
+                  className={cn(
+                    "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
+                    tier.popular
+                      ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
+                      : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
+                  )}
+                  onClick={() => {
+                    posthog.capture("pricing_plan_clicked", {
+                      plan_name: tier.name,
+                      plan_price: tier.price,
+                      is_popular: tier.popular,
+                      cta_text: tier.cta,
+                    });
+                    tier.action();
+                  }}
+                >
+                  {isLoading && tier.popular ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  {tier.cta}
+                </Button>
+              );
+
+              if (showCheckoutTooltip) {
+                return (
+                  <span
+                    title={checkoutUnavailableMessage}
+                    className="inline-block w-full"
+                  >
+                    {ctaButton}
+                  </span>
+                );
               }
-              className={cn(
-                "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
-                tier.popular
-                  ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
-                  : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
-              )}
-              onClick={() => {
-                posthog.capture("pricing_plan_clicked", {
-                  plan_name: tier.name,
-                  plan_price: tier.price,
-                  is_popular: tier.popular,
-                  cta_text: tier.cta,
-                });
-                tier.action();
-              }}
-            >
-              {isLoading && tier.popular ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : null}
-              {tier.cta}
-            </Button>
+
+              return ctaButton;
+            })()}
           </motion.div>
         ))}
       </div>

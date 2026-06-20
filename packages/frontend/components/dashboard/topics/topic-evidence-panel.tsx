@@ -193,7 +193,10 @@ export function TopicEvidencePanel({
     <div className="border border-border bg-background">
       <div className="p-6 border-b border-border flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
-          <Shield className="mt-0.5 h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <Shield
+            className="mt-0.5 h-5 w-5 text-foreground"
+            strokeWidth={1.5}
+          />
           <div>
             <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
               {title}
