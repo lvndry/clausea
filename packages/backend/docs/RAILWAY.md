@@ -138,13 +138,13 @@ Add a **service variable** on the API service (Railway does not infer this from 
 PORT=8080
 ```
 
-Use the value shown in deploy logs (`Uvicorn running on http://[::]:8080`). On the **frontend** service:
+Use the value shown in deploy logs (`Uvicorn running on http://0.0.0.0:8080` or dual-stack). On the **frontend** service:
 
 ```text
 BACKEND_BASE_URL=http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}
 ```
 
-Private traffic stays off the public internet (no egress billing for frontend→API hops). The API Dockerfile binds uvicorn to `::` so IPv6 private-network clients can connect.
+Private traffic stays off the public internet (no egress billing for frontend→API hops). The API Dockerfile binds uvicorn with an empty `--host` so dual-stack listeners accept both Railway IPv4 healthchecks and private-network IPv6.
 
 See [frontend RAILWAY.md](../../frontend/docs/RAILWAY.md).
 
@@ -201,7 +201,7 @@ curl http://localhost:8000/health
 | Crawls fail in worker        | Verify Camoufox libs in image; check `CRAWLER_USE_BROWSER=true`     |
 | CORS errors from frontend    | Set `CORS_ORIGINS` on API to include frontend URL                   |
 | Auth fails                   | Verify `CLERK_JWKS_URL` matches your Clerk instance                 |
-| Frontend cannot reach API on private domain | API must listen on `::` (not `0.0.0.0` only). Set frontend `BACKEND_BASE_URL` to `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` with `PORT` defined on the API service. |
+| Frontend cannot reach API on private domain | API must use uvicorn `--host ''` (dual-stack), not `0.0.0.0` only. Set frontend `BACKEND_BASE_URL` to `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` with `PORT` defined on the API service. |
 
 ### Why regular `Dockerfile` + `python worker.py` fails health
 
