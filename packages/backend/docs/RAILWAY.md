@@ -130,15 +130,23 @@ Set variables on the **API** and **worker** services (share via Railway shared v
 
 Railway sets `PORT` automatically — do not hardcode it. **Do not** set `startCommand` in shared `railway.toml`: Railway passes it to the process without shell expansion, so `--port $PORT` becomes the literal string `$PORT` and uvicorn crashloops. Each service Dockerfile CMD uses `sh -c` with `${PORT:-8000}` instead.
 
-### Wiring frontend to API
+### Wiring frontend to API (private network)
 
-If the frontend service is named `frontend`:
+Add a **service variable** on the API service (Railway does not infer this from runtime `PORT`):
 
 ```text
-BACKEND_BASE_URL=https://${{api.RAILWAY_PUBLIC_DOMAIN}}
+PORT=8080
 ```
 
-Set on the **frontend** service. See [frontend RAILWAY.md](../../frontend/docs/RAILWAY.md).
+Use the value shown in deploy logs (`Uvicorn running on http://[::]:8080`). On the **frontend** service:
+
+```text
+BACKEND_BASE_URL=http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}
+```
+
+Private traffic stays off the public internet (no egress billing for frontend→API hops). The API Dockerfile binds uvicorn to `::` so IPv6 private-network clients can connect.
+
+See [frontend RAILWAY.md](../../frontend/docs/RAILWAY.md).
 
 ## CLI deploy (alternative)
 
@@ -193,6 +201,7 @@ curl http://localhost:8000/health
 | Crawls fail in worker        | Verify Camoufox libs in image; check `CRAWLER_USE_BROWSER=true`     |
 | CORS errors from frontend    | Set `CORS_ORIGINS` on API to include frontend URL                   |
 | Auth fails                   | Verify `CLERK_JWKS_URL` matches your Clerk instance                 |
+| Frontend cannot reach API on private domain | API must listen on `::` (not `0.0.0.0` only). Set frontend `BACKEND_BASE_URL` to `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` with `PORT` defined on the API service. |
 
 ### Why regular `Dockerfile` + `python worker.py` fails health
 

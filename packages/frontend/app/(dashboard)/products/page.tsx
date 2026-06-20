@@ -1,23 +1,33 @@
-import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
+import { httpJson } from "@lib/http";
 import { enrichLogos } from "@lib/logo";
+import { productsPageSchema } from "@lib/schemas";
 
 import { ProductsListClient, type ProductsPage } from "./products-list-client";
 
 const EMPTY_PAGE: ProductsPage = { items: [], total: 0, page: 1, pages: 1 };
 
-async function fetchInitialProducts(page: number): Promise<ProductsPage> {
+async function fetchInitialProducts(page: number): Promise<{
+  data: ProductsPage;
+  error: string | null;
+}> {
   try {
-    const { getToken } = await auth();
-    const token = await getToken();
     const params = new URLSearchParams({ page: String(page), limit: "20" });
-    const res = await fetch(getBackendUrl(`/products?${params.toString()}`), {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) return EMPTY_PAGE;
-    return enrichLogos((await res.json()) as ProductsPage);
-  } catch {
-    return EMPTY_PAGE;
+    // httpJson attaches the Clerk Bearer token server-side via lib/http.
+    const data = await httpJson(
+      getBackendUrl(`/products?${params.toString()}`),
+      {
+        method: "GET",
+        schema: productsPageSchema,
+      },
+    );
+    return { data: enrichLogos(data) as ProductsPage, error: null };
+  } catch (err) {
+    console.error("Failed to fetch initial products:", err);
+    return {
+      data: EMPTY_PAGE,
+      error: err instanceof Error ? err.message : "Failed to fetch products",
+    };
   }
 }
 
@@ -28,9 +38,15 @@ export default async function ProductsPage({
 }) {
   const { page } = await searchParams;
   const parsed = page ? Number.parseInt(page, 10) : 1;
-  const initialData = await fetchInitialProducts(
-    Number.isFinite(parsed) && parsed > 0 ? parsed : 1,
-  );
+  const { data: initialData, error: initialFetchError } =
+    await fetchInitialProducts(
+      Number.isFinite(parsed) && parsed > 0 ? parsed : 1,
+    );
 
-  return <ProductsListClient initialData={initialData} />;
+  return (
+    <ProductsListClient
+      initialData={initialData}
+      initialFetchError={initialFetchError}
+    />
+  );
 }

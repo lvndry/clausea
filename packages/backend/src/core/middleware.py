@@ -21,6 +21,7 @@ WHITELISTED_ROUTES = {
     "/health/startup",
     "/openapi.json",
     "/users/tier-limits",
+    "/products/stats",
     "/webhooks/paddle",
     "/contact",
     # Extension routes handle their own auth
