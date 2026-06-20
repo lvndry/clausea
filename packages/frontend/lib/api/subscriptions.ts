@@ -1,5 +1,4 @@
-// API client for subscription management
-import { getBackendUrl } from "@/lib/config";
+// API client for subscription management (browser → Next.js /api proxy → backend)
 
 export interface CheckoutRequest {
   price_id: string;
@@ -24,20 +23,15 @@ interface BillingPortalResponse {
 }
 
 class SubscriptionAPI {
-  private async fetchWithAuth(
+  private async fetchApi<T>(
     endpoint: string,
-    token: string | null,
     options: RequestInit = {},
-  ) {
-    const url = getBackendUrl(endpoint);
+  ): Promise<T> {
+    const url = `/api/subscriptions${endpoint}`;
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       ...options.headers,
     };
-
-    if (token) {
-      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
-    }
 
     const response = await fetch(url, {
       ...options,
@@ -49,52 +43,41 @@ class SubscriptionAPI {
       const error = await response
         .json()
         .catch(() => ({ detail: "Unknown error" }));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      throw new Error(
+        (error as { detail?: string; error?: string }).detail ||
+          (error as { detail?: string; error?: string }).error ||
+          `HTTP ${response.status}`,
+      );
     }
 
-    return response.json();
+    return response.json() as Promise<T>;
   }
 
-  async createCheckout(
-    request: CheckoutRequest,
-    token: string | null,
-  ): Promise<CheckoutResponse> {
-    return this.fetchWithAuth("/subscriptions/checkout", token, {
+  async createCheckout(request: CheckoutRequest): Promise<CheckoutResponse> {
+    return this.fetchApi("/checkout", {
       method: "POST",
       body: JSON.stringify(request),
     });
   }
 
-  async getSubscription(token: string | null): Promise<SubscriptionResponse> {
-    return this.fetchWithAuth("/subscriptions/me", token);
+  async getSubscription(): Promise<SubscriptionResponse> {
+    return this.fetchApi("/me");
   }
 
-  async cancelSubscription(
-    token: string | null,
-  ): Promise<{ success: boolean; message: string }> {
-    return this.fetchWithAuth("/subscriptions/cancel", token, {
-      method: "POST",
-    });
+  async cancelSubscription(): Promise<{ success: boolean; message: string }> {
+    return this.fetchApi("/cancel", { method: "POST" });
   }
 
-  async pauseSubscription(
-    token: string | null,
-  ): Promise<{ success: boolean; message: string }> {
-    return this.fetchWithAuth("/subscriptions/pause", token, {
-      method: "POST",
-    });
+  async pauseSubscription(): Promise<{ success: boolean; message: string }> {
+    return this.fetchApi("/pause", { method: "POST" });
   }
 
-  async resumeSubscription(
-    token: string | null,
-  ): Promise<{ success: boolean; message: string }> {
-    return this.fetchWithAuth("/subscriptions/resume", token, {
-      method: "POST",
-    });
+  async resumeSubscription(): Promise<{ success: boolean; message: string }> {
+    return this.fetchApi("/resume", { method: "POST" });
   }
 
-  async getBillingPortal(token: string | null): Promise<BillingPortalResponse> {
-    return this.fetchWithAuth("/subscriptions/portal", token);
+  async getBillingPortal(): Promise<BillingPortalResponse> {
+    return this.fetchApi("/portal");
   }
 }
 
