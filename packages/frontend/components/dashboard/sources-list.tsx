@@ -51,7 +51,7 @@ interface DocumentExtraction {
   benefits: ExtractedItem[];
 }
 
-interface SourcesListProps {
+interface EvidenceListProps {
   productSlug: string;
   documents: DocumentSummary[];
   topicReport?: ProductTopicReport | null;
@@ -126,11 +126,11 @@ const RISK_LEVEL_CONFIG = {
   },
 };
 
-export function SourcesList({
+export function EvidenceList({
   productSlug,
   documents,
   topicReport,
-}: SourcesListProps) {
+}: EvidenceListProps) {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [expandedKeypoints, setExpandedKeypoints] = useState<
     Record<string, Set<number>>
@@ -204,9 +204,12 @@ export function SourcesList({
           <div className="w-14 h-14 rounded-none bg-muted/50 flex items-center justify-center mx-auto mb-3">
             <FolderOpen className="h-7 w-7 text-muted-foreground/50" />
           </div>
-          <h3 className="font-semibold text-base mb-1">No Source Documents</h3>
+          <h3 className="font-semibold text-base mb-1">
+            No Evidence Available
+          </h3>
           <p className="text-muted-foreground text-sm max-w-sm mx-auto">
-            No source documents are available for analysis yet.
+            We have not collected policy documents or supporting quotes for
+            this product yet.
           </p>
         </CardContent>
       </Card>
@@ -219,7 +222,7 @@ export function SourcesList({
         <TopicEvidencePanel
           topicStances={null}
           topicReport={topicReport}
-          title="Per-Topic Evidence (Primary)"
+          title="Evidence by Policy Topic"
           showCitations={true}
         />
       )}
@@ -230,17 +233,18 @@ export function SourcesList({
           className="border-border bg-background shadow-none overflow-hidden"
         >
           <CardHeader className="pb-4">
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-none bg-muted flex items-center justify-center">
                   <FileText className="h-5 w-5 text-foreground" />
                 </div>
                 <div>
                   <CardTitle className="text-lg">
-                    Per-Document Drill-Down
+                    Policy Document Library
                   </CardTitle>
                   <p className="text-sm text-muted-foreground mt-0.5">
-                    Policy documents analyzed for this product
+                    Original policies we analyzed, with document-level findings
+                    and supporting quotes.
                   </p>
                 </div>
               </div>
@@ -374,10 +378,12 @@ export function SourcesList({
 
                           {/* Expand button */}
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleToggleExpanded(doc);
                             }}
+                            aria-expanded={isExpanded}
                             className={cn(
                               "flex items-center gap-1.5 px-2.5 py-1.5 rounded-none text-xs font-medium transition-all shrink-0",
                               isExpanded
@@ -650,7 +656,7 @@ export function SourcesList({
                                             ? directEvidence
                                             : derivedEvidence;
 
-                                        const canShowSources =
+                                        const canShowEvidence =
                                           directEvidence.length > 0 ||
                                           !!extraction ||
                                           !!doc.url;
@@ -667,9 +673,12 @@ export function SourcesList({
                                                   <span className="text-sm text-foreground/80 leading-snug">
                                                     {point}
                                                   </span>
-                                                  {canShowSources && (
+                                                  {canShowEvidence && (
                                                     <button
                                                       type="button"
+                                                      aria-expanded={
+                                                        isKpExpanded
+                                                      }
                                                       onClick={async () => {
                                                         if (
                                                           !extractions[doc.id]
@@ -691,8 +700,8 @@ export function SourcesList({
                                                       )}
                                                     >
                                                       {isKpExpanded
-                                                        ? "Hide sources"
-                                                        : "Sources"}
+                                                        ? "Hide evidence"
+                                                        : "View evidence"}
                                                     </button>
                                                   )}
                                                 </div>
@@ -723,7 +732,7 @@ export function SourcesList({
                                                         ] &&
                                                         !extractions[doc.id] ? (
                                                           <div className="text-xs text-muted-foreground">
-                                                            Loading sources…
+                                                            Loading evidence…
                                                           </div>
                                                         ) : evidence.length >
                                                           0 ? (
@@ -732,14 +741,26 @@ export function SourcesList({
                                                             .map((ev, j) => (
                                                               <div
                                                                 key={j}
-                                                                className="rounded-none bg-muted/40 border border-border/50 p-2"
+                                                                className="rounded-none bg-muted/40 border border-border/60 p-3"
                                                               >
-                                                                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                                                                  <span className="truncate">
-                                                                    Source:{" "}
-                                                                    {doc.title ||
-                                                                      "Document"}
-                                                                  </span>
+                                                                <div className="text-xs text-muted-foreground mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                                  <div className="min-w-0">
+                                                                    <div className="font-bold uppercase tracking-[0.18em] text-foreground">
+                                                                      Evidence
+                                                                      quote{" "}
+                                                                      {j + 1}
+                                                                    </div>
+                                                                    <div className="truncate">
+                                                                      From{" "}
+                                                                      <span className="text-foreground/80">
+                                                                        {doc.title ||
+                                                                          "Policy document"}
+                                                                      </span>
+                                                                      {ev.section_title
+                                                                        ? ` - ${ev.section_title}`
+                                                                        : ""}
+                                                                    </div>
+                                                                  </div>
                                                                   <a
                                                                     href={
                                                                       ev.url ||
@@ -747,22 +768,22 @@ export function SourcesList({
                                                                     }
                                                                     target="_blank"
                                                                     rel="noopener noreferrer"
-                                                                    className="inline-flex items-center gap-1 text-xs font-medium hover:text-foreground"
+                                                                    className="inline-flex w-fit items-center gap-1 border border-border px-2 py-1 text-xs font-semibold text-foreground hover:bg-background"
                                                                   >
-                                                                    Open
+                                                                    Open document
                                                                     <ExternalLink className="h-3 w-3 opacity-60" />
                                                                   </a>
                                                                 </div>
-                                                                <blockquote className="text-xs leading-relaxed text-foreground/85 border-l-2 border-foreground pl-2">
-                                                                  {ev.quote}
+                                                                <blockquote className="text-sm leading-relaxed text-foreground/90 border-l-2 border-foreground pl-3">
+                                                                  {`"${ev.quote}"`}
                                                                 </blockquote>
                                                               </div>
                                                             ))
                                                         ) : (
                                                           <div className="text-xs text-muted-foreground">
-                                                            No exact quote found
-                                                            for this keypoint
-                                                            yet.
+                                                            No exact supporting
+                                                            quote has been found
+                                                            for this insight yet.
                                                           </div>
                                                         )}
                                                       </div>
@@ -795,7 +816,7 @@ export function SourcesList({
           className="border-border bg-background shadow-none overflow-hidden"
         >
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No document-level drill-down is available yet.
+            No policy document library is available yet.
           </CardContent>
         </Card>
       )}
