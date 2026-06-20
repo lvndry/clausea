@@ -21,6 +21,7 @@
     "@clerk/ui": "^1.20.0",
     "@gsap/react": "^2.1.2",
     "@hookform/resolvers": "^5.4.0",
+    "@paddle/paddle-js": "^1.6.4",
     "@radix-ui/react-avatar": "^1.2.0",
     "@radix-ui/react-dialog": "^1.1.17",
     "@radix-ui/react-dropdown-menu": "^2.1.18",

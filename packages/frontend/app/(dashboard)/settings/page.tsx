@@ -19,23 +19,31 @@ import {
   type SubscriptionResponse,
   subscriptionApi,
 } from "@/lib/api/subscriptions";
+import {
+  type BillingInterval,
+  getProDisplayPrice,
+  getProPriceId,
+  isAnnualCheckoutAvailable,
+} from "@/lib/pricing";
+import { cn } from "@/lib/utils";
 import { useAuth, useUser } from "@clerk/nextjs";
-
-const PRO_PRICE_ID =
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY ||
-  "";
 
 export default function SettingsPage() {
   const { user } = useUser();
   const { getToken } = useAuth();
   const { startCheckout, isLoading: checkoutLoading } = useCheckout();
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("monthly");
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const proDisplayPrice = getProDisplayPrice(billingInterval);
+  const proPriceId = getProPriceId(billingInterval);
+  const annualCheckoutAvailable = isAnnualCheckoutAvailable();
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -288,19 +296,49 @@ export default function SettingsPage() {
                 You are on the Free plan with 3 analyses per month. Upgrade to
                 Pro for unlimited analyses.
               </p>
+              <div className="inline-flex border border-border rounded-md overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setBillingInterval("monthly")}
+                  className={cn(
+                    "px-4 py-2 text-sm font-medium transition-colors",
+                    billingInterval === "monthly"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Monthly
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBillingInterval("annual")}
+                  className={cn(
+                    "px-4 py-2 text-sm font-medium transition-colors border-l border-border",
+                    billingInterval === "annual"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Annual
+                </button>
+              </div>
               <Button
                 onClick={() => {
-                  if (PRO_PRICE_ID) {
-                    startCheckout(PRO_PRICE_ID);
+                  if (proPriceId) {
+                    startCheckout(proPriceId);
                   }
                 }}
-                disabled={checkoutLoading || !PRO_PRICE_ID}
+                disabled={
+                  checkoutLoading ||
+                  !proPriceId ||
+                  (billingInterval === "annual" && !annualCheckoutAvailable)
+                }
                 className="gap-2"
               >
                 {checkoutLoading && (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 )}
-                Upgrade to Pro - $9/month
+                Upgrade to Pro - {proDisplayPrice.label}
               </Button>
             </div>
           )}

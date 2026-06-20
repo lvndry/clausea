@@ -12,14 +12,17 @@ import { useRef, useState } from "react";
 import { GithubIcon } from "@/components/ui/brand-icons";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
+import {
+  type BillingInterval,
+  PRO_PRICE_ANNUAL,
+  PRO_PRICE_MONTHLY,
+  getProDisplayPrice,
+  getProPriceId,
+  isAnnualCheckoutAvailable,
+} from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
 type PricingFeature = string | { label: string; comingSoon: boolean };
-
-const PRO_PRICE_ID =
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY ||
-  "";
 
 /**
  * Pricing Component - Warm Theme
@@ -29,10 +32,19 @@ export function Pricing() {
   const isInView = useInView(containerRef, { once: true, amount: 0.2 });
   const router = useRouter();
   const { startCheckout, isLoading, error } = useCheckout();
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("monthly");
+
+  const proDisplayPrice = getProDisplayPrice(billingInterval);
+  const proPriceId = getProPriceId(billingInterval);
+  const annualCheckoutAvailable = isAnnualCheckoutAvailable();
+  const annualSavings = PRO_PRICE_MONTHLY * 12 - PRO_PRICE_ANNUAL;
 
   const tiers: Array<{
     name: string;
     price: string;
+    priceSuffix?: string;
+    priceNote?: string;
     description: string;
     features: PricingFeature[];
     cta: string;
@@ -42,6 +54,7 @@ export function Pricing() {
     {
       name: "Free",
       price: "0",
+      priceSuffix: "/mo",
       description:
         "Perfect for trying out Clausea with basic privacy analysis.",
       features: [
@@ -57,7 +70,12 @@ export function Pricing() {
     },
     {
       name: "Pro",
-      price: "9",
+      price: String(proDisplayPrice.amount),
+      priceSuffix: proDisplayPrice.suffix,
+      priceNote:
+        billingInterval === "annual" && annualSavings > 0
+          ? `Save $${annualSavings} vs monthly`
+          : undefined,
       description:
         "Unlimited analysis for privacy-conscious individuals and teams.",
       features: [
@@ -70,8 +88,8 @@ export function Pricing() {
       cta: "Upgrade to Pro",
       popular: true,
       action: () => {
-        if (PRO_PRICE_ID) {
-          startCheckout(PRO_PRICE_ID);
+        if (proPriceId) {
+          startCheckout(proPriceId);
         } else {
           router.push("/sign-up");
         }
@@ -103,8 +121,35 @@ export function Pricing() {
         </motion.div>
 
         <div className="mt-12 md:mt-0">
+          <div className="inline-flex border border-border mb-6">
+            <button
+              type="button"
+              onClick={() => setBillingInterval("monthly")}
+              className={cn(
+                "px-4 py-2 text-[10px] uppercase tracking-widest font-medium transition-colors",
+                billingInterval === "monthly"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Monthly
+            </button>
+            <button
+              type="button"
+              onClick={() => setBillingInterval("annual")}
+              className={cn(
+                "px-4 py-2 text-[10px] uppercase tracking-widest font-medium transition-colors border-l border-border",
+                billingInterval === "annual"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Annual
+            </button>
+          </div>
           <p className="text-muted-foreground text-sm leading-relaxed max-w-[280px]">
-            Start free, upgrade when you need more. No hidden fees.
+            Start free, upgrade when you need more. Pro is ${PRO_PRICE_MONTHLY}
+            /month or ${PRO_PRICE_ANNUAL}/year.
           </p>
           {/* Error message */}
           {error && (
@@ -140,13 +185,20 @@ export function Pricing() {
               )}
             </div>
 
-            <div className="flex items-baseline gap-2 mb-6">
-              <span className="text-6xl font-display font-medium text-foreground tracking-tight leading-none">
-                ${tier.price}
-              </span>
-              <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
-                /mo
-              </span>
+            <div className="mb-6">
+              <div className="flex items-baseline gap-2">
+                <span className="text-6xl font-display font-medium text-foreground tracking-tight leading-none">
+                  ${tier.price}
+                </span>
+                <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+                  {tier.priceSuffix ?? "/mo"}
+                </span>
+              </div>
+              {tier.priceNote ? (
+                <p className="mt-2 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+                  {tier.priceNote}
+                </p>
+              ) : null}
             </div>
 
             <p className="text-sm leading-relaxed text-muted-foreground mb-12 grow">
@@ -186,7 +238,13 @@ export function Pricing() {
 
             <Button
               variant={tier.popular ? "default" : "outline"}
-              disabled={isLoading && tier.popular}
+              disabled={
+                (isLoading && tier.popular) ||
+                (tier.popular &&
+                  billingInterval === "annual" &&
+                  !annualCheckoutAvailable) ||
+                (tier.popular && !proPriceId)
+              }
               className={cn(
                 "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
                 tier.popular
