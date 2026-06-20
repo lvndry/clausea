@@ -7,7 +7,7 @@ import { ui } from "@clerk/ui";
 
 export function Provider(props: {
   children: React.ReactNode;
-  publishableKey: string;
+  publishableKey?: string;
 }) {
   return (
     <ClerkProvider
