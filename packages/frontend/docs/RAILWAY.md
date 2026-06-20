@@ -39,12 +39,12 @@ Set these in the Railway dashboard for the **frontend service**. Variables marke
 
 #### Required
 
-| Variable                            | Build | Description                                    |
-| ----------------------------------- | ----- | ---------------------------------------------- |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes   | Clerk publishable key for auth UI              |
-| `CLERK_SECRET_KEY`                  | No    | Clerk secret key for server-side auth          |
-| `NEXT_PUBLIC_APP_URL`               | Yes   | Public site URL, e.g. `https://clausea.co`     |
-| `BACKEND_BASE_URL`                  | No    | Backend API URL, e.g. `https://api.clausea.co` |
+| Variable                            | Build | Description                                                                                  |
+| ----------------------------------- | ----- | -------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes   | Clerk publishable key for auth UI                                                            |
+| `CLERK_SECRET_KEY`                  | No    | Clerk secret key for server-side auth                                                        |
+| `NEXT_PUBLIC_APP_URL`               | Yes   | Public site URL, e.g. `https://clausea.co`                                                   |
+| `BACKEND_BASE_URL`                  | No    | Backend API URL; use private network: `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` |
 
 #### Recommended
 
@@ -67,13 +67,17 @@ Railway sets `PORT`, `NODE_ENV`, and `RAILWAY_*` automatically — do not overri
 
 #### Wiring to the backend on Railway
 
-If the backend service is named `api` (adjust to match your service name):
+Server-side fetches (SSR, `/api/*` proxy) should use the **private network** to avoid public egress charges. The browser never calls the backend directly for authenticated routes.
+
+On the **API** service, add a service variable `PORT` matching the port the app listens on (check deploy logs, often `8080`). Then on the **frontend** service:
 
 ```text
-BACKEND_BASE_URL=https://${{api.RAILWAY_PUBLIC_DOMAIN}}
+BACKEND_BASE_URL=http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}
 ```
 
-Or use the production custom domain:
+Use `http://`, not `https://` — Railway private domains speak plain HTTP on the service port (traffic is encrypted by Wireguard).
+
+Only use the public domain when traffic must leave Railway (e.g. local dev, external clients):
 
 ```text
 BACKEND_BASE_URL=https://api.clausea.co
@@ -135,11 +139,11 @@ docker run --rm -p 3000:3000 \
 
 ## Troubleshooting
 
-| Symptom                       | Fix                                                                                                                                                                                                             |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth broken in production     | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` was set **before** build; redeploy after adding it                                                                                                                   |
-| API calls fail                | Check `BACKEND_BASE_URL` points to the live backend; verify backend CORS                                                                                                                                        |
-| Empty products / ECONNREFUSED | Do **not** set `BACKEND_BASE_URL` to `https://*.railway.internal` — private domains use HTTP on the service `$PORT`, not HTTPS on 443. Use `https://${{api.RAILWAY_PUBLIC_DOMAIN}}` or `https://api.clausea.co` |
-| Wrong canonical URLs in SEO   | Set `NEXT_PUBLIC_APP_URL` and redeploy                                                                                                                                                                          |
-| Container exits immediately   | Check deploy logs; ensure `output: "standalone"` is in `next.config.mjs`                                                                                                                                        |
-| Health check fails            | Railway probes `/`; ensure the app binds to `0.0.0.0` (handled by Dockerfile `HOSTNAME`)                                                                                                                        |
+| Symptom                       | Fix                                                                                                                                                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth broken in production     | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` was set **before** build; redeploy after adding it                                                                                                            |
+| API calls fail                | Check `BACKEND_BASE_URL` points to the live backend; verify backend CORS                                                                                                                                 |
+| Empty products / ECONNREFUSED | Use `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}`, not `https://*.railway.internal` (HTTPS hits port 443 and fails). Set `PORT` on the API service. Redeploy API after it binds to `::` (IPv6). |
+| Wrong canonical URLs in SEO   | Set `NEXT_PUBLIC_APP_URL` and redeploy                                                                                                                                                                   |
+| Container exits immediately   | Check deploy logs; ensure `output: "standalone"` is in `next.config.mjs`                                                                                                                                 |
+| Health check fails            | Railway probes `/`; ensure the app binds to `0.0.0.0` (handled by Dockerfile `HOSTNAME`)                                                                                                                 |

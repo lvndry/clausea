@@ -52,9 +52,9 @@ async def _start_health_server() -> web.AppRunner:
     app.router.add_get("/health", _health)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", _HEALTH_PORT)
+    site = web.TCPSite(runner, "::", _HEALTH_PORT)
     await site.start()
-    logger.info("Health server listening on 0.0.0.0:%d/health", _HEALTH_PORT)
+    logger.info("Health server listening on [::]:%d/health", _HEALTH_PORT)
     return runner
 
 
