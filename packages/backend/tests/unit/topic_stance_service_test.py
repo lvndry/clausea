@@ -218,12 +218,14 @@ def test_evaluate_topic_stances_downgrades_standard_dangers() -> None:
                 category="dangers",
                 value="Accounts may be disabled or terminated for repeated infringement",
                 documents=["doc_1"],
+                attributes=[{"materiality": "standard_industry"}],
                 evidence=[],
             ),
             AggregatedFinding(
                 category="dangers",
                 value="We may sell your personal information to partners",
                 documents=["doc_1"],
+                attributes=[{"materiality": "material_risk"}],
                 evidence=[
                     EvidenceSpan(
                         document_id="doc_1",
@@ -257,12 +259,14 @@ def test_evaluate_topic_stances_omits_boilerplate_from_dangers_score() -> None:
                 category="dangers",
                 value="Agreement is not assignable without prior written consent",
                 documents=["doc_1"],
+                attributes=[{"materiality": "standard_industry"}],
                 evidence=[],
             ),
             AggregatedFinding(
                 category="dangers",
                 value="Binding arbitration with class action and jury trial waivers",
                 documents=["doc_1"],
+                attributes=[{"materiality": "notable"}],
                 evidence=[],
             ),
         ],
@@ -282,6 +286,7 @@ def test_evaluate_topic_stances_dispute_resolution_moderate_for_arbitration() ->
                 category="dispute_resolution",
                 value="Binding arbitration with class action waiver",
                 documents=["doc_1"],
+                attributes=[{"materiality": "notable"}],
                 evidence=[
                     EvidenceSpan(
                         document_id="doc_1",

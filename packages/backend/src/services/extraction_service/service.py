@@ -86,6 +86,7 @@ from src.services.extraction_service.utils import (
     _compute_content_hash,
     _extraction_validator,
 )
+from src.services.term_materiality_classifier import enrich_extraction_materiality
 from src.utils.cancellation import CancellationToken
 
 logger = get_logger(__name__)
@@ -395,6 +396,8 @@ async def extract_document_facts(
         benefits=list(benefits.values()),
         recommended_actions=list(recommended_actions.values()),
     )
+
+    await enrich_extraction_materiality(extraction)
 
     logger.debug(
         f"v4 extraction complete for {document.id}: "

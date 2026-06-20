@@ -69,6 +69,7 @@ from src.services.extraction_service.models import (
     _UserRight,
 )
 from src.services.extraction_service.utils import _make_evidence
+from src.utils.standard_terms import TermMateriality, coerce_term_materiality
 
 _SYNONYM_MAP: dict[str, str] = {
     "e-mail": "email",
@@ -147,6 +148,26 @@ def _dedupe_key(value: str) -> str:
     return normalized
 
 
+_MATERIALITY_RANK: dict[TermMateriality, int] = {
+    TermMateriality.STANDARD_INDUSTRY: 0,
+    TermMateriality.NOTABLE: 1,
+    TermMateriality.MATERIAL_RISK: 2,
+}
+
+
+def _merge_materiality(
+    current: TermMateriality | None,
+    new: TermMateriality | None,
+) -> TermMateriality | None:
+    if new is None:
+        return current
+    if current is None:
+        return new
+    if _MATERIALITY_RANK[new] > _MATERIALITY_RANK[current]:
+        return new
+    return current
+
+
 def _merge_text_items(
     existing: dict[str, ExtractedTextItem],
     items: list[_Item],
@@ -160,6 +181,9 @@ def _merge_text_items(
             continue
         if key not in existing:
             existing[key] = ExtractedTextItem(value=item.value.strip(), evidence=[])
+        label = coerce_term_materiality(getattr(item, "materiality", None))
+        if label is not None:
+            existing[key].materiality = _merge_materiality(existing[key].materiality, label)
         if item.quote:
             existing[key].evidence.append(_make_evidence(document, content_hash, item.quote))
 

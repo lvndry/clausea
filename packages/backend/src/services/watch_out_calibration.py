@@ -1,7 +1,8 @@
 """Calibrate consumer explainer watch-out severity and filter standard legal boilerplate.
 
-Classification and materiality tiers live in ``standard_terms`` — this module
-only applies those rules to ``ConsumerCase`` objects in ``watch_out_for``.
+Materiality tiers live in ``standard_terms``. This module applies those rules to
+``ConsumerCase`` objects in ``watch_out_for``, preferring LLM ``materiality``
+labels on each case over regex fallback.
 """
 
 from __future__ import annotations
@@ -28,30 +29,29 @@ def _case_text(case: ConsumerCase) -> str:
     return _normalized(" ".join(part for part in parts if part))
 
 
+def _case_materiality(case: ConsumerCase) -> TermMateriality:
+    return classify_term_materiality(_case_text(case), label=case.materiality)
+
+
 def is_standard_legal_mechanic(case: ConsumerCase) -> bool:
     """True when a watch-out is routine legal boilerplate, not a consumer danger."""
-    text = _case_text(case)
-    if not text:
-        return False
-    return classify_term_materiality(text) == TermMateriality.STANDARD_INDUSTRY
+    return _case_materiality(case) == TermMateriality.STANDARD_INDUSTRY
 
 
 def is_informational_dispute_term(case: ConsumerCase) -> bool:
     """True for arbitration / class-action style terms that warrant a medium note."""
-    text = _case_text(case)
-    if not text:
-        return False
-    return classify_term_materiality(text) == TermMateriality.NOTABLE
+    return _case_materiality(case) == TermMateriality.NOTABLE
 
 
 def calibrate_watch_out_case(case: ConsumerCase) -> ConsumerCase | None:
     """Return a calibrated case, or None when it should be removed from watch_out_for."""
     text = _case_text(case)
-    if not should_exclude_from_dangers(text):
+    tier = _case_materiality(case)
+    if not should_exclude_from_dangers(text, materiality=tier):
         return case
 
-    if classify_term_materiality(text) == TermMateriality.NOTABLE:
-        case.severity = calibrate_consumer_severity(case.severity, text)
+    if tier == TermMateriality.NOTABLE:
+        case.severity = calibrate_consumer_severity(case.severity, text, materiality=tier)
         if (case.classification or "").strip().lower() in {"blocker", "critical"}:
             case.classification = "informational"
         elif not case.classification:

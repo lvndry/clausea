@@ -84,12 +84,12 @@ from src.services.document_service import DocumentService
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
+from src.services.term_materiality_classifier import filter_danger_strings_llm
 from src.services.topic_report_service import build_product_topic_report
 from src.services.topic_stance_service import compose_product_risk_from_topics
 from src.services.watch_out_calibration import calibrate_consumer_explainer
 from src.utils.cancellation import CancellationToken
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
-from src.utils.standard_terms import filter_danger_strings
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -2129,7 +2129,7 @@ Per-document analyses and extractions:
         meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
         meta_summary.coverage = aggregation.coverage
         if meta_summary.dangers:
-            meta_summary.dangers = filter_danger_strings(meta_summary.dangers)
+            meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
 
         # Attach contradictions
         if isinstance(raw_contradictions, list):

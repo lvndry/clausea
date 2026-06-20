@@ -30,6 +30,7 @@ from src.utils.coercion import LenientBool
 class _Item(BaseModel):
     value: str
     quote: str
+    materiality: str | None = None
 
 
 class _DataItem(BaseModel):

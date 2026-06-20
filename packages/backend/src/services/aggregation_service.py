@@ -60,11 +60,17 @@ class AggregationService:
                 continue
             evidence = getattr(item, "evidence", None) or []
             quote = evidence[0].quote if evidence else None
+            item_materiality = getattr(item, "materiality", None)
             target_category = category
             if category == "dangers":
                 target_category = infer_insight_category(value, quote=quote, default="dangers")
-                if target_category == "dangers" and should_exclude_from_dangers(value):
+                if target_category == "dangers" and should_exclude_from_dangers(
+                    value, materiality=item_materiality
+                ):
                     continue
+            attrs: dict = {}
+            if item_materiality:
+                attrs["materiality"] = item_materiality
             findings.append(
                 Finding(
                     product_id=product_id,
@@ -72,6 +78,7 @@ class AggregationService:
                     category=target_category,
                     value=value.strip(),
                     normalized_value=self._normalize_value(value),
+                    attributes=attrs,
                     evidence=evidence,
                 )
             )
@@ -322,6 +329,7 @@ class AggregationService:
                         "jury_trial_waiver": getattr(item, "jury_trial_waiver", False),
                         "venue": getattr(item, "venue", None),
                         "governing_law": getattr(item, "governing_law", None),
+                        "materiality": "notable",
                     },
                     evidence=getattr(item, "evidence", None) or [],
                 )

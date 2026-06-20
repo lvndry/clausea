@@ -13,7 +13,7 @@ from src.models.topic_report import (
 )
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT, select_topic_citations
 from src.services.topic_stance_service import evaluate_topic_stances
-from src.utils.standard_terms import should_exclude_from_dangers
+from src.utils.standard_terms import finding_materiality_label, should_exclude_from_dangers
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
@@ -97,7 +97,9 @@ def build_product_topic_report(
     )
 
     for finding in aggregation.findings:
-        if finding.category == "dangers" and should_exclude_from_dangers(finding.value):
+        if finding.category == "dangers" and should_exclude_from_dangers(
+            finding.value, materiality=finding_materiality_label(finding.attributes)
+        ):
             continue
 
         if finding.category not in topics_by_category:

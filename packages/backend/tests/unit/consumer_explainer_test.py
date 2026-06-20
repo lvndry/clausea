@@ -155,6 +155,7 @@ def test_arbitration_blocker_is_downgraded_not_critical() -> None:
                 title="Binding arbitration",
                 severity="critical",
                 classification="blocker",
+                materiality="notable",
                 means_for_you="You must arbitrate disputes instead of going to court.",
             ),
         ],
@@ -178,6 +179,7 @@ def test_repeat_infringer_removed_from_watch_out_for() -> None:
             ConsumerCase(
                 title="Repeat infringer termination",
                 severity="high",
+                materiality="standard_industry",
                 means_for_you="Your account may be disabled for repeated copyright infringement.",
             ),
         ],

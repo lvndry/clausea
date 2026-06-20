@@ -14,6 +14,7 @@ def test_repeat_infringer_is_standard_mechanic() -> None:
         title="Account disabled for infringement",
         means_for_you="Your account may be disabled for repeated copyright infringement.",
         severity="critical",
+        materiality="standard_industry",
         quote="repeat infringer policy",
     )
     assert is_standard_legal_mechanic(case) is True
@@ -25,6 +26,7 @@ def test_assignment_restriction_is_standard_mechanic() -> None:
         title="Cannot transfer account",
         means_for_you="You may not assign or transfer this agreement without consent.",
         severity="high",
+        materiality="standard_industry",
     )
     assert is_standard_legal_mechanic(case) is True
     assert calibrate_watch_out_case(case) is None
@@ -36,6 +38,7 @@ def test_arbitration_downgrades_to_medium() -> None:
         means_for_you="You waive the right to sue in court or join a class action.",
         severity="critical",
         classification="blocker",
+        materiality="notable",
         quote="binding arbitration",
     )
     assert is_informational_dispute_term(case) is True
@@ -50,6 +53,7 @@ def test_data_sale_is_not_filtered() -> None:
         title="Sells your data",
         means_for_you="Advertisers may buy your personal information.",
         severity="critical",
+        materiality="material_risk",
         quote="sell your personal information",
     )
     assert is_standard_legal_mechanic(case) is False
@@ -67,16 +71,19 @@ def test_calibrate_explainer_removes_boilerplate_and_downgrades_arbitration() ->
                 title="Repeat infringer",
                 means_for_you="Accounts disabled for DMCA violations.",
                 severity="critical",
+                materiality="standard_industry",
             ),
             ConsumerCase(
                 title="Class action waiver",
                 means_for_you="Disputes must be resolved by arbitration.",
                 severity="high",
+                materiality="notable",
             ),
             ConsumerCase(
                 title="Sells data",
                 means_for_you="They sell personal information to partners.",
                 severity="critical",
+                materiality="material_risk",
             ),
         ],
     )
@@ -95,6 +102,7 @@ def test_ai_training_not_filtered_as_boilerplate() -> None:
         title="AI training on your content",
         means_for_you="Your uploads may be used for machine learning model training.",
         severity="critical",
+        materiality="material_risk",
     )
     assert is_standard_legal_mechanic(case) is False
     assert calibrate_watch_out_case(case) is not None
@@ -106,6 +114,7 @@ def test_auto_renewal_not_filtered() -> None:
         title="Automatic renewal",
         means_for_you="Subscription includes automatic renewal with recurring charges.",
         severity="high",
+        materiality="material_risk",
     )
     assert calibrate_watch_out_case(case) is not None
     assert calibrate_watch_out_case(case).severity == "high"
@@ -116,17 +125,19 @@ def test_indemnification_without_all_claims_stays_material() -> None:
         title="Broad indemnification",
         means_for_you="You agree to indemnify and hold harmless the company.",
         severity="critical",
+        materiality="material_risk",
     )
     assert is_standard_legal_mechanic(case) is False
     assert calibrate_watch_out_case(case) is not None
 
 
 def test_mixed_arbitration_and_data_sale_keeps_data_sale() -> None:
-    """Material risk in dispute text must not be downgraded to informational."""
+    """LLM material_risk label must win over arbitration keywords in text."""
     case = ConsumerCase(
         title="Arbitration and data sale",
         means_for_you="Binding arbitration applies. We may sell your personal information.",
         severity="critical",
+        materiality="material_risk",
         quote="sell your personal information",
     )
     assert is_informational_dispute_term(case) is False

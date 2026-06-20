@@ -272,6 +272,7 @@ def _build_cluster_specs() -> None:
             "dangers": [
                 {
                     "value": "No cap on liability for user-generated content claims",
+                    "materiality": "material_risk | notable | standard_industry",
                     "quote": "exact quote",
                 }
             ],
@@ -314,6 +315,10 @@ def _build_cluster_specs() -> None:
             "   Also skip governing-law/venue, severability, and standard liability caps (use liability).\n"
             "   Reserve dangers for unusual privacy harms, data sale, AI training, broad indemnification,\n"
             "   and one-sided terms not captured in the structured fields above.\n"
+            "   For each danger, set materiality:\n"
+            "   - standard_industry: routine boilerplate (DMCA, assignment, governing law)\n"
+            "   - notable: arbitration/class-action waivers (should use dispute_resolution instead)\n"
+            "   - material_risk: genuine consumer harm or meaningful loss of control\n"
             "   Goal: help users prioritize — not list every basic ToS clause as a red flag.\n"
             "8. BENEFITS: protections and user-friendly practices the document actually claims.\n"
             "9. RECOMMENDED ACTIONS: practical steps a user can take (settings, reading linked policies, opt-outs)\n"

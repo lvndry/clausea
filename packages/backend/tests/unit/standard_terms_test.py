@@ -7,83 +7,127 @@ from src.utils.standard_terms import (
 )
 
 
-def test_standard_industry_terms_excluded_from_dangers() -> None:
-    samples = [
-        "Repeat infringer account termination (DMCA-normal)",
-        "Non-assignable agreement clause",
-        "DMCA repeat infringer policy",
-        "This agreement may not be assigned without prior written consent",
-    ]
-    for sample in samples:
-        assert classify_term_materiality(sample) == TermMateriality.STANDARD_INDUSTRY
-        assert should_exclude_from_dangers(sample) is True
-        assert topic_signal_score(sample, category="dangers") == 2
+def test_llm_label_takes_precedence() -> None:
+    assert (
+        classify_term_materiality(
+            "Binding arbitration with class action waiver",
+            label=TermMateriality.MATERIAL_RISK,
+        )
+        == TermMateriality.MATERIAL_RISK
+    )
+    assert (
+        classify_term_materiality(
+            "Company may sell your personal information",
+            label=TermMateriality.STANDARD_INDUSTRY,
+        )
+        == TermMateriality.STANDARD_INDUSTRY
+    )
 
 
-def test_arbitration_is_notable_not_danger() -> None:
+def test_standard_industry_excluded_with_label() -> None:
+    sample = "DMCA repeat infringer policy"
+    assert (
+        classify_term_materiality(sample, label=TermMateriality.STANDARD_INDUSTRY)
+        == TermMateriality.STANDARD_INDUSTRY
+    )
+    assert (
+        should_exclude_from_dangers(sample, materiality=TermMateriality.STANDARD_INDUSTRY) is True
+    )
+    assert (
+        topic_signal_score(
+            sample, category="dangers", materiality=TermMateriality.STANDARD_INDUSTRY
+        )
+        == 2
+    )
+
+
+def test_notable_excluded_with_label() -> None:
     sample = "Binding arbitration / class action waiver"
-    assert classify_term_materiality(sample) == TermMateriality.NOTABLE
-    assert should_exclude_from_dangers(sample) is True
-    assert topic_signal_score(sample, category="dispute_resolution") == 4
-    assert topic_signal_score(sample, category="dangers") == 4
+    assert (
+        classify_term_materiality(sample, label=TermMateriality.NOTABLE) == TermMateriality.NOTABLE
+    )
+    assert should_exclude_from_dangers(sample, materiality=TermMateriality.NOTABLE) is True
+    assert (
+        topic_signal_score(
+            sample, category="dispute_resolution", materiality=TermMateriality.NOTABLE
+        )
+        == 4
+    )
 
 
-def test_material_risks_stay_prominent() -> None:
+def test_material_risks_stay_prominent_with_label() -> None:
     sample = "Company may sell your personal information to advertising partners"
+    assert (
+        classify_term_materiality(sample, label=TermMateriality.MATERIAL_RISK)
+        == TermMateriality.MATERIAL_RISK
+    )
+    assert should_exclude_from_dangers(sample, materiality=TermMateriality.MATERIAL_RISK) is False
+    assert (
+        topic_signal_score(sample, category="dangers", materiality=TermMateriality.MATERIAL_RISK)
+        == 8
+    )
+
+
+def test_unknown_text_defaults_to_material_risk_without_label() -> None:
+    sample = "We may monetize your usage data with advertising partners"
     assert classify_term_materiality(sample) == TermMateriality.MATERIAL_RISK
     assert should_exclude_from_dangers(sample) is False
-    assert topic_signal_score(sample, category="dangers") == 8
 
 
-def test_filter_danger_strings_drops_routine_boilerplate() -> None:
+def test_filter_danger_strings_requires_labels() -> None:
+    """Without LLM labels, unlabeled strings stay (conservative default)."""
+    values = [
+        "Repeat infringer account termination",
+        "No cap on liability for user-generated content claims",
+    ]
+    assert filter_danger_strings(values) == values
+
     filtered = filter_danger_strings(
         [
             "Repeat infringer account termination",
             "Binding arbitration with class action waiver",
             "No cap on liability for user-generated content claims",
-        ]
+        ],
+        labels={
+            "Repeat infringer account termination": TermMateriality.STANDARD_INDUSTRY,
+            "Binding arbitration with class action waiver": TermMateriality.NOTABLE,
+        },
     )
     assert filtered == ["No cap on liability for user-generated content claims"]
 
 
-def test_material_risk_patterns_cover_watch_out_edge_cases() -> None:
-    """Patterns formerly duplicated in watch_out_calibration must classify here."""
-    material_samples = [
-        "We may monetize your usage data with advertising partners",
-        "Content may be used for AI training and model training",
-        "You grant a perpetual license to your uploads",
-        "An irrevocable license to use your photos worldwide",
-        "Sublicensable rights to your content",
-        "You must indemnify us for any claims",
-        "Automatic renewal unless cancelled 30 days prior",
-        "Hidden fees may apply after the trial period",
-        "We collect GPS coordinates for location services",
-        "Services not intended for children under 13",
-        "Cross-site tracking across third-party websites",
-        "We indefinitely retain your account data",
-        "No opt-out available for this data collection",
-        "You cannot delete your biometric data once submitted",
-        "Sale of personal information to data brokers",
-    ]
-    for sample in material_samples:
-        assert classify_term_materiality(sample) == TermMateriality.MATERIAL_RISK, sample
-        assert should_exclude_from_dangers(sample) is False
-
-
-def test_standard_terms_not_overridden_by_broad_material_patterns() -> None:
-    """Routine boilerplate must stay standard even when text mentions adjacent topics."""
-    samples = [
-        "Repeat infringer account termination under DMCA",
-        "This agreement may not be assigned without prior written consent",
+def test_filter_danger_strings_respects_llm_labels() -> None:
+    filtered = filter_danger_strings(
+        [
+            "Binding arbitration with class action waiver",
+            "No cap on liability for user-generated content claims",
+        ],
+        labels={
+            "Binding arbitration with class action waiver": TermMateriality.MATERIAL_RISK,
+        },
+    )
+    assert filtered == [
         "Binding arbitration with class action waiver",
+        "No cap on liability for user-generated content claims",
     ]
-    for sample in samples:
-        assert classify_term_materiality(sample) != TermMateriality.MATERIAL_RISK, sample
 
 
 def test_is_material_risk_helper() -> None:
     from src.utils.standard_terms import is_material_risk
 
-    assert is_material_risk("Company may sell your personal information") is True
-    assert is_material_risk("Binding arbitration with class action waiver") is False
-    assert is_material_risk("DMCA repeat infringer policy") is False
+    assert (
+        is_material_risk(
+            "Company may sell your personal information", label=TermMateriality.MATERIAL_RISK
+        )
+        is True
+    )
+    assert (
+        is_material_risk(
+            "Binding arbitration with class action waiver", label=TermMateriality.NOTABLE
+        )
+        is False
+    )
+    assert (
+        is_material_risk("DMCA repeat infringer policy", label=TermMateriality.STANDARD_INDUSTRY)
+        is False
+    )

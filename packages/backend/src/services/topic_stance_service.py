@@ -13,7 +13,11 @@ from src.services.evidence_relevance import (
     MIN_SUBSTANTIVE_CITATIONS_FOR_ELEVATED_RISK,
     count_substantive_evidence,
 )
-from src.utils.standard_terms import should_exclude_from_dangers, topic_signal_score
+from src.utils.standard_terms import (
+    finding_materiality_label,
+    should_exclude_from_dangers,
+    topic_signal_score,
+)
 
 _YES_TOKENS = {"yes", "true", "1"}
 _NO_TOKENS = {"no", "false", "0"}
@@ -260,22 +264,32 @@ def _signals_from_findings(findings: list[AggregatedFinding]) -> dict[InsightCat
             signals[category].append(7)
             continue
 
+        label = finding_materiality_label(finding.attributes)
+
         if category == "indemnification":
-            signals[category].append(topic_signal_score(finding.value, category=category))
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
             continue
 
         if category in {"international_transfers", "dispute_resolution"}:
-            signals[category].append(topic_signal_score(finding.value, category=category))
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
             continue
 
         if category in {"termination_consequences", "content_ownership"}:
-            signals[category].append(topic_signal_score(finding.value, category=category))
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
             continue
 
         if category == "dangers":
-            if should_exclude_from_dangers(finding.value):
+            if should_exclude_from_dangers(finding.value, materiality=label):
                 continue
-            signals[category].append(topic_signal_score(finding.value, category=category))
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
             continue
 
         if category == "benefits":

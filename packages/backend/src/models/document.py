@@ -79,6 +79,13 @@ class ExtractedTextItem(BaseModel):
     """An extracted, normalized text item with evidence."""
 
     value: str
+    materiality: Literal["standard_industry", "notable", "material_risk"] | None = Field(
+        default=None,
+        description=(
+            "Consumer-facing materiality tier from extraction LLM or batch classifier. "
+            "When set, downstream filters prefer this over regex fallback."
+        ),
+    )
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
@@ -709,6 +716,10 @@ class ConsumerCase(BaseModel):
     )
     means_for_you: str = ""
     severity: ConsumerSeverity = "medium"
+    materiality: Literal["standard_industry", "notable", "material_risk"] | None = Field(
+        default=None,
+        description="Context-aware materiality from consumer explainer LLM; drives watch-out calibration.",
+    )
     classification: str | None = None
     what_they_get: str | None = Field(
         default=None, description="What the recipient receives, for the who_gets_your_data list."

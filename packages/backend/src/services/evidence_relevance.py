@@ -1,4 +1,16 @@
-"""Filter weak or off-topic evidence quotes before surfacing as topic citations."""
+"""Filter weak or off-topic evidence quotes before surfacing as topic citations.
+
+Term materiality (standard vs material risk) is handled by LLM labels in
+``standard_terms`` / ``term_materiality_classifier`` — not here.
+
+This module uses lightweight lexical heuristics only for quote-to-topic
+relevance scoring (0–100). Limits:
+- Cannot judge nuance or mixed clauses; token/keyword overlap only.
+- ``_FOREIGN_TOPIC_SIGNALS`` rejects quotes that clearly belong to another
+  insight category (e.g. arbitration quote cited under data_sharing).
+- ``_BOILERPLATE_PATTERNS`` drops generic cookie-consent filler, not legal terms.
+- Prefer substantive quotes with topic keyword overlap; see ``score_evidence_relevance``.
+"""
 
 from __future__ import annotations
 

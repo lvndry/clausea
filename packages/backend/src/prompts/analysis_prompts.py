@@ -653,6 +653,11 @@ Arbitration and class-action waivers: include at most ONE item if present, sever
 - "medium": notable but expected-with-tradeoffs, or limited in scope — including arbitration/class-action waivers (informational only).
 - "low": minor or standard.
 
+For each watch_out_for item, set materiality:
+- "material_risk": genuine harm or meaningful loss of control (see critical/high examples above).
+- "notable": arbitration/class-action/jury-trial waivers and similar informational dispute terms.
+- "standard_industry": routine legal mechanics (DMCA, assignment, governing law) — omit from watch_out_for when possible.
+
 ================ GRADE A–E + HARD CAP ================
 A = genuinely protective. B = mostly fair, minor concerns. C = typical/mixed. D = user-hostile in one important way. E = user-hostile in several ways.
 MECHANICAL CAP: Count your "critical" findings across what_they_collect, who_gets_your_data, and watch_out_for. Put that number in `critical_findings_count`. If it is 1, grade may be at most D. If it is 2 or more, grade may be at most E. A single critical finding caps at D regardless of anything good. State the blocker in `grade_reason`.
@@ -682,7 +687,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "critical_findings_count": 0,
   "confidence": "high|medium|low",
   "watch_out_for": [
-    {"title": "short plain label", "means_for_you": "consequence, not capability — required", "severity": "critical|high|medium|low", "quote": "exact copy from extraction or null", "quote_status": "from_extraction|none"}
+    {"title": "short plain label", "means_for_you": "consequence, not capability — required", "severity": "critical|high|medium|low", "materiality": "material_risk|notable|standard_industry", "quote": "exact copy from extraction or null", "quote_status": "from_extraction|none"}
   ],
   "who_gets_your_data": [
     {"who": "named company if extraction names it, else plain description", "what_they_get": "string", "means_for_you": "string", "severity": "critical|high|medium|low", "quote": "exact copy or null", "quote_status": "from_extraction|none"}

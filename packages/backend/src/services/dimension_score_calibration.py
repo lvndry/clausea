@@ -3,6 +3,11 @@
 Dimension scores are 0-10 where higher is better for the user. The LLM sometimes
 assigns C-range scores while the justification lists multiple real user controls.
 This module raises scores to evidence-based floors without ignoring genuine gaps.
+
+Note: score floors still use lightweight regex on LLM-written justifications — a
+different problem from term materiality (see ``standard_terms`` / batch classifier).
+Migrating these signal lists to LLM would add latency on every overview; kept as
+heuristic calibration until justified by accuracy gaps.
 """
 
 from __future__ import annotations
