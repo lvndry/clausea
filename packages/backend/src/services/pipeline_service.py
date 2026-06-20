@@ -179,6 +179,48 @@ class PipelineService:
 
         return {"already_indexed": False, "job": job}
 
+    async def create_job_for_product(self, db: AgnosticDatabase, product_slug: str) -> dict:
+        """Create a pipeline job for an existing product by slug.
+
+        Unlike ``create_job_for_url``, this always targets the named product even when
+        its crawl URL resolves to a different domain (e.g. Apple Music on apple.com).
+        """
+        product_svc = create_product_service()
+        product = await product_svc.get_product_by_slug(db, product_slug)
+        if not product:
+            raise ValueError(f"Product not found: {product_slug}")
+
+        overview = await product_svc.get_product_overview_data(db, product.slug)
+        if overview:
+            logger.info(f"Product {product.slug} is already indexed – skipping pipeline")
+            return {
+                "already_indexed": True,
+                "product_slug": product.slug,
+                "product_name": product.name,
+            }
+
+        base_urls = product.crawl_base_urls or []
+        domains = product.domains or []
+        url = base_urls[0] if base_urls else (f"https://{domains[0]}" if domains else None)
+        if not url:
+            raise ValueError(f"No crawl URL configured for product: {product_slug}")
+        if not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
+
+        job = PipelineJob(
+            product_slug=product.slug,
+            product_id=product.id,
+            product_name=product.name,
+            url=url,
+        )
+        job, created = await self._pipeline_repo.find_or_create_active(db, job)
+        if created:
+            logger.info(f"Created pipeline job {job.id} for {product.slug}")
+        else:
+            logger.info(f"Active pipeline job already exists for {product.slug}: {job.id}")
+
+        return {"already_indexed": False, "job": job}
+
     async def _await_with_stall_guard(
         self, core_task: asyncio.Task[None], job_id: str, started_at: datetime
     ) -> None:
