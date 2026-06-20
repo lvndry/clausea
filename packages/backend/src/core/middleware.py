@@ -22,6 +22,7 @@ WHITELISTED_ROUTES = {
     "/health/startup",
     "/openapi.json",
     "/users/tier-limits",
+    "/subscriptions/plans",
     "/products/stats",
     "/webhooks/paddle",
     "/contact",

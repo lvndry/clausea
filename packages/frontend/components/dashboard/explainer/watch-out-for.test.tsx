@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { WatchOutFor } from "./watch-out-for";
+import { fireEvent, render, screen } from "@testing-library/react";
+
 import type { ConsumerCase } from "./types";
+import { WatchOutFor } from "./watch-out-for";
 
 describe("WatchOutFor citations", () => {
   it("renders the resolved source document and link for verified quotes", () => {
@@ -31,7 +32,9 @@ describe("WatchOutFor citations", () => {
     expect(
       screen.getByText("Source: Privacy Policy - Section 4"),
     ).toBeInTheDocument();
-    expect(screen.getByText(/We may sell your personal information/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/We may sell your personal information/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /open source/i })).toHaveAttribute(
       "href",
       "https://example.com/privacy",

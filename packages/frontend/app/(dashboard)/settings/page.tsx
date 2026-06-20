@@ -15,23 +15,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCheckout } from "@/hooks/useCheckout";
+import { useProPricing } from "@/hooks/useProPricing";
 import {
   type SubscriptionResponse,
   subscriptionApi,
 } from "@/lib/api/subscriptions";
-import {
-  type BillingInterval,
-  getProDisplayPrice,
-  getProPriceId,
-  isAnnualCheckoutAvailable,
-} from "@/lib/pricing";
+import { type BillingInterval, getProDisplayPrice } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { useAuth, useUser } from "@clerk/nextjs";
 
 export default function SettingsPage() {
   const { user } = useUser();
   const { getToken } = useAuth();
-  const { startCheckout, isLoading: checkoutLoading } = useCheckout();
+  const {
+    startCheckout,
+    isLoading: checkoutLoading,
+    error: checkoutError,
+  } = useCheckout();
+  const {
+    getProPriceId,
+    isProCheckoutAvailable,
+    getCheckoutUnavailableMessage,
+  } = useProPricing();
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
@@ -43,7 +48,10 @@ export default function SettingsPage() {
 
   const proDisplayPrice = getProDisplayPrice(billingInterval);
   const proPriceId = getProPriceId(billingInterval);
-  const annualCheckoutAvailable = isAnnualCheckoutAvailable();
+  const checkoutAvailable = isProCheckoutAvailable(billingInterval);
+  const checkoutUnavailableMessage = checkoutAvailable
+    ? null
+    : getCheckoutUnavailableMessage(billingInterval);
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -324,15 +332,12 @@ export default function SettingsPage() {
               </div>
               <Button
                 onClick={() => {
-                  if (proPriceId) {
+                  if (checkoutAvailable && proPriceId) {
                     startCheckout(proPriceId);
                   }
                 }}
-                disabled={
-                  checkoutLoading ||
-                  !proPriceId ||
-                  (billingInterval === "annual" && !annualCheckoutAvailable)
-                }
+                disabled={checkoutLoading || !checkoutAvailable}
+                title={checkoutUnavailableMessage ?? undefined}
                 className="gap-2"
               >
                 {checkoutLoading && (
@@ -340,6 +345,14 @@ export default function SettingsPage() {
                 )}
                 Upgrade to Pro - {proDisplayPrice.label}
               </Button>
+              {checkoutUnavailableMessage && (
+                <p className="text-sm text-muted-foreground">
+                  {checkoutUnavailableMessage}
+                </p>
+              )}
+              {checkoutError && (
+                <p className="text-sm text-destructive">{checkoutError}</p>
+              )}
             </div>
           )}
         </CardContent>
