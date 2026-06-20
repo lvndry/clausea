@@ -1,4 +1,10 @@
+import { cookies } from "next/headers";
+
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
+import {
+  PREVIEW_TOKEN_COOKIE,
+  PREVIEW_TOKEN_HEADER,
+} from "@/lib/preview-token";
 import type {
   DocumentSummary,
   Product,
@@ -36,9 +42,13 @@ export default async function ProductPage({
 
   const { getToken } = await auth();
   const token = await getToken();
+  const cookieStore = await cookies();
+  const previewToken = cookieStore.get(PREVIEW_TOKEN_COOKIE)?.value;
   const headers: HeadersInit = token
     ? { Authorization: `Bearer ${token}` }
-    : {};
+    : previewToken
+      ? { [PREVIEW_TOKEN_HEADER]: previewToken }
+      : {};
 
   const tag = `product-${slug}`;
   const [

@@ -501,4 +501,56 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
         else:
             logger.warning(f"Could not create unique index on extension_anonymous_usage.token: {e}")
 
+    # Product preview anonymous usage tracking
+    try:
+        await db.product_preview_usage.create_index(
+            "last_seen",
+            expireAfterSeconds=60 * 60 * 24 * 30,
+            name="ttl_product_preview_usage_30d",
+            background=True,
+        )
+        logger.info("Created TTL index on product_preview_usage.last_seen")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg:
+            logger.debug("TTL index on product_preview_usage.last_seen already exists")
+        else:
+            logger.warning(f"Could not create TTL index on product_preview_usage.last_seen: {e}")
+
+    try:
+        await db.product_preview_usage.create_index(
+            "token",
+            unique=True,
+            sparse=True,
+            name="idx_product_preview_usage_token",
+            background=True,
+        )
+        logger.info("Created unique sparse index on product_preview_usage.token")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug(
+                "Unique index on product_preview_usage.token already exists or has duplicate values"
+            )
+        else:
+            logger.warning(f"Could not create unique index on product_preview_usage.token: {e}")
+
+    try:
+        await db.product_preview_usage.create_index(
+            "ip",
+            unique=True,
+            partialFilterExpression={"token": {"$exists": False}},
+            name="idx_product_preview_usage_ip",
+            background=True,
+        )
+        logger.info("Created unique partial index on product_preview_usage.ip")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug(
+                "Unique index on product_preview_usage.ip already exists or has duplicate values"
+            )
+        else:
+            logger.warning(f"Could not create unique index on product_preview_usage.ip: {e}")
+
     logger.info("Database indexes verified")

@@ -1,6 +1,7 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { PREVIEW_TOKEN_COOKIE } from "@/lib/preview-token";
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 const CRAWLER_UA =
@@ -67,6 +68,18 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
         path: "/",
         maxAge: 60 * 60 * 24 * 30,
       });
+
+      const existingPreviewToken =
+        request.cookies.get(PREVIEW_TOKEN_COOKIE)?.value;
+      if (!existingPreviewToken) {
+        response.cookies.set(PREVIEW_TOKEN_COOKIE, crypto.randomUUID(), {
+          httpOnly: true,
+          sameSite: "lax",
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+        });
+      }
+
       return response;
     }
   }

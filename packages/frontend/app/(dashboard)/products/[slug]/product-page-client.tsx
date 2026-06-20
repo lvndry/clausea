@@ -45,6 +45,7 @@ import type {
   ProductOverview,
   ProductTopicReport,
 } from "@/types";
+import { useAuth } from "@clerk/nextjs";
 
 import { deriveProductPageOverviewState } from "./product-page-fetch-state";
 
@@ -106,6 +107,7 @@ export default function CompanyPage({
 }: CompanyPageProps = {}) {
   const params = useParams();
   const slug = params.slug as string;
+  const { isSignedIn } = useAuth();
   const [product, setProduct] = useState<Product | null>(
     initialProduct ?? null,
   );
@@ -171,6 +173,8 @@ export default function CompanyPage({
           overviewStatus: overviewRes.status,
           explainerStatus: explainerRes.status,
           topicsStatus: topicsRes.status,
+          productStatus: prodRes.status,
+          documentsStatus: docsRes.status,
         });
 
         const prodJson = prodRes.ok
@@ -371,6 +375,62 @@ export default function CompanyPage({
 
   if (!data) {
     if (indexationMode === "limit_reached") {
+      if (!isSignedIn) {
+        return (
+          <div className="space-y-6">
+            <div className="border-b border-border pb-8">
+              <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+                {limitReachedDisplayName}
+              </h1>
+              <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
+                You&apos;ve used your free product previews. Sign in to continue
+                exploring policy reports.
+              </p>
+            </div>
+
+            <div className="border border-border bg-background">
+              <div className="p-6 border-b border-border bg-muted/5">
+                <div className="flex items-center gap-3">
+                  <ShieldBan
+                    className="h-5 w-5 text-amber-600"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                    Free Preview Limit Reached
+                  </h3>
+                </div>
+              </div>
+              <div className="p-6 space-y-4">
+                <h2 className="text-xl font-display font-medium text-foreground">
+                  Sign in to keep reading
+                </h2>
+                <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
+                  Anonymous visitors can preview a limited number of product
+                  reports. Create a free account to unlock more analyses.
+                </p>
+                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                  <Link
+                    href={`/sign-in?redirect_url=${encodeURIComponent(`/products/${slug}`)}`}
+                  >
+                    <Button className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold">
+                      Sign in
+                    </Button>
+                  </Link>
+                  <Link href="/pricing">
+                    <Button
+                      variant="outline"
+                      className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                    >
+                      View plans
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div className="space-y-6">
           <div className="border-b border-border pb-8">

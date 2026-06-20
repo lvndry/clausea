@@ -276,6 +276,7 @@ async def get_product_analysis(
 @router.get("/{slug}/documents", response_model=list[DocumentSummary])
 async def get_product_documents(
     slug: str,
+    _usage: None = Depends(check_usage_limit),
     user_tier: UserTier = Depends(get_user_tier),
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
@@ -414,6 +415,7 @@ async def get_document_deep_analysis_route(
 @router.get("/{slug}", response_model=Product)
 async def get_product_by_slug(
     slug: str,
+    _usage: None = Depends(check_usage_limit),
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
 ) -> Product:
