@@ -147,6 +147,23 @@ def _figma_like_scores() -> MetaSummaryScores:
     return MetaSummaryScores(
         transparency=MetaSummaryScore(score=6, justification="Clear but not exhaustive"),
         data_collection_scope=MetaSummaryScore(score=4, justification="Broad collection"),
+        user_control=MetaSummaryScore(
+            score=5,
+            justification=(
+                "Provides cookie consent banner, recognizes Global Privacy Control (GPC), "
+                "an AI Content Training toggle, marketing unsubscribe, and self-service "
+                "account deletion. Caveats: all-or-nothing deletion, mobile cookie limits."
+            ),
+        ),
+        third_party_sharing=MetaSummaryScore(score=3, justification="Wide sharing"),
+    )
+
+
+def _figma_like_scores_uncalibrated() -> MetaSummaryScores:
+    """Raw LLM scores before server-side calibration."""
+    return MetaSummaryScores(
+        transparency=MetaSummaryScore(score=6, justification="Clear but not exhaustive"),
+        data_collection_scope=MetaSummaryScore(score=4, justification="Broad collection"),
         user_control=MetaSummaryScore(score=5, justification="Some controls"),
         third_party_sharing=MetaSummaryScore(score=3, justification="Wide sharing"),
     )
@@ -154,16 +171,22 @@ def _figma_like_scores() -> MetaSummaryScores:
 
 def test_overview_risk_aligns_with_dimension_breakdown() -> None:
     """C-range dimensions must not produce D- overall unless signal floors apply."""
-    risk = _calculate_overview_risk_score(_figma_like_scores())
+    from src.services.dimension_score_calibration import calibrate_meta_summary_scores
+
+    scores = calibrate_meta_summary_scores(_figma_like_scores())
+    risk = _calculate_overview_risk_score(scores)
     # Weighted user-friendliness ~4.2 → risk ~6 (moderate), not 8+ (D-/D).
     assert 5 <= risk <= 7
 
 
 def test_reconcile_meta_summary_risk_ignores_llm_headline_risk() -> None:
     """Server-side reconciliation overwrites any LLM-emitted headline risk."""
+    from src.services.dimension_score_calibration import calibrate_meta_summary_scores
+
+    scores = calibrate_meta_summary_scores(_figma_like_scores())
     meta = MetaSummary(
         summary="ok",
-        scores=_figma_like_scores(),
+        scores=scores,
         risk_score=9,
         verdict="very_pervasive",
     )
@@ -175,11 +198,18 @@ def test_reconcile_meta_summary_risk_ignores_llm_headline_risk() -> None:
 def test_signal_floor_can_raise_dimension_risk_for_critical_signals() -> None:
     """Critical privacy signals may still push overall risk above dimension average."""
     from src.models.document import PrivacySignals
+    from src.services.dimension_score_calibration import calibrate_meta_summary_scores
 
     meta = MetaSummary(
         summary="ok",
-        scores=_figma_like_scores(),
+        scores=calibrate_meta_summary_scores(_figma_like_scores()),
         privacy_signals=PrivacySignals(sells_data="yes"),
     )
     _reconcile_meta_summary_risk(meta)
     assert meta.risk_score >= 6
+
+
+def test_uncalibrated_figma_user_control_is_c_range() -> None:
+    """Document the miscalibration the server fix addresses."""
+    scores = _figma_like_scores_uncalibrated()
+    assert scores.user_control.score == 5

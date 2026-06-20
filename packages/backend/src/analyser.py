@@ -76,6 +76,10 @@ from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
 from src.services.aggregation_service import AggregationService
+from src.services.dimension_score_calibration import (
+    calibrate_document_scores,
+    calibrate_meta_summary,
+)
 from src.services.document_service import DocumentService
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
@@ -684,6 +688,7 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
             cleaned[score_name] = score_obj
 
     parsed.scores = cleaned
+    parsed.scores = calibrate_document_scores(parsed.scores)
 
     # Recalculate risk_score and verdict deterministically from whatever scores the LLM
     # returned. _calculate_risk_score handles partial score sets by normalising weights.
@@ -2169,6 +2174,7 @@ Per-document analyses and extractions:
         }
         topic_blended = compose_product_risk_from_topics(topic_rows)
         legacy_blended = _weighted_product_risk_score(core_docs)
+        calibrate_meta_summary(meta_summary)
         dimension_risk = _calculate_overview_risk_score(meta_summary.scores)
         if legacy_blended is not None:
             logger.info(
