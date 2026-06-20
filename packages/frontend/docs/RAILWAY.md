@@ -135,10 +135,11 @@ docker run --rm -p 3000:3000 \
 
 ## Troubleshooting
 
-| Symptom                     | Fix                                                                                           |
-| --------------------------- | --------------------------------------------------------------------------------------------- |
-| Auth broken in production   | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` was set **before** build; redeploy after adding it |
-| API calls fail              | Check `BACKEND_BASE_URL` points to the live backend; verify backend CORS                      |
-| Wrong canonical URLs in SEO | Set `NEXT_PUBLIC_APP_URL` and redeploy                                                        |
-| Container exits immediately | Check deploy logs; ensure `output: "standalone"` is in `next.config.mjs`                      |
-| Health check fails          | Railway probes `/`; ensure the app binds to `0.0.0.0` (handled by Dockerfile `HOSTNAME`)      |
+| Symptom                       | Fix                                                                                                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth broken in production     | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` was set **before** build; redeploy after adding it                                                                                                                   |
+| API calls fail                | Check `BACKEND_BASE_URL` points to the live backend; verify backend CORS                                                                                                                                        |
+| Empty products / ECONNREFUSED | Do **not** set `BACKEND_BASE_URL` to `https://*.railway.internal` — private domains use HTTP on the service `$PORT`, not HTTPS on 443. Use `https://${{api.RAILWAY_PUBLIC_DOMAIN}}` or `https://api.clausea.co` |
+| Wrong canonical URLs in SEO   | Set `NEXT_PUBLIC_APP_URL` and redeploy                                                                                                                                                                          |
+| Container exits immediately   | Check deploy logs; ensure `output: "standalone"` is in `next.config.mjs`                                                                                                                                        |
+| Health check fails            | Railway probes `/`; ensure the app binds to `0.0.0.0` (handled by Dockerfile `HOSTNAME`)                                                                                                                        |
