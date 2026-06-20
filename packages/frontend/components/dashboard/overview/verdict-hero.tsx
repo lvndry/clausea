@@ -14,18 +14,22 @@ import { useState } from "react";
 
 import MarkdownRenderer from "@/components/markdown/markdown-renderer";
 import { Button } from "@/components/ui/button";
+import { gradeToneStyle, parseLetterGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
 
 interface VerdictHeroProps {
   productName: string;
   companyName?: string | null;
-  verdict:
+  verdict?:
     | "very_user_friendly"
     | "user_friendly"
     | "moderate"
     | "pervasive"
-    | "very_pervasive";
-  riskScore: number;
+    | "very_pervasive"
+    | null;
+  grade?: "A" | "B" | "C" | "D" | "E" | null;
+  gradeJustification?: string | null;
+  riskScore?: number | null;
   summary: string;
   keypoints?: string[] | null;
 }
@@ -73,38 +77,40 @@ const verdictConfig = {
   },
 };
 
+const gradeWord: Record<string, string> = {
+  A: "Reassuring",
+  B: "Mostly fair",
+  C: "Mixed",
+  D: "Concerning",
+  E: "Alarming",
+};
+
 export function VerdictHero({
   productName,
   companyName,
   verdict,
+  grade,
+  gradeJustification,
   riskScore,
   summary,
   keypoints,
 }: VerdictHeroProps) {
   const params = useParams();
   const slug = params.slug as string;
-  const config = verdictConfig[verdict];
-  const Icon = config.icon;
+  const parsedGrade = grade ? parseLetterGrade(grade) : null;
+  const gradeStyle = parsedGrade ? gradeToneStyle(parsedGrade.tone) : null;
+  const hasGrade = parsedGrade != null && parsedGrade.letter !== "—";
+  const verdictDisplay = hasGrade && verdict ? verdictConfig[verdict] : null;
+  const Icon = verdictDisplay?.icon ?? Shield;
   const topKeypoints = keypoints?.slice(0, 3) || [];
   const [shareText, setShareText] = useState("Share");
 
-  const getRiskLabel = () => {
-    if (riskScore <= 3) return "Low";
-    if (riskScore <= 6) return "Moderate";
-    return "High";
-  };
-
-  const getRiskColor = () => {
-    if (riskScore <= 3) return "text-risk-low";
-    if (riskScore <= 6) return "text-risk-medium";
-    return "text-risk-high";
-  };
-
   const handleShare = async () => {
     const shareUrl = `https://clausea.co/products/${slug}`;
-    const shareMessage = `${productName} is rated "${config.label}" for privacy (${riskScore}/10 risk). Check out the full analysis:`;
+    const shareMessage = hasGrade
+      ? `${productName} privacy grade: ${grade} (${gradeWord[grade!] ?? "assessed"}). Full analysis:`
+      : `${productName} privacy analysis on Clausea — grade pending:`;
 
-    // Try native share API first (mobile)
     if (navigator.share) {
       try {
         await navigator.share({
@@ -114,17 +120,15 @@ export function VerdictHero({
         });
         return;
       } catch {
-        // User cancelled or share failed, fall through to clipboard
+        // fall through
       }
     }
 
-    // Fallback to clipboard
     try {
       await navigator.clipboard.writeText(`${shareMessage} ${shareUrl}`);
       setShareText("Copied!");
       setTimeout(() => setShareText("Share"), 2000);
     } catch {
-      // Fallback for older browsers
       const textArea = document.createElement("textarea");
       textArea.value = `${shareMessage} ${shareUrl}`;
       document.body.appendChild(textArea);
@@ -138,28 +142,47 @@ export function VerdictHero({
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 border border-border bg-background">
-      {/* Score and Verdict */}
       <div className="col-span-12 md:col-span-4 p-8 border-b md:border-b-0 md:border-r border-border flex flex-col justify-between">
         <div>
           <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block mb-6">
-            Privacy Verdict
+            Privacy Grade
           </span>
           <h1
             className={cn(
               "text-5xl md:text-6xl font-display font-medium leading-[0.9] tracking-tight mb-4",
-              config.color,
+              hasGrade && gradeStyle
+                ? gradeStyle.color
+                : "text-muted-foreground",
             )}
           >
-            {config.label}
+            {hasGrade ? grade : "—"}
           </h1>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-display font-medium text-foreground">
-              {riskScore}
-            </span>
+          <div className="space-y-1">
+            <p
+              className={cn(
+                "text-lg font-display font-medium",
+                hasGrade && gradeStyle
+                  ? gradeStyle.color
+                  : "text-muted-foreground",
+              )}
+            >
+              {hasGrade ? (gradeWord[grade!] ?? "Assessed") : "Not yet graded"}
+            </p>
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-              Risk Score
+              Grade A–E
             </span>
           </div>
+          {!hasGrade && (
+            <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+              No grade is available yet. Re-run analysis after policy documents
+              are indexed, or check back once grading completes.
+            </p>
+          )}
+          {gradeJustification && (
+            <p className="mt-4 text-sm text-muted-foreground leading-relaxed border-l-2 border-border pl-4">
+              {gradeJustification}
+            </p>
+          )}
         </div>
 
         <div className="mt-12">
@@ -169,17 +192,23 @@ export function VerdictHero({
           <div
             className={cn(
               "inline-flex items-center gap-2 px-3 py-1.5 border border-border text-[10px] uppercase tracking-widest font-bold",
-              config.color,
-              config.bg,
+              hasGrade && verdictDisplay
+                ? verdictDisplay.color
+                : "text-muted-foreground",
+              hasGrade && verdictDisplay ? verdictDisplay.bg : "bg-muted/5",
             )}
           >
             <Icon className="h-3 w-3" />
-            {config.label}
+            {hasGrade && verdictDisplay ? verdictDisplay.label : "Unavailable"}
           </div>
+          {riskScore != null && (
+            <p className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground">
+              Legacy risk index: {riskScore}/10
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Analysis and Insights */}
       <div className="col-span-12 md:col-span-8 flex flex-col">
         <div className="p-8 md:p-10 border-b border-border flex-1">
           <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block mb-6">
@@ -201,7 +230,6 @@ export function VerdictHero({
           </div>
         </div>
 
-        {/* Key Insights */}
         {topKeypoints.length > 0 && (
           <div className="p-8 md:p-10 bg-muted/5">
             <span className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground block mb-6">
@@ -213,7 +241,9 @@ export function VerdictHero({
                   <div
                     className={cn(
                       "h-px w-8",
-                      config.color.replace("text-", "bg-"),
+                      hasGrade && gradeStyle
+                        ? gradeStyle.color.replace("text-", "bg-")
+                        : "bg-muted-foreground/30",
                     )}
                   />
                   <p className="text-xs text-muted-foreground leading-relaxed">

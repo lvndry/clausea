@@ -11,7 +11,9 @@ from src.models.topic_report import (
     TopicFinding,
     TopicReportItem,
 )
+from src.services.evidence_relevance import TOPIC_CITATION_LIMIT, select_topic_citations
 from src.services.topic_stance_service import evaluate_topic_stances
+from src.utils.standard_terms import finding_materiality_label, should_exclude_from_dangers
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
@@ -38,11 +40,21 @@ def _evidence_key(evidence: EvidenceSpan) -> tuple:
 
 
 def _build_citations(
-    evidence_spans: list[EvidenceSpan], documents_by_id: dict[str, DocumentSummary]
+    evidence_spans: list[EvidenceSpan],
+    documents_by_id: dict[str, DocumentSummary],
+    *,
+    category: InsightCategory,
+    finding_value: str | None = None,
 ) -> list[TopicCitation]:
+    selected_spans = select_topic_citations(
+        evidence_spans,
+        category=category,
+        finding_value=finding_value,
+        limit=TOPIC_CITATION_LIMIT,
+    )
     seen: set[tuple] = set()
     citations: list[TopicCitation] = []
-    for evidence in evidence_spans:
+    for evidence in selected_spans:
         if not (evidence.quote or "").strip():
             continue
         key = _evidence_key(evidence)
@@ -60,13 +72,6 @@ def _build_citations(
                 verified=evidence.verified,
             )
         )
-    citations.sort(
-        key=lambda c: (
-            c.document_id,
-            c.section_title or "",
-            c.quote,
-        )
-    )
     return citations
 
 
@@ -92,6 +97,11 @@ def build_product_topic_report(
     )
 
     for finding in aggregation.findings:
+        if finding.category == "dangers" and should_exclude_from_dangers(
+            finding.value, materiality=finding_materiality_label(finding.attributes)
+        ):
+            continue
+
         if finding.category not in topics_by_category:
             topics_by_category[finding.category] = TopicReportItem(
                 topic=finding.category,
@@ -105,7 +115,12 @@ def build_product_topic_report(
         if topic_item.coverage_status in {"missing", "not_analyzed"}:
             topic_item.coverage_status = "found"
 
-        citations = _build_citations(finding.evidence, documents_by_id)
+        citations = _build_citations(
+            finding.evidence,
+            documents_by_id,
+            category=finding.category,
+            finding_value=finding.value,
+        )
         if not citations:
             # Keep contract strict: emitted findings must be evidence-backed.
             continue
@@ -134,7 +149,12 @@ def build_product_topic_report(
         topic_item = topics_by_category[conflict.category]
         topic_item.coverage_status = "ambiguous"
 
-        citations = _build_citations(conflict.evidence, documents_by_id)
+        citations = _build_citations(
+            conflict.evidence,
+            documents_by_id,
+            category=conflict.category,
+            finding_value=conflict.description,
+        )
         conflict_document_ids = _dedupe_preserve_order(
             list(conflict.document_ids)
             + [citation.document_id for citation in citations if citation.document_id]

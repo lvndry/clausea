@@ -30,7 +30,7 @@ export const productOverviewSchema = z.looseObject({
   product_name: z.string(),
   product_slug: z.string(),
   company_name: z.string().nullish(),
-  verdict: verdictSchema,
-  risk_score: z.number(),
+  verdict: verdictSchema.nullish(),
+  risk_score: z.number().nullish(),
   one_line_summary: z.string(),
 });

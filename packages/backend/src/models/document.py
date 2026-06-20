@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from src.utils.grading import GradeLetter, coerce_grade, score_to_grade
+
 logger = logging.getLogger(__name__)
 
 TierRelevance = Literal["core", "extended"]
@@ -35,8 +37,33 @@ CORE_DOC_TYPES = {
 
 
 class DocumentAnalysisScores(BaseModel):
-    score: int
+    """Per-dimension A–E grade with mandatory LLM justification."""
+
+    grade: GradeLetter
     justification: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_score(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "grade" not in data and "score" in data:
+            try:
+                data = dict(data)
+                data["grade"] = score_to_grade(int(data["score"]))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(data.get("grade"), str):
+            data = dict(data)
+            data["grade"] = coerce_grade(data["grade"])
+        return data
+
+    @property
+    def score(self) -> int:
+        """Legacy user-friendliness proxy (0–10) derived from letter grade."""
+        from src.utils.grading import grade_to_user_score
+
+        return grade_to_user_score(self.grade)
 
 
 class EvidenceSpan(BaseModel):
@@ -79,6 +106,13 @@ class ExtractedTextItem(BaseModel):
     """An extracted, normalized text item with evidence."""
 
     value: str
+    materiality: Literal["standard_industry", "notable", "material_risk"] | None = Field(
+        default=None,
+        description=(
+            "Consumer-facing materiality tier from extraction LLM or batch classifier. "
+            "When set, downstream filters prefer this over regex fallback."
+        ),
+    )
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
@@ -433,13 +467,26 @@ class DocumentAnalysis(BaseModel):
 
     # Narrative and scoring
     summary: str
-    scores: dict[str, DocumentAnalysisScores]
-    risk_score: int = Field(default=5, ge=0, le=10, description="Overall risk score from 0-10")
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ] = Field(default="moderate", description="Privacy friendliness level based on risk score")
+    scores: dict[str, DocumentAnalysisScores] = Field(default_factory=dict)
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = Field(default=None, description="Privacy friendliness level based on risk score")
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
-        default=None, description="A-E grade derived deterministically from risk_score"
+        default=None, description="Overall A–E grade from LLM with server-side validation"
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="Mandatory LLM reasoning for the overall grade",
     )
     liability_risk: int | None = Field(
         default=None, ge=0, le=10, description="Liability risk score (0-10, for business users)"
@@ -508,8 +555,30 @@ class DocumentAnalysis(BaseModel):
 
 
 class MetaSummaryScore(BaseModel):
-    score: int
+    grade: GradeLetter
     justification: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_score(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "grade" not in data and "score" in data:
+            try:
+                data = dict(data)
+                data["grade"] = score_to_grade(int(data["score"]))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(data.get("grade"), str):
+            data = dict(data)
+            data["grade"] = coerce_grade(data["grade"])
+        return data
+
+    @property
+    def score(self) -> int:
+        from src.utils.grading import grade_to_user_score
+
+        return grade_to_user_score(self.grade)
 
 
 class MetaSummaryScores(BaseModel):
@@ -554,12 +623,28 @@ class MetaSummary(BaseModel):
         ),
     )
     scores: MetaSummaryScores
-    risk_score: int
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ]
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = Field(
+        default=None,
+        description="Privacy friendliness; derived deterministically from risk_score",
+    )
     grade: Literal["A", "B", "C", "D", "E"] | None = Field(
-        default=None, description="A-E grade derived deterministically from risk_score"
+        default=None, description="Overall A–E grade from LLM with server-side validation"
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="Mandatory LLM reasoning for the overall grade",
     )
     keypoints: list[str] = Field(default_factory=list)
     data_collected: list[str] | None = None
@@ -697,6 +782,10 @@ class ConsumerCase(BaseModel):
     )
     means_for_you: str = ""
     severity: ConsumerSeverity = "medium"
+    materiality: Literal["standard_industry", "notable", "material_risk"] | None = Field(
+        default=None,
+        description="Context-aware materiality from consumer explainer LLM; drives watch-out calibration.",
+    )
     classification: str | None = None
     what_they_get: str | None = Field(
         default=None, description="What the recipient receives, for the who_gets_your_data list."
@@ -707,6 +796,7 @@ class ConsumerCase(BaseModel):
     quote: str | None = None
     quote_status: str = "none"
     citation: SourceCitation | None = None
+    citations: list[SourceCitation] = Field(default_factory=list)
 
     @field_validator("severity", mode="before")
     @classmethod
@@ -900,6 +990,16 @@ class ComplianceBreakdown(BaseModel):
     status: Literal["Compliant", "Partially Compliant", "Non-Compliant", "Unknown"]
     strengths: list[str] = Field(description="What they do well.")
     gaps: list[str] = Field(description="What is missing or unclear.")
+    assessment_notes: str | None = Field(
+        default=None,
+        description="Brief summary of the evidence basis for this grade.",
+    )
+
+    def has_rationale(self) -> bool:
+        """True when the grade is backed by visible assessment notes."""
+        if self.assessment_notes and self.assessment_notes.strip():
+            return True
+        return bool(self.strengths or self.gaps)
 
 
 class ProductOverview(BaseModel):
@@ -915,10 +1015,19 @@ class ProductOverview(BaseModel):
     last_updated: datetime | None = None
 
     # Decision Support
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ]
-    risk_score: int = Field(ge=0, le=10)
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = None
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
     one_line_summary: str = Field(
         examples=["Spotify collects extensive data for ads but offers strong user rights"]
     )
@@ -928,6 +1037,14 @@ class ProductOverview(BaseModel):
             "One human-friendly sentence summarising the product's single most important "
             "privacy posture, as generated by the LLM."
         ),
+    )
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None,
+        description="Overall A–E privacy grade from LLM",
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="LLM reasoning for the overall grade",
     )
 
     # Core Insights (what users most want to know)
@@ -961,6 +1078,12 @@ class ProductOverview(BaseModel):
 
     # Compliance status per regulation (e.g., {"GDPR": 8, "CCPA": 7})
     compliance_status: dict[str, int] | None = None
+
+    # Justified per-regime compliance (score + strengths/gaps from product_compliance store)
+    compliance: dict[str, ComplianceBreakdown] | None = Field(
+        default=None,
+        description="Evidence-backed compliance breakdown keyed by regulation.",
+    )
 
     # Quick-scan privacy signals
     privacy_signals: PrivacySignals | None = None
@@ -1013,7 +1136,15 @@ class DocumentSummary(BaseModel):
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = None
-    risk_score: int | None = Field(default=None, ge=0, le=10)
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
     top_concerns: list[str] | None = Field(default=None, description="Top 3 concerns.")
     summary: str | None = Field(
         default=None, description="User-oriented explanation from analysis."
@@ -1129,7 +1260,7 @@ class DocumentSection(BaseModel):
 class DocumentRiskBreakdown(BaseModel):
     """Detailed risk assessment for a document."""
 
-    overall_risk: int = Field(ge=0, le=10)
+    overall_risk: int | None = Field(default=None, ge=0, le=10)
     risk_by_category: dict[str, int] = Field(
         default_factory=dict,
         examples=[{"data_sharing": 8, "retention": 5}],
@@ -1142,12 +1273,13 @@ class DocumentRiskBreakdown(BaseModel):
 
         Without this, a single missing nested field discards the entire document
         analysis. When overall_risk is absent we derive it from risk_by_category
-        (mean), falling back to a neutral 5 only when no category signal exists.
+        (mean). When no category signal exists, overall_risk stays unset.
         """
         if isinstance(data, dict) and data.get("overall_risk") in (None, ""):
             categories = data.get("risk_by_category") or {}
             values = [v for v in categories.values() if isinstance(v, int | float)]
-            data["overall_risk"] = round(sum(values) / len(values)) if values else 5
+            if values:
+                data["overall_risk"] = round(sum(values) / len(values))
         return data
 
     top_concerns: list[str] = Field(default_factory=list, description="Specific concerns.")

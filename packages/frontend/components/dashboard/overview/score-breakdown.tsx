@@ -8,13 +8,13 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
-import { gradeToneStyle, gradeToneWord, scoreToGrade } from "@/lib/grade";
+import { gradeToneStyle, gradeToneWord, parseLetterGrade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
 import type { DetailedScores } from "@/types";
 
 interface ScoreBreakdownProps {
   detailedScores: DetailedScores;
-  riskScore: number;
+  overallGrade?: "A" | "B" | "C" | "D" | "E" | null;
 }
 
 const scoreConfig = {
@@ -40,23 +40,32 @@ const scoreConfig = {
   },
 } as const;
 
+const GRADE_POSITION: Record<string, number> = {
+  A: 90,
+  B: 70,
+  C: 50,
+  D: 30,
+  E: 10,
+};
+
 export function ScoreBreakdown({
   detailedScores,
-  riskScore,
+  overallGrade,
 }: ScoreBreakdownProps) {
   const dimensions = Object.entries(scoreConfig).map(([key, config]) => {
     const detail = detailedScores[key as keyof DetailedScores];
+    const grade = parseLetterGrade(detail.grade);
     return {
       key,
       ...config,
-      score: detail.score,
+      grade,
       justification: detail.justification,
-      grade: scoreToGrade(detail.score),
+      position: GRADE_POSITION[grade.letter] ?? 50,
     };
   });
 
-  const riskGrade = scoreToGrade(riskScore, { invert: true });
-  const riskStyle = gradeToneStyle(riskGrade.tone);
+  const riskGrade = overallGrade ? parseLetterGrade(overallGrade) : null;
+  const riskStyle = riskGrade ? gradeToneStyle(riskGrade.tone) : null;
 
   return (
     <div className="border border-border bg-background">
@@ -72,22 +81,34 @@ export function ScoreBreakdown({
         </div>
         <div className="flex items-center gap-3">
           <ShieldAlert
-            className={cn("h-4 w-4", riskStyle.color)}
+            className={cn(
+              "h-4 w-4",
+              riskStyle ? riskStyle.color : "text-muted-foreground",
+            )}
             strokeWidth={1.5}
           />
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            Overall Risk
+            Overall Grade
           </span>
-          <div
-            className={cn(
-              "px-2.5 py-1 border font-display font-medium text-base leading-none",
-              riskStyle.color,
-              riskStyle.bg,
-              riskStyle.border,
-            )}
-          >
-            {riskGrade.letter}
-          </div>
+          {riskGrade && riskStyle ? (
+            <div
+              className={cn(
+                "px-2.5 py-1 border font-display font-medium text-base leading-none",
+                riskStyle.color,
+                riskStyle.bg,
+                riskStyle.border,
+              )}
+            >
+              {riskGrade.letter}
+            </div>
+          ) : (
+            <div
+              className="px-2.5 py-1 border border-border font-display font-medium text-base leading-none text-muted-foreground"
+              title="Insufficient dimension grades for an overall grade"
+            >
+              —
+            </div>
+          )}
         </div>
       </div>
 
@@ -127,7 +148,7 @@ export function ScoreBreakdown({
                         style.bg,
                         style.border,
                       )}
-                      style={{ left: `${item.score * 10}%` }}
+                      style={{ left: `${item.position}%` }}
                     />
                   </div>
                   <div className="flex items-baseline justify-end w-12">

@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-import re
+import json
 from collections import defaultdict
 from typing import Any
 
 from src.models.document import CoverageItem, InsightCategory
 from src.models.finding import AggregatedFinding, FindingConflict
 from src.models.topic_report import TopicStance
+from src.services.evidence_relevance import (
+    MIN_SUBSTANTIVE_CITATIONS_FOR_ELEVATED_RISK,
+    count_substantive_evidence,
+)
+from src.utils.standard_terms import (
+    finding_materiality_label,
+    should_exclude_from_dangers,
+    topic_signal_score,
+)
 
 _YES_TOKENS = {"yes", "true", "1"}
 _NO_TOKENS = {"no", "false", "0"}
 _UNCLEAR_TOKENS = {"unclear", "unknown", "null", "none", ""}
-
-_AI_TRAINING_FLAG_PATTERN = re.compile(
-    r"""
-    ["']?(?:ai_training_on_user_data|training_on_user_data|ai-training-on-user-data)["']?
-    \s*[:=]\s*
-    ["']?(yes|no|true|false|1|0|unclear|null|unknown|none)["']?
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
 
 
 def _coerce_yes_no_unclear(value: object) -> str | None:
@@ -32,6 +32,23 @@ def _coerce_yes_no_unclear(value: object) -> str | None:
         return "no"
     if normalized in _UNCLEAR_TOKENS:
         return "unclear"
+    return None
+
+
+def _ai_training_signal_from_value(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw.startswith("{"):
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in ("ai_training_on_user_data", "training_on_user_data", "AI_TRAINING_ON_USER_DATA"):
+        parsed = _coerce_yes_no_unclear(payload.get(key))
+        if parsed in {"yes", "no"}:
+            return parsed
     return None
 
 
@@ -50,16 +67,6 @@ def _ai_training_signal_from_attributes(attributes: list[dict[str, Any]]) -> str
             return "yes"
 
     return None
-
-
-def _ai_training_signal_from_value(value: str) -> str | None:
-    match = _AI_TRAINING_FLAG_PATTERN.search(value or "")
-    if not match:
-        return None
-    parsed = _coerce_yes_no_unclear(match.group(1))
-    if parsed in {"yes", "no"}:
-        return parsed
-    return "unclear"
 
 
 def _resolve_ai_training_signal(*, value: str, attributes: list[dict[str, Any]]) -> str | None:
@@ -84,6 +91,14 @@ def _render_rationale(rationale_key: str, params: dict[str, int | str | None] | 
             f"{data.get('document_count', 0)} document(s) with "
             f"{data.get('evidence_count', 0)} evidence span(s)."
         )
+    if rationale_key == "topic.thin_evidence":
+        return (
+            "Only "
+            f"{data.get('substantive_evidence_count', 0)} substantive citation(s) "
+            "support this topic, so risk is treated as low until more evidence appears."
+        )
+    if rationale_key == "topic.positive_practice":
+        return "Documents describe clear protective practices for this topic."
     # fallback to generic deterministic sentence
     return "Evidence present for this topic."
 
@@ -126,21 +141,8 @@ def _map_sharing_risk_level(value: str | None) -> int:
 
 
 def _parse_duration_risk(text: str) -> int:
-    lower = text.lower()
-    if any(term in lower for term in ("indefinite", "forever", "permanent", "as long as")):
-        return 8
-    if any(term in lower for term in ("delete", "deletion", "remove")) and any(
-        term in lower for term in ("30 day", "60 day", "90 day", "month")
-    ):
-        return 3
-    year_match = re.search(r"(\d+)\s*year", lower)
-    if year_match:
-        years = int(year_match.group(1))
-        if years >= 5:
-            return 8
-        if years >= 2:
-            return 6
-        return 5
+    """Conservative default when retention duration is not structured in attributes."""
+    _ = text
     return 5
 
 
@@ -247,12 +249,32 @@ def _signals_from_findings(findings: list[AggregatedFinding]) -> dict[InsightCat
             signals[category].append(7)
             continue
 
-        if category in {"international_transfers", "dispute_resolution", "indemnification"}:
-            signals[category].append(6)
+        label = finding_materiality_label(finding.attributes)
+
+        if category == "indemnification":
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
+            continue
+
+        if category in {"international_transfers", "dispute_resolution"}:
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
+            continue
+
+        if category in {"termination_consequences", "content_ownership"}:
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
             continue
 
         if category == "dangers":
-            signals[category].append(8)
+            if should_exclude_from_dangers(finding.value, materiality=label):
+                continue
+            signals[category].append(
+                topic_signal_score(finding.value, category=category, materiality=label)
+            )
             continue
 
         if category == "benefits":
@@ -271,6 +293,76 @@ def _score_to_stance(score: int) -> TopicStance:
     if score <= 6:
         return "moderate_risk"
     return "high_risk"
+
+
+_PROTECTIVE_TOPICS: frozenset[InsightCategory] = frozenset(
+    {"benefits", "security", "user_rights", "breach_notification"}
+)
+
+
+def _count_topic_substantive_evidence(
+    *,
+    topic: InsightCategory,
+    findings: list[AggregatedFinding],
+    conflicts: list[FindingConflict],
+) -> int:
+    total = 0
+    for finding in findings:
+        if finding.category != topic:
+            continue
+        total += count_substantive_evidence(
+            finding.evidence,
+            category=finding.category,
+            finding_value=finding.value,
+        )
+    for conflict in conflicts:
+        if conflict.category != topic:
+            continue
+        total += count_substantive_evidence(
+            conflict.evidence,
+            category=conflict.category,
+            finding_value=conflict.description,
+        )
+    return total
+
+
+def _apply_evidence_sufficiency_cap(row: dict[str, Any], substantive_count: int) -> None:
+    """Downgrade topics with fewer than three substantive citations to low risk."""
+    if row["status"] in {"missing", "not_disclosed"}:
+        return
+    if row["stance"] == "mixed":
+        return
+    if substantive_count >= MIN_SUBSTANTIVE_CITATIONS_FOR_ELEVATED_RISK:
+        return
+
+    current_score = row.get("topic_score")
+    row["topic_score"] = min(current_score if isinstance(current_score, int) else 5, 3)
+    row["stance"] = "low_risk"
+    row["rationale_key"] = "topic.thin_evidence"
+    row["rationale_params"] = {
+        "finding_count": row.get("finding_count", 0),
+        "document_count": row.get("document_count", 0),
+        "evidence_count": row.get("evidence_count", 0),
+        "substantive_evidence_count": substantive_count,
+    }
+    row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
+
+
+def _apply_positive_practice_rationale(topic: InsightCategory, row: dict[str, Any]) -> None:
+    """Surface low-risk protective topics with a positive rationale when evidence is solid."""
+    if row["status"] != "found" or row["stance"] != "low_risk":
+        return
+    if row.get("rationale_key") == "topic.thin_evidence":
+        return
+    if topic not in _PROTECTIVE_TOPICS:
+        return
+    row["rationale_key"] = "topic.positive_practice"
+    row["rationale_params"] = {
+        "finding_count": row.get("finding_count", 0),
+        "document_count": row.get("document_count", 0),
+        "evidence_count": row.get("evidence_count", 0),
+    }
+    row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
 
 
 def evaluate_topic_stances(
@@ -361,6 +453,12 @@ def evaluate_topic_stances(
 
     for topic, row in by_topic.items():
         row["document_count"] = len(topic_document_ids[topic])
+        substantive_count = _count_topic_substantive_evidence(
+            topic=topic,
+            findings=findings,
+            conflicts=conflicts,
+        )
+        _apply_evidence_sufficiency_cap(row, substantive_count)
         if row["status"] in {"missing", "not_disclosed"}:
             row["rationale_key"] = "topic.not_disclosed"
             row["rationale_params"] = None
@@ -374,13 +472,15 @@ def evaluate_topic_stances(
             }
             row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
             continue
-        row["rationale_key"] = "topic.findings_summary"
-        row["rationale_params"] = {
-            "finding_count": row["finding_count"],
-            "document_count": row["document_count"],
-            "evidence_count": row["evidence_count"],
-        }
-        row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
+        if row.get("rationale_key") != "topic.thin_evidence":
+            row["rationale_key"] = "topic.findings_summary"
+            row["rationale_params"] = {
+                "finding_count": row["finding_count"],
+                "document_count": row["document_count"],
+                "evidence_count": row["evidence_count"],
+            }
+            row["rationale"] = _render_rationale(row["rationale_key"], row["rationale_params"])
+        _apply_positive_practice_rationale(topic, row)
 
     return by_topic
 

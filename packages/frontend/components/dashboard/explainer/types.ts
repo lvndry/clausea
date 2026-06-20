@@ -35,6 +35,7 @@ export interface ConsumerCase {
   quote?: string | null;
   quote_status?: string | null;
   citation?: SourceCitation | null;
+  citations?: SourceCitation[] | null;
 }
 
 export interface ConsumerDataItem extends ConsumerCase {
@@ -147,6 +148,44 @@ export function normalizeConfidence(
 
 export function hasCitation(quoteStatus: string | null | undefined): boolean {
   return (quoteStatus ?? "").trim().toLowerCase() === "from_extraction";
+}
+
+export function resolveCitations(item: ConsumerCase): SourceCitation[] {
+  if (item.citations && item.citations.length > 0) {
+    return item.citations;
+  }
+  return item.citation ? [item.citation] : [];
+}
+
+function humanizeSource(value: string | null | undefined): string | null {
+  const cleaned = value?.trim();
+  if (!cleaned) return null;
+  return cleaned.replace(/_/g, " ");
+}
+
+function sourceLabelFromUrl(url: string): string | null {
+  const cleaned = url.trim();
+  if (!cleaned) return null;
+  try {
+    const parsed = new URL(cleaned);
+    const host = parsed.hostname.replace(/^www\./, "");
+    if (host) return host;
+  } catch {
+    // Fall back to the raw URL when it isn't parseable.
+  }
+  return cleaned;
+}
+
+export function resolveSourceLabel(
+  citation: SourceCitation | null | undefined,
+): string {
+  return (
+    humanizeSource(citation?.document_title) ??
+    humanizeSource(citation?.document_type) ??
+    sourceLabelFromUrl(citation?.document_url ?? "") ??
+    humanizeSource(citation?.document_id) ??
+    "the source document"
+  );
 }
 
 // `what_they_collect` / `who_gets_your_data` / `what_you_can_do` may arrive as

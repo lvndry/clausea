@@ -221,7 +221,9 @@ def show_complete_workflow() -> None:
         return
 
     # Filter products that have either crawl_base_urls or domains
-    products_with_urls = [p for p in products if p.crawl_base_urls or p.domains]
+    products_with_urls = [
+        product for product in products if product.crawl_base_urls or product.domains
+    ]
 
     if not products_with_urls:
         st.warning(

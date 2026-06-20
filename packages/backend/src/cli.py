@@ -96,7 +96,7 @@ def _select_products(products: list, selection: str, allow_all: bool) -> list:
     if allow_all or selection.lower() in {"all", "*"}:
         return products
 
-    by_slug = {p.slug: p for p in products}
+    by_slug = {product.slug: product for product in products}
     selected: list = []
     for token in [t.strip() for t in selection.split(",") if t.strip()]:
         if token.isdigit():
@@ -372,7 +372,7 @@ async def _main() -> None:
             product_svc = create_product_service()
             products = await product_svc.get_all_products(db)
 
-        products = sorted(products, key=lambda p: (p.slug or "").lower())
+        products = sorted(products, key=lambda product: (product.slug or "").lower())
 
         if not products:
             logger.info("No products found in database")
@@ -398,7 +398,7 @@ async def _main() -> None:
             "Selected products",
             action=action,
             dry_run=is_dry_run,
-            products=[p.slug for p in selected_products],
+            products=[product.slug for product in selected_products],
         )
 
         dry_run_label = (
@@ -407,7 +407,7 @@ async def _main() -> None:
         console.print(
             Panel.fit(
                 f"[bold]Action:[/bold] {action}\n[bold]Products:[/bold] "
-                f"{', '.join(p.slug for p in selected_products)}{dry_run_label}",
+                f"{', '.join(product.slug for product in selected_products)}{dry_run_label}",
                 border_style="green" if not is_dry_run else "yellow",
                 box=box.ASCII,
             )

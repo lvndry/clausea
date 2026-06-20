@@ -36,7 +36,7 @@ def find_most_recent_log_file(product: Product) -> Path | None:
         return None
 
     # Return the most recently modified file
-    return max(log_files, key=lambda p: p.stat().st_mtime)
+    return max(log_files, key=lambda path: path.stat().st_mtime)
 
 
 def read_log_file(log_file_path: Path | None) -> str:
@@ -270,7 +270,9 @@ def show_crawling() -> None:
         return
 
     # Filter products that have either crawl_base_urls or domains
-    products_with_urls = [p for p in products if p.crawl_base_urls or p.domains]
+    products_with_urls = [
+        product for product in products if product.crawl_base_urls or product.domains
+    ]
 
     if not products_with_urls:
         st.warning(

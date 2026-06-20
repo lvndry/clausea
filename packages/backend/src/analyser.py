@@ -12,6 +12,7 @@ Flow for product overview (powers cached JSON on `/products/{slug}` in the app):
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any, Literal, NamedTuple
@@ -47,6 +48,7 @@ from src.models.document import (
     IndividualImpact,
     InsightCategory,
     MetaSummary,
+    MetaSummaryScores,
     PrivacySignals,
     ProcurementDecision,
     ProductContradiction,
@@ -76,11 +78,20 @@ from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
 from src.services.aggregation_service import AggregationService
 from src.services.document_service import DocumentService
+from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
+from src.services.term_materiality_classifier import filter_danger_strings_llm
 from src.services.topic_report_service import build_product_topic_report
 from src.services.topic_stance_service import compose_product_risk_from_topics
+from src.services.watch_out_calibration import calibrate_consumer_explainer
 from src.utils.cancellation import CancellationToken
+from src.utils.grading import (
+    aggregate_dimension_grades,
+    coerce_grade,
+    grade_to_risk_score,
+    risk_score_to_verdict,
+)
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
 load_dotenv()
@@ -97,14 +108,27 @@ def _analysis_validator(content: str) -> bool:
             return False
         if not isinstance(data.get("summary"), str) or not data["summary"].strip():
             return False
+        grade = data.get("grade")
+        if not isinstance(grade, str) or grade.strip().upper()[:1] not in {"A", "B", "C", "D", "E"}:
+            return False
         scores = data.get("scores")
-        if not isinstance(scores, dict) or len(scores) == 0:
+        if not isinstance(scores, dict) or not scores:
             return False
-        # At least one score entry must be a dict with a numeric score field
-        if not any(
-            isinstance(v, dict) and isinstance(v.get("score"), int) for v in scores.values()
-        ):
-            return False
+        for value in scores.values():
+            if not isinstance(value, dict):
+                return False
+            dim_grade = value.get("grade")
+            justification = value.get("justification")
+            if not isinstance(dim_grade, str) or dim_grade.strip().upper()[:1] not in {
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+            }:
+                return False
+            if not isinstance(justification, str) or not justification.strip():
+                return False
         return True
     except (json.JSONDecodeError, AttributeError):
         return False
@@ -339,36 +363,59 @@ def _compute_document_signature(documents: list[Document]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
-def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
-    """
-    Calculate overall risk score from component scores.
+def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
+    """Derive product headline risk from LLM-assessed overview dimension grades."""
+    return _calculate_risk_score(
+        {
+            key: DocumentAnalysisScores(
+                grade=getattr(scores, key).grade,
+                justification=getattr(scores, key).justification,
+            )
+            for key in (
+                "transparency",
+                "data_collection_scope",
+                "user_control",
+                "third_party_sharing",
+            )
+        }
+    )
 
-    Higher component scores = better for the user. Risk is the inverse of that
-    weighted blend so minimal-data / low-sharing / strong-security policies
-    score clearly lower than ad-heavy, broadly shared data practices.
 
-    Weights (sum 1.0): data_collection_scope and third_party_sharing dominate;
-    transparency, user_control, retention, and security add nuance (e.g. E2EE).
+def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
+    """Set headline risk and verdict from LLM grade; apply signal floors to risk only."""
+    llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
+    derived_grade = aggregate_dimension_grades(
+        {
+            key: getattr(meta_summary.scores, key).grade
+            for key in (
+                "transparency",
+                "data_collection_scope",
+                "user_control",
+                "third_party_sharing",
+            )
+        }
+    )
+    final_grade = llm_grade or derived_grade
+    if final_grade is None:
+        meta_summary.risk_score = None
+        meta_summary.verdict = None
+        meta_summary.grade = None
+        return
 
-    Any absent score is filled with neutral (5) so the full weight set is always
-    applied — a missing dimension is unknown, not perfectly scored.
-    """
-    weights = {
-        "transparency": 0.14,
-        "data_collection_scope": 0.26,
-        "user_control": 0.18,
-        "third_party_sharing": 0.24,
-        "data_retention_score": 0.10,
-        "security_score": 0.08,
-    }
+    meta_summary.grade = final_grade
+    base_risk = grade_to_risk_score(final_grade)
+    adjusted = _apply_positive_risk_adjustment(base_risk, meta_summary)
+    floored = _apply_signal_floors(adjusted, meta_summary.privacy_signals)
+    meta_summary.risk_score = floored
+    meta_summary.verdict = risk_score_to_verdict(floored)
 
-    effective = dict(scores)
-    for key in weights:
-        if key not in effective:
-            effective[key] = DocumentAnalysisScores(score=5, justification="not assessed")
 
-    weighted_sum = sum(effective[k].score * w for k, w in weights.items())
-    return max(0, min(10, round(10 - weighted_sum)))
+def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
+    """Map weighted dimension letter grades to an optional 0–10 risk score."""
+    grade = aggregate_dimension_grades({key: value.grade for key, value in scores.items()})
+    if grade is None:
+        return None
+    return grade_to_risk_score(grade)
 
 
 def _calculate_verdict(
@@ -401,6 +448,21 @@ def _calculate_grade(risk_score: int) -> Literal["A", "B", "C", "D", "E"]:
     if risk_score <= 8:
         return "D"
     return "E"
+
+
+def _apply_positive_risk_adjustment(risk_score: int, meta_summary: MetaSummary) -> int:
+    """Reduce headline risk when documented protections outweigh thin concerns."""
+    adjustment = 0
+    benefits = meta_summary.benefits or []
+    if len(benefits) >= 2:
+        adjustment += 1
+    stances = meta_summary.topic_stances or []
+    low_risk_topics = sum(
+        1 for stance in stances if stance.stance == "low_risk" and stance.status == "found"
+    )
+    if low_risk_topics >= 3:
+        adjustment += 1
+    return max(0, risk_score - adjustment)
 
 
 def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int:
@@ -458,28 +520,102 @@ def _truncate_text(value: str | None, limit: int = 220) -> str | None:
 
 def _topic_supporting_citations(topic: Any) -> list[TopicSupportCitation]:
     selected: list[TopicSupportCitation] = []
-    citation_pool = [
-        *(citation for finding in topic.findings for citation in (finding.citations or [])),
-        *(citation for conflict in topic.conflicts for citation in (conflict.citations or [])),
-    ]
-    for citation in citation_pool:
-        quote = getattr(citation, "quote", None)
-        if not quote:
-            continue
-        document_id = getattr(citation, "document_id", "")
-        section_title = getattr(citation, "section_title", None)
-        document_url = getattr(citation, "document_url", None)
-        selected.append(
-            TopicSupportCitation(
-                document_id=document_id,
-                document_title=getattr(citation, "document_title", None),
-                document_url=document_url,
-                quote=str(quote),
-                section_title=section_title,
-                verified=bool(getattr(citation, "verified", True)),
+    seen: set[tuple[str, str]] = set()
+    for finding in topic.findings:
+        for citation in finding.citations or []:
+            quote = getattr(citation, "quote", None)
+            if not quote:
+                continue
+            document_id = getattr(citation, "document_id", "")
+            key = (document_id, str(quote))
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(
+                TopicSupportCitation(
+                    document_id=document_id,
+                    document_title=getattr(citation, "document_title", None),
+                    document_url=getattr(citation, "document_url", None),
+                    quote=str(quote),
+                    section_title=getattr(citation, "section_title", None),
+                    verified=bool(getattr(citation, "verified", True)),
+                )
             )
-        )
+            if len(selected) >= TOPIC_CITATION_LIMIT:
+                return selected
+    for conflict in topic.conflicts:
+        for citation in conflict.citations or []:
+            quote = getattr(citation, "quote", None)
+            if not quote:
+                continue
+            document_id = getattr(citation, "document_id", "")
+            key = (document_id, str(quote))
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(
+                TopicSupportCitation(
+                    document_id=document_id,
+                    document_title=getattr(citation, "document_title", None),
+                    document_url=getattr(citation, "document_url", None),
+                    quote=str(quote),
+                    section_title=getattr(citation, "section_title", None),
+                    verified=bool(getattr(citation, "verified", True)),
+                )
+            )
+            if len(selected) >= TOPIC_CITATION_LIMIT:
+                return selected
     return selected
+
+
+_PROTECTIVE_HEADLINE_TOPICS: frozenset[str] = frozenset(
+    {"benefits", "security", "user_rights", "breach_notification", "data_sale", "ai_training"}
+)
+_PROTECTIVE_VALUE_MARKERS: tuple[str, ...] = (
+    "sells_data: no",
+    "does not sell",
+    "do not sell",
+    "not sell",
+    "encrypt",
+    "no ai training",
+    "not used for training",
+    "does not use",
+    "opt out",
+    "delete your",
+    "data deletion",
+)
+
+
+def _is_protective_finding_value(topic: str, value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return False
+    if topic in _PROTECTIVE_HEADLINE_TOPICS:
+        if topic in {"benefits", "security", "user_rights", "breach_notification"}:
+            return True
+        if topic == "data_sale" and (
+            re.search(r"\bno\b", normalized) is not None or "not sell" in normalized
+        ):
+            return True
+        if topic == "ai_training" and (
+            re.search(r"\bno\b", normalized) is not None
+            or any(marker in normalized for marker in ("not train", "does not use", "opt out"))
+        ):
+            return True
+    return any(marker in normalized for marker in _PROTECTIVE_VALUE_MARKERS)
+
+
+def _headline_finding_for_topic(topic: Any) -> Any | None:
+    findings = list(getattr(topic, "findings", []) or [])
+    if not findings:
+        return None
+    stance = str(getattr(topic, "stance", "") or "")
+    topic_name = str(getattr(topic, "topic", "") or "")
+    if stance == "low_risk":
+        for finding in findings:
+            if _is_protective_finding_value(topic_name, getattr(finding, "value", None)):
+                return finding
+    return findings[0]
 
 
 def _topic_why_it_matters(topic: str, status: str, stance: str, conflict_count: int) -> str:
@@ -547,28 +683,51 @@ def _weighted_product_risk_score(docs: list[Document]) -> int | None:
     return max(0, min(10, round(weighted_sum / weight_total)))
 
 
+def _merge_legacy_dimension_justifications(
+    parsed_dict: dict[str, Any],
+) -> None:
+    """Convert legacy dimension_justifications-only LLM output to grade scores."""
+    legacy = parsed_dict.pop("dimension_justifications", None)
+    if not isinstance(legacy, dict):
+        return
+    scores = parsed_dict.setdefault("scores", {})
+    if not isinstance(scores, dict):
+        scores = {}
+        parsed_dict["scores"] = scores
+    for key, justification in legacy.items():
+        if key in scores and isinstance(scores[key], dict):
+            continue
+        if isinstance(justification, str) and justification.strip():
+            scores[key] = {"grade": "C", "justification": justification.strip()}
+
+
 def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     """
-    Validate scores returned by the LLM and recalculate the headline risk.
+    Validate LLM dimension grades and derive optional headline risk and verdict.
 
-    Missing score keys are left absent — the LLM is instructed to omit scores it
-    cannot assess from the extraction. Invalid values (out-of-range or wrong type)
-    are dropped so they don't distort the weighted risk formula.
+    The LLM overall ``grade`` and ``grade_justification`` are preserved when present.
+    ``risk_score`` is derived from grades for legacy consumers only.
     """
     cleaned: dict[str, DocumentAnalysisScores] = {}
     for score_name, score_obj in parsed.scores.items():
-        score_value = getattr(score_obj, "score", None)
-        if score_value is not None and isinstance(score_value, int) and 0 <= score_value <= 10:
+        justification = (score_obj.justification or "").strip()
+        if score_obj.grade and justification:
             cleaned[score_name] = score_obj
 
     parsed.scores = cleaned
 
-    # Recalculate risk_score and verdict deterministically from whatever scores the LLM
-    # returned. _calculate_risk_score handles partial score sets by normalising weights.
-    parsed.risk_score = _calculate_risk_score(parsed.scores)
-    parsed.verdict = _calculate_verdict(parsed.risk_score)
-    parsed.grade = _calculate_grade(parsed.risk_score)
+    llm_grade = coerce_grade(parsed.grade) if parsed.grade else None
+    derived_grade = aggregate_dimension_grades({key: value.grade for key, value in cleaned.items()})
+    final_grade = llm_grade or derived_grade
+    if final_grade is None:
+        parsed.risk_score = None
+        parsed.verdict = None
+        parsed.grade = None
+        return parsed
 
+    parsed.grade = final_grade
+    parsed.risk_score = grade_to_risk_score(final_grade)
+    parsed.verdict = risk_score_to_verdict(parsed.risk_score)
     return parsed
 
 
@@ -715,7 +874,7 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
 
     risk_breakdown_raw = data.get("document_risk_breakdown", {})
     if isinstance(risk_breakdown_raw, dict):
-        if "overall_risk" not in risk_breakdown_raw:
+        if "overall_risk" not in risk_breakdown_raw and analysis.risk_score is not None:
             risk_breakdown_raw["overall_risk"] = analysis.risk_score
         try:
             analysis.document_risk_breakdown = DocumentRiskBreakdown(**risk_breakdown_raw)
@@ -827,6 +986,7 @@ async def analyse_document(
     # Fallback: raw text if extraction fails unexpectedly.
     extracted_prompt: str | None = None
     extraction_for_evidence: dict[str, Any] | None = None
+    extraction: DocumentExtraction | None = None
 
     try:
         await token.check_cancellation()
@@ -858,6 +1018,7 @@ Extracted facts (evidence-backed JSON):
         logger.warning(
             f"Extraction failed for document {document.id}: {e}. Falling back to raw text."
         )
+        extraction = None
 
     if extracted_prompt is not None:
         prompt = extracted_prompt
@@ -924,10 +1085,10 @@ Document content:
                 )
 
                 # Cancel pending tasks
-                for p in pending:
-                    p.cancel()
+                for pending_task in pending:
+                    pending_task.cancel()
                     try:
-                        await p
+                        await pending_task
                     except asyncio.CancelledError:
                         pass
 
@@ -957,11 +1118,11 @@ Document content:
             # Parse and validate response
             try:
                 parsed_dict = json.loads(content)
+                _merge_legacy_dimension_justifications(parsed_dict)
 
                 parsed: DocumentAnalysis = DocumentAnalysis.model_validate(
                     parsed_dict, strict=False
                 )
-                # Ensure all required scores are present, normalize names, and calculate risk_score/verdict
                 parsed = _ensure_required_scores(parsed)
 
                 # Parse deep analysis fields (critical_clauses, risk_breakdown,
@@ -1078,7 +1239,9 @@ def _collect_extraction_citations(
         if isinstance(node, dict):
             quote = node.get("quote")
             if isinstance(quote, str) and quote.strip():
-                document_id = str(node.get("document_id") or (document.id if document else "")).strip()
+                document_id = str(
+                    node.get("document_id") or (document.id if document else "")
+                ).strip()
                 document_url = str(node.get("url") or (document.url if document else "")).strip()
                 if document_id and document_url:
                     start_char = node.get("start_char")
@@ -1124,17 +1287,74 @@ def _collect_extraction_quotes(extraction: DocumentExtraction) -> list[str]:
     return [citation.quote for citation in _collect_extraction_citations(extraction)]
 
 
-def _match_source_citation(
+def _match_source_citations(
     quote: str | None, allowed_citations: Sequence[SourceCitation]
-) -> SourceCitation | None:
-    """Return the first source citation whose verified quote contains ``quote``."""
+) -> list[SourceCitation]:
+    """Return every source citation whose verified quote contains ``quote``."""
     needle = (quote or "").strip()
     if not needle:
-        return None
+        return []
+    matched: list[SourceCitation] = []
+    seen: set[tuple[str, str]] = set()
     for citation in allowed_citations:
-        if needle in citation.quote:
-            return citation
-    return None
+        if needle not in citation.quote:
+            continue
+        key = (citation.document_id, citation.quote)
+        if key in seen:
+            continue
+        seen.add(key)
+        matched.append(citation)
+    return matched
+
+
+def _citation_has_source_identity(citation: SourceCitation | None) -> bool:
+    """True when a citation carries enough metadata for the UI source label."""
+    if citation is None:
+        return False
+    if citation.document_title and citation.document_title.strip():
+        return True
+    if citation.document_type and citation.document_type.strip():
+        return True
+    return bool(citation.document_url and citation.document_url.strip())
+
+
+def enrich_consumer_explainer_citations(
+    explainer: ConsumerExplainer,
+    documents: Sequence[Document],
+) -> ConsumerExplainer:
+    """Attach missing source citations for legacy stored explainers on read.
+
+    Explainers generated before verified citations shipped may still carry
+    ``quote_status="from_extraction"`` without a populated ``citation`` object.
+    """
+    allowed_citations: list[SourceCitation] = []
+    for document in documents:
+        extraction = document.extraction
+        if extraction is None:
+            continue
+        allowed_citations.extend(_collect_extraction_citations(extraction, document))
+    if not allowed_citations:
+        return explainer
+
+    def _attach(cases: Sequence[ConsumerCase]) -> None:
+        for case in cases:
+            if not case.quote or case.quote_status != "from_extraction":
+                continue
+            verified = [
+                citation
+                for citation in _match_source_citations(case.quote, allowed_citations)
+                if citation.document_id != "unknown"
+            ]
+            if not verified:
+                continue
+            case.citations = verified
+            if not _citation_has_source_identity(case.citation):
+                case.citation = verified[0]
+
+    _attach(explainer.watch_out_for)
+    _attach(explainer.who_gets_your_data)
+    _attach(explainer.what_they_collect)
+    return explainer
 
 
 def _strip_json_fences(content: str) -> str:
@@ -1193,19 +1413,25 @@ def _validate_consumer_explainer_quotes(
                 case.quote = None
                 case.quote_status = "none"
                 case.citation = None
+                case.citations = []
                 continue
-            citation = _match_source_citation(case.quote, allowed_citations)
-            if citation:
+            matched = _match_source_citations(case.quote, allowed_citations)
+            verified = [citation for citation in matched if citation.document_id != "unknown"]
+            if verified:
                 case.quote_status = "from_extraction"
-                case.citation = citation if citation.document_id != "unknown" else None
+                case.citations = verified
+                case.citation = verified[0]
             else:
                 case.quote = None
                 case.quote_status = "none"
                 case.citation = None
+                case.citations = []
 
     _recite(explainer.watch_out_for)
     _recite(explainer.who_gets_your_data)
     _recite(explainer.what_they_collect)
+
+    calibrate_consumer_explainer(explainer)
 
     critical_count = sum(
         1
@@ -1241,6 +1467,22 @@ def _validate_consumer_explainer_quotes(
                 f"Grade adjusted to {floor}: {critical_count} critical "
                 f"finding{'s' if critical_count != 1 else ''}."
             )
+    elif critical_count == 0 and len(explainer.good_to_know or []) >= 2:
+        current_index = grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
+        boost_index = max(0, current_index - 1)
+        if boost_index < current_index:
+            improved = grade_order[boost_index]
+            logger.info(
+                "ConsumerExplainer grade boost: %s -> %s (%d good_to_know items)",
+                explainer.grade,
+                improved,
+                len(explainer.good_to_know or []),
+            )
+            explainer.grade = improved
+            if not explainer.grade_reason:
+                explainer.grade_reason = (
+                    "Grade reflects documented protections described in the policies."
+                )
 
     return explainer
 
@@ -1459,6 +1701,19 @@ async def generate_product_consumer_explainer(
     return None
 
 
+def _normalize_compliance_regime_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Coerce LLM compliance regime fields before model validation."""
+    normalized = dict(payload)
+    rationale = normalized.pop("rationale", None)
+    if rationale is not None and not normalized.get("assessment_notes"):
+        normalized["assessment_notes"] = rationale
+    for key in ("strengths", "gaps"):
+        value = normalized.get(key)
+        if isinstance(value, str):
+            normalized[key] = [value] if value.strip() else []
+    return normalized
+
+
 async def generate_product_compliance(
     db: AgnosticDatabase,
     product_slug: str,
@@ -1546,7 +1801,7 @@ async def generate_product_compliance(
                     continue
                 try:
                     breakdowns[str(regime)] = ComplianceBreakdown.model_validate(
-                        payload, strict=False
+                        _normalize_compliance_regime_payload(payload), strict=False
                     )
                 except Exception as item_error:  # noqa: BLE001 - skip one bad regime, keep the rest
                     logger.debug(
@@ -1738,8 +1993,8 @@ async def generate_product_overview(
                     for d in doc.extraction.data_collected
                 ],
                 "data_purposes": [
-                    {"data_type": p.data_type, "purposes": p.purposes}
-                    for p in doc.extraction.data_purposes
+                    {"data_type": data_purpose.data_type, "purposes": data_purpose.purposes}
+                    for data_purpose in doc.extraction.data_purposes
                 ],
                 "third_party_details": [
                     {
@@ -1850,10 +2105,10 @@ Per-document analyses and extractions:
             )
 
             # Cancel pending tasks
-            for p in pending:
-                p.cancel()
+            for pending_task in pending:
+                pending_task.cancel()
                 try:
-                    await p
+                    await pending_task
                 except asyncio.CancelledError:
                     pass
 
@@ -1884,12 +2139,15 @@ Per-document analyses and extractions:
 
         # Parse the product overview
         overview_dict = json.loads(content)
+        _merge_legacy_dimension_justifications(overview_dict)
 
         # Parse contradictions before model validation
         raw_contradictions = overview_dict.pop("contradictions", None)
 
         meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
         meta_summary.coverage = aggregation.coverage
+        if meta_summary.dangers:
+            meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
 
         # Attach contradictions
         if isinstance(raw_contradictions, list):
@@ -1913,7 +2171,7 @@ Per-document analyses and extractions:
             for conflict in topic.conflicts:
                 cited_document_ids.update(conflict.document_ids)
                 evidence_count += len(conflict.citations)
-            primary_finding = topic.findings[0] if topic.findings else None
+            primary_finding = _headline_finding_for_topic(topic)
             primary_conflict = topic.conflicts[0] if topic.conflicts else None
             supporting_citations = _topic_supporting_citations(topic)
             if primary_finding and primary_finding.value:
@@ -1964,21 +2222,24 @@ Per-document analyses and extractions:
         }
         topic_blended = compose_product_risk_from_topics(topic_rows)
         legacy_blended = _weighted_product_risk_score(core_docs)
+        dimension_risk = _calculate_overview_risk_score(meta_summary.scores)
         if legacy_blended is not None:
             logger.info(
-                "overview scoring comparison for %s: legacy_doc=%s topic=%s drift=%s",
+                "overview scoring comparison for %s: legacy_doc=%s topic=%s dimension=%s",
                 product_slug,
                 legacy_blended,
                 topic_blended,
-                abs(topic_blended - legacy_blended),
+                dimension_risk,
             )
-        blended = topic_blended
+        else:
+            logger.info(
+                "overview scoring comparison for %s: topic=%s dimension=%s",
+                product_slug,
+                topic_blended,
+                dimension_risk,
+            )
 
-        signals = meta_summary.privacy_signals
-        floored = _apply_signal_floors(blended, signals)
-        meta_summary.risk_score = floored
-        meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
-        meta_summary.grade = _calculate_grade(meta_summary.risk_score)
+        _reconcile_meta_summary_risk(meta_summary)
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(
@@ -2221,8 +2482,8 @@ async def generate_product_deep_analysis(
                     for d in doc.extraction.data_collected[:20]
                 ],
                 "data_purposes": [
-                    {"data_type": p.data_type, "purposes": p.purposes}
-                    for p in doc.extraction.data_purposes[:20]
+                    {"data_type": data_purpose.data_type, "purposes": data_purpose.purposes}
+                    for data_purpose in doc.extraction.data_purposes[:20]
                 ],
                 "third_party_details": [
                     {

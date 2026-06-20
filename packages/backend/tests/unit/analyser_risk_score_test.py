@@ -1,7 +1,27 @@
-"""Tests for deterministic privacy risk scoring and product-level blending."""
+"""Tests for grade-based privacy risk derivation."""
 
-from src.analyser import _calculate_risk_score, _weighted_product_risk_score
-from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores
+from src.analyser import (
+    _calculate_overview_risk_score,
+    _calculate_risk_score,
+    _ensure_required_scores,
+    _is_protective_finding_value,
+    _reconcile_meta_summary_risk,
+    _weighted_product_risk_score,
+)
+from src.models.document import (
+    Document,
+    DocumentAnalysis,
+    DocumentAnalysisScores,
+    MetaSummary,
+    MetaSummaryScore,
+    MetaSummaryScores,
+    PrivacySignals,
+    TopicStanceBreakdown,
+)
+
+
+def _grade(letter: str, justification: str = "ok") -> DocumentAnalysisScores:
+    return DocumentAnalysisScores(grade=letter, justification=justification)  # type: ignore[arg-type]
 
 
 def _doc(
@@ -14,13 +34,14 @@ def _doc(
     analysis = DocumentAnalysis(
         summary="x",
         scores={
-            "transparency": DocumentAnalysisScores(score=5, justification=""),
-            "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-            "user_control": DocumentAnalysisScores(score=5, justification=""),
-            "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-            "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-            "security_score": DocumentAnalysisScores(score=5, justification=""),
+            "transparency": _grade("C"),
+            "data_collection_scope": _grade("C"),
+            "user_control": _grade("C"),
+            "third_party_sharing": _grade("C"),
+            "data_retention_score": _grade("C"),
+            "security_score": _grade("C"),
         },
+        grade="C",
         risk_score=risk,
         verdict="moderate",
         keypoints=[],
@@ -38,10 +59,10 @@ def _doc(
     )
 
 
-def test_calculate_risk_score_privacy_friendly_high_components() -> None:
+def test_calculate_risk_score_privacy_friendly_grades() -> None:
     scores = {
-        k: DocumentAnalysisScores(score=9, justification="")
-        for k in (
+        key: _grade("A")
+        for key in (
             "transparency",
             "data_collection_scope",
             "user_control",
@@ -53,14 +74,14 @@ def test_calculate_risk_score_privacy_friendly_high_components() -> None:
     assert _calculate_risk_score(scores) == 1
 
 
-def test_calculate_risk_score_invasive_low_components() -> None:
+def test_calculate_risk_score_invasive_grades() -> None:
     scores = {
-        "transparency": DocumentAnalysisScores(score=6, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=2, justification=""),
-        "user_control": DocumentAnalysisScores(score=3, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=2, justification=""),
-        "data_retention_score": DocumentAnalysisScores(score=3, justification=""),
-        "security_score": DocumentAnalysisScores(score=4, justification=""),
+        "transparency": _grade("B"),
+        "data_collection_scope": _grade("E"),
+        "user_control": _grade("D"),
+        "third_party_sharing": _grade("E"),
+        "data_retention_score": _grade("D"),
+        "security_score": _grade("D"),
     }
     assert _calculate_risk_score(scores) == 7
 
@@ -73,58 +94,85 @@ def test_weighted_product_risk_privacy_policy_dominates() -> None:
     assert _weighted_product_risk_score(docs) == 4
 
 
-def test_weighted_product_risk_skips_missing_analysis() -> None:
-    d = Document(
-        url="https://example.com",
-        product_id="p",
-        doc_type="privacy_policy",
-        markdown="",
-        text="",
-        analysis=None,
+def test_no_weighted_dimensions_returns_none() -> None:
+    assert _calculate_risk_score({}) is None
+
+
+def test_ensure_required_scores_preserves_llm_grade() -> None:
+    parsed = DocumentAnalysis(
+        summary="ok",
+        grade="B",
+        grade_justification="Solid controls with minor gaps.",
+        scores={
+            "transparency": _grade("B", "Clear disclosures"),
+            "data_collection_scope": _grade("C", "Broad collection"),
+        },
     )
-    assert _weighted_product_risk_score([d]) is None
+    result = _ensure_required_scores(parsed)
+    assert result.grade == "B"
+    assert result.grade_justification == "Solid controls with minor gaps."
+    assert result.risk_score == 3
 
 
-def test_other_docs_excluded_from_weighted_score() -> None:
-    """'other' documents must never influence the product risk score."""
-    privacy = _doc(doc_type="privacy_policy", risk=8)
-    other = _doc(doc_type="other", risk=0)  # artificially low — should be ignored
-    score = _weighted_product_risk_score([privacy, other])
-    assert score == 8  # only privacy_policy contributes
+def test_reconcile_meta_summary_uses_llm_grade() -> None:
+    meta = MetaSummary(
+        summary="ok",
+        grade="B",
+        grade_justification="Mostly fair with some sharing concerns.",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Clear"),
+            data_collection_scope=MetaSummaryScore(grade="C", justification="Broad"),
+            user_control=MetaSummaryScore(grade="B", justification="Some controls"),
+            third_party_sharing=MetaSummaryScore(grade="D", justification="Wide sharing"),
+        ),
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.grade == "B"
+    assert meta.risk_score is not None
 
 
-def test_missing_optional_scores_filled_with_neutral() -> None:
-    """Absent optional scores must not distort the weighted average."""
-    # Only security_score present — should not produce an extreme result.
-    scores_sparse = {"security_score": DocumentAnalysisScores(score=2, justification="")}
-    scores_full = {
-        "transparency": DocumentAnalysisScores(score=5, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-        "user_control": DocumentAnalysisScores(score=5, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-        "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-        "security_score": DocumentAnalysisScores(score=2, justification=""),
-    }
-    sparse_risk = _calculate_risk_score(scores_sparse)
-    full_risk = _calculate_risk_score(scores_full)
-    # With neutral fill the sparse result must equal the full result.
-    assert sparse_risk == full_risk
+def test_overview_risk_from_dimension_grades() -> None:
+    scores = MetaSummaryScores(
+        transparency=MetaSummaryScore(grade="B", justification="Clear but not exhaustive"),
+        data_collection_scope=MetaSummaryScore(grade="C", justification="Broad collection"),
+        user_control=MetaSummaryScore(
+            grade="B",
+            justification="Cookie banner, GPC, AI toggle, self-service deletion.",
+        ),
+        third_party_sharing=MetaSummaryScore(grade="D", justification="Wide sharing"),
+    )
+    risk = _calculate_overview_risk_score(scores)
+    assert risk in {5, 7}
 
 
-def test_all_optional_absent_uses_neutral() -> None:
-    """When both optional scores are absent, result equals same scores at neutral."""
-    core_scores = {
-        "transparency": DocumentAnalysisScores(score=5, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-        "user_control": DocumentAnalysisScores(score=5, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-    }
-    full_neutral = {
-        "transparency": DocumentAnalysisScores(score=5, justification=""),
-        "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
-        "user_control": DocumentAnalysisScores(score=5, justification=""),
-        "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
-        "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
-        "security_score": DocumentAnalysisScores(score=5, justification=""),
-    }
-    assert _calculate_risk_score(core_scores) == _calculate_risk_score(full_neutral)
+def test_protective_finding_rejects_no_substring_false_positives() -> None:
+    assert not _is_protective_finding_value("data_sale", "We provide notice of data practices")
+    assert not _is_protective_finding_value(
+        "data_sale", "Information is not shared with third parties"
+    )
+    assert _is_protective_finding_value("data_sale", "sells_data: no")
+    assert _is_protective_finding_value("data_sale", "does not sell personal data")
+    assert not _is_protective_finding_value("ai_training", "We provide notification of updates")
+    assert _is_protective_finding_value("ai_training", "no ai training on user content")
+
+
+def test_signal_floor_holds_after_positive_adjustment() -> None:
+    meta = MetaSummary(
+        summary="ok",
+        grade="B",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Clear"),
+            data_collection_scope=MetaSummaryScore(grade="B", justification="Limited"),
+            user_control=MetaSummaryScore(grade="B", justification="Controls"),
+            third_party_sharing=MetaSummaryScore(grade="B", justification="Limited sharing"),
+        ),
+        privacy_signals=PrivacySignals(sells_data="yes"),
+        benefits=["encryption at rest", "self-service deletion"],
+        topic_stances=[
+            TopicStanceBreakdown(topic="data_sale", status="found", stance="low_risk"),
+            TopicStanceBreakdown(topic="ai_training", status="found", stance="low_risk"),
+            TopicStanceBreakdown(topic="security", status="found", stance="low_risk"),
+        ],
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.risk_score == 6

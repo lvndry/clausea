@@ -143,7 +143,7 @@ class DocumentAnalyzer(LLMUsageTrackingMixin):
         from urllib.parse import urlparse as _urlparse
 
         parsed = _urlparse(url)
-        path_parts = [p for p in parsed.path.split("/") if p]
+        path_parts = [part for part in parsed.path.split("/") if part]
         if path_parts:
             title = path_parts[-1].replace("-", " ").replace("_", " ").title()
         else:

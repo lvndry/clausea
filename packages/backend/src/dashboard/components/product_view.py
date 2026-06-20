@@ -340,7 +340,9 @@ def show_product_view() -> None:
             st.metric("Total Documents", total_documents)
 
         with col4:
-            products_with_crawl_urls = len([p for p in products if p.crawl_base_urls])
+            products_with_crawl_urls = len(
+                [product for product in products if product.crawl_base_urls]
+            )
             st.metric("Products with Crawl URLs", products_with_crawl_urls)
 
         with col5:
@@ -359,9 +361,10 @@ def show_product_view() -> None:
             # Count products accessible to each tier
             free_accessible = len(
                 [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.FREE in p.visible_to_tiers
+                    product
+                    for product in products
+                    if hasattr(product, "visible_to_tiers")
+                    and UserTier.FREE in product.visible_to_tiers
                 ]
             )
             st.metric("Free Tier Accessible", free_accessible)
@@ -369,9 +372,10 @@ def show_product_view() -> None:
         with col2:
             pro_accessible = len(
                 [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.PRO in p.visible_to_tiers
+                    product
+                    for product in products
+                    if hasattr(product, "visible_to_tiers")
+                    and UserTier.PRO in product.visible_to_tiers
                 ]
             )
             st.metric("Pro Tier Accessible", pro_accessible)
@@ -380,15 +384,18 @@ def show_product_view() -> None:
             # Count premium-only products (Pro only, not Free)
             premium_only = len(
                 [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.FREE not in p.visible_to_tiers
+                    product
+                    for product in products
+                    if hasattr(product, "visible_to_tiers")
+                    and UserTier.FREE not in product.visible_to_tiers
                 ]
             )
             st.metric("Premium Only", premium_only)
 
         # Products without crawl URLs
-        products_without_crawl_urls = [p for p in products if not p.crawl_base_urls]
+        products_without_crawl_urls = [
+            product for product in products if not product.crawl_base_urls
+        ]
 
         if products_without_crawl_urls:
             st.write("---")

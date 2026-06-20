@@ -25,6 +25,7 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 
@@ -321,10 +322,14 @@ class ProductService:
         Product pages treat overview scoring as the single source of truth.
         The explainer grade is therefore reconciled against product_overviews
         before returning, and legacy mismatches are repaired best-effort.
+        Stored explainers also get verified source citations backfilled on read
+        from the product's core document extractions when missing.
         """
         explainer = await self._product_repo.get_product_explainer(db, product_slug)
         if not explainer:
             return None
+
+        explainer = await self._enrich_product_explainer_citations(db, product_slug, explainer)
 
         canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
         if canonical_grade is None:
@@ -356,6 +361,40 @@ class ProductService:
                 exc,
             )
         return repaired
+
+    async def _enrich_product_explainer_citations(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        explainer: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Backfill missing source citations for legacy stored explainers."""
+        product = await self._product_repo.find_by_slug(db, product_slug)
+        if not product:
+            return explainer
+
+        documents = await self._document_repo.find_by_product_id_full(db, product.id)
+        core_docs = [
+            document
+            for document in documents
+            if document.doc_type in OVERVIEW_CORE_DOC_TYPES and document.extraction is not None
+        ]
+        if not core_docs:
+            return explainer
+
+        try:
+            from src.analyser import enrich_consumer_explainer_citations
+
+            explainer_model = ConsumerExplainer.model_validate(explainer)
+            enriched = enrich_consumer_explainer_citations(explainer_model, core_docs)
+            return enriched.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 - best-effort enrichment
+            logger.warning(
+                "Failed to enrich explainer citations for %s: %s",
+                product_slug,
+                exc,
+            )
+            return explainer
 
     async def save_product_explainer(
         self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer
@@ -519,6 +558,18 @@ class ProductService:
                     for reg, scores in aggregated_compliance.items()
                 }
 
+        stored_compliance = await self._product_repo.get_product_compliance(db, slug)
+        if stored_compliance:
+            parsed: dict[str, ComplianceBreakdown] = {}
+            for regime, payload in stored_compliance.items():
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    parsed[str(regime)] = ComplianceBreakdown.model_validate(payload, strict=False)
+                except Exception:
+                    continue
+            overview.compliance = parsed or None
+
         return overview
 
     async def get_product_analysis(self, db: AgnosticDatabase, slug: str) -> ProductAnalysis | None:
@@ -634,6 +685,8 @@ class ProductService:
             last_updated=updated_at if updated_at else datetime.now(),
             verdict=meta.verdict,
             risk_score=meta.risk_score,
+            grade=meta.grade,
+            grade_justification=meta.grade_justification,
             one_line_summary=meta.summary,
             headline_claim=meta.headline_claim,
             data_collected=meta.data_collected,
@@ -683,6 +736,9 @@ class ProductService:
             return None
 
         risk_score = overview.get("risk_score")
+        stored_grade = self._coerce_grade(overview.get("grade"))
+        if stored_grade:
+            return stored_grade
         if isinstance(risk_score, bool):
             return None
         if isinstance(risk_score, int):
@@ -703,15 +759,16 @@ class ProductService:
 
     @classmethod
     def _grade_reason_from_overview(
-        cls, canonical_grade: str, explainer: ConsumerExplainer | dict
+        cls,
+        canonical_grade: str,
+        explainer: ConsumerExplainer | dict,
+        *,
+        overview_grade_justification: str | None = None,
     ) -> str:
-        """Build a canonical grade_reason that explains the overview-derived grade.
+        """Build a canonical grade_reason that explains the overview-derived grade."""
+        if overview_grade_justification and overview_grade_justification.strip():
+            return overview_grade_justification.strip()
 
-        Replaces the LLM-emitted grade_reason which may describe a different grade
-        after reconciliation stomps the grade to the canonical value.
-        Preserves the original LLM reasoning as context when available, prefixed
-        with the canonical justification for the actual grade.
-        """
         canonical_justification = cls._GRADE_REASONS.get(
             canonical_grade, "Risk assessment based on structured policy analysis."
         )

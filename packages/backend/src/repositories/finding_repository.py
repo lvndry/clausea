@@ -14,7 +14,7 @@ class FindingRepository(BaseRepository):
     async def create_many(self, db: AgnosticDatabase, findings: list[Finding]) -> int:
         if not findings:
             return 0
-        result = await db.findings.insert_many([f.model_dump() for f in findings])
+        result = await db.findings.insert_many([finding.model_dump() for finding in findings])
         return len(result.inserted_ids)
 
     async def find_by_product(self, db: AgnosticDatabase, product_id: str) -> list[Finding]:

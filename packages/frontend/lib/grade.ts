@@ -58,6 +58,27 @@ const GRADE_BANDS: GradeBand[] = [
   { min: -Infinity, letter: "E", tone: "bad" },
 ];
 
+export function letterGradeToTone(letter: string): GradeTone {
+  switch (letter.toUpperCase().charAt(0)) {
+    case "A":
+      return "good";
+    case "B":
+      return "ok";
+    case "C":
+      return "warn";
+    default:
+      return "bad";
+  }
+}
+
+export function parseLetterGrade(letter: string): Grade {
+  const normalized = letter.trim().toUpperCase().charAt(0);
+  if (!["A", "B", "C", "D", "E"].includes(normalized)) {
+    return { letter: "—", tone: "warn" };
+  }
+  return { letter: normalized, tone: letterGradeToTone(normalized) };
+}
+
 export function scoreToGrade(
   score: number,
   opts?: { invert?: boolean },

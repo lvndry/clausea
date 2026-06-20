@@ -30,6 +30,7 @@ import type {
   EvidenceSpan,
   KeypointWithEvidence,
   ProductTopicReport,
+  TopicStanceBreakdown,
 } from "@/types";
 
 interface ExtractedItem {
@@ -55,6 +56,7 @@ interface EvidenceListProps {
   productSlug: string;
   documents: DocumentSummary[];
   topicReport?: ProductTopicReport | null;
+  topicStances?: TopicStanceBreakdown[] | null;
 }
 
 function normalizeForMatch(s: string): string {
@@ -87,12 +89,12 @@ function deriveEvidenceForKeypoint(
       const value = normalizeForMatch(item.value);
       if (value && kp.includes(value) && item.evidence?.length) {
         found.push(...item.evidence);
-        if (found.length >= 3) return found.slice(0, 3);
+        if (found.length >= 5) return found.slice(0, 5);
       }
     }
   }
 
-  return found.slice(0, 3);
+  return found.slice(0, 5);
 }
 
 const RISK_LEVEL_CONFIG = {
@@ -130,6 +132,7 @@ export function EvidenceList({
   productSlug,
   documents,
   topicReport,
+  topicStances,
 }: EvidenceListProps) {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [expandedKeypoints, setExpandedKeypoints] = useState<
@@ -192,7 +195,8 @@ export function EvidenceList({
     toggleExpanded(doc.id, doc.title);
   }
 
-  const hasTopics = (topicReport?.topics?.length || 0) > 0;
+  const hasTopics =
+    (topicReport?.topics?.length || 0) > 0 || (topicStances?.length || 0) > 0;
 
   if (documents.length === 0 && !hasTopics) {
     return (
@@ -220,10 +224,11 @@ export function EvidenceList({
     <div className="space-y-6">
       {hasTopics && (
         <TopicEvidencePanel
-          topicStances={null}
+          topicStances={topicStances}
           topicReport={topicReport}
           title="Evidence by Policy Topic"
           showCitations={true}
+          collapsibleTopics={true}
         />
       )}
 
@@ -480,13 +485,13 @@ export function EvidenceList({
                                         <ul className="space-y-1">
                                           {riskBreakdown.positive_protections
                                             .slice(0, 4)
-                                            .map((p, i) => (
+                                            .map((protection, i) => (
                                               <li
                                                 key={i}
                                                 className="text-xs text-foreground/80 flex items-start gap-1.5"
                                               >
                                                 <span className="mt-1 h-1.5 w-1.5 rounded-full bg-risk-low shrink-0" />
-                                                {p}
+                                                {protection}
                                               </li>
                                             ))}
                                         </ul>
@@ -737,7 +742,7 @@ export function EvidenceList({
                                                         ) : evidence.length >
                                                           0 ? (
                                                           evidence
-                                                            .slice(0, 3)
+                                                            .slice(0, 5)
                                                             .map((ev, j) => (
                                                               <div
                                                                 key={j}

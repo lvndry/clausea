@@ -202,7 +202,7 @@ class TestExtractionToFindings:
         findings = service._extraction_to_findings(
             product_id="p1", document_id="d1", extraction=extraction
         )
-        categories = {f.category for f in findings}
+        categories = {finding.category for finding in findings}
         assert "retention" in categories
         assert "cookies_tracking" in categories
 
@@ -216,7 +216,7 @@ class TestExtractionToFindings:
         findings = service._extraction_to_findings(
             product_id="p1", document_id="d1", extraction=extraction
         )
-        children_findings = [f for f in findings if f.category == "children"]
+        children_findings = [finding for finding in findings if finding.category == "children"]
         assert len(children_findings) >= 1
 
     def test_all_clusters_produce_findings(self) -> None:
@@ -284,7 +284,7 @@ class TestExtractionToFindings:
         findings = service._extraction_to_findings(
             product_id="p1", document_id="d1", extraction=extraction
         )
-        categories = {f.category for f in findings}
+        categories = {finding.category for finding in findings}
         expected = {
             "data_collection",
             "data_purposes",
@@ -312,6 +312,37 @@ class TestExtractionToFindings:
             "data_sale",
         }
         assert expected.issubset(categories), f"Missing: {expected - categories}"
+
+
+class TestDangersMaterialityFiltering:
+    def test_standard_industry_dangers_excluded_via_llm_label(self) -> None:
+        service = _service()
+        extraction = DocumentExtraction(
+            source_content_hash="hash-1",
+            dangers=[
+                ExtractedTextItem(
+                    value="Binding arbitration / class action waiver",
+                    materiality="notable",
+                ),
+                ExtractedTextItem(
+                    value="Repeat infringer account termination (DMCA-normal)",
+                    materiality="standard_industry",
+                ),
+                ExtractedTextItem(
+                    value="Non-assignable agreement clause",
+                    materiality="standard_industry",
+                ),
+                ExtractedTextItem(value="No cap on liability for user-generated content claims"),
+            ],
+        )
+        findings = service._extraction_to_findings(
+            product_id="p1", document_id="d1", extraction=extraction
+        )
+        by_value = {finding.value: finding.category for finding in findings}
+        assert "Repeat infringer account termination (DMCA-normal)" not in by_value
+        assert "Non-assignable agreement clause" not in by_value
+        assert "Binding arbitration / class action waiver" not in by_value
+        assert by_value["No cap on liability for user-generated content claims"] == "dangers"
 
 
 # ── _build_coverage no false "missing" ──────────────────────────────

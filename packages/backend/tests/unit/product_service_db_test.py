@@ -1,12 +1,17 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.models.document import (
+    ComplianceBreakdown,
     ConsumerExplainer,
     Document,
     DocumentAnalysis,
     DocumentAnalysisScores,
+    DocumentExtraction,
+    EvidenceSpan,
+    ExtractedDataItem,
 )
 from src.models.product import Product
 from src.models.user import UserTier
@@ -96,12 +101,59 @@ async def test_get_product_overview(
     mock_product_repo.find_by_slug.return_value = None
     mock_product_repo.get_document_counts.return_value = {"total": 1, "analyzed": 1}
     mock_product_repo.get_document_types.return_value = {"privacy_policy": 1}
+    mock_product_repo.get_product_compliance = AsyncMock(return_value=None)
 
     overview = await product_service.get_product_overview(mock_db, "test-product")
     assert overview is not None
     assert overview.product_slug == "test-product"
     assert overview.risk_score == 5
     mock_product_repo.get_product_overview.assert_called_once_with(mock_db, "test-product")
+
+
+@pytest.mark.asyncio
+async def test_get_product_overview_includes_compliance_breakdown(
+    product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
+) -> None:
+    mock_product_repo.get_product_overview.return_value = {
+        "overview": {
+            "summary": "Test summary",
+            "scores": {
+                "transparency": {"score": 8, "justification": "Good"},
+                "data_collection_scope": {"score": 5, "justification": "Medium"},
+                "user_control": {"score": 7, "justification": "Okay"},
+                "third_party_sharing": {"score": 3, "justification": "Bad"},
+            },
+            "risk_score": 5,
+            "verdict": "moderate",
+            "compliance_status": {"GDPR": 7},
+        }
+    }
+    mock_product_repo.find_by_slug.return_value = None
+    mock_product_repo.get_document_counts.return_value = {"total": 1, "analyzed": 1}
+    mock_product_repo.get_document_types.return_value = {"privacy_policy": 1}
+    mock_product_repo.get_product_compliance = AsyncMock(
+        return_value={
+            "GDPR": {
+                "score": 7,
+                "status": "Partially Compliant",
+                "assessment_notes": "Privacy Policy describes EU data subject rights.",
+                "strengths": ["Lawful basis for processing stated"],
+                "gaps": ["Retention periods not specified"],
+            }
+        }
+    )
+
+    overview = await product_service.get_product_overview(mock_db, "test-product")
+
+    assert overview is not None
+    assert overview.compliance is not None
+    assert "GDPR" in overview.compliance
+    gdpr = overview.compliance["GDPR"]
+    assert isinstance(gdpr, ComplianceBreakdown)
+    assert gdpr.assessment_notes == "Privacy Policy describes EU data subject rights."
+    assert gdpr.strengths == ["Lawful basis for processing stated"]
+    assert gdpr.gaps == ["Retention periods not specified"]
+    assert gdpr.has_rationale() is True
 
 
 @pytest.mark.asyncio
@@ -115,6 +167,7 @@ async def test_get_product_explainer_uses_canonical_overview_grade(
         return_value={"overview": {"risk_score": 5, "grade": "C"}}
     )
     mock_product_repo.update_product_explainer_grade = AsyncMock()
+    mock_product_repo.find_by_slug = AsyncMock(return_value=None)
 
     explainer = await product_service.get_product_explainer(mock_db, "test-product")
 
@@ -137,6 +190,7 @@ async def test_get_product_explainer_derives_grade_from_risk_score_when_missing_
     )
     mock_product_repo.get_product_overview = AsyncMock(return_value={"overview": {"risk_score": 8}})
     mock_product_repo.update_product_explainer_grade = AsyncMock()
+    mock_product_repo.find_by_slug = AsyncMock(return_value=None)
 
     explainer = await product_service.get_product_explainer(mock_db, "test-product")
 
@@ -174,6 +228,84 @@ async def test_save_product_explainer_overrides_grade_with_canonical_overview(
         saved_explainer.grade_reason
         == "Moderate risk: notable concerns around data sharing, limited user controls, or vague language."
     )
+
+
+@pytest.mark.asyncio
+async def test_get_product_explainer_backfills_missing_source_citations(
+    product_service: ProductService,
+    mock_product_repo: MagicMock,
+    mock_document_repo: MagicMock,
+    mock_db: MagicMock,
+) -> None:
+    mock_product_repo.get_product_explainer = AsyncMock(
+        return_value={
+            "headline": "h",
+            "grade": "C",
+            "watch_out_for": [
+                {
+                    "title": "Sells data",
+                    "severity": "high",
+                    "quote": "sell your personal information",
+                    "quote_status": "from_extraction",
+                }
+            ],
+        }
+    )
+    mock_product_repo.get_product_overview = AsyncMock(return_value=None)
+    mock_product_repo.find_by_slug = AsyncMock(
+        return_value=Product(
+            id="prod-1",
+            name="Test Product",
+            slug="test-product",
+            company_name="Test Company",
+            domains=["test.com"],
+            categories=["tech"],
+            crawl_base_urls=["https://test.com"],
+            logo=None,
+            visible_to_tiers=[UserTier.FREE, UserTier.PRO],
+        )
+    )
+    extraction = DocumentExtraction(
+        source_content_hash="hash-1",
+        data_collected=[
+            ExtractedDataItem(
+                data_type="data_0",
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc-1",
+                        url="https://example.com/privacy",
+                        quote="We may sell your personal information to advertisers.",
+                        start_char=0,
+                        end_char=55,
+                        verified=True,
+                    )
+                ],
+            )
+        ],
+    )
+    mock_document_repo.find_by_product_id_full = AsyncMock(
+        return_value=[
+            Document(
+                id="doc-1",
+                url="https://example.com/privacy",
+                product_id="prod-1",
+                doc_type="privacy_policy",
+                title="Privacy Policy",
+                markdown="# Privacy",
+                text="policy body",
+                extraction=extraction,
+                created_at=datetime(2026, 1, 1),
+            )
+        ]
+    )
+
+    explainer = await product_service.get_product_explainer(mock_db, "test-product")
+
+    assert explainer is not None
+    citation = explainer["watch_out_for"][0]["citation"]
+    assert citation is not None
+    assert citation["document_title"] == "Privacy Policy"
+    assert citation["document_url"] == "https://example.com/privacy"
 
 
 @pytest.mark.asyncio

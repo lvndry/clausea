@@ -39,15 +39,35 @@ OVERVIEW_CORE_DOC_TYPES: frozenset[str] = frozenset(
 
 # ─── 1. DOCUMENT ANALYSIS (deep by default) ────────────────────────────────────
 
+DIMENSION_GRADE_RUBRIC = """### Dimension grades (A–E — higher letter = better for the user)
+Assign each dimension an **A to E letter grade** with a **mandatory justification** (1–3 sentences). Do NOT output numeric scores or ranks.
+
+- **A**: Strong — multiple real protections or clearly minimal practice; minor caveats only.
+- **B**: Good — meaningful controls or moderate practice with some gaps.
+- **C**: Mixed/typical — some controls but material gaps, OR invasive practice with partial mitigation.
+- **D**: Weak — one important gap or mostly user-hostile on this dimension.
+- **E**: Very weak — explicitly worst-case on this dimension.
+
+**transparency** — clarity of what is collected, why, and by whom.
+**data_collection_scope** — breadth of collection (A = minimal/necessary only).
+**user_control** — self-service opt-outs, deletion, portability, consent tools.
+**third_party_sharing** — breadth of sharing (A = no sharing / not sold).
+**data_retention_score** — retention specificity (document analysis only).
+**security_score** — stated security measures (document analysis only).
+
+Be fair: reward documented protections; note caveats in justification without downgrading more than one letter grade. If the justification lists multiple genuine controls, grade MUST be at least B."""
+
 DOCUMENT_ANALYSIS_JSON_SCHEMA = """{
   "summary": string (3-5 concrete sentences),
+  "grade": "A" | "B" | "C" | "D" | "E",
+  "grade_justification": string (2-4 sentences explaining the overall grade),
   "scores": {
-    "transparency":          {"score": int 0-10, "justification": string},
-    "data_collection_scope": {"score": int 0-10, "justification": string},
-    "user_control":          {"score": int 0-10, "justification": string},
-    "third_party_sharing":   {"score": int 0-10, "justification": string},
-    "data_retention_score":  {"score": int 0-10, "justification": string},
-    "security_score":        {"score": int 0-10, "justification": string}
+    "transparency":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "data_collection_scope": {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "user_control":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "third_party_sharing":   {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "data_retention_score":  {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "security_score":        {"grade": "A"|"B"|"C"|"D"|"E", "justification": string}
   },
   "liability_risk": int 0-10 | null,
   "compliance_status": {"GDPR": int|null, "CCPA": int|null, "PIPEDA": int|null, "LGPD": int|null} | null,
@@ -86,23 +106,20 @@ DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evid
 ## Rules (non-negotiable)
 - Use ONLY facts from the extraction below. If absent, state "Not specified in document".
 - Every critical clause quote must be an exact substring from the extraction evidence.
-- Never output `risk_score` or `verdict` — the platform computes them deterministically from your scores.
+- Never output numeric dimension scores, `risk_score`, or `verdict` — assign letter grades A–E with justifications only.
 - If the extraction is partial, set analysis_completeness to "partial".
+
+## OVERALL GRADE
+Assign an overall **grade** (A–E) for this document's privacy posture and **grade_justification** (2–4 sentences) explaining why.
 
 ## SUMMARY
 3-5 concrete sentences. Name exact data types ("precise GPS", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics"), exact rights paths ("Settings > Privacy > Delete"). Start with the service/product name, never with "This document" or "This policy".
 
-## SCORES
-Each dimension is 0-10 (higher = better for the user). Include a dimension ONLY when the document substantively addresses it. If the document is silent on a dimension — e.g. a security/trust page that says nothing about data collection — OMIT that key. A score of 0 means the document EXPLICITLY describes the worst-case practice; silence or "not mentioned" is NEVER 0, omit instead.
+## DIMENSION GRADES
+Provide `scores` with a letter grade and justification for each dimension the document substantively addresses.
+If silent on a dimension, omit that key. Silence is not a worst-case finding — never assign E for silence.
 
-- **transparency**: clarity of what is collected, why, and by whom. 10=crystal clear, 0=deliberately opaque.
-- **data_collection_scope**: breadth of collection. 10=minimal/necessary only, 0=explicitly sweeping.
-- **user_control**: self-service controls. 10=full opt-out/deletion/portability, 0=explicitly none.
-- **third_party_sharing**: breadth of sharing. 10=no sharing, 0=explicitly unrestricted.
-- **data_retention_score**: retention specificity. 10=short specific periods, 0=explicitly indefinite.
-- **security_score**: stated security measures. 10=E2EE/SOC2/pen-tests, 0=explicitly weak.
-
-Calibration: minimal-collection + E2EE → high collection/sharing scores (7-10). Ad-tech ecosystem + AI training on user content → low (0-4). Clear disclosure of invasive practices does NOT raise scores.
+{DIMENSION_GRADE_RUBRIC}
 
 ## KEYPOINTS
 5-10 specific, concrete bullets (fewer acceptable when extraction is thin). Prioritize: AI training on user data, biometrics/health, arbitration waivers, content licenses, government access, cross-entity binding, liability caps.
@@ -139,14 +156,14 @@ Return valid JSON matching this schema:
 PRODUCT_OVERVIEW_JSON_SCHEMA = """{
   "summary": string,
   "headline_claim": string | null,
+  "grade": "A" | "B" | "C" | "D" | "E",
+  "grade_justification": string (2-4 sentences explaining the overall grade),
   "scores": {
-    "transparency":          {"score": int (0-10), "justification": string},
-    "data_collection_scope": {"score": int (0-10), "justification": string},
-    "user_control":          {"score": int (0-10), "justification": string},
-    "third_party_sharing":   {"score": int (0-10), "justification": string}
+    "transparency":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "data_collection_scope": {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "user_control":          {"grade": "A"|"B"|"C"|"D"|"E", "justification": string},
+    "third_party_sharing":   {"grade": "A"|"B"|"C"|"D"|"E", "justification": string}
   },
-  "risk_score": int (0-10),
-  "verdict": "very_user_friendly" | "user_friendly" | "moderate" | "pervasive" | "very_pervasive",
   "keypoints": [string],
   "data_collected": [string],
   "data_purposes": [string],
@@ -232,11 +249,16 @@ Then a markdown bullet list titled "Key Takeaways" — 6-10 specific cross-docum
 
 Rules: be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
 
-## SCORES
-Synthesize from all document scores. Where documents conflict, use the most conservative (worst) interpretation for the underlying facts, then assign scores that spread across the 0-10 scale.
-Apply the same calibration as single-document analysis: minimal-data / low-sharing / strong technical protections (per extraction) → high scores on `data_collection_scope`, `third_party_sharing`; ad-tech-scale collection, many recipients, tracking, training on user content → low scores on collection and sharing. The product's cached `risk_score` is derived from per-document analyses with privacy_policy weighted most heavily, so privacy-policy scores must honestly reflect breadth of collection and sharing.
+## OVERALL GRADE
+Assign an overall **grade** (A–E) for this product's privacy posture and **grade_justification** (2–4 sentences) explaining why. Be specific about the single biggest factor driving your judgment.
 
-Provide only: transparency, data_collection_scope, user_control, third_party_sharing.
+## DIMENSION GRADES
+Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for:
+transparency, data_collection_scope, user_control, third_party_sharing.
+
+{DIMENSION_GRADE_RUBRIC}
+
+Do NOT output numeric dimension scores, `risk_score`, or `verdict` — letter grades with justifications only.
 
 ## DATA COLLECTED
 10-20 specific data types. Be precise: "device fingerprint", "precise GPS coordinates", "browsing history across third-party sites" — not "device information" or "usage data".
@@ -254,7 +276,7 @@ Every named or implied third-party recipient from all documents. For each: what 
 8-12 items: what the documents say users may do (controls, opt-outs, access/deletion paths). Phrase as helpful facts, not lectures. Include how to exercise it — URL, email, in-app path.
 
 ## DANGERS
-5-7 meaningful risks actually stated in documents. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing. Include: unusually broad data use, one-sided legal terms, sensitive categories, third-party flows adding real exposure.
+5-7 meaningful risks actually stated in documents. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing. Skip industry-standard boilerplate: DMCA repeat-infringer termination, routine assignment restrictions, governing-law/venue clauses, standard liability caps. Include: data sale/monetization, AI training on user content, broad indemnification, hidden fees, unusually broad data use, sensitive categories, third-party flows adding real exposure. Arbitration/class-action waivers may appear once as a proportionate trade-off, not as alarmist filler.
 
 ## BENEFITS
 Up to 8 specific protections the documents actually describe. Balance dangers with genuine positives (encryption, data-sale disclaimers, retention limits).
@@ -593,11 +615,26 @@ CONSUMER_EXPLAINER_SYSTEM_PROMPT = """You explain legal documents (privacy polic
 
 7. STRICT JSON ONLY. Output one valid JSON object matching the schema. Begin with { and end with }. No markdown, no code fences, no text before or after. Each string is plain prose (no markdown inside strings). If you must drop content to stay valid, drop later/optional list items — never the headline, grade, or biggest risks.
 
+================ WHAT BELONGS IN watch_out_for ================
+Include ONLY findings most users would genuinely worry about if they knew:
+- sells or shares personal data for ads/money; trains AI on private content without opt-out; broad user indemnification; hidden fees or auto-renewals; perpetual/irrevocable license to photos/messages; sensitive data (biometric, health, precise location, kids) without clear limits; no way to delete your account; one-sided right to change terms anytime.
+
+Do NOT put these in watch_out_for — they are standard legal mechanics, not consumer dangers:
+- DMCA / repeat-infringer account termination; copyright takedown rules; standard "you may not assign this agreement" clauses; governing law / venue / severability / entire-agreement boilerplate; routine limitation-of-liability or warranty disclaimers.
+- If the extraction only mentions those, omit them from watch_out_for (mention in good_to_know only when it is a genuine user protection, e.g. a 30-day arbitration opt-out).
+
+Arbitration and class-action waivers: include at most ONE item if present, severity "medium" only — informational ("disputes go to private arbitration, not court"), never "critical" or "high". Same for jury-trial waivers.
+
 ================ SEVERITY (use these exact words) ================
-- "critical": real, hard-to-undo harm or strips a core protection — e.g. sells your data; trains AI on your private content with no opt-out; you give up the right to sue or join a class action; permanent license to your photos/messages; collects biometric/health/precise-location/kids' data without clear limits.
-- "high": meaningful loss of control most people would object to — broad cross-app tracking; sharing with many named ad companies; no self-service delete; one-sided right to change the deal anytime.
-- "medium": notable but expected-with-tradeoffs, or limited in scope.
+- "critical": real, hard-to-undo harm — e.g. sells your data; trains AI on your private content with no opt-out; permanent license to your photos/messages; collects biometric/health/precise-location/kids' data without clear limits; broad indemnification making you liable for the company's claims.
+- "high": meaningful loss of control most people would object to — broad cross-app tracking; sharing with many named ad companies; no self-service delete; one-sided right to change the deal anytime; hidden recurring charges.
+- "medium": notable but expected-with-tradeoffs, or limited in scope — including arbitration/class-action waivers (informational only).
 - "low": minor or standard.
+
+For each watch_out_for item, set materiality:
+- "material_risk": genuine harm or meaningful loss of control (see critical/high examples above).
+- "notable": arbitration/class-action/jury-trial waivers and similar informational dispute terms.
+- "standard_industry": routine legal mechanics (DMCA, assignment, governing law) — omit from watch_out_for when possible.
 
 ================ GRADE A–E + HARD CAP ================
 A = genuinely protective. B = mostly fair, minor concerns. C = typical/mixed. D = user-hostile in one important way. E = user-hostile in several ways.
@@ -628,7 +665,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "critical_findings_count": 0,
   "confidence": "high|medium|low",
   "watch_out_for": [
-    {"title": "short plain label", "means_for_you": "consequence, not capability — required", "severity": "critical|high|medium|low", "quote": "exact copy from extraction or null", "quote_status": "from_extraction|none"}
+    {"title": "short plain label", "means_for_you": "consequence, not capability — required", "severity": "critical|high|medium|low", "materiality": "material_risk|notable|standard_industry", "quote": "exact copy from extraction or null", "quote_status": "from_extraction|none"}
   ],
   "who_gets_your_data": [
     {"who": "named company if extraction names it, else plain description", "what_they_get": "string", "means_for_you": "string", "severity": "critical|high|medium|low", "quote": "exact copy or null", "quote_status": "from_extraction|none"}

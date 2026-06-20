@@ -23,6 +23,7 @@ from litellm import ModelResponse
 from src.analyser import (
     _validate_consumer_explainer,
     _validate_consumer_explainer_quotes,
+    enrich_consumer_explainer_citations,
     generate_consumer_explainer,
 )
 from src.models.document import (
@@ -131,11 +132,11 @@ def test_grade_clamp_does_not_improve_a_worse_grade() -> None:
 
 
 def test_grade_clamp_blocker_classification_counts_as_critical() -> None:
-    extraction = _extraction_with_quotes("binding arbitration")
+    extraction = _extraction_with_quotes("we sell your personal information")
     explainer = ConsumerExplainer(
         grade="A",
         watch_out_for=[
-            ConsumerCase(title="Arbitration", severity="high", classification="blocker"),
+            ConsumerCase(title="Sells data", severity="critical", classification="blocker"),
         ],
     )
 
@@ -145,10 +146,70 @@ def test_grade_clamp_blocker_classification_counts_as_critical() -> None:
     assert validated.grade == "D"
 
 
+def test_arbitration_blocker_is_downgraded_not_critical() -> None:
+    extraction = _extraction_with_quotes("binding arbitration and class action waiver")
+    explainer = ConsumerExplainer(
+        grade="A",
+        watch_out_for=[
+            ConsumerCase(
+                title="Binding arbitration",
+                severity="critical",
+                classification="blocker",
+                materiality="notable",
+                means_for_you="You must arbitrate disputes instead of going to court.",
+            ),
+        ],
+    )
+
+    validated = _validate_consumer_explainer(explainer, extraction)
+
+    assert len(validated.watch_out_for) == 1
+    assert validated.watch_out_for[0].severity == "medium"
+    assert validated.critical_findings_count == 0
+    assert validated.grade == "A"
+
+
+def test_repeat_infringer_removed_from_watch_out_for() -> None:
+    extraction = _extraction_with_quotes(
+        "We may terminate accounts of repeat infringers under our DMCA policy."
+    )
+    explainer = ConsumerExplainer(
+        grade="D",
+        watch_out_for=[
+            ConsumerCase(
+                title="Repeat infringer termination",
+                severity="high",
+                materiality="standard_industry",
+                means_for_you="Your account may be disabled for repeated copyright infringement.",
+            ),
+        ],
+    )
+
+    validated = _validate_consumer_explainer(explainer, extraction)
+
+    assert validated.watch_out_for == []
+    assert validated.critical_findings_count == 0
+    assert validated.grade == "D"
+
+
 def test_no_critical_leaves_grade_untouched() -> None:
     extraction = _extraction_with_quotes("we collect your email")
     explainer = ConsumerExplainer(
         grade="B",
+        watch_out_for=[ConsumerCase(title="Collects email", severity="medium")],
+    )
+
+    validated = _validate_consumer_explainer(explainer, extraction)
+
+    assert validated.critical_findings_count == 0
+    assert validated.grade == "B"
+
+
+def test_good_to_know_boosts_grade_when_no_criticals() -> None:
+    extraction = _extraction_with_quotes("we encrypt data at rest")
+    explainer = ConsumerExplainer(
+        grade="C",
+        good_to_know=["End-to-end encryption for messages", "30-day data deletion on request"],
         watch_out_for=[ConsumerCase(title="Collects email", severity="medium")],
     )
 
@@ -201,11 +262,119 @@ def test_verified_quote_attaches_source_citation_metadata() -> None:
 
     citation = validated.watch_out_for[0].citation
     assert citation is not None
+    assert len(validated.watch_out_for[0].citations) == 1
     assert citation.document_id == "doc-1"
     assert citation.document_title == "Privacy Policy"
     assert citation.document_type == "privacy_policy"
     assert citation.document_url == "https://example.com/policy"
     assert citation.quote == "We may sell your personal information to advertisers."
+
+
+def test_enrich_consumer_explainer_backfills_missing_citations() -> None:
+    extraction = _extraction_with_quotes("We may sell your personal information to advertisers.")
+    document = _make_document(extraction)
+    explainer = ConsumerExplainer(
+        watch_out_for=[
+            ConsumerCase(
+                title="Sells data",
+                severity="high",
+                quote="sell your personal information",
+                quote_status="from_extraction",
+                citation=None,
+            )
+        ],
+    )
+
+    enriched = enrich_consumer_explainer_citations(explainer, [document])
+
+    case = enriched.watch_out_for[0]
+    assert case.citation is not None
+    assert len(case.citations) == 1
+    assert case.citation.document_title == "Privacy Policy"
+    assert case.citation.document_url == "https://example.com/policy"
+
+
+def test_enrich_consumer_explainer_backfills_all_matching_source_documents() -> None:
+    shared_quote = "customer content for model training"
+    privacy_extraction = DocumentExtraction(
+        source_content_hash="hash-privacy",
+        data_collected=[
+            ExtractedDataItem(
+                data_type="ai_training",
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc-privacy",
+                        url="https://example.com/privacy",
+                        quote=f"We may use {shared_quote} to improve our services.",
+                        start_char=0,
+                        end_char=64,
+                        verified=True,
+                    )
+                ],
+            )
+        ],
+    )
+    terms_extraction = DocumentExtraction(
+        source_content_hash="hash-terms",
+        data_collected=[
+            ExtractedDataItem(
+                data_type="ai_training",
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc-terms",
+                        url="https://example.com/terms",
+                        quote=f"We may use {shared_quote}.",
+                        start_char=0,
+                        end_char=44,
+                        verified=True,
+                    )
+                ],
+            )
+        ],
+    )
+    documents = [
+        Document(
+            id="doc-privacy",
+            url="https://example.com/privacy",
+            product_id="prod-1",
+            doc_type="privacy_policy",
+            title="Privacy Policy",
+            markdown="# privacy",
+            text="privacy body",
+            extraction=privacy_extraction,
+            created_at=datetime(2026, 1, 1),
+        ),
+        Document(
+            id="doc-terms",
+            url="https://example.com/terms",
+            product_id="prod-1",
+            doc_type="terms_of_service",
+            title="Terms of Service",
+            markdown="# terms",
+            text="terms body",
+            extraction=terms_extraction,
+            created_at=datetime(2026, 1, 1),
+        ),
+    ]
+    explainer = ConsumerExplainer(
+        watch_out_for=[
+            ConsumerCase(
+                title="AI training",
+                severity="critical",
+                quote=shared_quote,
+                quote_status="from_extraction",
+            )
+        ],
+    )
+
+    enriched = enrich_consumer_explainer_citations(explainer, documents)
+
+    matched = enriched.watch_out_for[0].citations
+    assert len(matched) == 2
+    assert {citation.document_id for citation in matched} == {
+        "doc-privacy",
+        "doc-terms",
+    }
 
 
 def test_product_rollup_quote_resolves_to_matching_source_document() -> None:
@@ -238,11 +407,53 @@ def test_product_rollup_quote_resolves_to_matching_source_document() -> None:
 
     validated = _validate_consumer_explainer_quotes(explainer, citations)
 
-    citation = validated.watch_out_for[0].citation
-    assert citation is not None
+    matched = validated.watch_out_for[0].citations
+    assert len(matched) == 1
+    citation = matched[0]
     assert citation.document_id == "doc-terms"
     assert citation.document_title == "Terms of Service"
     assert validated.watch_out_for[0].quote_status == "from_extraction"
+    assert validated.watch_out_for[0].citation == citation
+
+
+def test_product_rollup_quote_resolves_to_all_matching_source_documents() -> None:
+    shared_quote = "customer content for model training"
+    explainer = ConsumerExplainer(
+        watch_out_for=[
+            ConsumerCase(
+                title="AI training",
+                severity="critical",
+                quote=shared_quote,
+                quote_status="from_extraction",
+            )
+        ],
+    )
+    citations = [
+        SourceCitation(
+            document_id="doc-privacy",
+            document_title="Privacy Policy",
+            document_type="privacy_policy",
+            document_url="https://example.com/privacy",
+            quote=f"We may use {shared_quote} to improve our services.",
+        ),
+        SourceCitation(
+            document_id="doc-terms",
+            document_title="Terms of Service",
+            document_type="terms_of_service",
+            document_url="https://example.com/terms",
+            quote=f"We may use {shared_quote}.",
+        ),
+    ]
+
+    validated = _validate_consumer_explainer_quotes(explainer, citations)
+
+    matched = validated.watch_out_for[0].citations
+    assert len(matched) == 2
+    assert {citation.document_id for citation in matched} == {
+        "doc-privacy",
+        "doc-terms",
+    }
+    assert validated.watch_out_for[0].citation == matched[0]
 
 
 def test_quote_absent_from_extraction_is_decited_but_finding_kept() -> None:

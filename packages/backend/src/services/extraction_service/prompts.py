@@ -33,6 +33,9 @@ Your job is to extract structured facts ONLY from the provided text chunk.
 Critical rules:
 - Only extract items explicitly present in the text chunk.
 - For every extracted item, provide an evidence quote that is an EXACT substring of the provided chunk.
+- The evidence quote must DIRECTLY substantiate the extracted fact — what the company does with data, who receives it, retention, rights, AI use, liability, etc.
+- Do NOT use generic cookie definitions, browser mechanics, footer links, or "how to manage cookies" text as evidence unless the extracted item is specifically about cookies, trackers, or consent mechanics.
+- Prefer the shortest quote that still contains the substantive claim. Skip introductory boilerplate.
 - If a field is not present, return an empty list for that field.
 - Do not paraphrase evidence quotes; copy exact text.
 """
@@ -269,6 +272,7 @@ def _build_cluster_specs() -> None:
             "dangers": [
                 {
                     "value": "No cap on liability for user-generated content claims",
+                    "materiality": "material_risk | notable | standard_industry",
                     "quote": "exact quote",
                 }
             ],
@@ -302,10 +306,20 @@ def _build_cluster_specs() -> None:
             "   - physical_world: digital terms affecting physical-world rights (medical, biometric, property).\n"
             "5. INDEMNIFICATION: what the user is personally liable for.\n"
             "6. TERMINATION CONSEQUENCES: what happens to data, content, and access on termination.\n"
-            "7. DANGERS: material risks, one-sided legal terms, or meaningful trade-offs **stated in the chunk**.\n"
+            "7. DANGERS: material consumer-facing risks and meaningful trade-offs **stated in the chunk**.\n"
             "   Skip routine signup or category-norm requirements (e.g. phone for messaging, email for accounts)\n"
             "   unless the text ties them to unusual extra processing, sharing, or retention worth flagging.\n"
-            "   Goal: help users prioritize — not list every basic requirement as a red flag.\n"
+            "   Do NOT put arbitration/class-action waivers here — use dispute_resolution.\n"
+            "   Do NOT put DMCA/repeat-infringer termination here — use termination_consequences.\n"
+            "   Do NOT put assignment/non-assignable clauses here — use content_ownership.\n"
+            "   Also skip governing-law/venue, severability, and standard liability caps (use liability).\n"
+            "   Reserve dangers for unusual privacy harms, data sale, AI training, broad indemnification,\n"
+            "   and one-sided terms not captured in the structured fields above.\n"
+            "   For each danger, set materiality:\n"
+            "   - standard_industry: routine boilerplate (DMCA, assignment, governing law)\n"
+            "   - notable: arbitration/class-action waivers (should use dispute_resolution instead)\n"
+            "   - material_risk: genuine consumer harm or meaningful loss of control\n"
+            "   Goal: help users prioritize — not list every basic ToS clause as a red flag.\n"
             "8. BENEFITS: protections and user-friendly practices the document actually claims.\n"
             "9. RECOMMENDED ACTIONS: practical steps a user can take (settings, reading linked policies, opt-outs)\n"
             "   with specific URLs or instructions when present — helpful tone, not alarmist."
@@ -332,6 +346,7 @@ Text chunk:
 
 Return a JSON object with ONLY the keys listed below (all keys required).
 Evidence quotes must be EXACT substrings of the chunk above.
+Each quote must substantiate its extracted fact — not generic cookie definitions, browser instructions, or footer/manage-cookies UI text unless the fact is specifically about cookies, trackers, or consent controls.
 """
     return f"{header}\n{json.dumps(schema_hint, separators=(',', ':'))}\n\nNotes:\n{notes}"
 

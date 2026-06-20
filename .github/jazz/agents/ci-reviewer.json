@@ -1,7 +1,7 @@
 {
   "id": "ci-reviewer",
   "name": "ci-reviewer",
-  "description": "CI code review agent for Clausea AI — Python/TypeScript full-stack policy intelligence platform",
+  "description": "Clausea CI reviewer — strict PR diff on correctness, security, a11y, and performance. Concrete problems on concrete lines; http_request when unsure, expert subagents when the diff needs depth; 'we already do it here' won't fly.",
   "model": "openrouter/owl-alpha",
   "config": {
     "persona": "coder",
