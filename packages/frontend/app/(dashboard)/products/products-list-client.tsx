@@ -166,8 +166,10 @@ export interface ProductsPage {
 
 export function ProductsListClient({
   initialData,
+  initialFetchError = null,
 }: {
   initialData: ProductsPage;
+  initialFetchError?: string | null;
 }) {
   const { user } = useUser();
   const router = useRouter();
@@ -179,7 +181,10 @@ export function ProductsListClient({
   const [loading, setLoading] = useState(false);
   const [initialLoad, setInitialLoad] = useState(false);
   const isFirstFetch = useRef(true);
-  const [error, setError] = useState<string | null>(null);
+  const refetchEmptyCatalogOnMount = useRef(
+    !initialFetchError && initialData.total === 0,
+  );
+  const [error, setError] = useState<string | null>(initialFetchError);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -221,11 +226,12 @@ export function ProductsListClient({
     }
   }, [debouncedSearch, currentPage, searchParams, router]);
 
-  // Fetch when page/search changes; the initial page is server-rendered, so skip the first run.
+  // Fetch when page/search changes. Skip the first run when SSR already returned data;
+  // refetch immediately when the catalog is empty so client auth can recover from SSR misses.
   useEffect(() => {
     if (isFirstFetch.current) {
       isFirstFetch.current = false;
-      return;
+      if (!refetchEmptyCatalogOnMount.current) return;
     }
     const controller = new AbortController();
     async function fetchProducts() {

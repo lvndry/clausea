@@ -44,6 +44,7 @@ def _make_request(
 class TestWhitelisting:
     def test_whitelisted_routes_exist(self) -> None:
         assert "/health" in WHITELISTED_ROUTES
+        assert "/products/stats" in WHITELISTED_ROUTES
         assert "/docs" in WHITELISTED_ROUTES
         assert "/openapi.json" in WHITELISTED_ROUTES
         assert "/webhooks/paddle" in WHITELISTED_ROUTES
@@ -51,6 +52,10 @@ class TestWhitelisting:
 
     def test_whitelisted_route_detected(self, middleware: AuthMiddleware) -> None:
         request = _make_request(path="/health")
+        assert middleware._is_whitelisted(request) is True
+
+    def test_products_stats_whitelisted(self, middleware: AuthMiddleware) -> None:
+        request = _make_request(path="/products/stats")
         assert middleware._is_whitelisted(request) is True
 
     def test_non_whitelisted_route(self, middleware: AuthMiddleware) -> None:
