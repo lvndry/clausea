@@ -10,7 +10,11 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { ProductTopicReport, TopicStanceBreakdown } from "@/types";
+import type {
+  ProductTopicReport,
+  TopicCitation,
+  TopicStanceBreakdown,
+} from "@/types";
 
 interface TopicEvidencePanelProps {
   topicStances?: TopicStanceBreakdown[] | null;
@@ -54,6 +58,64 @@ const stanceStyles: Record<
 
 function humanizeTopic(topic: string): string {
   return topic.replace(/_/g, " ");
+}
+
+function TopicCitationCard({
+  citation,
+  index,
+  total,
+  compact = false,
+}: {
+  citation: TopicCitation;
+  index: number;
+  total: number;
+  compact?: boolean;
+}) {
+  const documentLabel =
+    citation.document_title || citation.document_id || "Policy document";
+
+  return (
+    <figure
+      className={cn(
+        "rounded-none border border-border/60 bg-muted/30",
+        compact ? "p-3" : "p-4",
+      )}
+    >
+      <figcaption className="mb-2 flex flex-col gap-2 text-[11px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-bold uppercase tracking-[0.18em] text-foreground">
+              Evidence quote {index + 1}
+              {total > 1 ? ` of ${total}` : ""}
+            </span>
+            {citation.verified && (
+              <Badge variant="outline" size="sm" className="h-5 px-1.5">
+                Verified
+              </Badge>
+            )}
+          </div>
+          <div className="truncate">
+            From <span className="text-foreground/80">{documentLabel}</span>
+            {citation.section_title ? ` - ${citation.section_title}` : ""}
+          </div>
+        </div>
+        {citation.document_url && (
+          <a
+            href={citation.document_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex w-fit items-center gap-1 border border-border px-2 py-1 font-semibold text-foreground transition-colors hover:bg-background"
+          >
+            Open document
+            <ExternalLink className="h-3 w-3 opacity-60" />
+          </a>
+        )}
+      </figcaption>
+      <blockquote className="border-l-2 border-foreground pl-3 text-sm leading-relaxed text-foreground/90">
+        &ldquo;{citation.quote}&rdquo;
+      </blockquote>
+    </figure>
+  );
 }
 
 export function TopicEvidencePanel({
@@ -129,11 +191,20 @@ export function TopicEvidencePanel({
 
   return (
     <div className="border border-border bg-background">
-      <div className="p-6 border-b border-border flex items-center gap-3">
-        <Shield className="h-5 w-5 text-foreground" strokeWidth={1.5} />
-        <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-          {title}
-        </h3>
+      <div className="p-6 border-b border-border flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3">
+          <Shield className="mt-0.5 h-5 w-5 text-foreground" strokeWidth={1.5} />
+          <div>
+            <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+              {title}
+            </h3>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              {showCitations
+                ? "Trace each topic back to exact quotes from the policies we analyzed."
+                : "A quick topic summary with representative evidence where available."}
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="divide-y divide-border">
@@ -197,31 +268,13 @@ export function TopicEvidencePanel({
               {!showCitations && previewCitations.length > 0 && (
                 <div className="space-y-2">
                   {previewCitations.map((citation, idx) => (
-                    <div
+                    <TopicCitationCard
                       key={`${topic.topic}-overview-citation-${idx}`}
-                      className="rounded-none bg-muted/40 border border-border/50 p-2"
-                    >
-                      <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate">
-                          Source:{" "}
-                          {citation.document_title || citation.document_id}
-                        </span>
-                        {citation.document_url && (
-                          <a
-                            href={citation.document_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 hover:text-foreground"
-                          >
-                            Open
-                            <ExternalLink className="h-3 w-3 opacity-60" />
-                          </a>
-                        )}
-                      </div>
-                      <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
-                        {citation.quote}
-                      </blockquote>
-                    </div>
+                      citation={citation}
+                      index={idx}
+                      total={previewCitations.length}
+                      compact
+                    />
                   ))}
                 </div>
               )}
@@ -261,31 +314,12 @@ export function TopicEvidencePanel({
               {showCitations && previewCitations.length > 0 && (
                 <div className="space-y-2 pt-1">
                   {previewCitations.map((citation, idx) => (
-                    <div
+                    <TopicCitationCard
                       key={`${topic.topic}-quote-${idx}`}
-                      className="rounded-none bg-muted/40 border border-border/50 p-2"
-                    >
-                      <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate">
-                          Source:{" "}
-                          {citation.document_title || citation.document_id}
-                        </span>
-                        {citation.document_url && (
-                          <a
-                            href={citation.document_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 hover:text-foreground"
-                          >
-                            Open
-                            <ExternalLink className="h-3 w-3 opacity-60" />
-                          </a>
-                        )}
-                      </div>
-                      <blockquote className="text-xs text-foreground/85 border-l-2 border-foreground pl-2">
-                        {citation.quote}
-                      </blockquote>
-                    </div>
+                      citation={citation}
+                      index={idx}
+                      total={previewCitations.length}
+                    />
                   ))}
                 </div>
               )}

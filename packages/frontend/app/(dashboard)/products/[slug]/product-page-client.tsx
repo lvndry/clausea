@@ -27,7 +27,7 @@ import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown"
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
-import { SourcesList } from "@/components/dashboard/sources-list";
+import { EvidenceList } from "@/components/dashboard/sources-list";
 import { TopicEvidencePanel } from "@/components/dashboard/topics/topic-evidence-panel";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
@@ -800,11 +800,11 @@ export default function CompanyPage({
               Overview
             </TabsTrigger>
             <TabsTrigger
-              value="sources"
+              value="evidence"
               variant="underline"
               className="px-0 text-[10px] uppercase tracking-[0.2em] font-bold gap-2"
             >
-              Sources
+              Evidence
               {documents.length > 0 && (
                 <span className="px-1.5 py-0.5 border border-border text-[8px] font-bold">
                   {documents.length}
@@ -991,7 +991,7 @@ export default function CompanyPage({
           )}
         </TabsContent>
 
-        <TabsContent value="sources" className="mt-0">
+        <TabsContent value="evidence" className="mt-0">
           {documentsLoading ? (
             <div className="space-y-4">
               <Skeleton className="h-12 w-64 rounded-xl" />
@@ -1000,7 +1000,7 @@ export default function CompanyPage({
               <Skeleton className="h-32 rounded-2xl" />
             </div>
           ) : (
-            <SourcesList
+            <EvidenceList
               productSlug={slug}
               documents={documents}
               topicReport={topics}
