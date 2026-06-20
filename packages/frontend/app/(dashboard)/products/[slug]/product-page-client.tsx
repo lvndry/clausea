@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { triggerPipeline } from "@/app/actions/pipeline";
 import { subscribeIndexationNotify } from "@/app/actions/products";
+import { EvidenceList } from "@/components/dashboard/evidence-list";
 import { ConsumerExplainerView } from "@/components/dashboard/explainer/consumer-explainer-view";
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
 import { ComplianceBadges } from "@/components/dashboard/overview/compliance-badges";
@@ -27,7 +28,6 @@ import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown"
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
-import { EvidenceList } from "@/components/dashboard/sources-list";
 import { TopicEvidencePanel } from "@/components/dashboard/topics/topic-evidence-panel";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
