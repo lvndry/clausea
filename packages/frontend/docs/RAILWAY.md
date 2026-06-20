@@ -56,12 +56,15 @@ Set these in the Railway dashboard for the **frontend service**. Variables marke
 
 #### Optional
 
-| Variable                                      | Build | Description                    |
-| --------------------------------------------- | ----- | ------------------------------ |
-| `NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY`        | Yes   | Paddle price ID for Pro plan   |
-| `NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY` | Yes   | Legacy alias for Pro price ID  |
-| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION`        | Yes   | Google Search Console meta tag |
-| `NEXT_PUBLIC_BING_VERIFICATION`               | Yes   | Bing Webmaster meta tag        |
+| Variable                                      | Build | Description                                                         |
+| --------------------------------------------- | ----- | ------------------------------------------------------------------- |
+| `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN`             | Yes   | Paddle client-side token for checkout overlay (`/checkout`)         |
+| `NEXT_PUBLIC_PADDLE_ENVIRONMENT`              | Yes   | `sandbox` or `production` — must match backend `PADDLE_ENVIRONMENT` |
+| `NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY`        | Yes   | Paddle price ID for Pro monthly plan                                |
+| `NEXT_PUBLIC_PADDLE_PRICE_PRO_ANNUAL`         | Yes   | Paddle price ID for Pro annual plan                                 |
+| `NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY` | Yes   | Legacy alias for Pro monthly price ID                               |
+| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION`        | Yes   | Google Search Console meta tag                                      |
+| `NEXT_PUBLIC_BING_VERIFICATION`               | Yes   | Bing Webmaster meta tag                                             |
 
 Railway sets `PORT`, `NODE_ENV`, and `RAILWAY_*` automatically — do not override `PORT`.
 

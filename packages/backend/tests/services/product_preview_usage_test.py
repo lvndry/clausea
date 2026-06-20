@@ -21,6 +21,7 @@ def mock_db():
 
 @pytest.mark.asyncio
 async def test_allows_first_use_with_token(mock_db):
+    mock_db.product_preview_usage.find_one.side_effect = [None]
     mock_db.product_preview_usage.find_one_and_update.return_value = {
         "token": "uuid-1",
         "count": 1,
@@ -33,6 +34,9 @@ async def test_allows_first_use_with_token(mock_db):
 
 @pytest.mark.asyncio
 async def test_allows_up_to_limit(mock_db):
+    mock_db.product_preview_usage.find_one.side_effect = [
+        {"token": "uuid-1", "count": ANONYMOUS_LIMIT - 1},
+    ]
     mock_db.product_preview_usage.find_one_and_update.return_value = {
         "token": "uuid-1",
         "count": ANONYMOUS_LIMIT,
@@ -45,7 +49,6 @@ async def test_allows_up_to_limit(mock_db):
 
 @pytest.mark.asyncio
 async def test_blocks_over_limit(mock_db):
-    mock_db.product_preview_usage.find_one_and_update.return_value = None
     mock_db.product_preview_usage.find_one.return_value = {
         "token": "uuid-1",
         "count": ANONYMOUS_LIMIT,
@@ -58,6 +61,7 @@ async def test_blocks_over_limit(mock_db):
 
 @pytest.mark.asyncio
 async def test_different_tokens_are_independent_on_same_ip(mock_db):
+    mock_db.product_preview_usage.find_one.side_effect = [None, None]
     mock_db.product_preview_usage.find_one_and_update.return_value = {
         "token": "uuid-A",
         "count": 1,
@@ -71,6 +75,7 @@ async def test_different_tokens_are_independent_on_same_ip(mock_db):
 
 @pytest.mark.asyncio
 async def test_ip_fallback_when_no_token(mock_db):
+    mock_db.product_preview_usage.find_one.side_effect = [None]
     mock_db.product_preview_usage.find_one_and_update.return_value = {
         "ip": "9.9.9.9",
         "count": 1,
