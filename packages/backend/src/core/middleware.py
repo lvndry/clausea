@@ -34,7 +34,11 @@ WHITELISTED_ROUTES = {
 
 # Public GET routes for product detail pages (shared links, crawlers, incognito).
 _PUBLIC_PRODUCT_GET_RE = re.compile(
-    r"^/products/(?:sitemap|[A-Za-z0-9][A-Za-z0-9_-]*(?:/(?:overview|documents|explainer|topics))?)$"
+    r"^/products/(?:"
+    r"sitemap|"
+    r"[A-Za-z0-9][A-Za-z0-9_-]*"
+    r"(?:/(?:overview|explainer|topics|documents(?:/[A-Za-z0-9][A-Za-z0-9_-]*/(?:extraction|deep-analysis))?))?"
+    r")$"
 )
 
 # Localhost addresses that are considered safe for development

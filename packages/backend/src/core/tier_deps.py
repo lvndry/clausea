@@ -20,7 +20,10 @@ _CRAWLER_UA_RE = re.compile(
     re.IGNORECASE,
 )
 _METERED_PRODUCT_GET_RE = re.compile(
-    r"^/products/(?:[A-Za-z0-9][A-Za-z0-9_-]*(?:/(?:overview|documents|explainer|topics))?)$"
+    r"^/products/(?:"
+    r"[A-Za-z0-9][A-Za-z0-9_-]*"
+    r"(?:/(?:overview|explainer|topics|documents(?:/[A-Za-z0-9][A-Za-z0-9_-]*/(?:extraction|deep-analysis))?))?"
+    r")$"
 )
 _preview_usage_svc = ProductPreviewUsageService()
 
