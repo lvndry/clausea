@@ -116,6 +116,7 @@ Set variables on the **API** and **worker** services (share via Railway shared v
 | ------------------- | -------------------------- |
 | `POSTHOG_API_KEY`   | Product analytics          |
 | `PADDLE_API_KEY`    | Billing                    |
+| `PADDLE_CLIENT_TOKEN` | Paddle.js client-side token for checkout overlay (`/subscriptions/checkout-config`) |
 | `PADDLE_WEBHOOK_SECRET` | Paddle webhooks        |
 | `PADDLE_PRICE_PRO_MONTHLY` | Pro monthly Paddle price ID (exposed via `/subscriptions/plans`) |
 | `PADDLE_PRICE_PRO_ANNUAL` | Pro annual Paddle price ID (optional) |

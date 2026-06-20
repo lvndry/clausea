@@ -16,10 +16,10 @@ import {
 
 type CheckoutViewState = "loading" | "opening" | "closed" | "error";
 
-function getPaddleEnvironment(): "production" | "sandbox" {
-  return process.env.NEXT_PUBLIC_PADDLE_ENVIRONMENT === "production"
-    ? "production"
-    : "sandbox";
+function getPaddleEnvironmentFromConfig(
+  environment: string | undefined,
+): "production" | "sandbox" {
+  return environment === "production" ? "production" : "sandbox";
 }
 
 function getCheckoutTheme(): "light" | "dark" {
@@ -57,28 +57,50 @@ function CheckoutPageContent() {
 }
 
 function CheckoutOverlay({ transactionId }: { transactionId: string }) {
-  const clientToken = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN;
-  const [viewState, setViewState] = useState<CheckoutViewState>(
-    clientToken ? "loading" : "error",
-  );
-  const [errorMessage, setErrorMessage] = useState<string | null>(
-    clientToken
-      ? null
-      : "Checkout is temporarily unavailable. Please try again in a few minutes.",
-  );
+  const [viewState, setViewState] = useState<CheckoutViewState>("loading");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const paddleRef = useRef<Paddle | null>(null);
   const openedRef = useRef(false);
 
   useEffect(() => {
-    if (!clientToken) return;
-
     let cancelled = false;
 
     (async () => {
+      let clientToken =
+        process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN?.trim() || "";
+      let environment =
+        process.env.NEXT_PUBLIC_PADDLE_ENVIRONMENT?.trim() || "sandbox";
+
+      if (!clientToken) {
+        try {
+          const response = await fetch("/api/subscriptions/checkout-config");
+          if (response.ok) {
+            const config = (await response.json()) as {
+              client_token?: string;
+              environment?: string;
+            };
+            clientToken = config.client_token?.trim() || "";
+            environment = config.environment?.trim() || environment;
+          }
+        } catch {
+          // Fall through to missing-token error below.
+        }
+      }
+
+      if (!clientToken) {
+        if (!cancelled) {
+          setViewState("error");
+          setErrorMessage(
+            "Checkout is temporarily unavailable. Please try again in a few minutes.",
+          );
+        }
+        return;
+      }
+
       try {
         const paddle = await initializePaddle({
           token: clientToken,
-          environment: getPaddleEnvironment(),
+          environment: getPaddleEnvironmentFromConfig(environment),
           checkout: {
             settings: {
               displayMode: "overlay",
@@ -151,7 +173,7 @@ function CheckoutOverlay({ transactionId }: { transactionId: string }) {
         paddleRef.current.Checkout.close();
       }
     };
-  }, [clientToken, transactionId]);
+  }, [transactionId]);
 
   if (viewState === "closed") {
     return (

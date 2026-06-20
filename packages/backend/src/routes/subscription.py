@@ -41,6 +41,20 @@ async def get_subscription_plans() -> dict[str, str]:
     }
 
 
+@router.get("/checkout-config")
+async def get_checkout_config() -> dict[str, str]:
+    """
+    Public Paddle client config for the checkout overlay.
+
+    Served at runtime from backend env so the frontend does not depend on
+    NEXT_PUBLIC_* build-time inlining on Railway.
+    """
+    return {
+        "client_token": config.paddle.client_token or "",
+        "environment": config.paddle.environment or "sandbox",
+    }
+
+
 @router.post("/checkout", status_code=201)
 async def create_checkout(
     req: CheckoutRequest,
