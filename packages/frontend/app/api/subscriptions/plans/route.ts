@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { getBackendUrl } from "@/lib/config";
 import { httpJson } from "@/lib/http";
 
+export const dynamic = "force-dynamic";
+
 interface SubscriptionPlansResponse {
   pro_monthly: string;
   pro_annual: string;
