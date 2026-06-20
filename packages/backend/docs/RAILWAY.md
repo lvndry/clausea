@@ -174,7 +174,7 @@ docker run --rm \
 
 | Symptom                      | Fix                                                                 |
 | ---------------------------- | ------------------------------------------------------------------- |
-| API health check fails       | Confirm start command uses `$PORT`; probe `/health`                 |
+| API health check fails       | Confirm start command uses `$PORT`; `/health` is liveness-only (200 even while DB warms up). Check deploy logs for missing `MONGO_URI` or MongoDB connectivity; use `/health/ready` for readiness. |
 | Worker OOM / crashloops      | Lower `PIPELINE_WORKER_CONCURRENCY`; increase memory; add replicas  |
 | Worker redeploys on API push | Expected if both share root — use watch paths or separate triggers  |
 | Crawls fail in worker        | Verify Camoufox libs in image; check `CRAWLER_USE_BROWSER=true`     |
