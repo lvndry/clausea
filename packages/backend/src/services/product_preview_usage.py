@@ -45,9 +45,25 @@ class ProductPreviewUsageService:
         else:
             set_on_insert["ip"] = ip
 
-        try:
+        existing = await db[self.COLLECTION].find_one(key_filter)
+        if existing:
+            current = existing.get("count", 0)
+            if current >= ANONYMOUS_LIMIT:
+                return False, current
             doc = await db[self.COLLECTION].find_one_and_update(
                 update_filter,
+                {"$inc": {"count": 1}, "$set": set_fields},
+                return_document=ReturnDocument.AFTER,
+            )
+            if doc is not None:
+                return True, doc["count"]
+            existing = await db[self.COLLECTION].find_one(key_filter, {"count": 1})
+            current = existing["count"] if existing else ANONYMOUS_LIMIT
+            return False, current
+
+        try:
+            doc = await db[self.COLLECTION].find_one_and_update(
+                key_filter,
                 {
                     "$inc": {"count": 1},
                     "$set": set_fields,
@@ -57,15 +73,10 @@ class ProductPreviewUsageService:
                 return_document=ReturnDocument.AFTER,
             )
         except DuplicateKeyError:
-            doc = await db[self.COLLECTION].find_one_and_update(
-                update_filter,
-                {"$inc": {"count": 1}, "$set": set_fields},
-                return_document=ReturnDocument.AFTER,
-            )
+            existing = await db[self.COLLECTION].find_one(key_filter, {"count": 1})
+            current = existing["count"] if existing else ANONYMOUS_LIMIT
+            return False, current
 
         if doc is not None:
             return True, doc["count"]
-
-        existing = await db[self.COLLECTION].find_one(key_filter, {"count": 1})
-        current = existing["count"] if existing else ANONYMOUS_LIMIT
-        return False, current
+        return False, ANONYMOUS_LIMIT

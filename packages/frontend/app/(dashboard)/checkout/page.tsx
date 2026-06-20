@@ -146,6 +146,7 @@ function CheckoutOverlay({ transactionId }: { transactionId: string }) {
 
     return () => {
       cancelled = true;
+      openedRef.current = false;
       if (paddleRef.current) {
         paddleRef.current.Checkout.close();
       }
