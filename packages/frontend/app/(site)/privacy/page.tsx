@@ -143,10 +143,11 @@ export default function PrivacyPolicyPage() {
                     Service Providers:
                   </strong>{" "}
                   We use third-party providers to run the Service, including
-                  MongoDB Atlas (database hosting), Railway (backend hosting),
-                  and Vercel (frontend hosting and delivery). We may also use
-                  providers for payments and analytics. Providers that process
-                  personal data on our behalf are required to protect it.
+                  MongoDB Atlas (database hosting), Railway (application
+                  hosting), and related infrastructure providers. We may also
+                  use providers for payments and analytics. Providers that
+                  process personal data on our behalf are required to protect
+                  it.
                 </li>
                 <li>
                   <strong className="text-foreground">
