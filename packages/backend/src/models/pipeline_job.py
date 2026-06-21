@@ -26,8 +26,7 @@ class PipelineErrorCode(StrEnum):
     internal_error = "internal_error"
     timed_out = "timed_out"
     stalled = "stalled"
-    # Hard anti-bot/access block accumulated over retries — domain is skipped
-    # for the remainder of this pipeline run to avoid wasting browser concurrency.
+    interrupted = "interrupted"
     domain_circuit_breaker = "domain_circuit_breaker"
 
 
@@ -39,6 +38,7 @@ PipelineJobStatus = Literal[
     "completed",
     "failed",
     "no_documents",
+    "interrupted",
 ]
 
 # Statuses a job can never leave. A job in any of these is "done" and must not be
@@ -52,6 +52,7 @@ TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
     "completed",
     "failed",
     "no_documents",
+    "interrupted",
 )
 
 CrawlErrorType = Literal[
@@ -158,6 +159,7 @@ class PipelineStep(BaseModel):
     progress_percent: float | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    has_explainer: bool | None = None
 
 
 class PipelineJob(BaseModel):
