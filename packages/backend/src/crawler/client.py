@@ -788,6 +788,7 @@ class ClauseaCrawler:
         "connection closed",
         "context or browser has been closed",
         "browser closed",
+        "window is null",  # Camoufox crash: context.new_page() fails when browser process dies
     )
 
     def _browser_render_slot(self) -> asyncio.Semaphore:
