@@ -37,6 +37,7 @@ _RETRYABLE_PIPELINE_ERRORS = {
     PipelineErrorCode.internal_error.value,
     PipelineErrorCode.timed_out.value,
     PipelineErrorCode.stalled.value,
+    PipelineErrorCode.interrupted.value,
 }
 _NON_RETRYABLE_PIPELINE_ERRORS = {
     PipelineErrorCode.product_not_found.value,
@@ -489,4 +490,120 @@ class PipelineRepository(BaseRepository):
         count = result.modified_count
         if count:
             logger.warning(f"Marked {count} stale pipeline job(s) as failed on startup")
+        return count
+
+    async def mark_interrupted(self, db: AgnosticDatabase, job_ids: list[str]) -> int:
+        """Mark in-flight jobs as interrupted so they can be re-queued on the next boot.
+
+        Called during graceful shutdown to checkpoint which jobs were cut short by a
+        SIGTERM, so they can be picked up immediately on restart without waiting for
+        the stale sweep.
+        """
+        if not job_ids:
+            return 0
+        now = datetime.now()
+        result = await db[self.COLLECTION].update_many(
+            {"id": {"$in": job_ids}, "status": {"$in": _ORPHANABLE_STATUSES}},
+            {
+                "$set": {
+                    "status": "interrupted",
+                    "active": False,
+                    "error": PipelineErrorCode.interrupted.value,
+                    "auto_retry_disabled": False,
+                    "auto_retry_disabled_reason": None,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            },
+        )
+        count = result.modified_count
+        if count:
+            logger.info("Marked %d in-flight job(s) as interrupted", count)
+        return count
+
+    async def requeue_interrupted_jobs(self, db: AgnosticDatabase) -> int:
+        """Re-queue jobs that were interrupted by a graceful shutdown.
+
+        Interrupted jobs are always retryable — they were cut short by a SIGTERM,
+        not by a code bug or data issue. They should be picked up immediately on
+        restart without waiting for the stale sweep.
+        """
+        fresh_steps = [
+            {
+                "name": name,
+                "status": "pending",
+                "message": None,
+                "progress_current": None,
+                "progress_total": None,
+                "progress_percent": None,
+                "started_at": None,
+                "completed_at": None,
+            }
+            for name in ("crawling", "synthesising", "generating_overview")
+        ]
+        claimed_slugs: set[str] = set(
+            await db[self.COLLECTION].distinct("product_slug", {"active": True})
+        )
+
+        cursor = (
+            db[self.COLLECTION]
+            .find({"status": "interrupted", "active": {"$ne": True}})
+            .sort("updated_at", 1)
+        )
+        candidates: list[dict[str, Any]] = await cursor.to_list(length=MAX_REQUEUE_BATCH_SIZE)
+
+        count = 0
+        for job in candidates:
+            slug = job["product_slug"]
+            if slug in claimed_slugs:
+                continue
+            claimed_slugs.add(slug)
+
+            hard_failures_this_attempt = sum(
+                1
+                for err in (job.get("crawl_errors") or [])
+                if is_hard_crawl_error(
+                    err.get("error_type", ""),
+                    int(err.get("status_code") or 0),
+                    err.get("error_message"),
+                )
+            )
+            new_hard_failure_count = (
+                int(job.get("accumulated_hard_failure_count") or 0) + hard_failures_this_attempt
+            )
+
+            try:
+                result = await db[self.COLLECTION].update_one(
+                    {
+                        "id": job["id"],
+                        "status": "interrupted",
+                        "active": {"$ne": True},
+                    },
+                    {
+                        "$set": {
+                            "status": "pending",
+                            "active": True,
+                            "steps": fresh_steps,
+                            "error": None,
+                            "error_detail": None,
+                            "started_at": None,
+                            "completed_at": None,
+                            "last_heartbeat": None,
+                            "documents_found": 0,
+                            "documents_stored": 0,
+                            "crawl_errors": [],
+                            "crawl_skip_reasons": [],
+                            "auto_retry_disabled": False,
+                            "auto_retry_disabled_reason": None,
+                            "accumulated_hard_failure_count": new_hard_failure_count,
+                            "updated_at": datetime.now(),
+                        }
+                    },
+                )
+            except DuplicateKeyError:
+                continue
+            if result.modified_count:
+                count += 1
+        if count:
+            logger.info("Re-queued %d interrupted job(s)", count)
         return count

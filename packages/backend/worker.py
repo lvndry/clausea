@@ -166,16 +166,28 @@ async def _run_worker_loop(
     # was owned by a now-dead process and must be reset immediately. The periodic
     # sweep uses 30 min to avoid interrupting genuinely running jobs.
     async with db_session() as db:
+        # First priority: re-queue jobs that were gracefully interrupted by the
+        # previous worker process. These are always retryable — they were cut short
+        # by SIGTERM, not by a code bug.
+        interrupted = await repo.requeue_interrupted_jobs(db)
+        if interrupted:
+            logger.info("Boot sweep: re-queued %d interrupted job(s)", interrupted)
+        # Then reap any stale jobs that weren't caught by the graceful shutdown.
         boot_reaped = await repo.mark_stale_as_failed(db, stale_threshold_minutes=0)
         if boot_reaped:
             async with db_session() as db2:
                 requeued = await repo.requeue_failed_jobs(db2)
-            logger.info("Boot sweep: reset %d orphaned job(s), re-queued %d", boot_reaped, requeued)
+            if boot_reaped or requeued:
+                logger.info(
+                    "Boot sweep: reset %d orphaned job(s), re-queued %d failed",
+                    boot_reaped,
+                    requeued,
+                )
     last_sweep = loop.time()
     last_monitoring_sweep = loop.time()
 
     logger.info("Pipeline worker started (concurrency=%d, poll=%.1fs)", _CONCURRENCY, _POLL_SECONDS)
-    running: set[asyncio.Task[None]] = set()
+    running: dict[asyncio.Task[None], str] = {}
 
     while not stop.is_set():
         if loop.time() - last_sweep >= _STALE_SWEEP_SECONDS:
@@ -199,10 +211,23 @@ async def _run_worker_loop(
 
         logger.info("Claimed job %s for %s", job.id, job.product_slug)
         task = asyncio.create_task(_run_job(job.id))
-        running.add(task)
-        task.add_done_callback(running.discard)
+        running[task] = job.id
+        task.add_done_callback(running.pop)
 
+    # Graceful shutdown: mark in-flight jobs as interrupted so they can be
+    # re-queued immediately on the next boot, then cancel tasks after grace period.
     if running:
+        in_flight_ids = list(running.values())
+        logger.info(
+            "Shutdown: marking %d in-flight job(s) as interrupted",
+            len(in_flight_ids),
+        )
+        try:
+            async with db_session() as db:
+                await repo.mark_interrupted(db, in_flight_ids)
+        except Exception:
+            logger.warning("Failed to mark interrupted jobs; falling back to cancellation")
+
         logger.info(
             "Shutdown: waiting up to %.0fs for %d in-flight job(s) to finish",
             _SHUTDOWN_GRACE_SECONDS,
@@ -214,8 +239,6 @@ async def _run_worker_loop(
                 timeout=_SHUTDOWN_GRACE_SECONDS,
             )
         except TimeoutError:
-            # Don't get SIGKILLed mid-crawl (which leaks the browser and leaves zombie
-            # `crawling` jobs). Cancel now; the stale-sweep reclaims them on next boot.
             logger.warning("Shutdown grace exceeded; cancelling %d in-flight job(s)", len(running))
             for task in running:
                 task.cancel()
