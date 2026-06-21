@@ -255,10 +255,21 @@ class PipelineRepository(BaseRepository):
             )
             return None
 
+        now = datetime.now()
         data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
             {"id": candidate["id"], "status": "pending"},
             {
-                "$set": {"status": "crawling", "started_at": datetime.now(), "active": True},
+                "$set": {
+                    "status": "crawling",
+                    "started_at": now,
+                    "active": True,
+                    # Set last_heartbeat at claim time so stale detection has a non-null
+                    # timestamp from the moment the job is claimed. Without this, a worker
+                    # that is SIGKILL'd before the first progress callback leaves
+                    # last_heartbeat=null, and mark_stale_as_failed must fall back to
+                    # updated_at — which can be ambiguous when multiple fields update it.
+                    "last_heartbeat": now,
+                },
                 "$inc": {"attempts": 1},
             },
             return_document=ReturnDocument.AFTER,
