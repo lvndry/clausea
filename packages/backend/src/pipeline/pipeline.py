@@ -63,7 +63,32 @@ def _is_valid_brand_name(name: str) -> bool:
     name = name.strip()
     if not name or not (2 <= len(name) <= 80):
         return False
-    if name.lower() in {"undefined", "null", "none", "unknown", "website", "home"}:
+    if name.lower() in {
+        "undefined",
+        "null",
+        "none",
+        "unknown",
+        "website",
+        "home",
+        "homepage",
+        "privacy",
+        "privacy policy",
+        "terms",
+        "terms of service",
+        "terms of use",
+        "cookie policy",
+        "cookies",
+        "legal",
+        "legal notice",
+        "tos",
+        "about",
+        "about us",
+        "contact",
+        "contact us",
+        "help",
+        "support",
+        "faq",
+    }:
         return False
     if "://" in name or name.startswith("www."):
         return False
@@ -103,9 +128,13 @@ def _extract_brand_name(results: list[CrawlResult]) -> str | None:
         title = (meta.get("title") or result.title or "").strip()
         for sep in (" - ", " | ", " — ", " · ", ": "):
             if sep in title:
-                candidate = title.split(sep)[0].strip()
-                if _is_valid_brand_name(candidate):
-                    return candidate
+                parts = title.split(sep)
+                candidate_first = parts[0].strip()
+                if _is_valid_brand_name(candidate_first):
+                    return candidate_first
+                candidate_last = parts[-1].strip()
+                if _is_valid_brand_name(candidate_last):
+                    return candidate_last
 
     return None
 

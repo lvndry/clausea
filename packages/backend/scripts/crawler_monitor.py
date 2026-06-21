@@ -258,142 +258,143 @@ async def _mongo_snapshot() -> dict[str, Any]:
         raise SystemExit("No MONGO_URI configured")
 
     client = AsyncIOMotorClient(cfg.mongodb_uri)
-    db = client[cfg.mongodb_database]
-    now = _utc_now()
+    try:
+        db = client[cfg.mongodb_database]
+        now = _utc_now()
 
-    products = await db.products.count_documents({})
-    by_status = {
-        row["_id"]: row["n"]
-        async for row in db.pipeline_jobs.aggregate(
-            [{"$group": {"_id": "$status", "n": {"$sum": 1}}}]
+        products = await db.products.count_documents({})
+        by_status = {
+            row["_id"]: row["n"]
+            async for row in db.pipeline_jobs.aggregate(
+                [{"$group": {"_id": "$status", "n": {"$sum": 1}}}]
+            )
+        }
+        total_jobs = sum(by_status.values())
+        active = await db.pipeline_jobs.count_documents({"active": True})
+        pending = by_status.get("pending", 0)
+        running = sum(by_status.get(s, 0) for s in IN_PROGRESS)
+        quarantined = await db.pipeline_jobs.count_documents(
+            {"status": "failed", "auto_retry_disabled": True}
         )
-    }
-    total_jobs = sum(by_status.values())
-    active = await db.pipeline_jobs.count_documents({"active": True})
-    pending = by_status.get("pending", 0)
-    running = sum(by_status.get(s, 0) for s in IN_PROGRESS)
-    quarantined = await db.pipeline_jobs.count_documents(
-        {"status": "failed", "auto_retry_disabled": True}
-    )
-    recent_failed = await db.pipeline_jobs.count_documents(
-        {"status": "failed", "updated_at": {"$gte": now - timedelta(minutes=15)}}
-    )
-    recent_completed = await db.pipeline_jobs.count_documents(
-        {"status": "completed", "completed_at": {"$gte": now - timedelta(minutes=15)}}
-    )
-
-    stale_cutoff = now - timedelta(minutes=25)
-    stale = (
-        await db.pipeline_jobs.find(
-            {
-                "status": {"$in": list(IN_PROGRESS)},
-                "$or": [
-                    {"last_heartbeat": {"$lt": stale_cutoff}},
-                    {"last_heartbeat": None, "updated_at": {"$lt": stale_cutoff}},
-                ],
-            },
-            {
-                "_id": 0,
-                "product_slug": 1,
-                "status": 1,
-                "attempts": 1,
-                "last_heartbeat": 1,
-                "updated_at": 1,
-            },
+        recent_failed = await db.pipeline_jobs.count_documents(
+            {"status": "failed", "updated_at": {"$gte": now - timedelta(minutes=15)}}
         )
-        .sort("updated_at", 1)
-        .limit(20)
-        .to_list(length=20)
-    )
-
-    dupes = await db.pipeline_jobs.aggregate(
-        [
-            {"$match": {"active": True}},
-            {"$group": {"_id": "$product_slug", "n": {"$sum": 1}}},
-            {"$match": {"n": {"$gt": 1}}},
-            {"$sort": {"n": -1}},
-        ]
-    ).to_list(length=20)
-
-    in_progress = (
-        await db.pipeline_jobs.find(
-            {"status": {"$in": list(IN_PROGRESS)}},
-            {
-                "_id": 0,
-                "product_slug": 1,
-                "product_name": 1,
-                "status": 1,
-                "attempts": 1,
-                "documents_found": 1,
-                "documents_stored": 1,
-                "analyses_skipped": 1,
-                "force_reanalyze": 1,
-                "last_heartbeat": 1,
-                "updated_at": 1,
-                "steps": 1,
-            },
+        recent_completed = await db.pipeline_jobs.count_documents(
+            {"status": "completed", "completed_at": {"$gte": now - timedelta(minutes=15)}}
         )
-        .sort("updated_at", -1)
-        .to_list(length=50)
-    )
 
-    recent_terminal = (
-        await db.pipeline_jobs.find(
-            {
-                "status": {"$in": ["completed", "failed", "no_documents", "interrupted"]},
-                "updated_at": {"$gte": now - timedelta(minutes=15)},
-            },
-            {
-                "_id": 0,
-                "product_slug": 1,
-                "status": 1,
-                "error": 1,
-                "error_detail": 1,
-                "documents_found": 1,
-                "documents_stored": 1,
-                "analyses_skipped": 1,
-                "completed_at": 1,
-                "updated_at": 1,
-            },
+        stale_cutoff = now - timedelta(minutes=25)
+        stale = (
+            await db.pipeline_jobs.find(
+                {
+                    "status": {"$in": list(IN_PROGRESS)},
+                    "$or": [
+                        {"last_heartbeat": {"$lt": stale_cutoff}},
+                        {"last_heartbeat": None, "updated_at": {"$lt": stale_cutoff}},
+                    ],
+                },
+                {
+                    "_id": 0,
+                    "product_slug": 1,
+                    "status": 1,
+                    "attempts": 1,
+                    "last_heartbeat": 1,
+                    "updated_at": 1,
+                },
+            )
+            .sort("updated_at", 1)
+            .limit(20)
+            .to_list(length=20)
         )
-        .sort("updated_at", -1)
-        .limit(10)
-        .to_list(length=10)
-    )
 
-    watch_jobs = (
-        await db.pipeline_jobs.find(
-            {"status": {"$in": list(IN_PROGRESS)}},
-            {
-                "_id": 0,
-                "product_slug": 1,
-                "product_name": 1,
-                "status": 1,
-                "attempts": 1,
-                "documents_found": 1,
-                "documents_stored": 1,
-                "last_heartbeat": 1,
-                "updated_at": 1,
-                "steps": 1,
-                "error": 1,
-                "error_detail": 1,
-            },
+        dupes = await db.pipeline_jobs.aggregate(
+            [
+                {"$match": {"active": True}},
+                {"$group": {"_id": "$product_slug", "n": {"$sum": 1}}},
+                {"$match": {"n": {"$gt": 1}}},
+                {"$sort": {"n": -1}},
+            ]
+        ).to_list(length=20)
+
+        in_progress = (
+            await db.pipeline_jobs.find(
+                {"status": {"$in": list(IN_PROGRESS)}},
+                {
+                    "_id": 0,
+                    "product_slug": 1,
+                    "product_name": 1,
+                    "status": 1,
+                    "attempts": 1,
+                    "documents_found": 1,
+                    "documents_stored": 1,
+                    "analyses_skipped": 1,
+                    "force_reanalyze": 1,
+                    "last_heartbeat": 1,
+                    "updated_at": 1,
+                    "steps": 1,
+                },
+            )
+            .sort("updated_at", -1)
+            .to_list(length=50)
         )
-        .sort("updated_at", -1)
-        .limit(8)
-        .to_list(length=8)
-    )
 
-    completed_total = by_status.get("completed", 0)
-    failed_total = by_status.get("failed", 0)
-    interrupted_total = by_status.get("interrupted", 0)
-    blocked = await db.pipeline_jobs.count_documents(
-        {"active": False, "status": {"$nin": ["completed", "failed", "no_documents"]}}
-    )
+        recent_terminal = (
+            await db.pipeline_jobs.find(
+                {
+                    "status": {"$in": ["completed", "failed", "no_documents", "interrupted"]},
+                    "updated_at": {"$gte": now - timedelta(minutes=15)},
+                },
+                {
+                    "_id": 0,
+                    "product_slug": 1,
+                    "status": 1,
+                    "error": 1,
+                    "error_detail": 1,
+                    "documents_found": 1,
+                    "documents_stored": 1,
+                    "analyses_skipped": 1,
+                    "completed_at": 1,
+                    "updated_at": 1,
+                },
+            )
+            .sort("updated_at", -1)
+            .limit(10)
+            .to_list(length=10)
+        )
 
-    stall_risk = _stall_risk_jobs(in_progress, now)
+        watch_jobs = (
+            await db.pipeline_jobs.find(
+                {"status": {"$in": list(IN_PROGRESS)}},
+                {
+                    "_id": 0,
+                    "product_slug": 1,
+                    "product_name": 1,
+                    "status": 1,
+                    "attempts": 1,
+                    "documents_found": 1,
+                    "documents_stored": 1,
+                    "last_heartbeat": 1,
+                    "updated_at": 1,
+                    "steps": 1,
+                    "error": 1,
+                    "error_detail": 1,
+                },
+            )
+            .sort("updated_at", -1)
+            .limit(8)
+            .to_list(length=8)
+        )
 
-    client.close()
+        completed_total = by_status.get("completed", 0)
+        failed_total = by_status.get("failed", 0)
+        interrupted_total = by_status.get("interrupted", 0)
+        blocked = await db.pipeline_jobs.count_documents(
+            {"active": False, "status": {"$nin": ["completed", "failed", "no_documents"]}}
+        )
+
+        stall_risk = _stall_risk_jobs(in_progress, now)
+    finally:
+        client.close()
 
     alerts: list[str] = []
     if dupes:
@@ -1074,8 +1075,11 @@ async def main() -> None:
         )
         exit_code = 0
         while time.time() < deadline:
-            code = await _run_once(include_logs=include_logs, auto_fix=auto_fix)
-            exit_code = max(exit_code, code)
+            try:
+                code = await _run_once(include_logs=include_logs, auto_fix=auto_fix)
+                exit_code = max(exit_code, code)
+            except Exception as exc:
+                print(f"[WATCHDOG] Error during run: {exc}", file=sys.stderr)
             remaining_h = (deadline - time.time()) / 3600
             print(f"[WATCHDOG] next check in {LOOP_INTERVAL_SECONDS}s (~{remaining_h:.1f}h left)")
             await asyncio.sleep(LOOP_INTERVAL_SECONDS)

@@ -530,6 +530,8 @@ class ClauseaCrawler:
                 request_args["proxy"] = self.proxy
 
             async with session.get(url, **request_args) as response:
+                if response.status != 200:
+                    return None
                 content_type = response.headers.get("content-type", "").lower()
                 if not any(
                     content_type.startswith(ct)
@@ -1620,6 +1622,17 @@ class ClauseaCrawler:
                         logger.debug(
                             "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",
                             self._consecutive_browser_failures,
+                        )
+                        return CrawlResult(
+                            url=effective_url,
+                            title=(page.title if page else ""),
+                            content="",
+                            markdown="",
+                            metadata=(page.metadata if page else {}),
+                            status_code=raw.status_code,
+                            success=False,
+                            error_message="Static content unusable and browser rendering skipped due to domain failure cap",
+                            discovered_links=(page.discovered_links if page else []),
                         )
                     else:
                         slot_wait_start = time.monotonic()

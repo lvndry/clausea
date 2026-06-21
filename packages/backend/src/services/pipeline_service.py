@@ -561,11 +561,21 @@ class PipelineService:
                         # re-created automatically if the user retries the URL later.
                         if job.status == "no_documents":
                             try:
-                                await db.products.delete_one({"id": product.id})
-                                logger.info(
-                                    "Removed empty product %s (no policy documents found)",
-                                    job.product_slug,
+                                doc_count = await db.documents.count_documents(
+                                    {"product_id": product.id}
                                 )
+                                if doc_count == 0:
+                                    await db.products.delete_one({"id": product.id})
+                                    logger.info(
+                                        "Removed empty product %s (no policy documents found)",
+                                        job.product_slug,
+                                    )
+                                else:
+                                    logger.info(
+                                        "Kept product %s despite no_documents — %d existing document(s) present",
+                                        job.product_slug,
+                                        doc_count,
+                                    )
                             except Exception as del_exc:  # noqa: BLE001
                                 logger.warning(
                                     "Failed to remove empty product %s: %s",
