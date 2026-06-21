@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
@@ -29,6 +30,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from src.core.config import DatabaseConfig
 from src.core.database import db_session
 from src.repositories.pipeline_repository import PipelineRepository
+
+logger = logging.getLogger(__name__)
 
 IN_PROGRESS = ("crawling", "synthesising", "generating_overview")
 STATE_FILE = Path("/tmp/clausea_crawler_monitor_state.json")
@@ -1079,7 +1082,7 @@ async def main() -> None:
                 code = await _run_once(include_logs=include_logs, auto_fix=auto_fix)
                 exit_code = max(exit_code, code)
             except Exception as exc:
-                print(f"[WATCHDOG] Error during run: {exc}", file=sys.stderr)
+                logger.error("Watchdog run failed: %s", exc, exc_info=True)
             remaining_h = (deadline - time.time()) / 3600
             print(f"[WATCHDOG] next check in {LOOP_INTERVAL_SECONDS}s (~{remaining_h:.1f}h left)")
             await asyncio.sleep(LOOP_INTERVAL_SECONDS)

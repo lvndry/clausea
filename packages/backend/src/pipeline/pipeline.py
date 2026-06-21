@@ -92,6 +92,10 @@ def _is_valid_brand_name(name: str) -> bool:
         return False
     if "://" in name or name.startswith("www."):
         return False
+    # Reject ISO-style abbreviations (2-letter country/language codes like "GB", "US", "EN")
+    # that can appear as the trailing segment of titles such as "Privacy Policy - GB".
+    if len(name) == 2 and name.isupper():
+        return False
     return True
 
 
@@ -129,12 +133,10 @@ def _extract_brand_name(results: list[CrawlResult]) -> str | None:
         for sep in (" - ", " | ", " — ", " · ", ": "):
             if sep in title:
                 parts = title.split(sep)
-                candidate_first = parts[0].strip()
-                if _is_valid_brand_name(candidate_first):
-                    return candidate_first
-                candidate_last = parts[-1].strip()
-                if _is_valid_brand_name(candidate_last):
-                    return candidate_last
+                for part in parts:
+                    candidate = part.strip()
+                    if _is_valid_brand_name(candidate):
+                        return candidate
 
     return None
 
