@@ -1,6 +1,8 @@
 import { ImageResponse } from "next/og";
 import type { NextRequest } from "next/server";
 
+import { letterGradeToTone } from "@/lib/grade";
+
 export const contentType = "image/png";
 
 // Colors matching lib/grade.ts tone palette
@@ -20,29 +22,11 @@ const VERDICT_LABELS: Record<string, { label: string; tone: string }> = {
   very_pervasive: { label: "Alarming", tone: "bad" },
 };
 
-// Grade bands: risk_score is higher = worse, invert to get letter
-const GRADE_BANDS = [
-  { min: 9.5, letter: "A+" },
-  { min: 8.5, letter: "A" },
-  { min: 8.0, letter: "A-" },
-  { min: 7.5, letter: "B+" },
-  { min: 6.5, letter: "B" },
-  { min: 6.0, letter: "B-" },
-  { min: 5.5, letter: "C+" },
-  { min: 4.5, letter: "C" },
-  { min: 4.0, letter: "C-" },
-  { min: 3.5, letter: "D+" },
-  { min: 2.5, letter: "D" },
-  { min: 1.0, letter: "D-" },
-  { min: -Infinity, letter: "E" },
-];
-
-function riskScoreToGrade(score: number): string {
-  const effective = 10 - Math.max(0, Math.min(10, score));
-  return (
-    GRADE_BANDS.find((b) => effective >= b.min)?.letter ??
-    GRADE_BANDS[GRADE_BANDS.length - 1].letter
-  );
+function normalizeOgGrade(raw: string | null): string | null {
+  if (!raw) return null;
+  const letter = raw.trim().toUpperCase().charAt(0);
+  if (!["A", "B", "C", "D", "E"].includes(letter)) return null;
+  return letter;
 }
 
 async function loadFont(
@@ -65,7 +49,7 @@ async function loadFont(
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const name = searchParams.get("name");
-  const scoreRaw = searchParams.get("score");
+  const gradeRaw = searchParams.get("grade");
   const verdict = searchParams.get("verdict") ?? "";
 
   const isProduct = Boolean(name);
@@ -103,13 +87,13 @@ export async function GET(request: NextRequest) {
 
   // ─── Product OG ──────────────────────────────────────────────────────────────
   if (isProduct) {
-    const score = scoreRaw ? parseFloat(scoreRaw) : null;
-    const gradeLetter =
-      score !== null && !isNaN(score) ? riskScoreToGrade(score) : null;
+    const gradeLetter = normalizeOgGrade(gradeRaw);
     const verdictInfo = VERDICT_LABELS[verdict] ?? null;
     const gradeColor = verdictInfo
       ? TONE_COLORS[verdictInfo.tone]
-      : "rgba(250,249,246,0.4)";
+      : gradeLetter
+        ? TONE_COLORS[letterGradeToTone(gradeLetter)]
+        : "rgba(250,249,246,0.4)";
 
     return new ImageResponse(
       <div
