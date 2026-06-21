@@ -2,13 +2,32 @@
 
 import { useRouter } from "next/navigation";
 
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 
+import { Spinner } from "@/components/ui/spinner";
 import { getSignedInDestination } from "@/lib/auth-routes";
 import { SignUp, useAuth } from "@clerk/nextjs";
 
 import { useAnalytics } from "../../../../hooks/useAnalytics";
 import { useUserData } from "../../../../hooks/useUserData";
+
+function SignUpShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="max-w-md mx-auto px-4 py-20">
+      <div className="flex flex-col items-center gap-8">
+        <div className="flex flex-col gap-4 text-center">
+          <h1 className="text-4xl font-bold">Join Clausea</h1>
+          <p className="text-lg text-muted-foreground">
+            Create your account to start analyzing legal agreements and policies
+          </p>
+        </div>
+        <div className="w-full max-w-[400px] min-h-[400px] flex flex-col items-center justify-center">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -47,39 +66,29 @@ export default function SignUpPage() {
     };
   }, [trackUserJourney]);
 
-  if (!isLoaded || (isSignedIn && userDataLoading)) {
-    return null;
-  }
-
-  if (isSignedIn) {
-    return null;
+  if (!isLoaded || isSignedIn) {
+    return (
+      <SignUpShell>
+        <Spinner size="lg" />
+      </SignUpShell>
+    );
   }
 
   return (
-    <div className="max-w-md mx-auto px-4 py-20">
-      <div className="flex flex-col items-center gap-8">
-        <div className="flex flex-col gap-4 text-center">
-          <h1 className="text-4xl font-bold">Join Clausea</h1>
-          <p className="text-lg text-muted-foreground">
-            Create your account to start analyzing legal agreements and policies
-          </p>
-        </div>
-        <div className="w-full max-w-[400px]">
-          <SignUp
-            appearance={{
-              elements: {
-                rootBox: "w-full",
-                card: "shadow-none border-0",
-                headerTitle: "hidden",
-                headerSubtitle: "hidden",
-              },
-            }}
-            signInUrl="/sign-in"
-            forceRedirectUrl="/onboarding"
-            fallbackRedirectUrl="/onboarding"
-          />
-        </div>
-      </div>
-    </div>
+    <SignUpShell>
+      <SignUp
+        appearance={{
+          elements: {
+            rootBox: "w-full",
+            card: "shadow-none border-0",
+            headerTitle: "hidden",
+            headerSubtitle: "hidden",
+          },
+        }}
+        signInUrl="/sign-in"
+        forceRedirectUrl="/onboarding"
+        fallbackRedirectUrl="/onboarding"
+      />
+    </SignUpShell>
   );
 }

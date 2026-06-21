@@ -19,6 +19,7 @@ from typing import Any, Literal, NamedTuple
 
 from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
+from pymongo.errors import ConnectionFailure
 
 from src.core.logging import get_logger
 from src.llm import (
@@ -169,8 +170,10 @@ async def _stamp_analysis_error(
     """
     try:
         await document_svc.update_document(db, doc, invalidate_product_overview=False)
+    except ConnectionFailure:
+        raise
     except Exception as exc:
-        logger.warning(f"could not stamp analysis_error for document {doc.id}: {exc}")
+        logger.error(f"could not stamp analysis_error for document {doc.id}: {exc}")
 
 
 def _analysis_up_to_date(doc: Document) -> bool:
@@ -1661,6 +1664,7 @@ async def generate_product_consumer_explainer(
 
     for attempt in range(max_retries):
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
         try:
             async with usage_tracking(tracker_callback):
                 response = await acompletion_with_fallback(
@@ -1671,6 +1675,7 @@ async def generate_product_consumer_explainer(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    heartbeat_callback=heartbeat_callback,
                 )
             logger.info(
                 "generate_product_consumer_explainer %s used model %s", product_slug, response.model

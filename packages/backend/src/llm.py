@@ -69,6 +69,9 @@ class CircuitBreaker:
         self._is_open = False
         self._half_open = False
 
+    def reset_half_open(self) -> None:
+        self._half_open = False
+
     def allow_request(self) -> bool:
         if not self._is_open:
             return True
@@ -330,6 +333,10 @@ async def acompletion_with_fallback(
             raise CircuitBreakerError(
                 "LLM service unavailable: too many consecutive failures"
             ) from None
+        raise
+    except BaseException:
+        if cb.is_open:
+            cb.reset_half_open()
         raise
     else:
         cb.record_success()

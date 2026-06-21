@@ -538,6 +538,7 @@ class PipelineRepository(BaseRepository):
                 "progress_percent": None,
                 "started_at": None,
                 "completed_at": None,
+                **({"has_explainer": None} if name == "generating_overview" else {}),
             }
             for name in ("crawling", "synthesising", "generating_overview")
         ]
