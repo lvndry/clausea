@@ -162,9 +162,11 @@ async def _run_worker_loop(
     repo: PipelineRepository, stop: asyncio.Event, loop: asyncio.AbstractEventLoop
 ) -> None:
     # Reap jobs orphaned by a previous crash/redeploy before claiming new work.
-    # On boot we use threshold=0: any job still "crawling" when this process starts
-    # was owned by a now-dead process and must be reset immediately. The periodic
-    # sweep uses 30 min to avoid interrupting genuinely running jobs.
+    # We use a 2-minute threshold (not 0) so that sibling replicas starting within
+    # seconds of each other don't orphan each other's freshly-claimed jobs.  Any
+    # job running for more than 2 minutes when this replica boots was owned by a
+    # genuinely dead process and should be reset.  The periodic sweep (every 5 min)
+    # catches the rare case where a crash happens within that 2-minute window.
     async with db_session() as db:
         # First priority: re-queue jobs that were gracefully interrupted by the
         # previous worker process. These are always retryable — they were cut short
@@ -174,7 +176,7 @@ async def _run_worker_loop(
             logger.info("Boot sweep: re-queued %d interrupted job(s)", interrupted)
         # Then reap any stale jobs that weren't caught by the graceful shutdown.
         boot_reaped = await repo.mark_stale_as_failed(
-            db, stale_threshold_minutes=0, context=StaleReapContext.worker_boot
+            db, stale_threshold_minutes=2, context=StaleReapContext.worker_boot
         )
         if boot_reaped:
             async with db_session() as db2:
