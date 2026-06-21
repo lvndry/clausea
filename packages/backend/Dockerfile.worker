@@ -91,32 +91,9 @@ WORKDIR /app
 # Copy the compiled virtual environment (all external deps, no local package).
 COPY --from=builder /opt/venv /opt/venv
 
-# Patch Playwright's Node driver (coreBundle.js): Camoufox's Juggler can emit
-# Page.uncaughtError without a location field, causing an uncaught TypeError
-# ("Cannot read properties of undefined (reading 'url')") that crashes the
-# Node.js driver process and kills the container.
-# Fixed upstream in camoufox >0.4.11; patch the vendored bundle in the meantime.
-# Using Python for exact string replacement to avoid shell/sed escaping issues.
-# The build fails loudly if the pattern is not found (catches version drift).
-RUN python3 -c "
-import sys, glob
-# Locate coreBundle.js regardless of the exact Python version in the venv.
-matches = glob.glob('/opt/venv/lib/python*/site-packages/playwright/driver/package/lib/coreBundle.js')
-if not matches:
-    sys.exit('ERROR: coreBundle.js not found — update the patch path')
-path = matches[0]
-old = 'url: pageError.location.url,'
-new = 'url: pageError.location ? pageError.location.url : \"\",'
-with open(path) as f:
-    src = f.read()
-if old not in src:
-    sys.exit(f'ERROR: Playwright patch pattern not found in {path} — already fixed or version changed')
-patched = src.replace(old, new)
-with open(path, 'w') as f:
-    f.write(patched)
-count = patched.count(new)
-print(f'Playwright patch applied to {path} ({count} occurrence(s))')
-"
+# Patch Playwright's Node driver — see scripts/patch_playwright.py for details.
+COPY scripts/patch_playwright.py /tmp/patch_playwright.py
+RUN python3 /tmp/patch_playwright.py
 
 # Copy the pre-fetched Camoufox Firefox binary (stored under XDG_CACHE_HOME).
 COPY --from=builder /opt/camoufox-cache /opt/camoufox-cache
