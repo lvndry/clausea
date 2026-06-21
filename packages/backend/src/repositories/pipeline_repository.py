@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from motor.core import AgnosticDatabase
@@ -29,6 +30,33 @@ _ORPHANABLE_STATUSES = ["crawling", "synthesising", "generating_overview"]
 
 logger = get_logger(__name__)
 
+
+class StaleReapContext(StrEnum):
+    """Why mark_stale_as_failed is running — drives error_detail copy."""
+
+    worker_boot = "worker_boot"
+    periodic_sweep = "periodic_sweep"
+    api_startup = "api_startup"
+
+
+def _stale_reap_detail(context: StaleReapContext, stale_threshold_minutes: int) -> str:
+    if context == StaleReapContext.worker_boot:
+        return (
+            "The crawler worker restarted or crashed while this job was in progress "
+            "(for example after a deploy). It will be retried automatically."
+        )
+    if context == StaleReapContext.api_startup:
+        return (
+            f"This job had no progress for over {stale_threshold_minutes} minutes when the "
+            "API service started and was marked stale. It will be retried automatically."
+        )
+    return (
+        f"No progress updates for {stale_threshold_minutes} minutes while this job was running. "
+        "The worker may have stopped heartbeating or the process was lost. "
+        "It will be retried automatically."
+    )
+
+
 _RETRYABLE_PIPELINE_ERRORS = {
     PipelineErrorCode.crawl_failed.value,
     PipelineErrorCode.all_analysis_failed.value,
@@ -38,6 +66,7 @@ _RETRYABLE_PIPELINE_ERRORS = {
     PipelineErrorCode.timed_out.value,
     PipelineErrorCode.stalled.value,
     PipelineErrorCode.interrupted.value,
+    PipelineErrorCode.orphaned.value,
 }
 _NON_RETRYABLE_PIPELINE_ERRORS = {
     PipelineErrorCode.product_not_found.value,
@@ -450,12 +479,17 @@ class PipelineRepository(BaseRepository):
         return count
 
     async def mark_stale_as_failed(
-        self, db: AgnosticDatabase, stale_threshold_minutes: int = 30
+        self,
+        db: AgnosticDatabase,
+        stale_threshold_minutes: int = 30,
+        *,
+        context: StaleReapContext = StaleReapContext.periodic_sweep,
     ) -> int:
         """Mark stale in-progress jobs older than the threshold as failed.
 
-        Used on startup to recover from server crashes that left jobs orphaned.
-        Uses last_heartbeat if available, otherwise falls back to updated_at.
+        Used on worker boot, periodic sweeps, and API startup to recover jobs left
+        in-flight without a live worker. Uses last_heartbeat if available, otherwise
+        falls back to updated_at.
 
         Only jobs that were actively executing are eligible — "pending" jobs are queued,
         not orphaned, so a restart leaves them for the worker to pick up rather than
@@ -466,6 +500,7 @@ class PipelineRepository(BaseRepository):
         from datetime import timedelta
 
         cutoff = datetime.now() - timedelta(minutes=stale_threshold_minutes)
+        error_detail = _stale_reap_detail(context, stale_threshold_minutes)
         result = await db[self.COLLECTION].update_many(
             {
                 "status": {"$in": _ORPHANABLE_STATUSES},
@@ -479,7 +514,8 @@ class PipelineRepository(BaseRepository):
                 "$set": {
                     "status": "failed",
                     "active": False,
-                    "error": "Server restart — job was orphaned",
+                    "error": PipelineErrorCode.orphaned.value,
+                    "error_detail": error_detail,
                     "auto_retry_disabled": False,
                     "auto_retry_disabled_reason": None,
                     "updated_at": datetime.now(),
@@ -489,7 +525,23 @@ class PipelineRepository(BaseRepository):
         )
         count = result.modified_count
         if count:
-            logger.warning(f"Marked {count} stale pipeline job(s) as failed on startup")
+            if context == StaleReapContext.worker_boot:
+                logger.warning(
+                    "Marked %d in-flight job(s) as failed after worker boot (orphan sweep)",
+                    count,
+                )
+            elif context == StaleReapContext.api_startup:
+                logger.warning(
+                    "Marked %d stale pipeline job(s) as failed on API startup (>%dm idle)",
+                    count,
+                    stale_threshold_minutes,
+                )
+            else:
+                logger.warning(
+                    "Marked %d stale pipeline job(s) as failed (no progress for %dm)",
+                    count,
+                    stale_threshold_minutes,
+                )
         return count
 
     async def mark_interrupted(self, db: AgnosticDatabase, job_ids: list[str]) -> int:
@@ -509,6 +561,10 @@ class PipelineRepository(BaseRepository):
                     "status": "interrupted",
                     "active": False,
                     "error": PipelineErrorCode.interrupted.value,
+                    "error_detail": (
+                        "The worker shut down gracefully (deploy or scale-down) while this job "
+                        "was running. It will be retried automatically."
+                    ),
                     "auto_retry_disabled": False,
                     "auto_retry_disabled_reason": None,
                     "updated_at": now,

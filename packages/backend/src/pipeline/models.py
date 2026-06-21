@@ -45,6 +45,10 @@ class ProcessingStats(BaseModel):
     crawl_errors: list[dict[str, Any]] = Field(default_factory=list)
     crawl_skip_reasons: list[dict[str, Any]] = Field(default_factory=list)
 
+    # Best brand name extracted from crawled page metadata (og:site_name, application-name,
+    # or page title). None when no useful name could be found during the crawl.
+    brand_name: str | None = None
+
     @property
     def success_rate(self) -> float:
         total = self.products_processed + self.products_failed

@@ -414,6 +414,31 @@ class PipelineService:
                     if crawl_tasks:
                         await asyncio.gather(*crawl_tasks, return_exceptions=True)
 
+                    # Update the product display name when the crawler found a better one in
+                    # page metadata (e.g. og:site_name "OpenAI" vs domain-derived "Openai").
+                    brand_name: str | None = getattr(stats, "brand_name", None)
+                    if brand_name and brand_name != product.name:
+                        try:
+                            product_svc_upd = create_product_service()
+                            await product_svc_upd.update_product_name(db, product.id, brand_name)
+                            logger.info(
+                                "Product name updated: '%s' → '%s' (%s)",
+                                product.name,
+                                brand_name,
+                                job.product_slug,
+                            )
+                            product.name = brand_name
+                            job.product_name = brand_name
+                            await self._pipeline_repo.update_fields(
+                                db, job.id, {"product_name": brand_name}
+                            )
+                        except Exception as name_exc:
+                            logger.warning(
+                                "Brand name update failed for %s: %s",
+                                job.product_slug,
+                                name_exc,
+                            )
+
                     job.documents_found = stats.total_documents_found
                     job.documents_stored = stats.policy_documents_stored
 
@@ -526,6 +551,25 @@ class PipelineService:
                             "Skipped - no documents to analyze",
                         )
                         await self._pipeline_repo.update(db, job)
+
+                        # Remove the product record when the crawl found nothing at all.
+                        # A product with no documents is invisible to users (no analysis,
+                        # no overview) and reappearing in the product list is confusing.
+                        # The pipeline job is kept as a failure record; the product is
+                        # re-created automatically if the user retries the URL later.
+                        if job.status == "no_documents":
+                            try:
+                                await db.products.delete_one({"id": product.id})
+                                logger.info(
+                                    "Removed empty product %s (no policy documents found)",
+                                    job.product_slug,
+                                )
+                            except Exception as del_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "Failed to remove empty product %s: %s",
+                                    job.product_slug,
+                                    del_exc,
+                                )
 
                         # Alert the admin so a human can check whether this is a
                         # crawler coverage gap or the site genuinely has no policy

@@ -125,6 +125,14 @@ class ProductService:
         """
         return await self._product_repo.create(db, product)
 
+    async def update_product_name(self, db: AgnosticDatabase, product_id: str, name: str) -> None:
+        """Update the display name of a product.
+
+        Replaces the domain-derived placeholder name (e.g. "Openai") with the canonical
+        brand name extracted from page metadata (e.g. "OpenAI").
+        """
+        await self._product_repo.update_name(db, product_id, name)
+
     async def get_all_products(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 

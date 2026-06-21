@@ -172,6 +172,17 @@ ACCEPT_HEADER = (
     "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
 )
 
+# Stealth fallback headers used when the bot UA triggers a JS-shell bot-wall.
+# Only used for the secondary static retry; the primary fetch always uses DEFAULT_USER_AGENT.
+STEALTH_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+STEALTH_ACCEPT_HEADER = (
+    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+    "image/avif,image/webp,image/apng,*/*;q=0.8"
+)
+
 DEFAULT_NO_POLICY_PAGE_BUDGET = int(os.getenv("CRAWLER_NO_POLICY_PAGE_BUDGET", "50"))
 CONVERGENCE_LEGAL_SCORE = 0.2
 CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
