@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 
 import { startTransition, useEffect, useRef, useState } from "react";
 
+import { AUTH_ROUTES } from "@/lib/auth-routes";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@clerk/nextjs";
 
@@ -18,9 +19,7 @@ export function Header() {
 
   // Default to signed-out nav until Clerk confirms a session (safe for marketing pages).
   const showSignedInCta = isLoaded && isSignedIn;
-  const ctaHref = showSignedInCta
-    ? "/products"
-    : "/sign-in?redirect_url=%2Fproducts";
+  const ctaHref = showSignedInCta ? AUTH_ROUTES.products : AUTH_ROUTES.signUp;
   const ctaLabel = showSignedInCta ? "Dashboard" : "Get Started";
   const showSignIn = !showSignedInCta;
 

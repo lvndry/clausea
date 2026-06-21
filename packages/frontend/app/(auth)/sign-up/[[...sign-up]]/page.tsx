@@ -1,18 +1,37 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import { useEffect } from "react";
 
-import { SignUp } from "@clerk/nextjs";
+import { getSignedInDestination } from "@/lib/auth-routes";
+import { SignUp, useAuth } from "@clerk/nextjs";
 
 import { useAnalytics } from "../../../../hooks/useAnalytics";
+import { useUserData } from "../../../../hooks/useUserData";
 
 export default function SignUpPage() {
+  const router = useRouter();
+  const { isSignedIn, isLoaded } = useAuth();
+  const { userData, loading: userDataLoading } = useUserData();
   const { trackPageView, trackUserJourney } = useAnalytics();
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || userDataLoading) {
+      return;
+    }
+
+    router.replace(getSignedInDestination(userData?.onboarding_completed));
+  }, [isLoaded, isSignedIn, userDataLoading, userData, router]);
 
   // Track sign-up page view
   useEffect(() => {
+    if (isSignedIn) {
+      return;
+    }
+
     trackPageView("sign_up_page");
-  }, [trackPageView]);
+  }, [trackPageView, isSignedIn]);
 
   // Track sign-up events
   useEffect(() => {
@@ -27,6 +46,14 @@ export default function SignUpPage() {
       window.removeEventListener("clerk-sign-up-complete", handleSignUp);
     };
   }, [trackUserJourney]);
+
+  if (!isLoaded || (isSignedIn && userDataLoading)) {
+    return null;
+  }
+
+  if (isSignedIn) {
+    return null;
+  }
 
   return (
     <div className="max-w-md mx-auto px-4 py-20">

@@ -3,7 +3,6 @@
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/dist/ScrollTrigger";
 import Lenis from "lenis";
-import "lenis/dist/lenis.css";
 
 import { useEffect } from "react";
 

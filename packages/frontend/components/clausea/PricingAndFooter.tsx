@@ -4,7 +4,6 @@ import { CheckCircle2, Loader2, Mail } from "lucide-react";
 import { motion, useInView } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
 
 import { useRef, useState } from "react";
@@ -12,6 +11,7 @@ import { useRef, useState } from "react";
 import { GithubIcon } from "@/components/ui/brand-icons";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
+import { useGetStartedNavigation } from "@/hooks/useGetStartedNavigation";
 import { useProPricing } from "@/hooks/useProPricing";
 import {
   type BillingInterval,
@@ -29,8 +29,9 @@ type PricingFeature = string | { label: string; comingSoon: boolean };
 export function Pricing() {
   const containerRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(containerRef, { once: true, amount: 0.2 });
-  const router = useRouter();
   const { startCheckout, isLoading, error } = useCheckout();
+  const { navigate: navigateToGetStarted, isNavigationReady } =
+    useGetStartedNavigation();
   const {
     getProPriceId,
     isProCheckoutAvailable,
@@ -73,7 +74,7 @@ export function Pricing() {
       ],
       cta: "Get Started",
       popular: false,
-      action: () => router.push("/sign-up"),
+      action: () => navigateToGetStarted(),
     },
     {
       name: "Pro",
@@ -254,10 +255,11 @@ export function Pricing() {
                   variant={tier.popular ? "default" : "outline"}
                   disabled={
                     (isLoading && tier.popular) ||
-                    (tier.popular && !checkoutAvailable)
+                    (tier.popular && !checkoutAvailable) ||
+                    (!tier.popular && !isNavigationReady)
                   }
                   className={cn(
-                    "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
+                    "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border cursor-pointer",
                     tier.popular
                       ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
                       : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
