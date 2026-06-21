@@ -40,12 +40,12 @@ class StaleReapContext(StrEnum):
 
 
 def _stale_reap_detail(context: StaleReapContext, stale_threshold_minutes: int) -> str:
-    if context == StaleReapContext.worker_boot:
+    if context is StaleReapContext.worker_boot:
         return (
             "The crawler worker restarted or crashed while this job was in progress "
             "(for example after a deploy). It will be retried automatically."
         )
-    if context == StaleReapContext.api_startup:
+    if context is StaleReapContext.api_startup:
         return (
             f"This job had no progress for over {stale_threshold_minutes} minutes when the "
             "API service started and was marked stale. It will be retried automatically."
@@ -525,12 +525,12 @@ class PipelineRepository(BaseRepository):
         )
         count = result.modified_count
         if count:
-            if context == StaleReapContext.worker_boot:
+            if context is StaleReapContext.worker_boot:
                 logger.warning(
                     "Marked %d in-flight job(s) as failed after worker boot (orphan sweep)",
                     count,
                 )
-            elif context == StaleReapContext.api_startup:
+            elif context is StaleReapContext.api_startup:
                 logger.warning(
                     "Marked %d stale pipeline job(s) as failed on API startup (>%dm idle)",
                     count,
