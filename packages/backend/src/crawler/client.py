@@ -1586,11 +1586,15 @@ class ClauseaCrawler:
             if static_unusable and raw.status_code == 200 and needs_browser_fallback(raw):
                 stealth_raw = await self._static_fetch_stealth(session, url)
                 if stealth_raw is not None and not needs_browser_fallback(stealth_raw):
-                    stealth_page = await self._extract_page_content(stealth_raw, effective_url)
+                    stealth_effective = stealth_raw.resolved_url or effective_url
+                    stealth_page = await self._extract_page_content(stealth_raw, stealth_effective)
                     if stealth_page is not None and self._content_is_sufficient(
-                        stealth_page, effective_url
+                        stealth_page, stealth_effective
                     ):
                         logger.debug("Stealth static retry resolved %s", url)
+                        if stealth_effective != effective_url:
+                            self.visited_urls.add(self.normalize_url(stealth_effective))
+                            effective_url = stealth_effective
                         page = stealth_page
                         static_unusable = False
 

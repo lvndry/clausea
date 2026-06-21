@@ -416,22 +416,21 @@ class PipelineService:
 
                     # Update the product display name when the crawler found a better one in
                     # page metadata (e.g. og:site_name "OpenAI" vs domain-derived "Openai").
-                    if stats.brand_name and stats.brand_name != product.name:
+                    brand_name: str | None = getattr(stats, "brand_name", None)
+                    if brand_name and brand_name != product.name:
                         try:
                             product_svc_upd = create_product_service()
-                            await product_svc_upd.update_product_name(
-                                db, product.id, stats.brand_name
-                            )
+                            await product_svc_upd.update_product_name(db, product.id, brand_name)
                             logger.info(
                                 "Product name updated: '%s' → '%s' (%s)",
                                 product.name,
-                                stats.brand_name,
+                                brand_name,
                                 job.product_slug,
                             )
-                            product.name = stats.brand_name
-                            job.product_name = stats.brand_name
+                            product.name = brand_name
+                            job.product_name = brand_name
                             await self._pipeline_repo.update_fields(
-                                db, job.id, {"product_name": stats.brand_name}
+                                db, job.id, {"product_name": brand_name}
                             )
                         except Exception as name_exc:
                             logger.warning(

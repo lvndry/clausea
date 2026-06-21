@@ -731,9 +731,9 @@ def _progress_deltas(
                     }
                 )
             continue
-        df = cur["found"] - int(prev.get("found") or 0)
-        ds = cur["stored"] - int(prev.get("stored") or 0)
-        dsk = cur["skipped"] - int(prev.get("skipped") or 0)
+        df = int(cur["found"]) - int(prev.get("found") or 0)
+        ds = int(cur["stored"]) - int(prev.get("stored") or 0)
+        dsk = int(cur["skipped"]) - int(prev.get("skipped") or 0)
         if prev.get("status") != cur["status"] or df or ds or dsk:
             deltas.append(
                 {
@@ -1078,7 +1078,7 @@ async def main() -> None:
             exit_code = max(exit_code, code)
             remaining_h = (deadline - time.time()) / 3600
             print(f"[WATCHDOG] next check in {LOOP_INTERVAL_SECONDS}s (~{remaining_h:.1f}h left)")
-            time.sleep(LOOP_INTERVAL_SECONDS)
+            await asyncio.sleep(LOOP_INTERVAL_SECONDS)
         print("[WATCHDOG] 24h window complete")
         sys.exit(exit_code)
 
