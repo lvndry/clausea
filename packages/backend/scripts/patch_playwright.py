@@ -27,14 +27,15 @@ def main() -> None:
     old = "url: pageError.location.url,"
     new = 'url: pageError.location ? pageError.location.url : "",'
 
-    src = path.read_text() if hasattr(path, "read_text") else open(path).read()
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
     if old not in src:
         sys.exit(
             f"ERROR: patch pattern not found in {path} — already fixed upstream or version changed"
         )
 
     patched = src.replace(old, new)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(patched)
 
     count = patched.count(new)
