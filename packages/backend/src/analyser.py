@@ -19,6 +19,7 @@ from typing import Any, Literal, NamedTuple
 
 from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
+from pymongo.errors import ConnectionFailure
 
 from src.core.logging import get_logger
 from src.llm import (
@@ -169,8 +170,10 @@ async def _stamp_analysis_error(
     """
     try:
         await document_svc.update_document(db, doc, invalidate_product_overview=False)
+    except ConnectionFailure:
+        raise
     except Exception as exc:
-        logger.warning(f"could not stamp analysis_error for document {doc.id}: {exc}")
+        logger.error(f"could not stamp analysis_error for document {doc.id}: {exc}")
 
 
 def _analysis_up_to_date(doc: Document) -> bool:
@@ -199,6 +202,7 @@ async def analyse_product_documents(
     cancellation_token: CancellationToken | None = None,
     progress_callback: ProgressCallback | None = None,
     force_reanalyze: bool = False,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> AnalysisResult:
     """Analyse all documents for a product concurrently (up to 3 at once).
 
@@ -250,7 +254,9 @@ async def analyse_product_documents(
             if progress_callback:
                 await _maybe_await(progress_callback(index, total_docs, doc))
             try:
-                analysis = await analyse_document(doc, cancellation_token=token)
+                analysis = await analyse_document(
+                    doc, cancellation_token=token, heartbeat_callback=heartbeat_callback
+                )
                 if analysis:
                     doc.analysis = analysis
                     doc.analysis_error = None
@@ -926,6 +932,7 @@ async def analyse_document(
     use_cache: bool = True,
     max_retries: int = 3,
     cancellation_token: CancellationToken | None = None,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> DocumentAnalysis | None:
     """
     Summarize a document with caching, retry logic, and optimized model selection.
@@ -935,6 +942,8 @@ async def analyse_document(
         use_cache: Whether to check for cached analysis
         max_retries: Maximum number of retry attempts
         cancellation_token: Optional cancellation token for interrupting the operation
+        heartbeat_callback: Optional liveness ping fired between retry attempts so the
+            caller can keep a pipeline job alive during long LLM backoff sequences.
 
     Returns:
         DocumentAnalysis or None if summarization fails or the document has no text
@@ -1058,6 +1067,7 @@ Document content:
     for attempt in range(max_retries):
         # Check for cancellation before each retry attempt
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
 
         try:
             logger.debug(f"Analysing document {document.id} (attempt {attempt + 1}/{max_retries}) ")
@@ -1074,6 +1084,7 @@ Document content:
                         validator=_analysis_validator,
                         response_format={"type": "json_object"},
                         temperature=0,
+                        heartbeat_callback=heartbeat_callback,
                     )
                 )
 
@@ -1186,6 +1197,7 @@ Document content:
             if attempt < max_retries - 1:
                 wait_time = 2**attempt  # 1s, 2s, 4s...
                 logger.debug(f"Waiting {wait_time}s before retry...")
+                await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
                 # Use cancellable sleep
                 try:
                     await asyncio.wait_for(
@@ -1492,6 +1504,7 @@ async def generate_consumer_explainer(
     *,
     cancellation_token: CancellationToken | None = None,
     max_retries: int = 2,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> ConsumerExplainer | None:
     """Generate a plain-English consumer explainer for ONE document.
 
@@ -1528,6 +1541,7 @@ async def generate_consumer_explainer(
 
     for attempt in range(max_retries):
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
         try:
             async with usage_tracking(tracker_callback):
                 response = await acompletion_with_fallback(
@@ -1538,6 +1552,7 @@ async def generate_consumer_explainer(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    heartbeat_callback=heartbeat_callback,
                 )
             logger.info("generate_consumer_explainer %s used model %s", document.id, response.model)
 
@@ -1590,6 +1605,7 @@ async def generate_product_consumer_explainer(
     *,
     cancellation_token: CancellationToken | None = None,
     max_retries: int = 2,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> ConsumerExplainer | None:
     """Synthesize ONE product-level consumer explainer (roll-up) across all core docs.
 
@@ -1648,6 +1664,7 @@ async def generate_product_consumer_explainer(
 
     for attempt in range(max_retries):
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
         try:
             async with usage_tracking(tracker_callback):
                 response = await acompletion_with_fallback(
@@ -1658,6 +1675,7 @@ async def generate_product_consumer_explainer(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    heartbeat_callback=heartbeat_callback,
                 )
             logger.info(
                 "generate_product_consumer_explainer %s used model %s", product_slug, response.model
@@ -2094,6 +2112,7 @@ Per-document analyses and extractions:
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    heartbeat_callback=on_progress,
                 )
             )
 

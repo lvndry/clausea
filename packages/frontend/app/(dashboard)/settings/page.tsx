@@ -321,7 +321,7 @@ export default function SettingsPage() {
                       }
                     }}
                     disabled={checkoutLoading || !checkoutAvailable}
-                    className="gap-2"
+                    className="gap-2 cursor-pointer"
                   >
                     {checkoutLoading && (
                       <Loader2 className="w-4 h-4 animate-spin" />

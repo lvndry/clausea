@@ -581,12 +581,21 @@ class PipelineService:
                             message=f"Analyzing document {index}/{total}{title} ({remaining} left)",
                         )
 
+                    async def _on_synthesise_heartbeat() -> None:
+                        await self._update_step_progress(
+                            db,
+                            job,
+                            "synthesising",
+                            message="Retrying LLM analysis…",
+                        )
+
                     analysis_result = await analyse_product_documents(
                         db,
                         job.product_slug,
                         doc_svc,
                         progress_callback=_on_synthesise_progress,
                         force_reanalyze=job.force_reanalyze,
+                        heartbeat_callback=_on_synthesise_heartbeat,
                     )
                     analysed_docs = analysis_result.documents
                     job.analyses_skipped = analysis_result.analyses_skipped
@@ -726,6 +735,10 @@ class PipelineService:
                     # Consumer explainer (product-level, the consumer-facing output).
                     # Best-effort: a failure here must NOT fail a job whose overview already
                     # succeeded — the product page degrades gracefully when it is absent.
+                    _explainer_step_idx = next(
+                        (i for i, s in enumerate(job.steps) if s.name == "generating_overview"),
+                        None,
+                    )
                     try:
                         await _on_overview_progress()
                         explainer = await generate_product_consumer_explainer(
@@ -733,6 +746,7 @@ class PipelineService:
                             job.product_slug,
                             product_svc_for_overview,
                             doc_svc_for_overview,
+                            heartbeat_callback=_on_overview_progress,
                         )
                         if explainer is not None:
                             saved = await product_svc_for_overview.save_product_explainer(
@@ -744,12 +758,32 @@ class PipelineService:
                                 explainer.grade,
                                 saved,
                             )
+                            if _explainer_step_idx is not None:
+                                job.steps[_explainer_step_idx].has_explainer = True
+                                await self._pipeline_repo.update_fields(
+                                    db,
+                                    job.id,
+                                    {
+                                        f"steps.{_explainer_step_idx}.has_explainer": True,
+                                    },
+                                )
                         else:
                             logger.warning(
                                 "Consumer explainer not generated for %s "
                                 "(no core extraction or model failure).",
                                 job.product_slug,
                             )
+                            if _explainer_step_idx is not None:
+                                job.steps[_explainer_step_idx].has_explainer = False
+                                await self._pipeline_repo.update_fields(
+                                    db,
+                                    job.id,
+                                    {
+                                        f"steps.{_explainer_step_idx}.has_explainer": False,
+                                    },
+                                )
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as explainer_error:
                         logger.warning(
                             "Consumer explainer generation failed for %s: %s",
@@ -757,6 +791,15 @@ class PipelineService:
                             explainer_error,
                             exc_info=True,
                         )
+                        if _explainer_step_idx is not None:
+                            job.steps[_explainer_step_idx].has_explainer = False
+                            await self._pipeline_repo.update_fields(
+                                db,
+                                job.id,
+                                {
+                                    f"steps.{_explainer_step_idx}.has_explainer": False,
+                                },
+                            )
 
                     # Justified compliance assessment (per-regime score + strengths/gaps).
                     # Also best-effort — secondary to the consumer-facing outputs above.
