@@ -14,6 +14,7 @@ interface ProductMetadata {
   slug: string;
   company_name?: string | null;
   one_line_summary?: string;
+  grade?: "A" | "B" | "C" | "D" | "E" | null;
   risk_score?: number;
   verdict?:
     | "very_user_friendly"
@@ -26,11 +27,11 @@ interface ProductMetadata {
 function buildOgUrl(
   base: string,
   name: string,
-  score?: number | null,
+  grade?: ProductMetadata["grade"],
   verdict?: string | null,
 ): string {
   const params = new URLSearchParams({ name });
-  if (score != null) params.set("score", String(score));
+  if (grade) params.set("grade", grade);
   if (verdict) params.set("verdict", verdict);
   return `${base}/og?${params.toString()}`;
 }
@@ -107,9 +108,11 @@ const fetchProductForMetadata = cache(async function (
     if (overviewRes?.ok) {
       try {
         const overview = (await overviewRes.json()) as {
+          grade?: ProductMetadata["grade"];
           risk_score?: number;
           verdict?: ProductMetadata["verdict"];
         };
+        if (overview.grade) product.grade = overview.grade;
         if (overview.risk_score != null)
           product.risk_score = overview.risk_score;
         if (overview.verdict) product.verdict = overview.verdict;
@@ -223,12 +226,7 @@ export async function generateMetadata({
       siteName: "Clausea AI",
       images: [
         {
-          url: buildOgUrl(
-            siteUrl,
-            productName,
-            product.risk_score,
-            product.verdict,
-          ),
+          url: buildOgUrl(siteUrl, productName, product.grade, product.verdict),
           width: 1200,
           height: 630,
           alt: `${productName} policy overview`,
@@ -242,7 +240,7 @@ export async function generateMetadata({
       title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
       images: [
-        buildOgUrl(siteUrl, productName, product.risk_score, product.verdict),
+        buildOgUrl(siteUrl, productName, product.grade, product.verdict),
       ],
     },
     alternates: {
