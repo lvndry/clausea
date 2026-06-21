@@ -270,12 +270,7 @@ class ClauseaCrawler:
         self._render_failures: int = 0
         self._render_slot_wait_total: float = 0.0
         self._render_recovered: int = 0
-        # Per-domain consecutive browser-fetch failure counters.  Reset to 0 on any
-        # browser success for that domain; once a domain's count reaches
-        # BROWSER_DOMAIN_FAILURE_CAP all further browser attempts for *that domain*
-        # are skipped (static-only) to prevent zombie Camoufox processes from
-        # accumulating when pages on a particular domain consistently timeout.
-        self._domain_browser_failures: dict[str, int] = {}
+        self._consecutive_browser_failures: int = 0
 
         self.rate_limiter = DomainRateLimiter(
             delay_between_requests=delay_between_requests, jitter=self.delay_jitter
@@ -1616,16 +1611,10 @@ class ClauseaCrawler:
                     self.url_scorer.score_url(effective_url),
                 )
                 if relevance >= self.min_legal_score:
-                    _domain = urlparse(effective_url).hostname or effective_url
-                    if self._domain_browser_failures.get(_domain, 0) >= BROWSER_DOMAIN_FAILURE_CAP:
-                        # Too many consecutive browser failures on this domain — skip browser
-                        # for the remainder of this crawl session to prevent zombie Camoufox
-                        # processes from accumulating (each timeout leaves defunct OS
-                        # processes behind).
+                    if self._consecutive_browser_failures >= BROWSER_DOMAIN_FAILURE_CAP:
                         logger.debug(
-                            "Browser cap reached (%d consecutive failures on %s) — disabling browser for this domain",
-                            self._domain_browser_failures.get(_domain, 0),
-                            _domain,
+                            "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",
+                            self._consecutive_browser_failures,
                         )
                         return CrawlResult(
                             url=effective_url,
@@ -1647,7 +1636,7 @@ class ClauseaCrawler:
                         if browser_page is not None and self._content_is_sufficient(
                             browser_page, effective_url
                         ):
-                            self._domain_browser_failures[_domain] = 0
+                            self._consecutive_browser_failures = 0
                             browser_resolved = browser_page.metadata.pop(
                                 "_browser_resolved_url", None
                             )
@@ -1658,10 +1647,7 @@ class ClauseaCrawler:
                                 self._render_recovered += 1
                             return self._build_crawl_result(effective_url, browser_page)
 
-                        # Browser returned nothing useful — increment per-domain failure counter.
-                        self._domain_browser_failures[_domain] = (
-                            self._domain_browser_failures.get(_domain, 0) + 1
-                        )
+                        self._consecutive_browser_failures += 1
                         if browser_page is None:
                             self._render_failures += 1
                             if not self._in_render_retry:

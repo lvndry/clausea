@@ -190,9 +190,9 @@ CRAWL_EXHAUSTION_GRACE = int(os.getenv("CRAWLER_EXHAUSTION_GRACE", "10"))
 # Fires when an entire domain is consistently inaccessible (bot wall, auth gate, etc.)
 # so the job fails fast rather than exhausting the max-pages budget on dead URLs.
 CRAWL_BOT_WALL_ABORT = int(os.getenv("CRAWLER_BOT_WALL_ABORT", "20"))
-# Stop attempting browser renders globally once this many consecutive browser fetches have
-# failed (timeout, crash) in a single crawl session. Prevents zombie Camoufox processes
-# from accumulating when pages consistently timeout in the browser.
+# Stop attempting browser renders once this many consecutive browser fetches in a single
+# crawl session have failed (timeout, crash). Prevents zombie Camoufox processes from
+# accumulating when pages consistently timeout in the browser.
 BROWSER_DOMAIN_FAILURE_CAP = int(os.getenv("CRAWLER_BROWSER_DOMAIN_FAILURE_CAP", "3"))
 MIN_PAGES_PER_SEED = int(os.getenv("CRAWLER_MIN_PAGES_PER_SEED", "60"))
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
