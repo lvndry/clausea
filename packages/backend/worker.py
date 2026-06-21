@@ -60,16 +60,23 @@ async def _start_health_server() -> web.AppRunner:
 
 
 async def _sweep_stale(repo: PipelineRepository) -> None:
-    """Self-heal the queue (boot + periodic): reap crash-orphaned in-progress jobs, then
-    re-queue failed ones (orphans + transient failures) — retries are unlimited.
+    """Self-heal the queue (boot + periodic): re-queue interrupted/failed jobs, then
+    reap crash-orphaned in-progress jobs — retries are unlimited.
 
     Best-effort: a sweep error must never stop the worker from claiming jobs (a single
     failure here previously crashlooped the whole worker), so failures are logged, not raised.
     """
     try:
         async with db_session() as db:
+            # Re-queue gracefully-interrupted jobs first. In rolling deployments a
+            # sibling replica may have been SIGTERMed *after* the current worker's boot
+            # sweep ran, leaving jobs stuck as status="interrupted" indefinitely. The
+            # periodic sweep must close that gap so they don't wait until the next boot.
+            interrupted = await repo.requeue_interrupted_jobs(db)
             reaped = await repo.mark_stale_as_failed(db, context=StaleReapContext.periodic_sweep)
             requeued = await repo.requeue_failed_jobs(db)
+        if interrupted:
+            logger.info("Re-queued %d interrupted job(s) for retry", interrupted)
         if reaped:
             logger.info("Reaped %d stale job(s) as failed", reaped)
         if requeued:
