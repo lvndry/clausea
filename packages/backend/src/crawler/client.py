@@ -78,6 +78,8 @@ from src.crawler.constants import (
     MIN_CONTENT_LENGTH_FOR_SPA_CHECK,
     MIN_PAGES_PER_SEED,
     SPA_HYDRATION_RETRIES,
+    STEALTH_ACCEPT_HEADER,
+    STEALTH_USER_AGENT,
     english_locale_canonical_key,
     locale_canonical_key,
 )
@@ -499,6 +501,51 @@ class ClauseaCrawler:
                     headers=resp_headers,
                     resolved_url=final_url,
                 )
+
+    async def _static_fetch_stealth(
+        self, session: aiohttp.ClientSession, url: str
+    ) -> StaticFetchResult | None:
+        """Retry a static fetch with a real browser UA when the bot UA got a JS-shell bot-wall.
+
+        Only called when the primary fetch returned HTTP 200 with < 500 chars of visible text,
+        indicating the server detected ClauseaBot and served a JS challenge instead of content.
+        Returns None on any network error so the caller can fall through to the browser.
+        """
+        try:
+            await self.rate_limit(url)
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+            headers = {
+                "User-Agent": STEALTH_USER_AGENT,
+                "Accept": STEALTH_ACCEPT_HEADER,
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            request_args: dict[str, Any] = {"timeout": timeout, "headers": headers}
+            if self.proxy:
+                request_args["proxy"] = self.proxy
+
+            async with session.get(url, **request_args) as response:
+                content_type = response.headers.get("content-type", "").lower()
+                if not any(
+                    content_type.startswith(ct)
+                    for ct in ("text/html", "text/markdown", "text/plain")
+                ):
+                    return None
+
+                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raw = raw[:MAX_RESPONSE_BYTES]
+                body = raw.decode(response.charset or "utf-8", errors="replace")
+                return StaticFetchResult(
+                    url=url,
+                    status_code=response.status,
+                    content_type=content_type,
+                    body=body,
+                    headers=dict(response.headers.items()),
+                    resolved_url=str(response.url),
+                )
+        except Exception as e:
+            logger.debug("Stealth static retry failed for %s: %s", url, e)
+            return None
 
     async def _extract_page_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
         ct = raw.content_type
@@ -1533,6 +1580,19 @@ class ClauseaCrawler:
                 or page is None
                 or not self._content_is_sufficient(page, effective_url)
             )
+
+            # When the bot UA triggered a JS-shell bot-wall (HTTP 200 but unusable content),
+            # retry once with a real Chrome UA before burning an expensive browser slot.
+            if static_unusable and raw.status_code == 200 and needs_browser_fallback(raw):
+                stealth_raw = await self._static_fetch_stealth(session, url)
+                if stealth_raw is not None and not needs_browser_fallback(stealth_raw):
+                    stealth_page = await self._extract_page_content(stealth_raw, effective_url)
+                    if stealth_page is not None and self._content_is_sufficient(
+                        stealth_page, effective_url
+                    ):
+                        logger.debug("Stealth static retry resolved %s", url)
+                        page = stealth_page
+                        static_unusable = False
 
             is_speculative = self.normalize_url(url) in self._speculative_urls
 
