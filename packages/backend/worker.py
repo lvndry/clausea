@@ -21,7 +21,7 @@ from aiohttp import web
 from src.core.database import close_motor_client, db_session
 from src.core.logging import get_logger, setup_logging
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
-from src.repositories.pipeline_repository import PipelineRepository
+from src.repositories.pipeline_repository import PipelineRepository, StaleReapContext
 from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
@@ -68,7 +68,7 @@ async def _sweep_stale(repo: PipelineRepository) -> None:
     """
     try:
         async with db_session() as db:
-            reaped = await repo.mark_stale_as_failed(db)
+            reaped = await repo.mark_stale_as_failed(db, context=StaleReapContext.periodic_sweep)
             requeued = await repo.requeue_failed_jobs(db)
         if reaped:
             logger.info("Reaped %d stale job(s) as failed", reaped)
@@ -173,7 +173,9 @@ async def _run_worker_loop(
         if interrupted:
             logger.info("Boot sweep: re-queued %d interrupted job(s)", interrupted)
         # Then reap any stale jobs that weren't caught by the graceful shutdown.
-        boot_reaped = await repo.mark_stale_as_failed(db, stale_threshold_minutes=0)
+        boot_reaped = await repo.mark_stale_as_failed(
+            db, stale_threshold_minutes=0, context=StaleReapContext.worker_boot
+        )
         if boot_reaped:
             async with db_session() as db2:
                 requeued = await repo.requeue_failed_jobs(db2)

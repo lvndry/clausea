@@ -27,6 +27,7 @@ class PipelineErrorCode(StrEnum):
     timed_out = "timed_out"
     stalled = "stalled"
     interrupted = "interrupted"
+    orphaned = "orphaned"
     domain_circuit_breaker = "domain_circuit_breaker"
 
 

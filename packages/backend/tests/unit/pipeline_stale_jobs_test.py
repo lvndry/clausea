@@ -15,6 +15,31 @@ from src.repositories.pipeline_repository import PipelineRepository
 
 
 @pytest.mark.asyncio
+async def test_mark_stale_sets_orphaned_code_and_context_detail():
+    collection = MagicMock()
+    collection.update_many = AsyncMock(return_value=MagicMock(modified_count=2))
+    db = MagicMock()
+    db.__getitem__.return_value = collection
+
+    await PipelineRepository().mark_stale_as_failed(
+        db, stale_threshold_minutes=0, context=pr.StaleReapContext.worker_boot
+    )
+
+    update = collection.update_many.call_args.args[1]["$set"]
+    assert update["error"] == PipelineErrorCode.orphaned.value
+    assert "worker restarted or crashed" in update["error_detail"].lower()
+    assert update["error_detail"] != "Server restart — job was orphaned"
+
+    collection.update_many.reset_mock()
+    await PipelineRepository().mark_stale_as_failed(
+        db, stale_threshold_minutes=30, context=pr.StaleReapContext.periodic_sweep
+    )
+    update = collection.update_many.call_args.args[1]["$set"]
+    assert update["error"] == PipelineErrorCode.orphaned.value
+    assert "30 minutes" in update["error_detail"]
+
+
+@pytest.mark.asyncio
 async def test_mark_stale_targets_only_in_progress_not_pending():
     collection = MagicMock()
     collection.update_many = AsyncMock(return_value=MagicMock(modified_count=0))
