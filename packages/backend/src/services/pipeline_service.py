@@ -45,10 +45,12 @@ logger = get_logger(__name__)
 # a large/multi-jurisdiction site runs to completion. Set PIPELINE_MAX_DURATION_SECONDS > 0 only if
 # you want a hard ceiling regardless of forward progress.
 MAX_PIPELINE_DURATION_SECONDS = float(os.getenv("PIPELINE_MAX_DURATION_SECONDS", "0"))
-# Abort a job that makes no forward progress (no page/document/step update bumps updated_at)
-# for this long. Bounds *inactivity*, not total runtime: a slow-but-advancing pipeline runs
-# indefinitely, while a wedged one frees its worker slot fast instead of clogging it.
-STALL_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_STALL_TIMEOUT_SECONDS", "1200"))
+# Abort a job that makes no forward progress (no heartbeat bump) for this long.
+# The crawler's own CRAWL_BOT_WALL_ABORT (20 consecutive failures) handles the
+# "completely blocked site" case early — this stall guard is the backstop for genuinely
+# hung/wedged processes (OOM, deadlock, etc.) that never update their heartbeat.
+# 3 600 s (60 min) is generous enough for legitimately large multi-jurisdiction crawls.
+STALL_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_STALL_TIMEOUT_SECONDS", "3600"))
 
 
 class _PipelineStalled(Exception):

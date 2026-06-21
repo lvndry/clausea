@@ -63,6 +63,7 @@ from src.crawler.constants import (
     _TLD_EXTRACT,
     _TRACKING_QUERY_PARAMS,
     ACCEPT_HEADER,
+    BROWSER_DOMAIN_FAILURE_CAP,
     BROWSER_LOAD_STATE_TIMEOUT_MS,
     BROWSER_NAV_TIMEOUT_MS,
     CONVERGENCE_LEGAL_SCORE,
@@ -269,6 +270,11 @@ class ClauseaCrawler:
         self._render_failures: int = 0
         self._render_slot_wait_total: float = 0.0
         self._render_recovered: int = 0
+        # Consecutive browser-fetch failures across the whole crawl session. Reset to 0
+        # on any browser success; once the count reaches BROWSER_DOMAIN_FAILURE_CAP all
+        # future browser attempts are skipped (static-only) to prevent zombie Camoufox
+        # processes from accumulating when pages consistently timeout in the browser.
+        self._consecutive_browser_failures: int = 0
 
         self.rate_limiter = DomainRateLimiter(
             delay_between_requests=delay_between_requests, jitter=self.delay_jitter
@@ -1606,38 +1612,57 @@ class ClauseaCrawler:
                     self.url_scorer.score_url(effective_url),
                 )
                 if relevance >= self.min_legal_score:
-                    slot_wait_start = time.monotonic()
-                    async with self._browser_render_slot():
-                        self._render_slot_wait_total += time.monotonic() - slot_wait_start
-                        self._render_attempts += 1
-                        browser_page = await self._browser_fetch(effective_url)
-                    if browser_page is not None and self._content_is_sufficient(
-                        browser_page, effective_url
-                    ):
-                        browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
-                        if browser_resolved and browser_resolved != effective_url:
-                            effective_url = browser_resolved
-                            self.visited_urls.add(self.normalize_url(effective_url))
-                        if self._in_render_retry:
-                            self._render_recovered += 1
-                        return self._build_crawl_result(effective_url, browser_page)
+                    if self._consecutive_browser_failures >= BROWSER_DOMAIN_FAILURE_CAP:
+                        # Too many consecutive browser failures — disable browser for the
+                        # remainder of this crawl session to prevent zombie Camoufox
+                        # processes from accumulating (each timeout leaves defunct OS
+                        # processes behind).
+                        logger.debug(
+                            "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",
+                            self._consecutive_browser_failures,
+                        )
+                    else:
+                        slot_wait_start = time.monotonic()
+                        async with self._browser_render_slot():
+                            self._render_slot_wait_total += time.monotonic() - slot_wait_start
+                            self._render_attempts += 1
+                            browser_page = await self._browser_fetch(effective_url)
+                        if browser_page is not None and self._content_is_sufficient(
+                            browser_page, effective_url
+                        ):
+                            self._consecutive_browser_failures = 0
+                            browser_resolved = browser_page.metadata.pop(
+                                "_browser_resolved_url", None
+                            )
+                            if browser_resolved and browser_resolved != effective_url:
+                                effective_url = browser_resolved
+                                self.visited_urls.add(self.normalize_url(effective_url))
+                            if self._in_render_retry:
+                                self._render_recovered += 1
+                            return self._build_crawl_result(effective_url, browser_page)
 
-                    if browser_page is None:
-                        self._render_failures += 1
-                        if not self._in_render_retry:
-                            self._render_retry_queue.append(effective_url)
+                        # Browser returned nothing useful — increment global consecutive cap.
+                        self._consecutive_browser_failures += 1
+                        if browser_page is None:
+                            self._render_failures += 1
+                            if not self._in_render_retry:
+                                self._render_retry_queue.append(effective_url)
 
-                    return CrawlResult(
-                        url=effective_url,
-                        title=(browser_page.title if browser_page else ""),
-                        content="",
-                        markdown="",
-                        metadata=(browser_page.metadata if browser_page else {}),
-                        status_code=(browser_page.status_code if browser_page else raw.status_code),
-                        success=False,
-                        error_message="Static content unusable and browser rendering failed",
-                        discovered_links=(browser_page.discovered_links if browser_page else []),
-                    )
+                        return CrawlResult(
+                            url=effective_url,
+                            title=(browser_page.title if browser_page else ""),
+                            content="",
+                            markdown="",
+                            metadata=(browser_page.metadata if browser_page else {}),
+                            status_code=(
+                                browser_page.status_code if browser_page else raw.status_code
+                            ),
+                            success=False,
+                            error_message="Static content unusable and browser rendering failed",
+                            discovered_links=(
+                                browser_page.discovered_links if browser_page else []
+                            ),
+                        )
 
                 if page is not None:
                     return self._build_crawl_result(effective_url, page)
