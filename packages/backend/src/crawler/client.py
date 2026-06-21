@@ -785,6 +785,10 @@ class ClauseaCrawler:
         "context or browser has been closed",
         "browser closed",
         "window is null",  # Camoufox crash: context.new_page() fails when browser process dies
+        # Playwright Node.js driver crash: FFBrowserContext._onUncaughtError reads
+        # error.location.url without null-checking; if the page throws an uncaught JS
+        # error with no location the Node.js process dies with this TypeError.
+        "cannot read properties of undefined",
     )
 
     def _browser_render_slot(self) -> asyncio.Semaphore:
@@ -863,6 +867,7 @@ class ClauseaCrawler:
         except Exception as e:
             error_str = str(e).lower()
             if any(marker in error_str for marker in self._BROWSER_CRASH_MARKERS):
+                logger.warning("Browser driver crash detected for %s: %s", url, e)
                 await _log_top_processes(logger)
                 await _log_browser_processes(logger)
                 _browser_cleaned_up = True
