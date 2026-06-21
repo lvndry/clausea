@@ -58,6 +58,58 @@ from src.utils.perf import log_memory_usage, memory_monitor_task
 load_dotenv()
 
 
+def _is_valid_brand_name(name: str) -> bool:
+    """Return True if name looks like a real brand name rather than a URL or placeholder."""
+    name = name.strip()
+    if not name or not (2 <= len(name) <= 80):
+        return False
+    if name.lower() in {"undefined", "null", "none", "unknown", "website", "home"}:
+        return False
+    if "://" in name or name.startswith("www."):
+        return False
+    return True
+
+
+def _extract_brand_name(results: list[CrawlResult]) -> str | None:
+    """Extract the canonical brand name from crawl result metadata.
+
+    Priority:
+    1. ``og:site_name`` — brands set this to their authoritative display name (e.g. "OpenAI",
+       "GitHub").  It is the most reliable signal and avoids the ambiguity of page titles.
+    2. ``application-name`` meta tag — used by PWAs and some SaaS products.
+    3. First segment of the page ``<title>`` before a common separator (e.g. "Netflix" from
+       "Netflix - Watch TV Shows Online").
+
+    Returns ``None`` when no suitable name can be found.
+    """
+    for result in results:
+        if not result.success:
+            continue
+        name = (result.metadata or {}).get("og:site_name", "")
+        if isinstance(name, str) and _is_valid_brand_name(name):
+            return name.strip()
+
+    for result in results:
+        if not result.success:
+            continue
+        name = (result.metadata or {}).get("application-name", "")
+        if isinstance(name, str) and _is_valid_brand_name(name):
+            return name.strip()
+
+    for result in results:
+        if not result.success:
+            continue
+        meta = result.metadata or {}
+        title = (meta.get("title") or result.title or "").strip()
+        for sep in (" - ", " | ", " — ", " · ", ": "):
+            if sep in title:
+                candidate = title.split(sep)[0].strip()
+                if _is_valid_brand_name(candidate):
+                    return candidate
+
+    return None
+
+
 class PolicyDocumentPipeline:
     def __init__(
         self,
@@ -412,6 +464,17 @@ class PolicyDocumentPipeline:
             )
             discovery_results = await self._crawl_base_urls(discovery_crawler, crawl_urls)
             total_results += len(discovery_results)
+
+            # Opportunistically grab a better brand name from page metadata (e.g. og:site_name).
+            # This runs once after the discovery pass so the pipeline service can update the
+            # product record without a separate HTTP fetch.
+            if self.stats.brand_name is None:
+                self.stats.brand_name = _extract_brand_name(discovery_results)
+                if self.stats.brand_name:
+                    logger_discovery.info(
+                        f"🏷️  [{product.name}] Brand name extracted from metadata: "
+                        f"'{self.stats.brand_name}'"
+                    )
 
             logger_discovery.info(
                 f"📄 [{product.name}] Discovery pass complete: {len(discovery_results)} pages"

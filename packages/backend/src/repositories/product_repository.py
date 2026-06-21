@@ -105,6 +105,18 @@ class ProductRepository(BaseRepository):
             {"$addToSet": {"crawl_base_urls": {"$each": urls}}},
         )
 
+    async def update_name(self, db: AgnosticDatabase, product_id: str, name: str) -> None:
+        """Update the display name of a product.
+
+        Used after a crawl to replace the domain-derived name with the canonical
+        brand name extracted from page metadata (e.g. og:site_name).
+        """
+        await db.products.update_one(
+            {"id": product_id},
+            {"$set": {"name": name}},
+        )
+        logger.debug("Updated product name for %s to '%s'", product_id, name)
+
     async def find_all(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 
