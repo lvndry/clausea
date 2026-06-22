@@ -19,16 +19,21 @@ async def main() -> None:
     db = client[db_name]
 
     by_status: dict[str, int] = {}
-    async for row in db.pipeline_jobs.aggregate(
-        [{"$group": {"_id": "$status", "n": {"$sum": 1}}}]
-    ):
+    async for row in db.pipeline_jobs.aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
         by_status[row["_id"]] = row["n"]
 
     overviews = await db.product_overviews.count_documents({})
     total = sum(by_status.values())
 
-    order = ["pending", "crawling", "summarizing", "generating_overview", "completed",
-             "no_documents", "failed"]
+    order = [
+        "pending",
+        "crawling",
+        "summarizing",
+        "generating_overview",
+        "completed",
+        "no_documents",
+        "failed",
+    ]
     parts = [f"{s}={by_status.get(s, 0)}" for s in order if s in by_status]
     extra = [f"{s}={n}" for s, n in by_status.items() if s not in order]
     print(f"jobs={total} " + " ".join(parts + extra) + f" overviews={overviews}")
@@ -37,7 +42,9 @@ async def main() -> None:
         {"status": {"$in": ["crawling", "summarizing", "generating_overview"]}}
     ).to_list(length=20)
     if crawling:
-        active = [f"{j['product_slug']}({j['status']},att={j.get('attempts', 0)})" for j in crawling]
+        active = [
+            f"{j['product_slug']}({j['status']},att={j.get('attempts', 0)})" for j in crawling
+        ]
         print("in-progress: " + ", ".join(active))
 
     failed = await db.pipeline_jobs.find({"status": "failed"}).sort("updated_at", -1).to_list(20)

@@ -74,7 +74,6 @@ async def run_cleanup() -> None:
         other_count = await db.documents.count_documents({"doc_type": "other"})
     except OperationFailure as e:
         _handle_quota_error(e)
-        return
 
     print(f"      Found {other_count} other-type documents.")
     deleted_count = 0
@@ -86,25 +85,29 @@ async def run_cleanup() -> None:
             print(f"      Deleted {deleted_count} documents.")
         except OperationFailure as e:
             _handle_quota_error(e)
-            return
     else:
         print("      Nothing to delete (idempotent).")
 
     # ------------------------------------------------------------------
     # Step 2: Remove text field from all remaining documents
     # ------------------------------------------------------------------
+    # Use the same filter for the count and the $unset so the reported number
+    # matches the actual documents modified.
+    _text_exists_query = {"text": {"$exists": True}}
+
     print("\n[2/3] Counting documents that still have a 'text' field …")
     try:
-        text_count = await db.documents.count_documents({"text": {"$exists": True, "$ne": ""}})
+        text_count = await db.documents.count_documents(_text_exists_query)
     except OperationFailure as e:
         _handle_quota_error(e)
-        return
 
-    print(f"      Found {text_count} documents with non-empty text field.")
+    print(f"      Found {text_count} documents with a 'text' field.")
     unset_count = 0
     avg_text_bytes = 0.0
     if text_count > 0:
-        # Sample a few docs to estimate average text size before removing.
+        # Sample up to 200 non-empty docs to estimate the average text size.
+        # The estimate is based on the non-empty sub-sample; actual savings may
+        # differ slightly if some stored text fields are empty strings.
         sample = (
             await db.documents.find(
                 {"text": {"$exists": True, "$ne": ""}},
@@ -113,27 +116,28 @@ async def run_cleanup() -> None:
             .limit(200)
             .to_list(length=200)
         )
-        avg_text_bytes = (
-            sum(len((doc.get("text") or "").encode()) for doc in sample) / len(sample)
-            if sample
-            else 0.0
-        )
-        estimated_mb = (avg_text_bytes * text_count) / (1024 * 1024)
-        print(
-            f"      Estimated text field size: {estimated_mb:.1f} MB "
-            f"(avg {avg_text_bytes / 1024:.1f} KB per doc)."
-        )
+        if sample:
+            avg_text_bytes = sum(len((doc.get("text") or "").encode()) for doc in sample) / len(
+                sample
+            )
+            estimated_mb = (avg_text_bytes * text_count) / (1024 * 1024)
+            print(
+                f"      Estimated text field size: ~{estimated_mb:.1f} MB "
+                f"(avg {avg_text_bytes / 1024:.1f} KB per non-empty doc, ×{text_count} total)."
+            )
+        else:
+            # All sampled documents had empty/missing text — skip the estimate.
+            print("      Estimated text field size: unavailable (no non-empty docs in sample).")
         print("      Removing 'text' field via $unset …")
         try:
             result = await db.documents.update_many(
-                {"text": {"$exists": True}},
+                _text_exists_query,
                 {"$unset": {"text": ""}},
             )
             unset_count = result.modified_count
             print(f"      Removed 'text' from {unset_count} documents.")
         except OperationFailure as e:
             _handle_quota_error(e)
-            return
     else:
         print("      No documents have a text field (idempotent).")
 
@@ -157,7 +161,6 @@ async def run_cleanup() -> None:
         )
     except OperationFailure as e:
         _handle_quota_error(e)
-        return
 
     truncated_count = 0
     truncated_mb_freed = 0.0
@@ -192,7 +195,6 @@ async def run_cleanup() -> None:
 
     except OperationFailure as e:
         _handle_quota_error(e)
-        return
 
     if truncated_count:
         print(f"      Truncated {truncated_count} documents, freed ~{truncated_mb_freed:.1f} MB.")
@@ -209,7 +211,7 @@ async def run_cleanup() -> None:
     print(f"  'text' field removed from    : {unset_count} documents")
     print(f"  oversized markdown truncated : {truncated_count} documents")
 
-    if unset_count > 0:
+    if unset_count > 0 and avg_text_bytes > 0.0:
         estimated_total_text_mb = (avg_text_bytes * text_count) / (1024 * 1024)
         print(f"  estimated MB freed (text)    : ~{estimated_total_text_mb:.1f} MB")
     if truncated_mb_freed > 0:

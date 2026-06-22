@@ -188,8 +188,10 @@ async def main() -> None:
         "hit_page_cap": hit_cap,
         # The verdict: terminated early (good) vs hit cap / timed out (wander signal).
         "verdict": (
-            "WANDER (hit cap)" if hit_cap
-            else "WANDER (timed out, still going)" if timed_out
+            "WANDER (hit cap)"
+            if hit_cap
+            else "WANDER (timed out, still going)"
+            if timed_out
             else "CONVERGED/EXHAUSTED early"
         ),
         "top_path_prefixes": prefixes.most_common(12),
