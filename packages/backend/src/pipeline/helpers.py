@@ -156,7 +156,7 @@ def canonicalize_url(url: str) -> str:
 
 
 def _diff_fields(existing: Document, incoming: Document) -> list[str]:
-    tracked = ["text", "title", "doc_type", "locale", "regions", "effective_date"]
+    tracked = ["markdown", "title", "doc_type", "locale", "regions", "effective_date"]
     changed = []
     for field in tracked:
         old_val = getattr(existing, field)

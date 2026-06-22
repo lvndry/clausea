@@ -37,6 +37,10 @@ from src.pipeline.models import ProcessingStats
 from src.repositories.document_version_repository import DocumentVersionRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service
+from src.utils.markdown import markdown_to_text
+
+_MAX_MARKDOWN_LENGTH = 150_000
+_MARKDOWN_TRUNCATION_SUFFIX = "\n\n[Content truncated at 150,000 characters]"
 
 
 class DocumentStorer:
@@ -62,6 +66,28 @@ class DocumentStorer:
 
             for document in documents:
                 try:
+                    # Skip non-policy documents — they should never reach storage.
+                    if document.doc_type == "other":
+                        logger_storage.debug(
+                            "skipping other-type document (not a policy doc): %s",
+                            document.url,
+                        )
+                        continue
+
+                    # Cap markdown to avoid storing bloated omnibus legal documents.
+                    # Idempotent: skip if already truncated from a previous run.
+                    if len(
+                        document.markdown
+                    ) > _MAX_MARKDOWN_LENGTH and not document.markdown.endswith(
+                        _MARKDOWN_TRUNCATION_SUFFIX
+                    ):
+                        document.markdown = (
+                            document.markdown[:_MAX_MARKDOWN_LENGTH] + _MARKDOWN_TRUNCATION_SUFFIX
+                        )
+                        # Re-derive text from the capped markdown so hash comparisons
+                        # are consistent with what will be stored.
+                        document.text = markdown_to_text(document.markdown)
+
                     source_product_id = document.product_id
                     existing_doc = await document_service.get_document_by_url(db, document.url)
                     if not existing_doc:

@@ -34,9 +34,16 @@ class TestDiffFields:
         assert _diff_fields(doc, doc) == []
 
     def test_text_changed(self) -> None:
+        # text is a transient field — it is not persisted or diff-tracked.
+        # Changing text alone (without markdown) is not a meaningful change.
         old = _doc(text="old text " * 50)
         new = _doc(text="new text " * 50)
-        assert "text" in _diff_fields(old, new)
+        assert "text" not in _diff_fields(old, new)
+
+    def test_markdown_changed(self) -> None:
+        old = _doc(markdown="# Old policy content " * 20)
+        new = _doc(markdown="# New policy content " * 20)
+        assert "markdown" in _diff_fields(old, new)
 
     def test_title_changed(self) -> None:
         old = _doc(title="Old Title")
@@ -64,11 +71,11 @@ class TestDiffFields:
         assert "effective_date" in _diff_fields(old, new)
 
     def test_multiple_fields_changed(self) -> None:
-        old = _doc(title="Old", text="old " * 50)
-        new = _doc(title="New", text="new " * 50)
+        old = _doc(title="Old", markdown="# old policy " * 20)
+        new = _doc(title="New", markdown="# new policy " * 20)
         changed = _diff_fields(old, new)
         assert "title" in changed
-        assert "text" in changed
+        assert "markdown" in changed
 
 
 class TestDocumentVersionRepository:

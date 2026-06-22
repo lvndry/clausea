@@ -234,7 +234,7 @@ class DocumentRepository(BaseRepository):
                 {"product_ids": product_id},
             ],
             "content_hash": content_hash,
-            "text": {"$ne": ""},
+            "markdown": {"$ne": ""},
         }
         cursor = db.documents.find(query).sort("url", 1)
         candidates = await cursor.to_list(length=10)
@@ -419,14 +419,15 @@ class DocumentRepository(BaseRepository):
             ValueError: If text and markdown are both empty / whitespace.
             Exception: If storage fails for other reasons.
         """
-        if not (document.text or "").strip() and not (document.markdown or "").strip():
+        if not (document.markdown or "").strip():
             raise ValueError(
                 f"Refusing to store empty document {document.id} for url={document.url} "
-                f"(text and markdown are both empty — fix upstream extraction instead "
+                f"(markdown is empty — fix upstream extraction instead "
                 f"of persisting a placeholder)."
             )
         try:
-            document_dict = document.model_dump()
+            # text is a transient derived field — exclude it from MongoDB storage.
+            document_dict = document.model_dump(exclude={"text"})
             document_dict["product_ids"] = _merge_product_ids(
                 canonical_product_id=document.product_id,
                 linked_product_ids=document_dict.get("product_ids"),
@@ -488,12 +489,11 @@ class DocumentRepository(BaseRepository):
             Exception: If update fails
         """
         try:
-            document_dict = document.model_dump()
-            incoming_text = document_dict.get("text") or ""
+            # text is a transient derived field — exclude it from MongoDB storage.
+            document_dict = document.model_dump(exclude={"text"})
             incoming_markdown = document_dict.get("markdown") or ""
             guarded_fields = ("analysis", "extraction", "consumer_explainer")
             projection = {
-                "text": 1,
                 "markdown": 1,
                 "product_id": 1,
                 "product_ids": 1,
@@ -524,19 +524,10 @@ class DocumentRepository(BaseRepository):
             # to None/"" before this Document was built, so writing the full model_dump
             # back would null out stored content. Drop any heavy field from the $set
             # when it is empty incoming but non-empty stored.
-            needs_guard = (
-                not incoming_text
-                or not incoming_markdown
-                or any(document_dict.get(field) is None for field in guarded_fields)
+            needs_guard = not incoming_markdown or any(
+                document_dict.get(field) is None for field in guarded_fields
             )
             if needs_guard:
-                if not incoming_text and (existing.get("text") or ""):
-                    document_dict.pop("text", None)
-                    logger.warning(
-                        "DocumentRepository.update refused to overwrite non-empty "
-                        f"text for document {document.id} with an empty value "
-                        "(caller likely loaded via a projecting reader)."
-                    )
                 if not incoming_markdown and (existing.get("markdown") or ""):
                     document_dict.pop("markdown", None)
                     logger.warning(
