@@ -8,45 +8,60 @@ import { useState } from "react";
 import { type CheckoutRequest, subscriptionApi } from "@/lib/api/subscriptions";
 import { useAuth } from "@clerk/nextjs";
 
-// Custom hook for checkout flow
+function getSignInRedirectUrl(): string {
+  if (typeof window === "undefined") {
+    return "/sign-in?redirect_url=%2Fpricing";
+  }
+
+  return `/sign-in?redirect_url=${encodeURIComponent(
+    `${window.location.pathname}${window.location.search}`,
+  )}`;
+}
 
 export function useCheckout() {
-  const { getToken } = useAuth();
+  const { isSignedIn, isLoaded } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const startCheckout = async (priceId: string) => {
+    if (!isLoaded) {
+      return;
+    }
+
+    if (!isSignedIn) {
+      window.location.assign(getSignInRedirectUrl());
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
-    // Track checkout started event
     posthog.capture("checkout_started", {
       price_id: priceId,
       source: "pricing_page",
     });
 
     try {
-      // Get Clerk token - try template first, then default
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-
       const request: CheckoutRequest = {
         price_id: priceId,
       };
 
-      const response = await subscriptionApi.createCheckout(request, token);
+      const response = await subscriptionApi.createCheckout(request);
+      const checkoutUrl = response.checkout_url?.trim();
 
-      // Redirect to Paddle checkout
-      window.location.href = response.checkout_url;
+      if (!checkoutUrl) {
+        throw new Error(
+          "We couldn't start checkout. Please try again in a moment.",
+        );
+      }
+
+      window.location.assign(checkoutUrl);
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to start checkout";
       setError(errorMessage);
       setIsLoading(false);
 
-      // Track checkout error
       posthog.capture("checkout_error", {
         price_id: priceId,
         error: errorMessage,

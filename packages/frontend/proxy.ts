@@ -1,22 +1,19 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { PREVIEW_TOKEN_COOKIE } from "@/lib/preview-token";
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Define public routes that don't require authentication
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/features",
-  "/about",
-  "/pricing",
-  "/api/webhooks(.*)",
-]);
+const CRAWLER_UA =
+  /bot|crawl|spider|facebookexternalhit|Slackbot|Twitterbot|WhatsApp|TelegramBot|LinkedInBot|discordbot|Applebot|preview|embed/i;
 
-// Define protected routes that require authentication
+// /products/[slug] — anything under /products/ with at least one more segment
+const PRODUCT_DETAIL_RE = /^\/products\/[^/]+/;
+
+const FREE_PRODUCT_VIEWS = 5;
+const PV_COOKIE = "__pv";
+
 const isProtectedRoute = createRouteMatcher([
-  "/products(.*)",
   "/dashboard(.*)",
   "/onboarding(.*)",
   "/c/(.*)",
@@ -25,16 +22,68 @@ const isProtectedRoute = createRouteMatcher([
 
 const clerkProxy = clerkMiddleware(async (auth, request) => {
   const { userId } = await auth();
+  const { pathname } = new URL(request.url);
 
-  // If accessing a protected route without authentication, redirect to sign-in
+  // Hard-protected routes always require a session — UA spoofing must not bypass these
   if (isProtectedRoute(request) && !userId) {
     const signInUrl = new URL("/sign-in", request.url);
-    // Preserve the original URL so we can redirect back after sign-in
     signInUrl.searchParams.set("redirect_url", request.url);
     return NextResponse.redirect(signInUrl);
   }
 
-  // Allow the request to proceed
+  // Products list requires auth — backend returns 401 without a token
+  if ((pathname === "/products" || pathname === "/products/") && !userId) {
+    const signInUrl = new URL("/sign-in", request.url);
+    signInUrl.searchParams.set("redirect_url", request.url);
+    return NextResponse.redirect(signInUrl);
+  }
+
+  // Product detail pages: crawlers pass freely (OG scraping), humans get metered access
+  if (PRODUCT_DETAIL_RE.test(pathname)) {
+    const ua = request.headers.get("user-agent") ?? "";
+    if (CRAWLER_UA.test(ua)) {
+      return NextResponse.next();
+    }
+
+    if (!userId) {
+      // Next.js prefetch requests must not consume the free-view quota
+      const isPrefetch =
+        request.headers.get("next-router-prefetch") === "1" ||
+        request.headers.get("purpose") === "prefetch";
+      if (isPrefetch) return NextResponse.next();
+
+      const raw = parseInt(request.cookies.get(PV_COOKIE)?.value ?? "0", 10);
+      const count = isNaN(raw) ? 0 : raw;
+
+      if (count >= FREE_PRODUCT_VIEWS) {
+        const signInUrl = new URL("/sign-in", request.url);
+        signInUrl.searchParams.set("redirect_url", request.url);
+        return NextResponse.redirect(signInUrl);
+      }
+
+      const response = NextResponse.next();
+      response.cookies.set(PV_COOKIE, String(count + 1), {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+
+      const existingPreviewToken =
+        request.cookies.get(PREVIEW_TOKEN_COOKIE)?.value;
+      if (!existingPreviewToken) {
+        response.cookies.set(PREVIEW_TOKEN_COOKIE, crypto.randomUUID(), {
+          httpOnly: true,
+          sameSite: "lax",
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+        });
+      }
+
+      return response;
+    }
+  }
+
   return NextResponse.next();
 });
 
@@ -44,22 +93,10 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes - handled separately below)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico, sitemap.xml, robots.txt (metadata files)
-     * - Static file extensions (images, fonts, documents, etc.)
-     *
-     * Note: Even when _next/data is excluded, proxy will still run for
-     * _next/data routes for security (to protect data routes).
-     */
     {
       source:
         "/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     },
-    // Always run for API routes (Clerk handles authentication per route)
     {
       source: "/(api|trpc)(.*)",
     },

@@ -27,7 +27,10 @@ export default defineConfig({
       //   1. Get the current tab URL when popup opens (App.tsx:136)
       //   2. Listen for tab updates/activation to update extension icon (background.ts:112,119)
       //   3. Set extension icon for specific tabs based on privacy policy verdict (background.ts:56)
-      permissions: ["activeTab", "cookies", "storage"],
+      // - "scripting": Required to inject the footer-link collector into the active
+      //   tab via chrome.scripting.executeScript when the user clicks "Analyze".
+      //   Works with activeTab — no broad host_permissions needed for this purpose.
+      permissions: ["activeTab", "cookies", "storage", "scripting"],
       // Host permission justifications:
       // - "https://api.clausea.co/*": Production API endpoint for:
       //   1. /extension/check - Check if privacy analysis exists for URL (api.ts:33, background.ts:92,139, App.tsx:190)

@@ -1,6 +1,6 @@
 import pytest
 
-from src.crawler import ClauseaCrawler, URLScorer
+from src.crawler import _MIRROR_SUBDOMAIN_RE, ClauseaCrawler, URLScorer
 
 
 class TestURLScorerGlossaryGuard:
@@ -228,7 +228,7 @@ class TestParentPageBoost:
         )
 
         assert len(crawler.url_priority_queue) == 1
-        neg_score, url, _depth, _base = crawler.url_priority_queue[0]
+        _rank, neg_score, url, _depth, _base = crawler.url_priority_queue[0]
         actual_score = -neg_score
 
         # Score should exceed the base URL score thanks to the parent boost
@@ -258,7 +258,7 @@ class TestParentPageBoost:
             page_metadata={"title": "Legal Resources"},
         )
 
-        queued = {url for _neg, url, _depth, _base in crawler.url_priority_queue}
+        queued = {url for _rank, _neg, url, _depth, _base in crawler.url_priority_queue}
         assert "https://example.com/template/holiday" not in queued
         assert "https://example.com/templates/legal-case/exp9" not in queued
         # The boost still works for non-excluded opaque policy URLs.
@@ -350,3 +350,104 @@ class TestURLScorerAuthAndRedirectParams:
             )
             >= 5.0
         )
+
+
+class TestMirrorSubdomainExclusion:
+    """Non-production mirror subdomains duplicate prod pages and must not be crawled."""
+
+    def _crawler(self):
+        return ClauseaCrawler(allowed_domains=["github.com"], follow_external_links=False)
+
+    def test_internal_mirror_rejected(self) -> None:
+        c = self._crawler()
+        assert not c.should_crawl_url(
+            "https://docs-internal.github.com/en/site-policy/github-terms/github-terms-of-service",
+            "https://docs.github.com/en/site-policy",
+            1,
+        )
+        assert not c.should_crawl_url("https://staging.github.com/legal", "https://github.com", 1)
+        assert not c.should_crawl_url("https://preview.github.com/legal", "https://github.com", 1)
+
+    def test_real_subdomains_still_allowed(self) -> None:
+        c = self._crawler()
+        # docs.github.com (the canonical surface) and a "developer" subdomain must NOT be
+        # caught by the mirror filter.
+        assert c.should_crawl_url(
+            "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service",
+            "https://docs.github.com/en/site-policy",
+            1,
+        )
+
+    def test_regex_catches_real_mirrors(self) -> None:
+        for subdomain in ("docs-internal", "staging", "preview", "preview.staging"):
+            assert _MIRROR_SUBDOMAIN_RE.search(subdomain), subdomain
+
+    def test_regex_spares_legit_subdomains_with_token_prefix(self) -> None:
+        # Hyphenated subdomains that merely start with a trigger token are legitimate, not
+        # mirrors — rejecting them silently drops real pages.
+        for subdomain in (
+            "preview-blog",
+            "staging-guide",
+            "my-internal-tool",
+            "internal-docs",
+            "international",
+            "www",
+        ):
+            assert not _MIRROR_SUBDOMAIN_RE.search(subdomain), subdomain
+
+
+class TestStrongPolicyPathPriority:
+    """Strong policy-path URLs drain from the best-first frontier before any other
+    lead, so a boost-inflated marketing section can't exhaust the page budget first."""
+
+    def _make_crawler(self) -> ClauseaCrawler:
+        crawler = ClauseaCrawler(
+            respect_robots_txt=False,
+            strategy="best_first",
+            min_legal_score=0.0,
+            allowed_domains=["example.com"],
+        )
+        crawler._sitemap_seeded = True
+        return crawler
+
+    def test_strong_policy_path_predicate(self) -> None:
+        scorer = URLScorer()
+        assert scorer.is_strong_policy_path("https://example.com/legal/privacy")
+        assert scorer.is_strong_policy_path("https://example.com/terms-of-service")
+        assert scorer.is_strong_policy_path("https://example.com/cookie-policy")
+        assert scorer.is_strong_policy_path(
+            "https://docs.github.com/en/site-policy/privacy-policies/github-cookies"
+        )
+        # Ambiguous / non-policy segments stay out of the priority tier.
+        assert not scorer.is_strong_policy_path("https://example.com/security/overview")
+        assert not scorer.is_strong_policy_path("https://example.com/platforms")
+        assert not scorer.is_strong_policy_path("https://example.com/blog/our-policy-update")
+
+    def test_policy_path_dequeued_before_higher_scored_marketing(self) -> None:
+        crawler = self._make_crawler()
+        # Marketing page with an inflated (parent-boosted) score...
+        crawler._enqueue_best_first("https://example.com/security/overview", 1, 9.0, 9.0)
+        # ...still loses to a genuine policy path scored far lower.
+        crawler._enqueue_best_first("https://example.com/legal/privacy", 1, 3.0, 3.0)
+
+        first = crawler.get_next_url()
+        assert first is not None and first[0] == "https://example.com/legal/privacy"
+
+    def test_all_policy_paths_drain_before_any_marketing(self) -> None:
+        crawler = self._make_crawler()
+        crawler._enqueue_best_first("https://example.com/security/a", 1, 9.0, 9.0)
+        crawler._enqueue_best_first("https://example.com/security/b", 1, 8.5, 8.5)
+        crawler._enqueue_best_first("https://example.com/cookie-policy", 1, 2.0, 2.0)
+        crawler._enqueue_best_first("https://example.com/terms", 1, 4.0, 4.0)
+
+        order: list[str] = []
+        while (nxt := crawler.get_next_url()) is not None:
+            order.append(nxt[0])
+
+        # Higher score leads within the policy tier; both policy paths precede marketing.
+        assert order == [
+            "https://example.com/terms",
+            "https://example.com/cookie-policy",
+            "https://example.com/security/a",
+            "https://example.com/security/b",
+        ]

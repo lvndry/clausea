@@ -3,10 +3,18 @@
 import { ThemeProvider } from "next-themes";
 
 import { ClerkProvider } from "@clerk/nextjs";
+import { ui } from "@clerk/ui";
 
-export function Provider(props: { children: React.ReactNode }) {
+export function Provider(props: {
+  children: React.ReactNode;
+  publishableKey?: string;
+}) {
   return (
-    <ClerkProvider afterSignOutUrl="/">
+    <ClerkProvider
+      publishableKey={props.publishableKey}
+      afterSignOutUrl="/"
+      ui={ui}
+    >
       <ThemeProvider
         attribute="class"
         defaultTheme="system"

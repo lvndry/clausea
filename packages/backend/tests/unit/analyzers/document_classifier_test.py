@@ -390,6 +390,67 @@ class TestSubstantivePolicyClaimSignal:
         assert DocumentClassifier._content_supports_substantive_policy_claim(text) is True
 
 
+# ── Metadata secondary guard ─────────────────────────────────────────
+
+
+class TestMetadataSecondaryGuard:
+    """Contract for the secondary guard added to the metadata keyword check.
+
+    A metadata keyword match alone is not sufficient: the URL must also contain a
+    recognisable policy-path token *or* the content must be substantial legal text
+    (>2000 chars with a legal_score > 0.4).
+    """
+
+    @pytest.mark.asyncio
+    async def test_marketing_page_with_policy_keyword_in_meta_rejected(
+        self, classifier: DocumentClassifier
+    ) -> None:
+        """Meta keyword in og:description + generic URL + low legal_score → not policy.
+
+        This is the canonical false-positive: a page whose og:description mentions
+        'community guidelines' but is a blog post or marketing page.
+        """
+        result = await classifier.classify_document(
+            url="https://example.com/blog/social-media-post",  # no policy path segment
+            text=(
+                "Home. About. Contact. "
+                "We promote community guidelines on this blog. Navigate to read. "
+            )
+            * 6,  # ~380 chars, has nav indicators → nav check returns False without LLM
+            metadata={"og:description": "community guidelines for our community"},
+            legal_score=None,  # treated as 0.0 → content_ok branch is False
+        )
+        assert result["is_policy_document"] is False
+
+    @pytest.mark.asyncio
+    async def test_metadata_guard_passes_when_url_has_policy_segment(
+        self, classifier: DocumentClassifier
+    ) -> None:
+        """Meta keyword match + policy path token in URL → secondary guard clears via URL."""
+        result = await classifier.classify_document(
+            url="https://example.com/safety-guidelines/enforcement-overview",
+            # "guideline" in path; no standard URL pattern covers this hyphenated form
+            text="We enforce community guidelines to protect all users on our platform. " * 7,
+            metadata={"og:description": "community guidelines and safety standards"},
+        )
+        assert result["classification"] == "community_guidelines"
+        assert result["is_policy_document"] is True
+
+    @pytest.mark.asyncio
+    async def test_metadata_guard_passes_when_legal_score_and_length_sufficient(
+        self, classifier: DocumentClassifier
+    ) -> None:
+        """Meta keyword + text > 2000 chars + legal_score > 0.4 → guard clears via content."""
+        result = await classifier.classify_document(
+            url="https://example.com/about/our-community-values",  # no policy path token
+            text="This platform has community guidelines for all users. " * 40,  # ~2160 chars
+            metadata={"og:description": "community guidelines"},
+            legal_score=0.6,
+        )
+        assert result["is_policy_document"] is True
+        assert result["classification"] == "community_guidelines"
+
+
 # ── Category list completeness ──────────────────────────────────────
 
 

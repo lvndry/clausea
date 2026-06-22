@@ -125,9 +125,104 @@ async def test_require_pro_rejects_unauthenticated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_check_usage_limit_rejects_unauthenticated() -> None:
+async def test_check_usage_limit_allows_unauthenticated_non_product_route() -> None:
     request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/users/tier-limits"
     db = AsyncMock()
-    with pytest.raises(HTTPException) as exc_info:
-        await check_usage_limit(request=request, db=db)
-    assert exc_info.value.status_code == 401
+    result = await check_usage_limit(request=request, db=db)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_allows_anonymous_product_preview() -> None:
+    request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    request.headers = {"X-Preview-Token": "preview-token-1"}
+    request.client = MagicMock(host="1.2.3.4")
+    db = AsyncMock()
+
+    with patch("src.core.tier_deps._preview_usage_svc") as mock_preview_svc:
+        mock_preview_svc.check_and_increment = AsyncMock(return_value=(True, 1))
+        result = await check_usage_limit(request=request, db=db)
+
+    assert result is None
+    mock_preview_svc.check_and_increment.assert_awaited_once_with(
+        db,
+        token="preview-token-1",
+        ip="1.2.3.4",
+        increment=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_blocks_anonymous_product_preview() -> None:
+    request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    request.headers = {}
+    request.client = MagicMock(host="9.9.9.9")
+    db = AsyncMock()
+
+    with patch("src.core.tier_deps._preview_usage_svc") as mock_preview_svc:
+        mock_preview_svc.check_and_increment = AsyncMock(return_value=(False, 5))
+        with pytest.raises(HTTPException) as exc_info:
+            await check_usage_limit(request=request, db=db)
+
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_skips_crawler_user_agents() -> None:
+    request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    request.headers = {"user-agent": "Twitterbot/1.0"}
+    db = AsyncMock()
+
+    with patch("src.core.tier_deps._preview_usage_svc") as mock_preview_svc:
+        result = await check_usage_limit(request=request, db=db)
+
+    assert result is None
+    mock_preview_svc.check_and_increment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_checks_without_increment_on_documents() -> None:
+    request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/products/acme/documents"
+    request.headers = {"X-Preview-Token": "preview-token-1"}
+    request.client = MagicMock(host="1.2.3.4")
+    db = AsyncMock()
+
+    with patch("src.core.tier_deps._preview_usage_svc") as mock_preview_svc:
+        mock_preview_svc.check_and_increment = AsyncMock(return_value=(True, 3))
+        result = await check_usage_limit(request=request, db=db)
+
+    assert result is None
+    mock_preview_svc.check_and_increment.assert_awaited_once_with(
+        db,
+        token="preview-token-1",
+        ip="1.2.3.4",
+        increment=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_enforces_signed_in_monthly_limit() -> None:
+    request = _mock_request("free-user-123")
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    db = AsyncMock()
+
+    with patch(
+        "src.core.tier_deps.UsageService.check_usage_limit",
+        new=AsyncMock(return_value=(False, {})),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await check_usage_limit(request=request, db=db)
+
+    assert exc_info.value.status_code == 429
+    assert "Monthly usage limit" in exc_info.value.detail

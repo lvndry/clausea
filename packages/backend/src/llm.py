@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import random
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -27,8 +28,70 @@ class AllModelsFailedError(Exception):
     """Raised when every model in the priority list failed for one completion request."""
 
 
-_consecutive_total_failures: int = 0
-_CIRCUIT_BREAKER_THRESHOLD: int = 3
+CIRCUIT_BREAKER_THRESHOLD: int = 3
+CIRCUIT_RESET_SECONDS: float = 300.0
+
+
+class CircuitBreaker:
+    """Per-key circuit breaker with time-based decay and half-open probe support.
+
+    Tracks consecutive failures for a single scope (e.g. a product slug).  When the
+    failure count reaches ``CIRCUIT_BREAKER_THRESHOLD`` the circuit opens and rejects
+    all requests until ``CIRCUIT_RESET_SECONDS`` have elapsed, at which point it enters
+    a half-open state and allows exactly one probe.  A successful probe closes the
+    circuit; a failed probe re-opens it.
+    """
+
+    def __init__(self) -> None:
+        self._consecutive_failures: int = 0
+        self._last_failure_time: float = 0.0
+        self._is_open: bool = False
+        self._half_open: bool = False
+
+    @property
+    def is_open(self) -> bool:
+        return self._is_open
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._consecutive_failures
+
+    def record_failure(self) -> None:
+        self._consecutive_failures += 1
+        self._last_failure_time = time.monotonic()
+        self._half_open = False
+        if self._consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD:
+            self._is_open = True
+
+    def record_success(self) -> None:
+        self._consecutive_failures = 0
+        self._last_failure_time = 0.0
+        self._is_open = False
+        self._half_open = False
+
+    def reset_half_open(self) -> None:
+        self._half_open = False
+
+    def allow_request(self) -> bool:
+        if not self._is_open:
+            return True
+        if self._half_open:
+            return False
+        now = time.monotonic()
+        if now - self._last_failure_time >= CIRCUIT_RESET_SECONDS:
+            self._half_open = True
+            return True
+        return False
+
+
+_circuit_breakers: dict[str, CircuitBreaker] = {}
+_GLOBAL_CIRCUIT_KEY = "__global__"
+
+
+def get_circuit_breaker(key: str) -> CircuitBreaker:
+    if key not in _circuit_breakers:
+        _circuit_breakers[key] = CircuitBreaker()
+    return _circuit_breakers[key]
 
 
 class Model:
@@ -50,13 +113,7 @@ class Model:
         self.extra_headers = extra_headers
 
 
-# Model identifier strings. Supported prefixes:
-#   gemini*       → Google     (GEMINI_API_KEY)
-#   voyage*       → Voyage     (VOYAGE_API_KEY, embeddings)
-#   openrouter/*  → OpenRouter (OPENROUTER_API_KEY)
 SupportedModel = str
-
-# Only rotating free slugs are aliased (env-overridable); other models use full slugs.
 _OPENROUTER_ALIASES: dict[str, str] = {
     "openrouter/owl-alpha": os.getenv(
         "OPENROUTER_OWL_ALPHA_MODEL", "openrouter/openrouter/owl-alpha"
@@ -69,9 +126,7 @@ _OPENROUTER_ALIASES: dict[str, str] = {
     ),
 }
 
-# Single free-first cascade used by every pipeline stage. ESCALATION is its paid tail.
 MODEL_PRIORITY: list[SupportedModel] = [
-    "gemini-2.5-flash-lite",
     "openrouter/owl-alpha",
     "openrouter/gpt-oss-120b-free",
     "openrouter/gemma-free",
@@ -117,21 +172,63 @@ def get_model(model_name: SupportedModel) -> Model:
     raise ValueError(f"Unsupported model: {model_name}")
 
 
+_RATE_LIMIT_BASE_DELAY = float(os.getenv("LLM_RATE_LIMIT_BASE_DELAY", "2"))
+_RATE_LIMIT_MAX_DELAY = float(os.getenv("LLM_RATE_LIMIT_MAX_DELAY", "30"))
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Provider-supplied Retry-After (seconds), if present on the exception's response."""
+    try:
+        headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+        value = headers.get("retry-after") or headers.get("Retry-After")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _rate_limit_delay(exc: Exception, prior_backoffs: int) -> float:
+    """Seconds to wait before the next attempt after a 429.
+
+    Honors an explicit Retry-After when the provider gives one; otherwise uses jittered
+    exponential backoff, capped so a fully rate-limited cascade stays bounded.
+    """
+    retry_after = _retry_after_seconds(exc)
+    if retry_after is not None:
+        return min(retry_after, _RATE_LIMIT_MAX_DELAY)
+    delay = min(_RATE_LIMIT_BASE_DELAY * (2**prior_backoffs), _RATE_LIMIT_MAX_DELAY)
+    return min(delay + random.uniform(0, delay * 0.25), _RATE_LIMIT_MAX_DELAY)
+
+
+async def _heartbeat_ping(heartbeat: Callable[[], Awaitable[None] | None] | None) -> None:
+    if heartbeat is not None:
+        await _maybe_await_impl(heartbeat())
+
+
+async def _maybe_await_impl(coroutine: Awaitable[None] | None) -> None:
+    if asyncio.iscoroutine(coroutine):
+        await coroutine
+
+
 async def _completion_with_fallback_impl(
     messages: list[dict[str, str]],
     completion_fn: Callable[..., Awaitable[ModelResponse]],
     model_priority: list[SupportedModel] | None = None,
     validator: EscalationValidator | None = None,
+    heartbeat_callback: Callable[[], Awaitable[None] | None] | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
+    import litellm
+
     models_to_try = model_priority.copy() if model_priority else MODEL_PRIORITY.copy()
     last_exception: Exception | None = None
     # A response that returned cleanly but failed the quality validator. If every
     # model fails validation we return the last one anyway — partial data beats
     # blocking the pipeline.
     last_unvalidated: ModelResponse | None = None
+    rate_limit_backoffs = 0
 
     for model_name in models_to_try:
+        await _heartbeat_ping(heartbeat_callback)
         model = get_model(model_name)
         logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
@@ -150,7 +247,18 @@ async def _completion_with_fallback_impl(
             track_usage(response, model_name, provider_model, duration=duration)
         except Exception as e:
             last_exception = e
-            logger.warning("Model %s failed: %s. Trying next model...", model_name, e)
+            if isinstance(e, litellm.exceptions.RateLimitError):
+                delay = _rate_limit_delay(e, rate_limit_backoffs)
+                rate_limit_backoffs += 1
+                logger.warning(
+                    "Model %s rate-limited (429); backing off %.1fs before next model",
+                    model_name,
+                    delay,
+                )
+                await _heartbeat_ping(heartbeat_callback)
+                await asyncio.sleep(delay)
+            else:
+                logger.warning("Model %s failed: %s. Trying next model...", model_name, e)
             continue
 
         if validator is not None:
@@ -183,6 +291,8 @@ async def acompletion_with_fallback(
     messages: list[dict[str, str]],
     model_priority: list[SupportedModel] | None = None,
     validator: EscalationValidator | None = None,
+    circuit_key: str = _GLOBAL_CIRCUIT_KEY,
+    heartbeat_callback: Callable[[], Awaitable[None] | None] | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Execute LLM completion, walking ``model_priority`` (default MODEL_PRIORITY) on failure.
@@ -190,10 +300,18 @@ async def acompletion_with_fallback(
     A model is skipped when the call raises, or — when ``validator`` is given — when its
     output fails validation. Since the list runs cheapest-to-most-capable, a validation
     failure naturally escalates to a stronger model.
-    """
-    global _consecutive_total_failures
 
-    if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+    ``circuit_key`` scopes the circuit breaker so that failures for one product don't
+    block others.  Defaults to a global key for backward compatibility.
+
+    Args:
+        heartbeat_callback: Optional async no-arg callable fired before each model attempt
+            and before each rate-limit backoff sleep, so the caller can bump a pipeline
+            job heartbeat and avoid stall-guard kills during long fallback sequences.
+    """
+    cb = get_circuit_breaker(circuit_key)
+
+    if not cb.allow_request():
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
 
     # Load the heavy litellm import off the event loop on first use; cached afterward.
@@ -206,17 +324,22 @@ async def acompletion_with_fallback(
             completion_fn=acompletion,
             model_priority=model_priority,
             validator=validator,
+            heartbeat_callback=heartbeat_callback,
             **kwargs,
         )
     except AllModelsFailedError:
-        _consecutive_total_failures += 1
-        if _consecutive_total_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+        cb.record_failure()
+        if not cb.allow_request():
             raise CircuitBreakerError(
                 "LLM service unavailable: too many consecutive failures"
             ) from None
         raise
+    except BaseException:
+        if cb.is_open:
+            cb.reset_half_open()
+        raise
     else:
-        _consecutive_total_failures = 0
+        cb.record_success()
         return result
 
 

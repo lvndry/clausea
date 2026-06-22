@@ -523,9 +523,7 @@ export function PipelineProgress({
                 className="w-full rounded-lg cursor-pointer"
                 onClick={() => {
                   const href = `/products/${job.product_slug}`;
-                  const here =
-                    (pathname ?? "").replace(/\/$/, "") ||
-                    "/";
+                  const here = (pathname ?? "").replace(/\/$/, "") || "/";
                   const there = href.replace(/\/$/, "") || "/";
                   // Same route: client router.push is a no-op; hard-navigate to refetch UI state.
                   if (here === there) {

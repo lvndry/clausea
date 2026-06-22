@@ -18,27 +18,27 @@ def test_progress_emits_across_batch_jumps_that_skip_multiples_of_ten():
         progress_callback=lambda current, total: calls.append((current, total))
     )
 
-    # Batch lands total_urls at 8 — below the interval, no report yet.
-    crawler.stats.total_urls = 8
-    crawler.stats.crawled_urls = 2
+    # Batch lands total_urls at 2 — below the interval of 3, no report yet.
+    crawler.stats.total_urls = 2
+    crawler.stats.crawled_urls = 1
     crawler._report_crawl_progress()
     assert calls == []
 
-    # Jumps to 16 (skipping the exact "10"): old logic emitted nothing here.
-    crawler.stats.total_urls = 16
-    crawler.stats.crawled_urls = 5
+    # Jumps to 6 (skipping the exact "3"): must still emit.
+    crawler.stats.total_urls = 6
+    crawler.stats.crawled_urls = 3
     crawler._report_crawl_progress()
     assert len(calls) == 1
 
-    # Only 6 new processed since last report — still below the interval.
-    crawler.stats.total_urls = 22
+    # Only 1 new processed since last report — still below the interval.
+    crawler.stats.total_urls = 7
+    crawler.stats.crawled_urls = 4
+    crawler._report_crawl_progress()
+    assert len(calls) == 1
+
+    # Jumps to 13 (skipping 9 and 12): must emit, not freeze.
+    crawler.stats.total_urls = 13
     crawler.stats.crawled_urls = 6
-    crawler._report_crawl_progress()
-    assert len(calls) == 1
-
-    # Jumps to 37 (skipping 20 and 30): must emit, not freeze.
-    crawler.stats.total_urls = 37
-    crawler.stats.crawled_urls = 9
     crawler._report_crawl_progress()
     assert len(calls) == 2
 

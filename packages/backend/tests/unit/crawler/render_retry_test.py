@@ -83,3 +83,30 @@ async def test_drain_is_noop_when_queue_empty(monkeypatch):
     monkeypatch.setattr(crawler, "fetch_page", fetch_page)
     await crawler._drain_render_retries(session=_NO_SESSION)
     fetch_page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_drain_bumps_heartbeat_on_every_retry_even_when_all_fail(monkeypatch):
+    """A long drain of failing renders must keep the job alive.
+
+    Failing retries emit no result, so without a per-retry progress report the pipeline
+    stall guard cancels the job mid-drain and loops reset→recrawl. Each retry must report
+    progress regardless of outcome.
+    """
+    heartbeats: list[int] = []
+    crawler = ClauseaCrawler(progress_callback=lambda current, total: heartbeats.append(current))
+    crawler._render_retry_queue = [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
+    monkeypatch.setattr(
+        crawler,
+        "fetch_page",
+        AsyncMock(side_effect=lambda _session, url: _result(url, success=False)),
+    )
+
+    await crawler._drain_render_retries(session=_NO_SESSION)
+
+    # One progress report per retried URL, not just on the (zero) successes.
+    assert len(heartbeats) == 3

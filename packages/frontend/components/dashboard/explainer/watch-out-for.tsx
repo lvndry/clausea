@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChevronDown, Quote } from "lucide-react";
+import { AlertTriangle, ChevronDown, ExternalLink, Quote } from "lucide-react";
 
 import { useState } from "react";
 
@@ -9,8 +9,11 @@ import { cn } from "@/lib/utils";
 import {
   type ConsumerCase,
   type ConsumerSeverity,
+  type SourceCitation,
   hasCitation,
   normalizeSeverity,
+  resolveCitations,
+  resolveSourceLabel,
 } from "./types";
 
 interface WatchOutForProps {
@@ -51,12 +54,47 @@ const severityStyle: Record<
   },
 };
 
+function SourceAttribution({
+  citation,
+  index,
+  total,
+}: {
+  citation: SourceCitation;
+  index: number;
+  total: number;
+}) {
+  const label = resolveSourceLabel(citation);
+
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-[10px] uppercase tracking-widest text-muted-foreground">
+        {total > 1 ? `Source ${index + 1}: ` : "Source: "}
+        {label}
+        {citation.section_title ? ` - ${citation.section_title}` : ""}
+      </p>
+      {citation.document_url && (
+        <a
+          href={citation.document_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Open source
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      )}
+    </div>
+  );
+}
+
 function WatchOutCard({ item, index }: { item: ConsumerCase; index: number }) {
   const [showQuote, setShowQuote] = useState(false);
   const severity = normalizeSeverity(item.severity);
   const style = severityStyle[severity];
   const citationVisible = hasCitation(item.quote_status) && Boolean(item.quote);
   const quoteId = `watch-out-quote-${index}`;
+  const citations = resolveCitations(item);
+  const multipleSources = citations.length > 1;
 
   return (
     <div className="group grid grid-cols-1 md:grid-cols-12">
@@ -122,14 +160,44 @@ function WatchOutCard({ item, index }: { item: ConsumerCase; index: number }) {
             {showQuote && (
               <div
                 id={quoteId}
-                className="mt-4 border-l-2 border-border bg-muted/5 p-5"
+                className="mt-4 border-l-2 border-border bg-muted/5 p-5 space-y-4"
               >
-                <p className="text-sm text-foreground/80 leading-relaxed font-serif italic">
-                  &ldquo;{item.quote}&rdquo;
-                </p>
-                <p className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Quoted from the source document
-                </p>
+                {multipleSources ? (
+                  citations.map((citation, citationIndex) => (
+                    <div
+                      key={`${citation.document_id}-${citationIndex}`}
+                      className={cn(
+                        citationIndex > 0 && "border-t border-border/60 pt-4",
+                      )}
+                    >
+                      <p className="text-sm text-foreground/80 leading-relaxed font-serif italic">
+                        &ldquo;{citation.quote}&rdquo;
+                      </p>
+                      <div className="mt-3">
+                        <SourceAttribution
+                          citation={citation}
+                          index={citationIndex}
+                          total={citations.length}
+                        />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    <p className="text-sm text-foreground/80 leading-relaxed font-serif italic">
+                      &ldquo;{citations[0]?.quote || item.quote}&rdquo;
+                    </p>
+                    {citations[0] && (
+                      <div className="mt-3">
+                        <SourceAttribution
+                          citation={citations[0]}
+                          index={0}
+                          total={1}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>

@@ -91,7 +91,7 @@ async def get_db() -> AsyncIterator[AgnosticDatabase]:
     client = get_motor_client()
     db = client[DATABASE_NAME]
     if is_db_dry_run():
-        yield DryRunDatabase(db, enabled=True)  # type: ignore[return-value]
+        yield DryRunDatabase(db, enabled=True)  # ty: ignore[invalid-yield]
     else:
         yield db
 

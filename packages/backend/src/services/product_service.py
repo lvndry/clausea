@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from motor.core import AgnosticDatabase
@@ -25,6 +25,7 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 
@@ -124,6 +125,14 @@ class ProductService:
         """
         return await self._product_repo.create(db, product)
 
+    async def update_product_name(self, db: AgnosticDatabase, product_id: str, name: str) -> None:
+        """Update the display name of a product.
+
+        Replaces the domain-derived placeholder name (e.g. "Openai") with the canonical
+        brand name extracted from page metadata (e.g. "OpenAI").
+        """
+        await self._product_repo.update_name(db, product_id, name)
+
     async def get_all_products(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 
@@ -171,8 +180,46 @@ class ProductService:
 
         counts: dict[str, Any] = {}
 
-        result = await db.documents.delete_many({"product_id": product_id})
-        counts["documents"] = result.deleted_count
+        # Shared-document semantics: unlink this product from canonical documents and
+        # delete only rows that are not linked to any remaining product.
+        linked_docs = await db.documents.find(
+            {"$or": [{"product_id": product_id}, {"product_ids": product_id}]},
+            {"id": 1, "product_id": 1, "product_ids": 1},
+        ).to_list(length=None)
+        documents_deleted = 0
+        documents_unlinked = 0
+        for row in linked_docs:
+            doc_id = row.get("id")
+            if not doc_id:
+                continue
+            linked_ids: list[str] = []
+            primary = row.get("product_id")
+            if isinstance(primary, str) and primary:
+                linked_ids.append(primary)
+            product_ids = row.get("product_ids")
+            if isinstance(product_ids, list):
+                for candidate in product_ids:
+                    if isinstance(candidate, str) and candidate and candidate not in linked_ids:
+                        linked_ids.append(candidate)
+            remaining_ids = [pid for pid in linked_ids if pid != product_id]
+            if remaining_ids:
+                await db.documents.update_one(
+                    {"id": doc_id},
+                    {
+                        "$set": {
+                            "product_id": remaining_ids[0],
+                            "product_ids": remaining_ids,
+                            "updated_at": datetime.now(),
+                        }
+                    },
+                )
+                documents_unlinked += 1
+            else:
+                await db.documents.delete_one({"id": doc_id})
+                documents_deleted += 1
+        counts["documents"] = documents_deleted + documents_unlinked
+        counts["documents_deleted"] = documents_deleted
+        counts["documents_unlinked"] = documents_unlinked
 
         result = await db.findings.delete_many({"product_id": product_id})
         counts["findings"] = result.deleted_count
@@ -255,6 +302,8 @@ class ProductService:
         db: AgnosticDatabase,
         product_slug: str,
         meta_summary: MetaSummary,
+        job_id: str | None = None,
+        product_id: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -262,8 +311,12 @@ class ProductService:
             db: Database instance
             product_slug: Product slug
             meta_summary: Overview payload (MetaSummary shape)
+            job_id: Optional pipeline job that produced this overview
+            product_id: Product identifier for the owning product record
         """
-        await self._product_repo.save_product_overview(db, product_slug, meta_summary)
+        await self._product_repo.save_product_overview(
+            db, product_slug, meta_summary, job_id=job_id, product_id=product_id
+        )
 
     # ============================================================================
     # Consumer Explainer Storage (product-level, consumer-facing)
@@ -272,14 +325,111 @@ class ProductService:
     async def get_product_explainer(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        """Get the stored product-level consumer explainer, or None."""
-        return await self._product_repo.get_product_explainer(db, product_slug)
+        """Get the product-level consumer explainer with canonical grade.
+
+        Product pages treat overview scoring as the single source of truth.
+        The explainer grade is therefore reconciled against product_overviews
+        before returning, and legacy mismatches are repaired best-effort.
+        Stored explainers also get verified source citations backfilled on read
+        from the product's core document extractions when missing.
+        """
+        explainer = await self._product_repo.get_product_explainer(db, product_slug)
+        if not explainer:
+            return None
+
+        explainer = await self._enrich_product_explainer_citations(db, product_slug, explainer)
+
+        canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
+        if canonical_grade is None:
+            return explainer
+
+        current_grade = self._coerce_grade(explainer.get("grade"))
+        if current_grade == canonical_grade:
+            return explainer
+
+        logger.info(
+            "Canonicalizing product explainer grade for %s: %s -> %s",
+            product_slug,
+            current_grade or "unknown",
+            canonical_grade,
+        )
+        canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
+        repaired = dict(explainer)
+        repaired["grade"] = canonical_grade
+        repaired["grade_reason"] = canonical_reason
+
+        try:
+            await self._product_repo.update_product_explainer_grade(
+                db, product_slug, canonical_grade, grade_reason=canonical_reason
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort repair
+            logger.warning(
+                "Failed to persist canonical explainer grade for %s: %s",
+                product_slug,
+                exc,
+            )
+        return repaired
+
+    async def _enrich_product_explainer_citations(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        explainer: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Backfill missing source citations for legacy stored explainers."""
+        product = await self._product_repo.find_by_slug(db, product_slug)
+        if not product:
+            return explainer
+
+        documents = await self._document_repo.find_by_product_id_full(db, product.id)
+        core_docs = [
+            document
+            for document in documents
+            if document.doc_type in OVERVIEW_CORE_DOC_TYPES and document.extraction is not None
+        ]
+        if not core_docs:
+            return explainer
+
+        try:
+            from src.analyser import enrich_consumer_explainer_citations
+
+            explainer_model = ConsumerExplainer.model_validate(explainer)
+            enriched = enrich_consumer_explainer_citations(explainer_model, core_docs)
+            return enriched.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 - best-effort enrichment
+            logger.warning(
+                "Failed to enrich explainer citations for %s: %s",
+                product_slug,
+                exc,
+            )
+            return explainer
 
     async def save_product_explainer(
         self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer
     ) -> bool:
-        """Persist the product-level consumer explainer; True when it landed."""
-        return await self._product_repo.save_product_explainer(db, product_slug, explainer)
+        """Persist the product-level consumer explainer; True when it landed.
+
+        The grade is always derived from the canonical overview score when an
+        overview exists, so explainer-owned grading cannot diverge.
+        """
+        canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
+        payload = explainer
+
+        if canonical_grade is not None:
+            current_grade = self._coerce_grade(explainer.grade)
+            if current_grade != canonical_grade:
+                canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
+                logger.info(
+                    "Overriding explainer grade with canonical overview grade for %s: %s -> %s",
+                    product_slug,
+                    current_grade or "unknown",
+                    canonical_grade,
+                )
+                payload = explainer.model_copy(
+                    update={"grade": canonical_grade, "grade_reason": canonical_reason}
+                )
+
+        return await self._product_repo.save_product_explainer(db, product_slug, payload)
 
     async def get_product_compliance(
         self, db: AgnosticDatabase, product_slug: str
@@ -392,13 +542,13 @@ class ProductService:
             overview.company_name = product.company_name
 
         # Attach optional fields from meta_summary and computed values
-        overview.keypoints = getattr(meta_summary, "keypoints", None)
+        overview.keypoints = meta_summary.keypoints
         overview.document_counts = document_counts
         overview.document_types = document_types
 
         # Attach new structured fields for Overview redesign
-        overview.data_collection_details = getattr(meta_summary, "data_collection_details", None)
-        overview.third_party_details = getattr(meta_summary, "third_party_details", None)
+        overview.data_collection_details = meta_summary.data_collection_details
+        overview.third_party_details = meta_summary.third_party_details
 
         # If compliance_status is missing from meta summary, aggregate from document analyses
         if not overview.compliance_status and product:
@@ -415,6 +565,18 @@ class ProductService:
                     reg: round(sum(scores) / len(scores))
                     for reg, scores in aggregated_compliance.items()
                 }
+
+        stored_compliance = await self._product_repo.get_product_compliance(db, slug)
+        if stored_compliance:
+            parsed: dict[str, ComplianceBreakdown] = {}
+            for regime, payload in stored_compliance.items():
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    parsed[str(regime)] = ComplianceBreakdown.model_validate(payload, strict=False)
+                except Exception:
+                    continue
+            overview.compliance = parsed or None
 
         return overview
 
@@ -531,7 +693,10 @@ class ProductService:
             last_updated=updated_at if updated_at else datetime.now(),
             verdict=meta.verdict,
             risk_score=meta.risk_score,
+            grade=meta.grade,
+            grade_justification=meta.grade_justification,
             one_line_summary=meta.summary,
+            headline_claim=meta.headline_claim,
             data_collected=meta.data_collected,
             data_purposes=meta.data_purposes,
             your_rights=meta.your_rights,
@@ -544,9 +709,85 @@ class ProductService:
             compliance_status=meta.compliance_status,
             # Quick-scan privacy signals
             privacy_signals=meta.privacy_signals,
+            topic_stances=meta.topic_stances,
             coverage=meta.coverage,
             contract_clauses=meta.contract_clauses,
         )
+
+    @staticmethod
+    def _coerce_grade(raw_grade: Any) -> str | None:
+        if not isinstance(raw_grade, str):
+            return None
+        candidate = raw_grade.strip().upper()[:1]
+        if candidate in {"A", "B", "C", "D", "E"}:
+            return candidate
+        return None
+
+    @staticmethod
+    def _grade_from_risk_score(risk_score: int) -> str:
+        if risk_score <= 2:
+            return "A"
+        if risk_score <= 4:
+            return "B"
+        if risk_score <= 6:
+            return "C"
+        if risk_score <= 8:
+            return "D"
+        return "E"
+
+    async def _get_canonical_overview_grade(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> str | None:
+        overview_data = await self._product_repo.get_product_overview(db, product_slug)
+        overview = overview_data.get("overview") if overview_data else None
+        if not isinstance(overview, dict):
+            return None
+
+        risk_score = overview.get("risk_score")
+        stored_grade = self._coerce_grade(overview.get("grade"))
+        if stored_grade:
+            return stored_grade
+        if isinstance(risk_score, bool):
+            return None
+        if isinstance(risk_score, int):
+            clamped = max(0, min(10, risk_score))
+            return self._grade_from_risk_score(clamped)
+        if isinstance(risk_score, float):
+            clamped = max(0, min(10, round(risk_score)))
+            return self._grade_from_risk_score(clamped)
+        return self._coerce_grade(overview.get("grade"))
+
+    _GRADE_REASONS: ClassVar[dict[str, str]] = {
+        "A": "Very user-friendly: minimal data collection, strong user controls, no major concerns.",
+        "B": "Generally user-friendly: some concerns but good transparency and user rights overall.",
+        "C": "Moderate risk: notable concerns around data sharing, limited user controls, or vague language.",
+        "D": "Pervasive risk: significant issues with data practices, limited user rights, or broad data sharing.",
+        "E": "Very pervasive risk: critical concerns such as forced arbitration, broad data selling, or severe opacity.",
+    }
+
+    @classmethod
+    def _grade_reason_from_overview(
+        cls,
+        canonical_grade: str,
+        explainer: ConsumerExplainer | dict,
+        *,
+        overview_grade_justification: str | None = None,
+    ) -> str:
+        """Build a canonical grade_reason that explains the overview-derived grade."""
+        if overview_grade_justification and overview_grade_justification.strip():
+            return overview_grade_justification.strip()
+
+        canonical_justification = cls._GRADE_REASONS.get(
+            canonical_grade, "Risk assessment based on structured policy analysis."
+        )
+        original_reason = (
+            explainer.grade_reason
+            if isinstance(explainer, ConsumerExplainer)
+            else explainer.get("grade_reason", "")
+        )
+        if original_reason and original_reason != canonical_justification:
+            return f"{canonical_justification} Original assessment: {original_reason}"
+        return canonical_justification
 
     @staticmethod
     def _normalize_domain(domain: str) -> str:

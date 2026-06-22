@@ -1,3 +1,4 @@
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -21,6 +22,9 @@ WHITELISTED_ROUTES = {
     "/health/startup",
     "/openapi.json",
     "/users/tier-limits",
+    "/subscriptions/plans",
+    "/subscriptions/checkout-config",
+    "/products/stats",
     "/webhooks/paddle",
     "/contact",
     # Extension routes handle their own auth
@@ -29,6 +33,15 @@ WHITELISTED_ROUTES = {
     "/extension/subscribe",
     "/extension/domains",
 }
+
+# Public GET routes for product detail pages (shared links, crawlers, incognito).
+_PUBLIC_PRODUCT_GET_RE = re.compile(
+    r"^/products/(?:"
+    r"sitemap|"
+    r"[A-Za-z0-9][A-Za-z0-9_-]*"
+    r"(?:/(?:overview|explainer|topics|documents(?:/[A-Za-z0-9][A-Za-z0-9_-]*/(?:extraction|deep-analysis))?))?"
+    r")$"
+)
 
 # Localhost addresses that are considered safe for development
 LOCALHOST_ADDRESSES = ("127.0.0.1", "localhost", "::1")
@@ -68,11 +81,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
     def _is_whitelisted(self, request: Request) -> bool:
         """Check if the request path is whitelisted"""
         path = request.url.path
-        return (
-            path in WHITELISTED_ROUTES
-            or path.startswith("/extension/status/")
-            or request.method == "OPTIONS"
-        )
+        if path in WHITELISTED_ROUTES or path.startswith("/extension/status/"):
+            return True
+        if request.method == "OPTIONS":
+            return True
+        if request.method == "GET" and _PUBLIC_PRODUCT_GET_RE.match(path):
+            return True
+        return False
 
     async def _authenticate(self, request: Request) -> dict[str, Any] | None:
         """Try to authenticate the request using available methods"""
@@ -140,7 +155,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         try:
             token = auth_header.split(" ")[1]
-            user_info: dict[str, Any] = await clerk_auth_service.verify_token(token)
+            payload: dict[str, Any] = await clerk_auth_service.verify_token(token)
+
+            # Normalise to the same shape as SERVICE_ACCOUNT_IDENTITY so
+            # _get_user_id / check_usage_limit always find "user_id".
+            # Clerk JWTs use "sub" (standard) or "id" (template custom claim).
+            user_id = payload.get("sub") or payload.get("id")
+            user_info = {
+                "user_id": user_id,
+                "email": payload.get("email"),
+                "name": payload.get("name"),
+            }
 
             self.logger.info(
                 "JWT authentication successful",

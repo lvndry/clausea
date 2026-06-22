@@ -44,6 +44,7 @@ def _make_request(
 class TestWhitelisting:
     def test_whitelisted_routes_exist(self) -> None:
         assert "/health" in WHITELISTED_ROUTES
+        assert "/products/stats" in WHITELISTED_ROUTES
         assert "/docs" in WHITELISTED_ROUTES
         assert "/openapi.json" in WHITELISTED_ROUTES
         assert "/webhooks/paddle" in WHITELISTED_ROUTES
@@ -51,6 +52,10 @@ class TestWhitelisting:
 
     def test_whitelisted_route_detected(self, middleware: AuthMiddleware) -> None:
         request = _make_request(path="/health")
+        assert middleware._is_whitelisted(request) is True
+
+    def test_products_stats_whitelisted(self, middleware: AuthMiddleware) -> None:
+        request = _make_request(path="/products/stats")
         assert middleware._is_whitelisted(request) is True
 
     def test_non_whitelisted_route(self, middleware: AuthMiddleware) -> None:
@@ -71,6 +76,29 @@ class TestWhitelisting:
         ]:
             request = _make_request(path=path)
             assert middleware._is_whitelisted(request) is True, f"{path} should be whitelisted"
+
+    def test_public_product_detail_routes(self, middleware: AuthMiddleware) -> None:
+        for path in [
+            "/products/sitemap",
+            "/products/clausea",
+            "/products/clausea/overview",
+            "/products/clausea/documents",
+            "/products/clausea/explainer",
+            "/products/clausea/topics",
+            "/products/clausea/documents/doc123/extraction",
+            "/products/clausea/documents/doc123/deep-analysis",
+        ]:
+            request = _make_request(path=path, method="GET")
+            assert middleware._is_whitelisted(request) is True, f"{path} should be public"
+
+    def test_product_list_and_analysis_not_public(self, middleware: AuthMiddleware) -> None:
+        for path in [
+            "/products",
+            "/products/clausea/analysis",
+            "/products/clausea/deep-analysis",
+        ]:
+            request = _make_request(path=path, method="GET")
+            assert middleware._is_whitelisted(request) is False, f"{path} should require auth"
 
 
 # ── Service API key auth ────────────────────────────────────────────
@@ -176,12 +204,13 @@ class TestJWTAuth:
     @patch("src.core.middleware.clerk_auth_service")
     async def test_valid_jwt(self, mock_clerk: MagicMock, middleware: AuthMiddleware) -> None:
         mock_clerk.verify_token = AsyncMock(
-            return_value={"user_id": "user_123", "email": "user@example.com"}
+            return_value={"sub": "user_123", "email": "user@example.com", "name": "Test User"}
         )
         request = _make_request()
         result = await middleware._authenticate_jwt("Bearer valid-token", request)
         assert result is not None
         assert result["user_id"] == "user_123"
+        assert result["email"] == "user@example.com"
 
     @pytest.mark.asyncio
     @patch("src.core.middleware.clerk_auth_service")

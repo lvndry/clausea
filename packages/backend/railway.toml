@@ -1,0 +1,18 @@
+# API service config. Worker and Streamlit also use root packages/backend but
+# MUST override Dockerfile in the Railway dashboard — see docs/RAILWAY.md:
+#   Worker:    Dockerfile.worker, start command empty, health check /health (optional)
+#   Streamlit: Dockerfile.streamlit, health check /_stcore/health
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+watchPatterns = ["packages/backend/**"]
+
+[deploy]
+# Do not set startCommand here — Railway passes it to uvicorn without shell
+# expansion, so `--port $PORT` becomes the literal string "$PORT" and the
+# container crashloops. Each Dockerfile CMD uses `sh -c` with ${PORT:-8000}.
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

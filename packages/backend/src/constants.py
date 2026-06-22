@@ -6,10 +6,15 @@ TIER_LIMITS = {
     UserTier.PRO: 999999,  # Effectively unlimited
 }
 
-# Tier pricing (USD per month)
+# Tier pricing (USD)
 TIER_PRICES = {
     UserTier.FREE: 0,
     UserTier.PRO: 9,  # $9/month
+}
+
+TIER_PRICES_ANNUAL = {
+    UserTier.FREE: 0,
+    UserTier.PRO: 100,  # $100/year
 }
 
 # Tier display names

@@ -29,3 +29,6 @@ class DocumentVersion(BaseModel):
     content_hash: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
+    product_slug: str | None = None
+    changed_fields: list[str] | None = None
+    job_id: str | None = None

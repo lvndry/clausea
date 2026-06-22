@@ -4,22 +4,24 @@ import { CheckCircle2, Loader2, Mail } from "lucide-react";
 import { motion, useInView } from "motion/react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
-import { GithubIcon } from "@/components/ui/brand-icons";
 
 import { useRef, useState } from "react";
 
+import { GithubIcon } from "@/components/ui/brand-icons";
 import { Button } from "@/components/ui/button";
 import { useCheckout } from "@/hooks/useCheckout";
+import { useGetStartedNavigation } from "@/hooks/useGetStartedNavigation";
+import { useProPricing } from "@/hooks/useProPricing";
+import {
+  type BillingInterval,
+  PRO_PRICE_ANNUAL,
+  PRO_PRICE_MONTHLY,
+  getProDisplayPrice,
+} from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
 type PricingFeature = string | { label: string; comingSoon: boolean };
-
-const PRO_PRICE_ID =
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY ||
-  "";
 
 /**
  * Pricing Component - Warm Theme
@@ -27,12 +29,30 @@ const PRO_PRICE_ID =
 export function Pricing() {
   const containerRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(containerRef, { once: true, amount: 0.2 });
-  const router = useRouter();
   const { startCheckout, isLoading, error } = useCheckout();
+  const { navigate: navigateToGetStarted, isNavigationReady } =
+    useGetStartedNavigation();
+  const {
+    getProPriceId,
+    isProCheckoutAvailable,
+    getCheckoutUnavailableMessage,
+  } = useProPricing();
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("monthly");
+
+  const proDisplayPrice = getProDisplayPrice(billingInterval);
+  const proPriceId = getProPriceId(billingInterval);
+  const checkoutAvailable = isProCheckoutAvailable(billingInterval);
+  const checkoutUnavailableMessage = checkoutAvailable
+    ? null
+    : getCheckoutUnavailableMessage(billingInterval);
+  const annualSavings = PRO_PRICE_MONTHLY * 12 - PRO_PRICE_ANNUAL;
 
   const tiers: Array<{
     name: string;
     price: string;
+    priceSuffix?: string;
+    priceNote?: string;
     description: string;
     features: PricingFeature[];
     cta: string;
@@ -42,6 +62,7 @@ export function Pricing() {
     {
       name: "Free",
       price: "0",
+      priceSuffix: "/mo",
       description:
         "Perfect for trying out Clausea with basic privacy analysis.",
       features: [
@@ -53,11 +74,16 @@ export function Pricing() {
       ],
       cta: "Get Started",
       popular: false,
-      action: () => router.push("/sign-up"),
+      action: () => navigateToGetStarted(),
     },
     {
       name: "Pro",
-      price: "9",
+      price: String(proDisplayPrice.amount),
+      priceSuffix: proDisplayPrice.suffix,
+      priceNote:
+        billingInterval === "annual" && annualSavings > 0
+          ? `Save $${annualSavings} vs monthly`
+          : undefined,
       description:
         "Unlimited analysis for privacy-conscious individuals and teams.",
       features: [
@@ -70,10 +96,8 @@ export function Pricing() {
       cta: "Upgrade to Pro",
       popular: true,
       action: () => {
-        if (PRO_PRICE_ID) {
-          startCheckout(PRO_PRICE_ID);
-        } else {
-          router.push("/sign-up");
+        if (checkoutAvailable && proPriceId) {
+          startCheckout(proPriceId);
         }
       },
     },
@@ -103,10 +127,42 @@ export function Pricing() {
         </motion.div>
 
         <div className="mt-12 md:mt-0">
+          <div className="inline-flex border border-border mb-6">
+            <button
+              type="button"
+              onClick={() => setBillingInterval("monthly")}
+              className={cn(
+                "px-4 py-2 text-[10px] uppercase tracking-widest font-medium transition-colors",
+                billingInterval === "monthly"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Monthly
+            </button>
+            <button
+              type="button"
+              onClick={() => setBillingInterval("annual")}
+              className={cn(
+                "px-4 py-2 text-[10px] uppercase tracking-widest font-medium transition-colors border-l border-border",
+                billingInterval === "annual"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Annual
+            </button>
+          </div>
           <p className="text-muted-foreground text-sm leading-relaxed max-w-[280px]">
-            Start free, upgrade when you need more. No hidden fees.
+            Start free, upgrade when you need more. Pro is ${PRO_PRICE_MONTHLY}
+            /month or ${PRO_PRICE_ANNUAL}/year.
           </p>
-          {/* Error message */}
+          {/* Checkout configuration / error messages */}
+          {checkoutUnavailableMessage && (
+            <div className="mt-6 p-4 border border-border bg-muted/30 text-xs leading-relaxed text-muted-foreground">
+              {checkoutUnavailableMessage}
+            </div>
+          )}
           {error && (
             <div className="mt-6 p-4 border border-foreground bg-foreground/5 text-xs font-medium text-foreground">
               {error}
@@ -140,13 +196,20 @@ export function Pricing() {
               )}
             </div>
 
-            <div className="flex items-baseline gap-2 mb-6">
-              <span className="text-6xl font-display font-medium text-foreground tracking-tight leading-none">
-                ${tier.price}
-              </span>
-              <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
-                /mo
-              </span>
+            <div className="mb-6">
+              <div className="flex items-baseline gap-2">
+                <span className="text-6xl font-display font-medium text-foreground tracking-tight leading-none">
+                  ${tier.price}
+                </span>
+                <span className="text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+                  {tier.priceSuffix ?? "/mo"}
+                </span>
+              </div>
+              {tier.priceNote ? (
+                <p className="mt-2 text-[10px] uppercase tracking-widest font-medium text-muted-foreground">
+                  {tier.priceNote}
+                </p>
+              ) : null}
             </div>
 
             <p className="text-sm leading-relaxed text-muted-foreground mb-12 grow">
@@ -184,30 +247,53 @@ export function Pricing() {
               })}
             </ul>
 
-            <Button
-              variant={tier.popular ? "default" : "outline"}
-              disabled={isLoading && tier.popular}
-              className={cn(
-                "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border",
-                tier.popular
-                  ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
-                  : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
-              )}
-              onClick={() => {
-                posthog.capture("pricing_plan_clicked", {
-                  plan_name: tier.name,
-                  plan_price: tier.price,
-                  is_popular: tier.popular,
-                  cta_text: tier.cta,
-                });
-                tier.action();
-              }}
-            >
-              {isLoading && tier.popular ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : null}
-              {tier.cta}
-            </Button>
+            {(() => {
+              const showCheckoutTooltip =
+                tier.popular && checkoutUnavailableMessage != null;
+              const ctaButton = (
+                <Button
+                  variant={tier.popular ? "default" : "outline"}
+                  disabled={
+                    (isLoading && tier.popular) ||
+                    (tier.popular && !checkoutAvailable) ||
+                    (!tier.popular && !isNavigationReady)
+                  }
+                  className={cn(
+                    "w-full h-14 rounded-none text-xs uppercase tracking-widest font-medium transition-colors border cursor-pointer",
+                    tier.popular
+                      ? "bg-foreground text-background border-foreground hover:bg-muted-foreground"
+                      : "bg-transparent border-foreground text-foreground hover:bg-foreground hover:text-background",
+                  )}
+                  onClick={() => {
+                    posthog.capture("pricing_plan_clicked", {
+                      plan_name: tier.name,
+                      plan_price: tier.price,
+                      is_popular: tier.popular,
+                      cta_text: tier.cta,
+                    });
+                    tier.action();
+                  }}
+                >
+                  {isLoading && tier.popular ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  {tier.cta}
+                </Button>
+              );
+
+              if (showCheckoutTooltip) {
+                return (
+                  <span
+                    title={checkoutUnavailableMessage}
+                    className="inline-block w-full"
+                  >
+                    {ctaButton}
+                  </span>
+                );
+              }
+
+              return ctaButton;
+            })()}
           </motion.div>
         ))}
       </div>

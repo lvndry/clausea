@@ -14,6 +14,7 @@ interface ProductMetadata {
   slug: string;
   company_name?: string | null;
   one_line_summary?: string;
+  grade?: "A" | "B" | "C" | "D" | "E" | null;
   risk_score?: number;
   verdict?:
     | "very_user_friendly"
@@ -21,6 +22,18 @@ interface ProductMetadata {
     | "moderate"
     | "pervasive"
     | "very_pervasive";
+}
+
+function buildOgUrl(
+  base: string,
+  name: string,
+  grade?: ProductMetadata["grade"],
+  verdict?: string | null,
+): string {
+  const params = new URLSearchParams({ name });
+  if (grade) params.set("grade", grade);
+  if (verdict) params.set("verdict", verdict);
+  return `${base}/og?${params.toString()}`;
 }
 
 function humanizeSlug(slug: string): string {
@@ -68,22 +81,47 @@ const fetchProductForMetadata = cache(async function (
     }
 
     const cookie = headerList.get("cookie");
+    const reqHeaders: HeadersInit = cookie ? { Cookie: cookie } : {};
 
-    const response = await fetch(`${origin}/api/products/${slug}`, {
-      headers: cookie ? { Cookie: cookie } : {},
-      next: { revalidate: 60 },
-    });
+    const [productRes, overviewRes] = await Promise.all([
+      fetch(`${origin}/api/products/${slug}`, {
+        headers: reqHeaders,
+        next: { revalidate: 60 },
+      }),
+      fetch(`${origin}/api/products/${slug}/overview`, {
+        headers: reqHeaders,
+        next: { revalidate: 60 },
+      }).catch(() => null),
+    ]);
 
-    if (response.status === 404) {
+    if (productRes.status === 404) {
       return { kind: "not_found" };
     }
 
-    if (!response.ok) {
-      console.error("Product metadata: API error", response.status, slug);
+    if (!productRes.ok) {
+      console.error("Product metadata: API error", productRes.status, slug);
       return { kind: "uncertain", displayName: humanizeSlug(slug) };
     }
 
-    return { kind: "ok", product: (await response.json()) as ProductMetadata };
+    const product = (await productRes.json()) as ProductMetadata;
+
+    if (overviewRes?.ok) {
+      try {
+        const overview = (await overviewRes.json()) as {
+          grade?: ProductMetadata["grade"];
+          risk_score?: number;
+          verdict?: ProductMetadata["verdict"];
+        };
+        if (overview.grade) product.grade = overview.grade;
+        if (overview.risk_score != null)
+          product.risk_score = overview.risk_score;
+        if (overview.verdict) product.verdict = overview.verdict;
+      } catch {
+        // Overview unavailable or malformed — OG card shows name only
+      }
+    }
+
+    return { kind: "ok", product };
   } catch (error) {
     console.error("Error fetching product data for metadata:", error);
     return { kind: "uncertain", displayName: humanizeSlug(slug) };
@@ -102,7 +140,7 @@ function neutralProductMetadata(displayName: string, slug: string): Metadata {
       siteName: "Clausea AI",
       images: [
         {
-          url: `${siteUrl}/og`,
+          url: buildOgUrl(siteUrl, displayName),
           width: 1200,
           height: 630,
           alt: `${displayName}`,
@@ -115,7 +153,7 @@ function neutralProductMetadata(displayName: string, slug: string): Metadata {
       card: "summary_large_image",
       title: `${displayName} | Clausea AI`,
       description,
-      images: [`${siteUrl}/og`],
+      images: [buildOgUrl(siteUrl, displayName)],
     },
     alternates: {
       canonical: `${siteUrl}/products/${slug}`,
@@ -188,7 +226,7 @@ export async function generateMetadata({
       siteName: "Clausea AI",
       images: [
         {
-          url: `${siteUrl}/og`,
+          url: buildOgUrl(siteUrl, productName, product.grade, product.verdict),
           width: 1200,
           height: 630,
           alt: `${productName} policy overview`,
@@ -201,7 +239,9 @@ export async function generateMetadata({
       card: "summary_large_image",
       title: `${productName} - Policy overview | Clausea AI`,
       description: fullDescription,
-      images: [`${siteUrl}/og`],
+      images: [
+        buildOgUrl(siteUrl, productName, product.grade, product.verdict),
+      ],
     },
     alternates: {
       canonical: `${siteUrl}/products/${product.slug}`,
@@ -220,8 +260,7 @@ export default async function ProductLayout({
   const result = await fetchProductForMetadata(slug);
 
   const product = result.kind === "ok" ? result.product : null;
-  const productName =
-    product?.name || product?.company_name || null;
+  const productName = product?.name || product?.company_name || null;
   const description = product?.one_line_summary || undefined;
 
   return (
@@ -251,7 +290,9 @@ export default async function ProductLayout({
                   "@type": "SoftwareApplication",
                   name: productName,
                   ...(product.company_name
-                    ? { brand: { "@type": "Brand", name: product.company_name } }
+                    ? {
+                        brand: { "@type": "Brand", name: product.company_name },
+                      }
                     : {}),
                 },
                 ...(typeof product.risk_score === "number"

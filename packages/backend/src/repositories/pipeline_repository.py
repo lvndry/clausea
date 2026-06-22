@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from motor.core import AgnosticDatabase
@@ -10,17 +12,123 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from src.core.logging import get_logger
-from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES, PipelineJob
+from src.models.pipeline_job import (
+    TERMINAL_PIPELINE_STATUSES,
+    PipelineErrorCode,
+    PipelineJob,
+    is_hard_crawl_error,
+)
 from src.repositories.base_repository import BaseRepository
+from src.utils.domain import extract_domain as _extract_domain
 
 _TERMINAL_STATUSES = list(TERMINAL_PIPELINE_STATUSES)
 
 # Statuses for a job that was actively executing and can be left orphaned by a worker
 # crash. A "pending" job is only queued — never started — so a restart must leave it
 # pending for the worker to pick up, not fail it. Only these can be marked stale.
-_ORPHANABLE_STATUSES = ["crawling", "summarizing", "generating_overview"]
+_ORPHANABLE_STATUSES = ["crawling", "synthesising", "generating_overview"]
 
 logger = get_logger(__name__)
+
+
+class StaleReapContext(StrEnum):
+    """Why mark_stale_as_failed is running — drives error_detail copy."""
+
+    worker_boot = "worker_boot"
+    periodic_sweep = "periodic_sweep"
+    api_startup = "api_startup"
+
+
+def _stale_reap_detail(context: StaleReapContext, stale_threshold_minutes: int) -> str:
+    if context == StaleReapContext.worker_boot:
+        return (
+            "The crawler worker restarted or crashed while this job was in progress "
+            "(for example after a deploy). It will be retried automatically."
+        )
+    if context == StaleReapContext.api_startup:
+        return (
+            f"This job had no progress for over {stale_threshold_minutes} minutes when the "
+            "API service started and was marked stale. It will be retried automatically."
+        )
+    return (
+        f"No progress updates for {stale_threshold_minutes} minutes while this job was running. "
+        "The worker may have stopped heartbeating or the process was lost. "
+        "It will be retried automatically."
+    )
+
+
+_RETRYABLE_PIPELINE_ERRORS = {
+    PipelineErrorCode.crawl_failed.value,
+    PipelineErrorCode.all_analysis_failed.value,
+    PipelineErrorCode.core_docs_unanalyzed.value,
+    PipelineErrorCode.overview_not_persisted.value,
+    PipelineErrorCode.internal_error.value,
+    PipelineErrorCode.timed_out.value,
+    PipelineErrorCode.stalled.value,
+    PipelineErrorCode.interrupted.value,
+    PipelineErrorCode.orphaned.value,
+}
+_NON_RETRYABLE_PIPELINE_ERRORS = {
+    PipelineErrorCode.product_not_found.value,
+    PipelineErrorCode.crawl_robots_blocked.value,
+    PipelineErrorCode.no_documents_found.value,
+    PipelineErrorCode.domain_circuit_breaker.value,
+}
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("Invalid %s=%r (must be int), using default=%d", name, raw, default)
+        return default
+
+
+# Recall-first default: allow enough auto-retry headroom to recover from transient
+# crawler/render/LLM failures before quarantining a job as poison.
+MAX_AUTO_RETRY_ATTEMPTS = _read_positive_int_env("PIPELINE_MAX_AUTO_RETRY_ATTEMPTS", 12)
+MAX_REQUEUE_BATCH_SIZE = _read_positive_int_env("PIPELINE_REQUEUE_BATCH_SIZE", 200)
+
+# Domain circuit breaker: stop claiming jobs for a domain once this many hard
+# crawl failures (bot detection, 403s, anti-scrape blocks) have accumulated across
+# retries of the same pipeline job.  Scoped per job document — resets when a brand
+# new job is created for the product (monitoring re-crawl, manual trigger, etc.).
+DOMAIN_CIRCUIT_BREAKER_THRESHOLD = _read_positive_int_env(
+    "PIPELINE_DOMAIN_CIRCUIT_BREAKER_THRESHOLD", 5
+)
+
+
+def _is_auto_retryable_failure(error_code: Any) -> bool:
+    """Best-effort retryability classifier for failed jobs.
+
+    We keep this forgiving for backward compatibility with historical rows that
+    store free-form strings in ``error``.
+    """
+    code = str(error_code).strip().lower() if error_code is not None else ""
+    if not code:
+        return True
+    if code in _NON_RETRYABLE_PIPELINE_ERRORS:
+        return False
+    if code in _RETRYABLE_PIPELINE_ERRORS:
+        return True
+    # Legacy rows may store free-text values.
+    if code in {"cancelled", "canceled", "cancelled by user", "canceled by user"}:
+        return False
+    if "orphaned" in code:
+        return True
+    return True
+
+
+def _retry_block_reason(job: dict[str, Any]) -> str | None:
+    attempts = int(job.get("attempts") or 0)
+    if attempts >= MAX_AUTO_RETRY_ATTEMPTS:
+        return f"attempt limit reached ({attempts}/{MAX_AUTO_RETRY_ATTEMPTS})"
+    if not _is_auto_retryable_failure(job.get("error")):
+        return f"non-retryable failure ({job.get('error') or 'unknown'})"
+    return None
 
 
 class PipelineRepository(BaseRepository):
@@ -94,14 +202,76 @@ class PipelineRepository(BaseRepository):
 
         Flips status pending -> crawling in one step so two workers (or concurrent claim
         loops) never pick up the same job. Returns the claimed job, or None if none pending.
+
+        Before claiming, checks the domain circuit breaker: if the job's accumulated hard
+        failure count (bot detection, 403s, persistent access blocks) has reached
+        DOMAIN_CIRCUIT_BREAKER_THRESHOLD, the job is marked as failed with
+        PipelineErrorCode.domain_circuit_breaker (non-retryable) and None is returned.
+        The worker will poll again on the next cycle.
         """
-        data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
+        # Peek at the next candidate without claiming, so we can check the circuit
+        # breaker first.  Uses the same sort as the eventual claim so we always inspect
+        # the job that *would* be claimed.
+        candidate: dict[str, Any] | None = await db[self.COLLECTION].find_one(
             {"status": "pending"},
+            sort=[("created_at", 1)],
+        )
+        if not candidate:
+            return None
+
+        hard_count = int(candidate.get("accumulated_hard_failure_count") or 0)
+        if hard_count >= DOMAIN_CIRCUIT_BREAKER_THRESHOLD:
+            domain = _extract_domain(candidate.get("url", ""))
+            logger.warning(
+                "Domain circuit breaker tripped — job=%s product=%s domain=%r "
+                "accumulated_hard_failures=%d threshold=%d; marking non-retryable.",
+                candidate.get("id"),
+                candidate.get("product_slug"),
+                domain,
+                hard_count,
+                DOMAIN_CIRCUIT_BREAKER_THRESHOLD,
+            )
+            await db[self.COLLECTION].update_one(
+                {"id": candidate["id"], "status": "pending"},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "active": False,
+                        "error": PipelineErrorCode.domain_circuit_breaker.value,
+                        "error_detail": (
+                            f"Domain {domain!r} accumulated {hard_count} hard failure(s) "
+                            f"(threshold={DOMAIN_CIRCUIT_BREAKER_THRESHOLD}). "
+                            "Stopping retries to avoid wasting browser concurrency on a "
+                            "site that blocks automated access."
+                        ),
+                        "auto_retry_disabled": True,
+                        "auto_retry_disabled_reason": (
+                            f"domain_circuit_breaker: {hard_count} hard failure(s) on {domain!r}"
+                        ),
+                        "completed_at": datetime.now(),
+                        "updated_at": datetime.now(),
+                    }
+                },
+            )
+            return None
+
+        now = datetime.now()
+        data: dict[str, Any] | None = await db[self.COLLECTION].find_one_and_update(
+            {"id": candidate["id"], "status": "pending"},
             {
-                "$set": {"status": "crawling", "started_at": datetime.now()},
+                "$set": {
+                    "status": "crawling",
+                    "started_at": now,
+                    "active": True,
+                    # Set last_heartbeat at claim time so stale detection has a non-null
+                    # timestamp from the moment the job is claimed. Without this, a worker
+                    # that is SIGKILL'd before the first progress callback leaves
+                    # last_heartbeat=null, and mark_stale_as_failed must fall back to
+                    # updated_at — which can be ambiguous when multiple fields update it.
+                    "last_heartbeat": now,
+                },
                 "$inc": {"attempts": 1},
             },
-            sort=[("created_at", 1)],
             return_document=ReturnDocument.AFTER,
         )
         if not data:
@@ -174,6 +344,10 @@ class PipelineRepository(BaseRepository):
             job_id: Job ID
             fields: Dictionary of fields to update (supports dot notation)
         """
+        status = fields.get("status")
+        if isinstance(status, str):
+            # Keep the active-index discriminator consistent whenever status is patched.
+            fields["active"] = status not in _TERMINAL_STATUSES
         fields["updated_at"] = datetime.now()
         await db[self.COLLECTION].update_one(
             {"id": job_id},
@@ -181,15 +355,29 @@ class PipelineRepository(BaseRepository):
         )
         logger.debug(f"Partially updated pipeline job {job_id}: {list(fields.keys())}")
 
+    async def inc_document_counters(
+        self, db: AgnosticDatabase, job_id: str, *, stored: int = 0, found: int = 0
+    ) -> None:
+        """Atomically increment live document counters on an in-flight job.
+
+        Keeps ``documents_found`` and ``documents_stored`` current during crawling
+        so real-time monitoring shows live progress instead of 0/0 until the crawl
+        phase ends.  Uses ``$inc`` — does not reload the full job document.
+        """
+        if not job_id or (stored == 0 and found == 0):
+            return
+        await db[self.COLLECTION].update_one(
+            {"id": job_id},
+            {"$inc": {"documents_stored": stored, "documents_found": found}},
+        )
+
     async def requeue_failed_jobs(self, db: AgnosticDatabase) -> int:
-        """Re-queue every failed job for another attempt — retries are unlimited.
+        """Re-queue retryable failed jobs for another attempt.
 
         Makes the worker self-healing: orphaned jobs (failed by mark_stale_as_failed) and
-        transient failures retry. ``no_documents`` is terminal and deliberately not retried.
-        There is no attempt ceiling: a job mostly accrues attempts from redeploys orphaning
-        long in-flight crawls, not from real defects, so capping it would permanently kill
-        legitimate work. The 5-minute stale-sweep cadence is the natural backoff between
-        retries, so a genuinely poison job retries slowly rather than tight-looping.
+        transient failures retry. ``no_documents`` and other deterministic failures remain
+        terminal. Retries are bounded by ``PIPELINE_MAX_AUTO_RETRY_ATTEMPTS`` so poison jobs
+        don't churn indefinitely.
 
         At most one active job per product (enforced by the uniq_active_job_per_product
         partial index): products that already have an active job are skipped, and only one
@@ -207,49 +395,112 @@ class PipelineRepository(BaseRepository):
                 "started_at": None,
                 "completed_at": None,
             }
-            for name in ("crawling", "summarizing", "generating_overview")
+            for name in ("crawling", "synthesising", "generating_overview")
         ]
         claimed_slugs: set[str] = set(
             await db[self.COLLECTION].distinct("product_slug", {"active": True})
         )
-        candidates: list[dict[str, Any]] = (
-            await db[self.COLLECTION].find({"status": "failed"}).to_list(length=None)
-        )
+        query: dict[str, Any] = {
+            "status": "failed",
+            "active": {"$ne": True},
+            "auto_retry_disabled": {"$ne": True},
+        }
+        cursor = db[self.COLLECTION].find(query).sort("updated_at", 1)
+        candidates: list[dict[str, Any]] = await cursor.to_list(length=MAX_REQUEUE_BATCH_SIZE)
 
         count = 0
         for job in candidates:
+            reason = _retry_block_reason(job)
+            if reason:
+                await db[self.COLLECTION].update_one(
+                    {"id": job["id"], "status": "failed", "active": {"$ne": True}},
+                    {
+                        "$set": {
+                            "auto_retry_disabled": True,
+                            "auto_retry_disabled_reason": reason,
+                            "updated_at": datetime.now(),
+                        }
+                    },
+                )
+                continue
             slug = job["product_slug"]
             if slug in claimed_slugs:  # product already has (or just got) an active job
                 continue
             claimed_slugs.add(slug)
-            await db[self.COLLECTION].update_one(
-                {"id": job["id"]},
-                {
-                    "$set": {
-                        "status": "pending",
-                        "active": True,
-                        "steps": fresh_steps,
-                        "error": None,
-                        "error_detail": None,
-                        "started_at": None,
-                        "completed_at": None,
-                        "last_heartbeat": None,
-                        "updated_at": datetime.now(),
-                    }
-                },
+
+            # Accumulate hard crawl failures from this attempt before wiping crawl_errors.
+            # The counter persists across retries (NOT reset here) so the circuit breaker
+            # has a cumulative signal even though per-attempt crawl_errors are cleared.
+            hard_failures_this_attempt = sum(
+                1
+                for err in (job.get("crawl_errors") or [])
+                if is_hard_crawl_error(
+                    err.get("error_type", ""),
+                    int(err.get("status_code") or 0),
+                    err.get("error_message"),
+                )
             )
-            count += 1
+            new_hard_failure_count = (
+                int(job.get("accumulated_hard_failure_count") or 0) + hard_failures_this_attempt
+            )
+
+            try:
+                result = await db[self.COLLECTION].update_one(
+                    {
+                        "id": job["id"],
+                        "status": "failed",
+                        "active": {"$ne": True},
+                        "auto_retry_disabled": {"$ne": True},
+                    },
+                    {
+                        "$set": {
+                            "status": "pending",
+                            "active": True,
+                            "steps": fresh_steps,
+                            "error": None,
+                            "error_detail": None,
+                            "started_at": None,
+                            "completed_at": None,
+                            "last_heartbeat": None,
+                            "documents_found": 0,
+                            "documents_stored": 0,
+                            "crawl_errors": [],
+                            "crawl_skip_reasons": [],
+                            "auto_retry_disabled": False,
+                            "auto_retry_disabled_reason": None,
+                            # Preserve the accumulated hard failure count — it must survive
+                            # retries so the circuit breaker can trip after enough attempts.
+                            "accumulated_hard_failure_count": new_hard_failure_count,
+                            "updated_at": datetime.now(),
+                        }
+                    },
+                )
+            except DuplicateKeyError:
+                # Another worker revived/claimed this product concurrently.
+                logger.debug(
+                    "Skipped requeue for %s/%s due to concurrent active-job claim",
+                    slug,
+                    job["id"],
+                )
+                continue
+            if result.modified_count:
+                count += 1
         if count:
             logger.info("Re-queued %d failed job(s) for retry", count)
         return count
 
     async def mark_stale_as_failed(
-        self, db: AgnosticDatabase, stale_threshold_minutes: int = 30
+        self,
+        db: AgnosticDatabase,
+        stale_threshold_minutes: int = 30,
+        *,
+        context: StaleReapContext = StaleReapContext.periodic_sweep,
     ) -> int:
         """Mark stale in-progress jobs older than the threshold as failed.
 
-        Used on startup to recover from server crashes that left jobs orphaned.
-        Uses last_heartbeat if available, otherwise falls back to updated_at.
+        Used on worker boot, periodic sweeps, and API startup to recover jobs left
+        in-flight without a live worker. Uses last_heartbeat if available, otherwise
+        falls back to updated_at.
 
         Only jobs that were actively executing are eligible — "pending" jobs are queued,
         not orphaned, so a restart leaves them for the worker to pick up rather than
@@ -260,6 +511,7 @@ class PipelineRepository(BaseRepository):
         from datetime import timedelta
 
         cutoff = datetime.now() - timedelta(minutes=stale_threshold_minutes)
+        error_detail = _stale_reap_detail(context, stale_threshold_minutes)
         result = await db[self.COLLECTION].update_many(
             {
                 "status": {"$in": _ORPHANABLE_STATUSES},
@@ -273,7 +525,10 @@ class PipelineRepository(BaseRepository):
                 "$set": {
                     "status": "failed",
                     "active": False,
-                    "error": "Server restart — job was orphaned",
+                    "error": PipelineErrorCode.orphaned.value,
+                    "error_detail": error_detail,
+                    "auto_retry_disabled": False,
+                    "auto_retry_disabled_reason": None,
                     "updated_at": datetime.now(),
                     "completed_at": datetime.now(),
                 }
@@ -281,5 +536,142 @@ class PipelineRepository(BaseRepository):
         )
         count = result.modified_count
         if count:
-            logger.warning(f"Marked {count} stale pipeline job(s) as failed on startup")
+            if context == StaleReapContext.worker_boot:
+                logger.warning(
+                    "Marked %d in-flight job(s) as failed after worker boot (orphan sweep)",
+                    count,
+                )
+            elif context == StaleReapContext.api_startup:
+                logger.warning(
+                    "Marked %d stale pipeline job(s) as failed on API startup (>%dm idle)",
+                    count,
+                    stale_threshold_minutes,
+                )
+            else:
+                logger.warning(
+                    "Marked %d stale pipeline job(s) as failed (no progress for %dm)",
+                    count,
+                    stale_threshold_minutes,
+                )
+        return count
+
+    async def mark_interrupted(self, db: AgnosticDatabase, job_ids: list[str]) -> int:
+        """Mark in-flight jobs as interrupted so they can be re-queued on the next boot.
+
+        Called during graceful shutdown to checkpoint which jobs were cut short by a
+        SIGTERM, so they can be picked up immediately on restart without waiting for
+        the stale sweep.
+        """
+        if not job_ids:
+            return 0
+        now = datetime.now()
+        result = await db[self.COLLECTION].update_many(
+            {"id": {"$in": job_ids}, "status": {"$in": _ORPHANABLE_STATUSES}},
+            {
+                "$set": {
+                    "status": "interrupted",
+                    "active": False,
+                    "error": PipelineErrorCode.interrupted.value,
+                    "error_detail": (
+                        "The worker shut down gracefully (deploy or scale-down) while this job "
+                        "was running. It will be retried automatically."
+                    ),
+                    "auto_retry_disabled": False,
+                    "auto_retry_disabled_reason": None,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            },
+        )
+        count = result.modified_count
+        if count:
+            logger.info("Marked %d in-flight job(s) as interrupted", count)
+        return count
+
+    async def requeue_interrupted_jobs(self, db: AgnosticDatabase) -> int:
+        """Re-queue jobs that were interrupted by a graceful shutdown.
+
+        Interrupted jobs are always retryable — they were cut short by a SIGTERM,
+        not by a code bug or data issue. They should be picked up immediately on
+        restart without waiting for the stale sweep.
+        """
+        fresh_steps = [
+            {
+                "name": name,
+                "status": "pending",
+                "message": None,
+                "progress_current": None,
+                "progress_total": None,
+                "progress_percent": None,
+                "started_at": None,
+                "completed_at": None,
+                **({"has_explainer": None} if name == "generating_overview" else {}),
+            }
+            for name in ("crawling", "synthesising", "generating_overview")
+        ]
+        claimed_slugs: set[str] = set(
+            await db[self.COLLECTION].distinct("product_slug", {"active": True})
+        )
+
+        cursor = (
+            db[self.COLLECTION]
+            .find({"status": "interrupted", "active": {"$ne": True}})
+            .sort("updated_at", 1)
+        )
+        candidates: list[dict[str, Any]] = await cursor.to_list(length=MAX_REQUEUE_BATCH_SIZE)
+
+        count = 0
+        for job in candidates:
+            slug = job["product_slug"]
+            if slug in claimed_slugs:
+                continue
+            claimed_slugs.add(slug)
+
+            hard_failures_this_attempt = sum(
+                1
+                for err in (job.get("crawl_errors") or [])
+                if is_hard_crawl_error(
+                    err.get("error_type", ""),
+                    int(err.get("status_code") or 0),
+                    err.get("error_message"),
+                )
+            )
+            new_hard_failure_count = (
+                int(job.get("accumulated_hard_failure_count") or 0) + hard_failures_this_attempt
+            )
+
+            try:
+                result = await db[self.COLLECTION].update_one(
+                    {
+                        "id": job["id"],
+                        "status": "interrupted",
+                        "active": {"$ne": True},
+                    },
+                    {
+                        "$set": {
+                            "status": "pending",
+                            "active": True,
+                            "steps": fresh_steps,
+                            "error": None,
+                            "error_detail": None,
+                            "started_at": None,
+                            "completed_at": None,
+                            "last_heartbeat": None,
+                            "documents_found": 0,
+                            "documents_stored": 0,
+                            "crawl_errors": [],
+                            "crawl_skip_reasons": [],
+                            "auto_retry_disabled": False,
+                            "auto_retry_disabled_reason": None,
+                            "accumulated_hard_failure_count": new_hard_failure_count,
+                            "updated_at": datetime.now(),
+                        }
+                    },
+                )
+            except DuplicateKeyError:
+                continue
+            if result.modified_count:
+                count += 1
+        if count:
+            logger.info("Re-queued %d interrupted job(s)", count)
         return count

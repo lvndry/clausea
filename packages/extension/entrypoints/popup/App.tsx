@@ -210,8 +210,29 @@ export default function App() {
             resolve({});
           }
         });
-      const headers = await getExtensionHeaders();
-      const result = await analyzeUrl(currentUrl, headers);
+
+      // Harvest rendered footer policy links from the active tab. Best-effort:
+      // failures fall through to a normal analyze call without seeds.
+      const collectFooterSeeds = (): Promise<string[]> =>
+        new Promise((resolve) => {
+          try {
+            chrome.runtime.sendMessage({ type: "COLLECT_FOOTER_SEEDS" }, (response) => {
+              if (chrome.runtime.lastError || !response?.success) {
+                resolve([]);
+                return;
+              }
+              resolve((response.seeds as string[]) ?? []);
+            });
+          } catch {
+            resolve([]);
+          }
+        });
+
+      const [headers, seeds] = await Promise.all([
+        getExtensionHeaders(),
+        collectFooterSeeds(),
+      ]);
+      const result = await analyzeUrl(currentUrl, headers, seeds.length > 0 ? seeds : undefined);
       setAnalyzeResult(result);
 
       if (result.status === "already_indexed") {

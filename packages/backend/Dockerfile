@@ -95,5 +95,8 @@ ENV MALLOC_ARENA_MAX=2
 
 EXPOSE 8000
 
-# Exec form: uvicorn runs as PID 1 so Railway's SIGTERM is delivered directly.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell wrapper so Railway's $PORT is honored when no startCommand override is set.
+# Empty host binds dual-stack (IPv4 + IPv6) in uvicorn — required for Railway IPv4
+# healthchecks and private-network IPv6. :: alone is IPv6-only and breaks healthchecks.
+# uvicorn remains PID 1 for clean SIGTERM handling.
+CMD ["sh", "-c", "exec uvicorn main:app --host '' --port ${PORT:-8000}"]

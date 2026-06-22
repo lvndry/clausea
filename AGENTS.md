@@ -69,6 +69,18 @@ cd packages/frontend
 bun run lint
 ```
 
+### Git Workflow
+
+**NEVER:**
+
+- ❌ Push commits directly to `main`
+
+**ALWAYS:**
+
+- ✅ Create a feature branch for all changes
+- ✅ Open a pull request for review before merge
+- ✅ Use `gh pr create` to open pull requests
+
 ### Backend Service Pattern
 
 ```python

@@ -194,6 +194,14 @@ _ALL_POLICY_KEYWORDS: frozenset[str] = frozenset(
     kw for keywords in POLICY_DOC_KEYWORDS.values() for kw in keywords
 )
 
+# Matches any recognisable policy-related token in a URL path (checked against the
+# path string only, query and fragment stripped before matching).  Used as the
+# first branch of the metadata-match secondary guard.
+_POLICY_PATH_RE = re.compile(
+    r"(?:legal|privacy|terms|polic|guideline|safety|trust|transparency|compliance)",
+    re.IGNORECASE,
+)
+
 
 class DocumentClassifier(LLMUsageTrackingMixin):
     """
@@ -262,7 +270,11 @@ class DocumentClassifier(LLMUsageTrackingMixin):
         return hits >= MIN_POLICY_KEYWORD_HITS
 
     async def classify_document(
-        self, url: str, text: str, metadata: dict[str, Any]
+        self,
+        url: str,
+        text: str,
+        metadata: dict[str, Any],
+        legal_score: float | None = None,
     ) -> dict[str, Any]:
         """
         Classify if document is a policy document and determine its type.
@@ -277,6 +289,9 @@ class DocumentClassifier(LLMUsageTrackingMixin):
             url: Document URL
             text: Document content
             metadata: Document metadata
+            legal_score: Pre-computed legal relevance score (0–1).  None is treated
+                as 0 so the content branch of the metadata secondary guard never
+                passes on an unscored page.
 
         Returns:
             Dict containing classification, justification, and is_policy_document flag
@@ -511,13 +526,32 @@ class DocumentClassifier(LLMUsageTrackingMixin):
                 if any(self._meta_has_keyword(combined_meta, kw) for kw in keywords):
                     # Check if content is substantial (not just a navigation page)
                     if len(text) > 300:
-                        logger.debug(f"found metadata keyword matches: classified as {doc_type}")
-                        return {
-                            "classification": doc_type,
-                            "classification_justification": "Detected from metadata keywords",
-                            "is_policy_document": True,
-                            "is_policy_document_justification": "Metadata and content indicate substantive policy document",
-                        }
+                        # Secondary guard: a bare metadata keyword match is not enough
+                        # on its own (marketing pages can carry policy keywords in their
+                        # og:description).  Require either a recognisable policy path
+                        # segment in the URL *or* substantial scored legal content.
+                        effective_score = legal_score if legal_score is not None else 0.0
+                        url_path = url_lower.split("?")[0].split("#")[0]
+                        url_ok = bool(_POLICY_PATH_RE.search(url_path))
+                        content_ok = len(text) > 2000 and effective_score > 0.4
+                        if url_ok or content_ok:
+                            logger.debug(
+                                f"found metadata keyword matches: classified as {doc_type}"
+                            )
+                            return {
+                                "classification": doc_type,
+                                "classification_justification": "Detected from metadata keywords",
+                                "is_policy_document": True,
+                                "is_policy_document_justification": "Metadata and content indicate substantive policy document",
+                            }
+                        logger.debug(
+                            "metadata keyword matched %s but secondary guard not met "
+                            "(url_ok=%s, content_ok=%s, effective_score=%.2f) — falling through to content analysis",
+                            doc_type,
+                            url_ok,
+                            content_ok,
+                            effective_score,
+                        )
 
         # 3. Check content heuristics (keywords and structure)
         text_lower = text.lower()
@@ -660,7 +694,7 @@ Security practices / trust pages (encryption, audits, incident response, certifi
                         f"{prev} {suffix}".strip() if prev else suffix
                     )
 
-            return result  # type: ignore
+            return result
 
         except Exception as e:
             logger.warning(f"classification process failed: {e}")

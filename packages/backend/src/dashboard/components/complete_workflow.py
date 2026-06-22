@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from threading import Event
+from typing import Any
 
 import streamlit as st
 
@@ -220,7 +221,9 @@ def show_complete_workflow() -> None:
         return
 
     # Filter products that have either crawl_base_urls or domains
-    products_with_urls = [p for p in products if p.crawl_base_urls or p.domains]
+    products_with_urls = [
+        product for product in products if product.crawl_base_urls or product.domains
+    ]
 
     if not products_with_urls:
         st.warning(
@@ -355,7 +358,7 @@ def show_complete_workflow() -> None:
             "current_step": None,
         }
 
-    batch_workflow_state = st.session_state.batch_workflow
+    batch_workflow_state: dict[str, Any] = st.session_state.batch_workflow
 
     workflow_state = st.session_state[workflow_key]
 

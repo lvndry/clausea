@@ -79,6 +79,39 @@ class DocumentService:
         """
         return await self._document_repo.find_by_url(db, url)
 
+    async def find_existing_by_content_hash(
+        self, db: AgnosticDatabase, product_id: str, content_hash: str
+    ) -> Document | None:
+        """Find an existing document for the same product with identical content.
+
+        Used for cross-run deduplication: when a newly crawled URL is unknown
+        but its content matches a document already stored under the same product,
+        we link instead of creating a duplicate.
+
+        Args:
+            db: Database instance
+            product_id: Product ID to scope the search
+            content_hash: The content fingerprint to match on
+
+        Returns:
+            Document or None if no match found
+        """
+        return await self._document_repo.find_by_product_and_content_hash(
+            db, product_id, content_hash
+        )
+
+    async def get_product_document_by_url(
+        self, db: AgnosticDatabase, product_id: str, url: str
+    ) -> Document | None:
+        """Get a document by URL for one product only."""
+        return await self._document_repo.find_by_product_and_url(db, product_id, url)
+
+    async def link_document_to_product(
+        self, db: AgnosticDatabase, document_id: str, product_id: str
+    ) -> bool:
+        """Link an existing canonical document to a product."""
+        return await self._document_repo.link_to_product(db, document_id, product_id)
+
     async def get_product_documents(self, db: AgnosticDatabase, product_id: str) -> list[Document]:
         """Get all documents for a specific product.
 
@@ -170,18 +203,6 @@ class DocumentService:
             # docs and skip re-fetching them (see Document.updated_at).
             document.updated_at = datetime.now()
             result = await self._document_repo.save(db, document)
-
-            # Business logic: Invalidate product overview cache for this product
-            try:
-                product = await self._product_repo.find_by_id(db, document.product_id)
-                if product:
-                    await self._product_repo.delete_product_overview(db, product.slug)
-                    logger.debug(f"Deleted product overview for product {product.slug}")
-            except Exception as cache_error:
-                # Don't fail document storage if cache invalidation fails
-                logger.warning(
-                    f"Failed to invalidate cache for document {document.id}: {cache_error}"
-                )
 
             return result
         except Exception as e:

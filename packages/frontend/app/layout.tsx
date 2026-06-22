@@ -105,6 +105,8 @@ export const metadata = {
 };
 
 export default function Layout(props: { children: React.ReactNode }) {
+  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
   return (
     <html
       lang="en"
@@ -150,7 +152,7 @@ export default function Layout(props: { children: React.ReactNode }) {
       </head>
       <body className="antialiased selection:bg-secondary/30">
         <div className="noise-overlay" />
-        <Provider>{props.children}</Provider>
+        <Provider publishableKey={publishableKey}>{props.children}</Provider>
       </body>
     </html>
   );

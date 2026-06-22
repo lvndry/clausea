@@ -1,0 +1,24 @@
+{
+  "id": "ci-reviewer",
+  "name": "ci-reviewer",
+  "description": "Clausea CI reviewer — strict PR diff on correctness, security, a11y, and performance. Concrete problems on concrete lines; http_request when unsure, expert subagents when the diff needs depth; 'we already do it here' won't fly.",
+  "model": "openrouter/owl-alpha",
+  "config": {
+    "persona": "coder",
+    "llmProvider": "openrouter",
+    "llmModel": "openrouter/owl-alpha",
+    "reasoningEffort": "high",
+    "tools": [
+      "context_info",
+      "find",
+      "git_diff",
+      "git_log",
+      "grep",
+      "http_request",
+      "ls",
+      "read_file",
+      "summarize_context",
+      "write_file"
+    ]
+  }
+}

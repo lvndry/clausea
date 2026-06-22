@@ -15,21 +15,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCheckout } from "@/hooks/useCheckout";
+import { useProPricing } from "@/hooks/useProPricing";
 import {
   type SubscriptionResponse,
   subscriptionApi,
 } from "@/lib/api/subscriptions";
-import { useAuth, useUser } from "@clerk/nextjs";
-
-const PRO_PRICE_ID =
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTHLY ||
-  process.env.NEXT_PUBLIC_PADDLE_PRICE_INDIVIDUAL_MONTHLY ||
-  "";
+import { type BillingInterval, getProDisplayPrice } from "@/lib/pricing";
+import { cn } from "@/lib/utils";
+import { useUser } from "@clerk/nextjs";
 
 export default function SettingsPage() {
   const { user } = useUser();
-  const { getToken } = useAuth();
-  const { startCheckout, isLoading: checkoutLoading } = useCheckout();
+  const {
+    startCheckout,
+    isLoading: checkoutLoading,
+    error: checkoutError,
+  } = useCheckout();
+  const {
+    getProPriceId,
+    isProCheckoutAvailable,
+    getCheckoutUnavailableMessage,
+  } = useProPricing();
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("monthly");
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(
     null,
   );
@@ -37,15 +45,17 @@ export default function SettingsPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const proDisplayPrice = getProDisplayPrice(billingInterval);
+  const proPriceId = getProPriceId(billingInterval);
+  const checkoutAvailable = isProCheckoutAvailable(billingInterval);
+  const checkoutUnavailableMessage = checkoutAvailable
+    ? null
+    : getCheckoutUnavailableMessage(billingInterval);
+
   const fetchSubscription = useCallback(async () => {
     try {
       setLoading(true);
-      // Get Clerk token - try template first, then default
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      const data = await subscriptionApi.getSubscription(token);
+      const data = await subscriptionApi.getSubscription();
       setSubscription(data);
     } catch {
       // User might not have a subscription yet
@@ -53,7 +63,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken]);
+  }, []);
 
   useEffect(() => {
     fetchSubscription();
@@ -70,11 +80,7 @@ export default function SettingsPage() {
     setActionLoading("cancel");
     setError(null);
     try {
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      await subscriptionApi.cancelSubscription(token);
+      await subscriptionApi.cancelSubscription();
       await fetchSubscription();
     } catch (err) {
       setError(
@@ -89,11 +95,7 @@ export default function SettingsPage() {
     setActionLoading("resume");
     setError(null);
     try {
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      await subscriptionApi.resumeSubscription(token);
+      await subscriptionApi.resumeSubscription();
       await fetchSubscription();
     } catch (err) {
       setError(
@@ -108,11 +110,7 @@ export default function SettingsPage() {
     setActionLoading("portal");
     setError(null);
     try {
-      let token = await getToken({ template: "default" });
-      if (!token) {
-        token = await getToken();
-      }
-      const data = await subscriptionApi.getBillingPortal(token);
+      const data = await subscriptionApi.getBillingPortal();
       window.open(data.portal_url, "_blank");
     } catch (err) {
       setError(
@@ -288,20 +286,71 @@ export default function SettingsPage() {
                 You are on the Free plan with 3 analyses per month. Upgrade to
                 Pro for unlimited analyses.
               </p>
-              <Button
-                onClick={() => {
-                  if (PRO_PRICE_ID) {
-                    startCheckout(PRO_PRICE_ID);
-                  }
-                }}
-                disabled={checkoutLoading || !PRO_PRICE_ID}
-                className="gap-2"
-              >
-                {checkoutLoading && (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                )}
-                Upgrade to Pro - $9/month
-              </Button>
+              <div className="inline-flex border border-border rounded-md overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setBillingInterval("monthly")}
+                  className={cn(
+                    "px-4 py-2 text-sm font-medium transition-colors",
+                    billingInterval === "monthly"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Monthly
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBillingInterval("annual")}
+                  className={cn(
+                    "px-4 py-2 text-sm font-medium transition-colors border-l border-border",
+                    billingInterval === "annual"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Annual
+                </button>
+              </div>
+              {(() => {
+                const upgradeButton = (
+                  <Button
+                    onClick={() => {
+                      if (checkoutAvailable && proPriceId) {
+                        startCheckout(proPriceId);
+                      }
+                    }}
+                    disabled={checkoutLoading || !checkoutAvailable}
+                    className="gap-2 cursor-pointer"
+                  >
+                    {checkoutLoading && (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    )}
+                    Upgrade to Pro - {proDisplayPrice.label}
+                  </Button>
+                );
+
+                if (checkoutUnavailableMessage) {
+                  return (
+                    <span
+                      title={checkoutUnavailableMessage}
+                      className="inline-block"
+                    >
+                      {upgradeButton}
+                    </span>
+                  );
+                }
+
+                return upgradeButton;
+              })()}
+              {checkoutUnavailableMessage && (
+                <p className="text-sm text-muted-foreground">
+                  {checkoutUnavailableMessage}
+                </p>
+              )}
+              {checkoutError && (
+                <p className="text-sm text-destructive">{checkoutError}</p>
+              )}
             </div>
           )}
         </CardContent>

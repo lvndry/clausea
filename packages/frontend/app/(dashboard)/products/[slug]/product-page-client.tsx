@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Calendar,
   FileText,
-  LayoutDashboard,
   RotateCcw,
   Shield,
   ShieldBan,
@@ -18,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { triggerPipeline } from "@/app/actions/pipeline";
 import { subscribeIndexationNotify } from "@/app/actions/products";
+import { EvidenceList } from "@/components/dashboard/evidence-list";
 import { ConsumerExplainerView } from "@/components/dashboard/explainer/consumer-explainer-view";
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
 import { ComplianceBadges } from "@/components/dashboard/overview/compliance-badges";
@@ -27,23 +27,23 @@ import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown"
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
-import { SourcesList } from "@/components/dashboard/sources-list";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ErrorDisplay } from "@/components/ui/error-display";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
-import { cn } from "@/lib/utils";
 import type {
-  CoverageItem,
   DocumentSummary,
   FailedCrawlJob,
   Product,
   ProductOverview,
+  ProductTopicReport,
 } from "@/types";
+import { useAuth } from "@clerk/nextjs";
+
+import { deriveProductPageOverviewState } from "./product-page-fetch-state";
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
@@ -64,11 +64,34 @@ function derivePipelineUrl(product: Product): string | null {
   return null;
 }
 
+function deriveLimitReachedDisplayName(
+  productName: string | null | undefined,
+  productSlug: string,
+): string {
+  const normalizedName = productName?.trim();
+  if (normalizedName) return normalizedName;
+
+  const normalizedSlug = productSlug
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalizedSlug) {
+    return "this company";
+  }
+
+  return normalizedSlug
+    .split(" ")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 interface CompanyPageProps {
   initialProduct?: Product | null;
   initialData?: ProductOverview | null;
   initialDocuments?: DocumentSummary[];
   initialExplainer?: ConsumerExplainer | null;
+  initialTopics?: ProductTopicReport | null;
 }
 
 export default function CompanyPage({
@@ -76,9 +99,11 @@ export default function CompanyPage({
   initialData: initialOverview,
   initialDocuments: initialDocs,
   initialExplainer,
+  initialTopics,
 }: CompanyPageProps = {}) {
   const params = useParams();
   const slug = params.slug as string;
+  const { isSignedIn } = useAuth();
   const [product, setProduct] = useState<Product | null>(
     initialProduct ?? null,
   );
@@ -91,10 +116,13 @@ export default function CompanyPage({
   const [documents, setDocuments] = useState<DocumentSummary[]>(
     initialDocs ?? [],
   );
+  const [topics, setTopics] = useState<ProductTopicReport | null>(
+    initialTopics ?? null,
+  );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
-    "ready" | "indexing" | "unknown"
+    "ready" | "indexing" | "limit_reached" | "unknown"
   >(initialOverview ? "ready" : "unknown");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [failedJob, setFailedJob] = useState<FailedCrawlJob | null>(null);
@@ -118,29 +146,36 @@ export default function CompanyPage({
 
         // Fire all requests in parallel — product, documents, overview, and the
         // consumer explainer arrive together instead of in a sequential chain.
-        const [prodRes, docsRes, overviewRes, explainerRes] = await Promise.all(
-          [
+        const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
+          await Promise.all([
             fetch(`/api/products/${slug}`),
             fetch(`/api/products/${slug}/documents`),
             fetch(`/api/products/${slug}/overview`),
             fetch(`/api/products/${slug}/explainer`),
-          ],
-        );
+            fetch(`/api/products/${slug}/topics`),
+          ]);
 
         // The explainer may 404/425 while the product is still indexing — a
         // missing explainer is non-fatal, the overview sections still render.
         if (explainerRes.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
         }
-
-        if (!prodRes.ok) {
-          setProduct(null);
-          setData(null);
-          setDocumentsLoading(false);
-          setIndexationMode("ready"); // render not-found
-          return;
+        if (topicsRes.ok) {
+          setTopics((await topicsRes.json()) as ProductTopicReport);
         }
-        const prodJson = (await prodRes.json()) as Product;
+
+        const overviewState = deriveProductPageOverviewState({
+          overviewOk: overviewRes.ok,
+          overviewStatus: overviewRes.status,
+          explainerStatus: explainerRes.status,
+          topicsStatus: topicsRes.status,
+          productStatus: prodRes.status,
+          documentsStatus: docsRes.status,
+        });
+
+        const prodJson = prodRes.ok
+          ? ((await prodRes.json()) as Product)
+          : null;
         setProduct(prodJson);
 
         const docsJson = docsRes.ok
@@ -149,20 +184,33 @@ export default function CompanyPage({
         setDocuments(docsJson);
         setDocumentsLoading(false);
 
+        if (overviewState === "limit_reached") {
+          setData(null);
+          setActiveJobId(null);
+          setFailedJob(null);
+          setEmptyJob(null);
+          setIndexationMode("limit_reached");
+          return;
+        }
+
+        if (!prodJson) {
+          setData(null);
+          setIndexationMode("ready"); // render not-found
+          return;
+        }
+
         // Overview was fetched in parallel — use the result immediately.
-        if (overviewRes.ok) {
+        if (overviewState === "ready") {
           setData((await overviewRes.json()) as ProductOverview);
           setIndexationMode("ready");
           return;
         }
 
-        // No overview yet — decide what to show based on the latest pipeline job.
-        // The pipeline is auto-triggered ONLY when the product has never been
-        // indexed (no job) or a job is still in progress. Terminal jobs are
-        // surfaced without retriggering:
-        //   - no_documents: crawl finished but found nothing (no retry — a
-        //     re-run yields the same result)
-        //   - failed: interrupted/errored (offer a manual Retry button)
+        if (overviewState === "unauthorized") {
+          setIndexationMode("ready");
+          return;
+        }
+
         setIndexationMode("indexing");
         setData(null);
 
@@ -173,7 +221,7 @@ export default function CompanyPage({
         const activeStatuses = [
           "pending",
           "crawling",
-          "summarizing",
+          "synthesising",
           "generating_overview",
         ];
 
@@ -217,7 +265,7 @@ export default function CompanyPage({
       }
     }
     fetchData();
-  }, [slug]);
+  }, [slug, initialProduct, initialOverview]);
 
   /**
    * Ensures a pipeline job is running for the product.
@@ -316,7 +364,123 @@ export default function CompanyPage({
     );
   }
 
+  const limitReachedDisplayName = deriveLimitReachedDisplayName(
+    product?.name,
+    slug,
+  );
+
   if (!data) {
+    if (indexationMode === "limit_reached") {
+      if (!isSignedIn) {
+        return (
+          <div className="space-y-6">
+            <div className="border-b border-border pb-8">
+              <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+                {limitReachedDisplayName}
+              </h1>
+              <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
+                You&apos;ve used your free product previews. Sign in to continue
+                exploring policy reports.
+              </p>
+            </div>
+
+            <div className="border border-border bg-background">
+              <div className="p-6 border-b border-border bg-muted/5">
+                <div className="flex items-center gap-3">
+                  <ShieldBan
+                    className="h-5 w-5 text-amber-600"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                    Free Preview Limit Reached
+                  </h3>
+                </div>
+              </div>
+              <div className="p-6 space-y-4">
+                <h2 className="text-xl font-display font-medium text-foreground">
+                  Sign in to keep reading
+                </h2>
+                <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
+                  Anonymous visitors can preview a limited number of product
+                  reports. Create a free account to unlock more analyses.
+                </p>
+                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                  <Link
+                    href={`/sign-in?redirect_url=${encodeURIComponent(`/products/${slug}`)}`}
+                  >
+                    <Button className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold">
+                      Sign in
+                    </Button>
+                  </Link>
+                  <Link href="/pricing">
+                    <Button
+                      variant="outline"
+                      className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                    >
+                      View plans
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-6">
+          <div className="border-b border-border pb-8">
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+              {limitReachedDisplayName}
+            </h1>
+            <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
+              You have reached your current plan&apos;s analysis limit for
+              product reports.
+            </p>
+          </div>
+
+          <div className="border border-border bg-background">
+            <div className="p-6 border-b border-border bg-muted/5">
+              <div className="flex items-center gap-3">
+                <ShieldBan
+                  className="h-5 w-5 text-amber-600"
+                  strokeWidth={1.5}
+                />
+                <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
+                  Usage Limit Reached
+                </h3>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <h2 className="text-xl font-display font-medium text-foreground">
+                Upgrade to continue this analysis
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
+                This report is unavailable right now because your monthly quota
+                is exhausted. Upgrade your plan for more analyses, or return
+                after your quota resets.
+              </p>
+              <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                <Link href="/pricing">
+                  <Button className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold">
+                    View plans
+                  </Button>
+                </Link>
+                <Link href="/settings">
+                  <Button
+                    variant="outline"
+                    className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                  >
+                    Check my limits
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // If product exists but indexation isn't ready, show the indexation message + email capture
     if (product && indexationMode === "indexing") {
       // Terminal outcomes that must NOT retrigger the pipeline:
@@ -328,7 +492,8 @@ export default function CompanyPage({
       const isFailed = failedJob !== null;
       // The crawl succeeded (documents were stored) but a later stage — document
       // analysis or overview synthesis — failed. Don't blame the crawl in this case.
-      const isAnalysisFailure = isFailed && (failedJob?.documents_stored ?? 0) > 0;
+      const isAnalysisFailure =
+        isFailed && (failedJob?.documents_stored ?? 0) > 0;
       const crawlErrors = terminalJob?.crawl_errors ?? [];
       const allRobotsBlocked =
         crawlErrors.length > 0 &&
@@ -537,13 +702,27 @@ export default function CompanyPage({
     }
 
     return (
-      <ErrorDisplay
-        variant="not-found"
-        title="Product Not Found"
-        message="The product you're looking for doesn't exist or has been removed."
-        actionLabel="Browse Products"
-        actionHref="/products"
-      />
+      <div className="space-y-8">
+        <div className="border-b border-border pb-8">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-4">
+            404 — Not Found
+          </p>
+          <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+            Product Not Found
+          </h1>
+          <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
+            The product you&apos;re looking for doesn&apos;t exist or has been
+            removed.
+          </p>
+        </div>
+        <Link
+          href="/products"
+          className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Browse Products
+        </Link>
+      </div>
     );
   }
 
@@ -608,10 +787,7 @@ export default function CompanyPage({
         }}
       >
         <div>
-          <TabsList
-            variant="underline"
-            className="w-full sm:w-auto gap-8"
-          >
+          <TabsList variant="underline" className="w-full sm:w-auto gap-8">
             <TabsTrigger
               value="overview"
               variant="underline"
@@ -620,11 +796,11 @@ export default function CompanyPage({
               Overview
             </TabsTrigger>
             <TabsTrigger
-              value="sources"
+              value="evidence"
               variant="underline"
               className="px-0 text-[10px] uppercase tracking-[0.2em] font-bold gap-2"
             >
-              Sources
+              Evidence
               {documents.length > 0 && (
                 <span className="px-1.5 py-0.5 border border-border text-[8px] font-bold">
                   {documents.length}
@@ -656,6 +832,8 @@ export default function CompanyPage({
             productName={data.product_name}
             companyName={data.company_name}
             verdict={data.verdict}
+            grade={data.grade}
+            gradeJustification={data.grade_justification}
             riskScore={data.risk_score}
             summary={data.one_line_summary}
             keypoints={data.keypoints}
@@ -666,78 +844,11 @@ export default function CompanyPage({
             <PrivacySignals signals={data.privacy_signals} />
           )}
 
-          {/* Coverage */}
-          {data.coverage && data.coverage.length > 0 && (
-            <div className="border border-border bg-background">
-              <div className="p-6 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <LayoutDashboard
-                    className="h-5 w-5 text-foreground"
-                    strokeWidth={1.5}
-                  />
-                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                    Policy Coverage
-                  </h3>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4">
-                {data.coverage.map((item, idx) => {
-                  const coverageStyles: Record<
-                    CoverageItem["status"],
-                    { className: string; label: string }
-                  > = {
-                    found: {
-                      className:
-                        "border-risk-low/20 bg-risk-low/5 text-risk-low",
-                      label: "Found",
-                    },
-                    ambiguous: {
-                      className:
-                        "border-risk-medium/20 bg-risk-medium/5 text-risk-medium",
-                      label: "Ambiguous",
-                    },
-                    missing: {
-                      className:
-                        "border-risk-high/20 bg-risk-high/5 text-risk-high",
-                      label: "Missing",
-                    },
-                    not_analyzed: {
-                      className: "border-border bg-muted/5 text-muted-foreground",
-                      label: "Not Analyzed",
-                    },
-                  };
-                  const coverage = coverageStyles[item.status];
-                  return (
-                    <div
-                      key={`${item.category}-${item.status}`}
-                      className={cn(
-                        "p-6 flex flex-col gap-4 bg-background border-b border-border",
-                        idx % 4 !== 3 ? "md:border-r border-border" : "",
-                      )}
-                    >
-                      <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground capitalize">
-                        {item.category.replace(/_/g, " ")}
-                      </span>
-                      <div
-                        className={cn(
-                          "px-2 py-0.5 text-[8px] font-bold uppercase tracking-tighter border w-fit",
-                          coverage.className,
-                        )}
-                      >
-                        {coverage.label}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Score Breakdown - Why the score is what it is */}
           {data.detailed_scores && (
             <ScoreBreakdown
               detailedScores={data.detailed_scores}
-              riskScore={data.risk_score}
+              overallGrade={data.grade}
             />
           )}
 
@@ -802,7 +913,7 @@ export default function CompanyPage({
           )}
         </TabsContent>
 
-        <TabsContent value="sources" className="mt-0">
+        <TabsContent value="evidence" className="mt-0">
           {documentsLoading ? (
             <div className="space-y-4">
               <Skeleton className="h-12 w-64 rounded-xl" />
@@ -811,7 +922,12 @@ export default function CompanyPage({
               <Skeleton className="h-32 rounded-2xl" />
             </div>
           ) : (
-            <SourcesList productSlug={slug} documents={documents} />
+            <EvidenceList
+              productSlug={slug}
+              documents={documents}
+              topicReport={topics}
+              topicStances={data?.topic_stances}
+            />
           )}
         </TabsContent>
       </Tabs>

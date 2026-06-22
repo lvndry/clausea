@@ -12,12 +12,14 @@ Flow for product overview (powers cached JSON on `/products/{slug}` in the app):
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from dotenv import load_dotenv
 from motor.core import AgnosticDatabase
+from pymongo.errors import ConnectionFailure
 
 from src.core.logging import get_logger
 from src.llm import (
@@ -42,9 +44,13 @@ from src.models.document import (
     DocumentDeepAnalysis,
     DocumentExtraction,
     DocumentRiskBreakdown,
+    DocumentSummary,
     DPIATriggerAssessment,
     IndividualImpact,
+    InsightCategory,
     MetaSummary,
+    MetaSummaryScores,
+    PrivacySignals,
     ProcurementDecision,
     ProductContradiction,
     ProductDeepAnalysis,
@@ -52,6 +58,9 @@ from src.models.document import (
     RemediationItem,
     RiskRegisterItem,
     SecurityPosture,
+    SourceCitation,
+    TopicStanceBreakdown,
+    TopicSupportCitation,
     WorkforceDataAssessment,
 )
 from src.prompts.analysis_prompts import (
@@ -70,9 +79,20 @@ from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
 from src.services.aggregation_service import AggregationService
 from src.services.document_service import DocumentService
+from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
+from src.services.term_materiality_classifier import filter_danger_strings_llm
+from src.services.topic_report_service import build_product_topic_report
+from src.services.topic_stance_service import compose_product_risk_from_topics
+from src.services.watch_out_calibration import calibrate_consumer_explainer
 from src.utils.cancellation import CancellationToken
+from src.utils.grading import (
+    aggregate_dimension_grades,
+    coerce_grade,
+    grade_to_risk_score,
+    risk_score_to_verdict,
+)
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 
 load_dotenv()
@@ -89,14 +109,27 @@ def _analysis_validator(content: str) -> bool:
             return False
         if not isinstance(data.get("summary"), str) or not data["summary"].strip():
             return False
+        grade = data.get("grade")
+        if not isinstance(grade, str) or grade.strip().upper()[:1] not in {"A", "B", "C", "D", "E"}:
+            return False
         scores = data.get("scores")
-        if not isinstance(scores, dict) or len(scores) == 0:
+        if not isinstance(scores, dict) or not scores:
             return False
-        # At least one score entry must be a dict with a numeric score field
-        if not any(
-            isinstance(v, dict) and isinstance(v.get("score"), int) for v in scores.values()
-        ):
-            return False
+        for value in scores.values():
+            if not isinstance(value, dict):
+                return False
+            dim_grade = value.get("grade")
+            justification = value.get("justification")
+            if not isinstance(dim_grade, str) or dim_grade.strip().upper()[:1] not in {
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+            }:
+                return False
+            if not isinstance(justification, str) or not justification.strip():
+                return False
         return True
     except (json.JSONDecodeError, AttributeError):
         return False
@@ -109,9 +142,57 @@ ProgressCallback = Callable[[int, int, Document], Awaitable[None] | None]
 HeartbeatCallback = Callable[[], Awaitable[None] | None]
 
 
+class AnalysisResult(NamedTuple):
+    """Return value from :func:`analyse_product_documents`.
+
+    Attributes:
+        documents: Every policy document for the product (analyzed or skipped).
+        analyses_skipped: Count of documents whose LLM analysis was reused from
+            a prior run because content had not changed since the last extraction.
+    """
+
+    documents: list[Document]
+    analyses_skipped: int
+
+
 async def _maybe_await(result: Awaitable[None] | None) -> None:
     if asyncio.iscoroutine(result):
         await result
+
+
+async def _stamp_analysis_error(
+    db: AgnosticDatabase, document_svc: DocumentService, doc: Document
+) -> None:
+    """Persist ``doc.analysis_error`` so a dropped analysis is visible, not silent.
+
+    Best-effort: a failure to write the marker must not mask the original analysis
+    failure, so write errors are swallowed.
+    """
+    try:
+        await document_svc.update_document(db, doc, invalidate_product_overview=False)
+    except ConnectionFailure:
+        raise
+    except Exception as exc:
+        logger.error(f"could not stamp analysis_error for document {doc.id}: {exc}")
+
+
+def _analysis_up_to_date(doc: Document) -> bool:
+    """Return True when the document has valid analysis for its current content.
+
+    Checks that:
+    1. The document already has analysis (was analyzed in a prior run).
+    2. The stored extraction was built from the same content currently in the DB
+       (source_content_hash matches the hash used by the extraction service).
+
+    Uses the same SHA-256 hash function the extraction service uses
+    (_compute_document_hash = SHA256(text + doc_type)) so the comparison is
+    consistent with the extraction-layer cache.
+    """
+    if doc.analysis is None:
+        return False
+    if doc.extraction is None:
+        return False
+    return doc.extraction.source_content_hash == _compute_document_hash(doc)
 
 
 async def analyse_product_documents(
@@ -120,11 +201,22 @@ async def analyse_product_documents(
     document_svc: DocumentService,
     cancellation_token: CancellationToken | None = None,
     progress_callback: ProgressCallback | None = None,
-) -> list[Document]:
+    force_reanalyze: bool = False,
+    heartbeat_callback: HeartbeatCallback | None = None,
+) -> AnalysisResult:
     """Analyse all documents for a product concurrently (up to 3 at once).
 
     Each document analysis itself runs 4 parallel extraction clusters, so capping at 3
     concurrent documents balances throughput against LLM rate limits.
+
+    Args:
+        force_reanalyze: When True, bypass the content-hash cache and re-run LLM
+            analysis on every document regardless of whether findings already exist.
+            Defaults to False (skip-by-default behaviour).
+
+    Returns:
+        An :class:`AnalysisResult` named tuple containing the list of documents and
+        the count of analyses that were reused without an LLM call.
     """
     token = cancellation_token or CancellationToken()
     all_documents: list[Document] = await document_svc.get_product_documents_by_slug(
@@ -142,17 +234,32 @@ async def analyse_product_documents(
     sem = asyncio.Semaphore(3)
 
     failed_doc_ids: list[str] = []
+    analyses_skipped = 0
 
     async def _analyse_one(index: int, doc: Document) -> None:
+        nonlocal analyses_skipped
         await token.check_cancellation()
         async with sem:
+            # Skip LLM re-analysis when findings already exist for this document
+            # and the document content has not changed since the last analysis run.
+            if not force_reanalyze and _analysis_up_to_date(doc):
+                analyses_skipped += 1
+                logger.info(
+                    f"⏭ Skipping re-analysis for document {doc.id} ({doc.url}) — "
+                    "existing analysis is up-to-date (content unchanged)"
+                )
+                return
+
             logger.info(f"Processing document {index}/{total_docs}: {doc.title}")
             if progress_callback:
                 await _maybe_await(progress_callback(index, total_docs, doc))
             try:
-                analysis = await analyse_document(doc, cancellation_token=token)
+                analysis = await analyse_document(
+                    doc, cancellation_token=token, heartbeat_callback=heartbeat_callback
+                )
                 if analysis:
                     doc.analysis = analysis
+                    doc.analysis_error = None
                     # Persist the full document first so the extraction and analysis
                     # metadata stamps set by analyse_document land alongside the body.
                     await document_svc.update_document(db, doc, invalidate_product_overview=False)
@@ -164,6 +271,8 @@ async def analyse_product_documents(
                     persisted = await document_svc.update_document_analysis(db, doc.id, analysis)
                     if not persisted:
                         doc.analysis = None
+                        doc.analysis_error = "analysis generated but database write did not persist"
+                        await _stamp_analysis_error(db, document_svc, doc)
                         failed_doc_ids.append(doc.id)
                         logger.error(
                             f"✗ Analysis for document {doc.id} ({doc.url}) was generated "
@@ -173,6 +282,8 @@ async def analyse_product_documents(
                     else:
                         logger.info(f"✓ Stored analysis for document {doc.id}")
                 else:
+                    doc.analysis_error = "analyse_document returned no result after retries"
+                    await _stamp_analysis_error(db, document_svc, doc)
                     failed_doc_ids.append(doc.id)
                     logger.warning(f"✗ Failed to generate analysis for document {doc.id}")
             except asyncio.CancelledError:
@@ -186,6 +297,8 @@ async def analyse_product_documents(
                 # so this doc simply contributes nothing rather than poisoning the
                 # whole product.
                 failed_doc_ids.append(doc.id)
+                doc.analysis_error = f"{exc.__class__.__name__}: {exc}"[:500]
+                await _stamp_analysis_error(db, document_svc, doc)
                 logger.error(
                     f"✗ Document analysis raised for {doc.id} ({doc.url}): "
                     f"{exc.__class__.__name__}: {exc}",
@@ -205,15 +318,19 @@ async def analyse_product_documents(
         if isinstance(result, BaseException):
             raise result
 
-    succeeded = total_docs - len(failed_doc_ids)
+    succeeded = total_docs - len(failed_doc_ids) - analyses_skipped
     if failed_doc_ids:
         logger.warning(
             f"⚠ Analysed {succeeded}/{total_docs} documents for {product_slug}; "
-            f"{len(failed_doc_ids)} failed: {failed_doc_ids}"
+            f"{len(failed_doc_ids)} failed, {analyses_skipped} reused (unchanged): "
+            f"{failed_doc_ids}"
         )
     else:
-        logger.info(f"✓ Successfully analysed all {total_docs} documents for {product_slug}")
-    return documents
+        logger.info(
+            f"✓ Analysed {product_slug}: {succeeded} new/updated, "
+            f"{analyses_skipped} reused (content unchanged), 0 failed"
+        )
+    return AnalysisResult(documents=documents, analyses_skipped=analyses_skipped)
 
 
 def _compute_document_hash(document: Document) -> str:
@@ -252,36 +369,59 @@ def _compute_document_signature(documents: list[Document]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
-def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int:
-    """
-    Calculate overall risk score from component scores.
+def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
+    """Derive product headline risk from LLM-assessed overview dimension grades."""
+    return _calculate_risk_score(
+        {
+            key: DocumentAnalysisScores(
+                grade=getattr(scores, key).grade,
+                justification=getattr(scores, key).justification,
+            )
+            for key in (
+                "transparency",
+                "data_collection_scope",
+                "user_control",
+                "third_party_sharing",
+            )
+        }
+    )
 
-    Higher component scores = better for the user. Risk is the inverse of that
-    weighted blend so minimal-data / low-sharing / strong-security policies
-    score clearly lower than ad-heavy, broadly shared data practices.
 
-    Weights (sum 1.0): data_collection_scope and third_party_sharing dominate;
-    transparency, user_control, retention, and security add nuance (e.g. E2EE).
+def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
+    """Set headline risk and verdict from LLM grade; apply signal floors to risk only."""
+    llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
+    derived_grade = aggregate_dimension_grades(
+        {
+            key: getattr(meta_summary.scores, key).grade
+            for key in (
+                "transparency",
+                "data_collection_scope",
+                "user_control",
+                "third_party_sharing",
+            )
+        }
+    )
+    final_grade = llm_grade or derived_grade
+    if final_grade is None:
+        meta_summary.risk_score = None
+        meta_summary.verdict = None
+        meta_summary.grade = None
+        return
 
-    Any absent score is filled with neutral (5) so the full weight set is always
-    applied — a missing dimension is unknown, not perfectly scored.
-    """
-    weights = {
-        "transparency": 0.14,
-        "data_collection_scope": 0.26,
-        "user_control": 0.18,
-        "third_party_sharing": 0.24,
-        "data_retention_score": 0.10,
-        "security_score": 0.08,
-    }
+    meta_summary.grade = final_grade
+    base_risk = grade_to_risk_score(final_grade)
+    adjusted = _apply_positive_risk_adjustment(base_risk, meta_summary)
+    floored = _apply_signal_floors(adjusted, meta_summary.privacy_signals)
+    meta_summary.risk_score = floored
+    meta_summary.verdict = risk_score_to_verdict(floored)
 
-    effective = dict(scores)
-    for key in weights:
-        if key not in effective:
-            effective[key] = DocumentAnalysisScores(score=5, justification="not assessed")
 
-    weighted_sum = sum(effective[k].score * w for k, w in weights.items())
-    return max(0, min(10, round(10 - weighted_sum)))
+def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
+    """Map weighted dimension letter grades to an optional 0–10 risk score."""
+    grade = aggregate_dimension_grades({key: value.grade for key, value in scores.items()})
+    if grade is None:
+        return None
+    return grade_to_risk_score(grade)
 
 
 def _calculate_verdict(
@@ -302,6 +442,211 @@ def _calculate_verdict(
         return "pervasive"
     else:
         return "very_pervasive"
+
+
+def _calculate_grade(risk_score: int) -> Literal["A", "B", "C", "D", "E"]:
+    if risk_score <= 2:
+        return "A"
+    if risk_score <= 4:
+        return "B"
+    if risk_score <= 6:
+        return "C"
+    if risk_score <= 8:
+        return "D"
+    return "E"
+
+
+def _apply_positive_risk_adjustment(risk_score: int, meta_summary: MetaSummary) -> int:
+    """Reduce headline risk when documented protections outweigh thin concerns."""
+    adjustment = 0
+    benefits = meta_summary.benefits or []
+    if len(benefits) >= 2:
+        adjustment += 1
+    stances = meta_summary.topic_stances or []
+    low_risk_topics = sum(
+        1 for stance in stances if stance.stance == "low_risk" and stance.status == "found"
+    )
+    if low_risk_topics >= 3:
+        adjustment += 1
+    return max(0, risk_score - adjustment)
+
+
+def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int:
+    if signals is None:
+        return risk_score
+    floor = risk_score
+    if signals.sells_data == "yes" or signals.ai_training_on_user_data == "yes":
+        floor = max(floor, 6)
+    if signals.children_data_collection == "yes":
+        floor = max(floor, 7)
+    critical_count = sum(
+        [
+            signals.sells_data == "yes",
+            signals.ai_training_on_user_data == "yes",
+            signals.children_data_collection == "yes",
+            signals.cross_site_tracking == "yes",
+        ]
+    )
+    if critical_count >= 2:
+        floor = max(floor, 8)
+    return floor
+
+
+_TOPIC_WHY_IT_MATTERS: dict[str, str] = {
+    "data_collection": "This affects how much personal information the product can gather about you.",
+    "data_sharing": "This determines whether your data is disclosed to external partners.",
+    "retention": "This controls how long your data remains stored after use.",
+    "ai_training": "This decides whether your prompts/outputs may be used to train models.",
+    "data_sale": "Data sale provisions can expand commercial use of your information.",
+    "security": "Security disclosures indicate how well user data is protected in practice.",
+    "user_rights": "Rights disclosures determine how easily you can access or delete your data.",
+}
+
+_TOPIC_RECOMMENDED_ACTIONS: dict[str, str] = {
+    "data_collection": "Review settings and disable optional data collection where possible.",
+    "data_sharing": "Check privacy controls and opt out of third-party sharing when available.",
+    "retention": "Request deletion timelines in writing if retention windows are unclear.",
+    "ai_training": "Disable training/usage permissions for your prompts if an opt-out exists.",
+    "data_sale": "Use explicit opt-out mechanisms for sale/sharing and document your preference.",
+    "security": "Request security documentation for controls relevant to your deployment.",
+    "user_rights": "Test the product's access/deletion workflow before relying on it at scale.",
+}
+
+
+def _truncate_text(value: str | None, limit: int = 220) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def _topic_supporting_citations(topic: Any) -> list[TopicSupportCitation]:
+    selected: list[TopicSupportCitation] = []
+    seen: set[tuple[str, str]] = set()
+    for finding in topic.findings:
+        for citation in finding.citations or []:
+            quote = getattr(citation, "quote", None)
+            if not quote:
+                continue
+            document_id = getattr(citation, "document_id", "")
+            key = (document_id, str(quote))
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(
+                TopicSupportCitation(
+                    document_id=document_id,
+                    document_title=getattr(citation, "document_title", None),
+                    document_url=getattr(citation, "document_url", None),
+                    quote=str(quote),
+                    section_title=getattr(citation, "section_title", None),
+                    verified=bool(getattr(citation, "verified", True)),
+                )
+            )
+            if len(selected) >= TOPIC_CITATION_LIMIT:
+                return selected
+    for conflict in topic.conflicts:
+        for citation in conflict.citations or []:
+            quote = getattr(citation, "quote", None)
+            if not quote:
+                continue
+            document_id = getattr(citation, "document_id", "")
+            key = (document_id, str(quote))
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(
+                TopicSupportCitation(
+                    document_id=document_id,
+                    document_title=getattr(citation, "document_title", None),
+                    document_url=getattr(citation, "document_url", None),
+                    quote=str(quote),
+                    section_title=getattr(citation, "section_title", None),
+                    verified=bool(getattr(citation, "verified", True)),
+                )
+            )
+            if len(selected) >= TOPIC_CITATION_LIMIT:
+                return selected
+    return selected
+
+
+_PROTECTIVE_HEADLINE_TOPICS: frozenset[str] = frozenset(
+    {"benefits", "security", "user_rights", "breach_notification", "data_sale", "ai_training"}
+)
+_PROTECTIVE_VALUE_MARKERS: tuple[str, ...] = (
+    "sells_data: no",
+    "does not sell",
+    "do not sell",
+    "not sell",
+    "encrypt",
+    "no ai training",
+    "not used for training",
+    "does not use",
+    "opt out",
+    "delete your",
+    "data deletion",
+)
+
+
+def _is_protective_finding_value(topic: str, value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return False
+    if topic in _PROTECTIVE_HEADLINE_TOPICS:
+        if topic in {"benefits", "security", "user_rights", "breach_notification"}:
+            return True
+        if topic == "data_sale" and (
+            re.search(r"\bno\b", normalized) is not None or "not sell" in normalized
+        ):
+            return True
+        if topic == "ai_training" and (
+            re.search(r"\bno\b", normalized) is not None
+            or any(marker in normalized for marker in ("not train", "does not use", "opt out"))
+        ):
+            return True
+    return any(marker in normalized for marker in _PROTECTIVE_VALUE_MARKERS)
+
+
+def _headline_finding_for_topic(topic: Any) -> Any | None:
+    findings = list(getattr(topic, "findings", []) or [])
+    if not findings:
+        return None
+    stance = str(getattr(topic, "stance", "") or "")
+    topic_name = str(getattr(topic, "topic", "") or "")
+    if stance == "low_risk":
+        for finding in findings:
+            if _is_protective_finding_value(topic_name, getattr(finding, "value", None)):
+                return finding
+    return findings[0]
+
+
+def _topic_why_it_matters(topic: str, status: str, stance: str, conflict_count: int) -> str:
+    if status in {"missing", "not_disclosed"}:
+        return "No explicit disclosure was found, which limits risk clarity for this topic."
+    if status == "ambiguous" or stance == "mixed":
+        return (
+            f"Documents disagree on this topic ({conflict_count} conflict(s)), "
+            "so commitments may vary by page or policy version."
+        )
+    return _TOPIC_WHY_IT_MATTERS.get(
+        topic,
+        "This topic materially influences user privacy expectations and legal risk.",
+    )
+
+
+def _topic_recommended_action(topic: str, status: str, stance: str) -> str:
+    if status in {"missing", "not_disclosed"}:
+        return "Request written clarification from the vendor before relying on this area."
+    if status == "ambiguous" or stance == "mixed":
+        return "Treat this as unresolved and ask for a single controlling policy statement."
+    return _TOPIC_RECOMMENDED_ACTIONS.get(
+        topic,
+        "Capture this topic in your vendor checklist and verify it during onboarding.",
+    )
 
 
 # Doc types that must never influence the product risk score or deep analysis LLM prompt.
@@ -344,27 +689,51 @@ def _weighted_product_risk_score(docs: list[Document]) -> int | None:
     return max(0, min(10, round(weighted_sum / weight_total)))
 
 
+def _merge_legacy_dimension_justifications(
+    parsed_dict: dict[str, Any],
+) -> None:
+    """Convert legacy dimension_justifications-only LLM output to grade scores."""
+    legacy = parsed_dict.pop("dimension_justifications", None)
+    if not isinstance(legacy, dict):
+        return
+    scores = parsed_dict.setdefault("scores", {})
+    if not isinstance(scores, dict):
+        scores = {}
+        parsed_dict["scores"] = scores
+    for key, justification in legacy.items():
+        if key in scores and isinstance(scores[key], dict):
+            continue
+        if isinstance(justification, str) and justification.strip():
+            scores[key] = {"grade": "C", "justification": justification.strip()}
+
+
 def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     """
-    Validate scores returned by the LLM and recalculate the headline risk.
+    Validate LLM dimension grades and derive optional headline risk and verdict.
 
-    Missing score keys are left absent — the LLM is instructed to omit scores it
-    cannot assess from the extraction. Invalid values (out-of-range or wrong type)
-    are dropped so they don't distort the weighted risk formula.
+    The LLM overall ``grade`` and ``grade_justification`` are preserved when present.
+    ``risk_score`` is derived from grades for legacy consumers only.
     """
     cleaned: dict[str, DocumentAnalysisScores] = {}
     for score_name, score_obj in parsed.scores.items():
-        score_value = getattr(score_obj, "score", None)
-        if score_value is not None and isinstance(score_value, int) and 0 <= score_value <= 10:
+        justification = (score_obj.justification or "").strip()
+        if score_obj.grade and justification:
             cleaned[score_name] = score_obj
 
     parsed.scores = cleaned
 
-    # Recalculate risk_score and verdict deterministically from whatever scores the LLM
-    # returned. _calculate_risk_score handles partial score sets by normalising weights.
-    parsed.risk_score = _calculate_risk_score(parsed.scores)
-    parsed.verdict = _calculate_verdict(parsed.risk_score)
+    llm_grade = coerce_grade(parsed.grade) if parsed.grade else None
+    derived_grade = aggregate_dimension_grades({key: value.grade for key, value in cleaned.items()})
+    final_grade = llm_grade or derived_grade
+    if final_grade is None:
+        parsed.risk_score = None
+        parsed.verdict = None
+        parsed.grade = None
+        return parsed
 
+    parsed.grade = final_grade
+    parsed.risk_score = grade_to_risk_score(final_grade)
+    parsed.verdict = risk_score_to_verdict(parsed.risk_score)
     return parsed
 
 
@@ -511,7 +880,7 @@ def _attach_deep_fields(analysis: DocumentAnalysis, data: dict[str, Any]) -> Non
 
     risk_breakdown_raw = data.get("document_risk_breakdown", {})
     if isinstance(risk_breakdown_raw, dict):
-        if "overall_risk" not in risk_breakdown_raw:
+        if "overall_risk" not in risk_breakdown_raw and analysis.risk_score is not None:
             risk_breakdown_raw["overall_risk"] = analysis.risk_score
         try:
             analysis.document_risk_breakdown = DocumentRiskBreakdown(**risk_breakdown_raw)
@@ -563,6 +932,7 @@ async def analyse_document(
     use_cache: bool = True,
     max_retries: int = 3,
     cancellation_token: CancellationToken | None = None,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> DocumentAnalysis | None:
     """
     Summarize a document with caching, retry logic, and optimized model selection.
@@ -572,6 +942,8 @@ async def analyse_document(
         use_cache: Whether to check for cached analysis
         max_retries: Maximum number of retry attempts
         cancellation_token: Optional cancellation token for interrupting the operation
+        heartbeat_callback: Optional liveness ping fired between retry attempts so the
+            caller can keep a pipeline job alive during long LLM backoff sequences.
 
     Returns:
         DocumentAnalysis or None if summarization fails or the document has no text
@@ -623,6 +995,7 @@ async def analyse_document(
     # Fallback: raw text if extraction fails unexpectedly.
     extracted_prompt: str | None = None
     extraction_for_evidence: dict[str, Any] | None = None
+    extraction: DocumentExtraction | None = None
 
     try:
         await token.check_cancellation()
@@ -654,6 +1027,7 @@ Extracted facts (evidence-backed JSON):
         logger.warning(
             f"Extraction failed for document {document.id}: {e}. Falling back to raw text."
         )
+        extraction = None
 
     if extracted_prompt is not None:
         prompt = extracted_prompt
@@ -693,6 +1067,7 @@ Document content:
     for attempt in range(max_retries):
         # Check for cancellation before each retry attempt
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
 
         try:
             logger.debug(f"Analysing document {document.id} (attempt {attempt + 1}/{max_retries}) ")
@@ -709,6 +1084,7 @@ Document content:
                         validator=_analysis_validator,
                         response_format={"type": "json_object"},
                         temperature=0,
+                        heartbeat_callback=heartbeat_callback,
                     )
                 )
 
@@ -720,10 +1096,10 @@ Document content:
                 )
 
                 # Cancel pending tasks
-                for p in pending:
-                    p.cancel()
+                for pending_task in pending:
+                    pending_task.cancel()
                     try:
-                        await p
+                        await pending_task
                     except asyncio.CancelledError:
                         pass
 
@@ -753,11 +1129,11 @@ Document content:
             # Parse and validate response
             try:
                 parsed_dict = json.loads(content)
+                _merge_legacy_dimension_justifications(parsed_dict)
 
                 parsed: DocumentAnalysis = DocumentAnalysis.model_validate(
                     parsed_dict, strict=False
                 )
-                # Ensure all required scores are present, normalize names, and calculate risk_score/verdict
                 parsed = _ensure_required_scores(parsed)
 
                 # Parse deep analysis fields (critical_clauses, risk_breakdown,
@@ -821,6 +1197,7 @@ Document content:
             if attempt < max_retries - 1:
                 wait_time = 2**attempt  # 1s, 2s, 4s...
                 logger.debug(f"Waiting {wait_time}s before retry...")
+                await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
                 # Use cancellable sleep
                 try:
                     await asyncio.wait_for(
@@ -857,27 +1234,139 @@ Document content:
 # ---------------------------------------------------------------------------
 
 
-def _collect_extraction_quotes(extraction: DocumentExtraction) -> list[str]:
-    """Collect every verbatim evidence ``quote`` string across the extraction.
+def _collect_extraction_citations(
+    extraction: DocumentExtraction, document: Document | None = None
+) -> list[SourceCitation]:
+    """Collect every verbatim evidence quote with source document metadata.
 
     The validator uses these as the allow-list for explainer citations: an
     explainer quote is only kept (cited) when it is a substring of one of these.
+    Source identity comes from stored extraction evidence and document metadata,
+    never from the LLM response.
     """
-    quotes: list[str] = []
+    citations: list[SourceCitation] = []
+    seen: set[tuple[str, str, int | None, int | None]] = set()
 
     def _walk(node: Any) -> None:
         if isinstance(node, dict):
-            for key, value in node.items():
-                if key == "quote" and isinstance(value, str) and value.strip():
-                    quotes.append(value)
-                else:
-                    _walk(value)
+            quote = node.get("quote")
+            if isinstance(quote, str) and quote.strip():
+                document_id = str(
+                    node.get("document_id") or (document.id if document else "")
+                ).strip()
+                document_url = str(node.get("url") or (document.url if document else "")).strip()
+                if document_id and document_url:
+                    start_char = node.get("start_char")
+                    end_char = node.get("end_char")
+                    key = (
+                        document_id,
+                        quote.strip(),
+                        start_char if isinstance(start_char, int) else None,
+                        end_char if isinstance(end_char, int) else None,
+                    )
+                    if key not in seen:
+                        seen.add(key)
+                        citations.append(
+                            SourceCitation(
+                                document_id=document_id,
+                                document_title=document.title if document else None,
+                                document_type=str(document.doc_type) if document else None,
+                                document_url=document_url,
+                                quote=quote,
+                                section_title=node.get("section_title")
+                                if isinstance(node.get("section_title"), str)
+                                else None,
+                                start_char=start_char if isinstance(start_char, int) else None,
+                                end_char=end_char if isinstance(end_char, int) else None,
+                                content_hash=node.get("content_hash")
+                                if isinstance(node.get("content_hash"), str)
+                                else None,
+                                verified=bool(node.get("verified", True)),
+                            )
+                        )
+            for value in node.values():
+                _walk(value)
         elif isinstance(node, list):
             for item in node:
                 _walk(item)
 
     _walk(extraction.model_dump())
-    return quotes
+    return citations
+
+
+def _collect_extraction_quotes(extraction: DocumentExtraction) -> list[str]:
+    """Backward-compatible quote-only allow-list for existing tests/callers."""
+    return [citation.quote for citation in _collect_extraction_citations(extraction)]
+
+
+def _match_source_citations(
+    quote: str | None, allowed_citations: Sequence[SourceCitation]
+) -> list[SourceCitation]:
+    """Return every source citation whose verified quote contains ``quote``."""
+    needle = (quote or "").strip()
+    if not needle:
+        return []
+    matched: list[SourceCitation] = []
+    seen: set[tuple[str, str]] = set()
+    for citation in allowed_citations:
+        if needle not in citation.quote:
+            continue
+        key = (citation.document_id, citation.quote)
+        if key in seen:
+            continue
+        seen.add(key)
+        matched.append(citation)
+    return matched
+
+
+def _citation_has_source_identity(citation: SourceCitation | None) -> bool:
+    """True when a citation carries enough metadata for the UI source label."""
+    if citation is None:
+        return False
+    if citation.document_title and citation.document_title.strip():
+        return True
+    if citation.document_type and citation.document_type.strip():
+        return True
+    return bool(citation.document_url and citation.document_url.strip())
+
+
+def enrich_consumer_explainer_citations(
+    explainer: ConsumerExplainer,
+    documents: Sequence[Document],
+) -> ConsumerExplainer:
+    """Attach missing source citations for legacy stored explainers on read.
+
+    Explainers generated before verified citations shipped may still carry
+    ``quote_status="from_extraction"`` without a populated ``citation`` object.
+    """
+    allowed_citations: list[SourceCitation] = []
+    for document in documents:
+        extraction = document.extraction
+        if extraction is None:
+            continue
+        allowed_citations.extend(_collect_extraction_citations(extraction, document))
+    if not allowed_citations:
+        return explainer
+
+    def _attach(cases: Sequence[ConsumerCase]) -> None:
+        for case in cases:
+            if not case.quote or case.quote_status != "from_extraction":
+                continue
+            verified = [
+                citation
+                for citation in _match_source_citations(case.quote, allowed_citations)
+                if citation.document_id != "unknown"
+            ]
+            if not verified:
+                continue
+            case.citations = verified
+            if not _citation_has_source_identity(case.citation):
+                case.citation = verified[0]
+
+    _attach(explainer.watch_out_for)
+    _attach(explainer.who_gets_your_data)
+    _attach(explainer.what_they_collect)
+    return explainer
 
 
 def _strip_json_fences(content: str) -> str:
@@ -893,14 +1382,18 @@ def _strip_json_fences(content: str) -> str:
 
 
 def _validate_consumer_explainer(
-    explainer: ConsumerExplainer, extraction: DocumentExtraction
+    explainer: ConsumerExplainer,
+    extraction: DocumentExtraction,
+    document: Document | None = None,
 ) -> ConsumerExplainer:
     """Validate a per-document explainer against that document's extraction."""
-    return _validate_consumer_explainer_quotes(explainer, _collect_extraction_quotes(extraction))
+    return _validate_consumer_explainer_quotes(
+        explainer, _collect_extraction_citations(extraction, document)
+    )
 
 
 def _validate_consumer_explainer_quotes(
-    explainer: ConsumerExplainer, allowed_quotes: list[str]
+    explainer: ConsumerExplainer, allowed_quotes: Sequence[str | SourceCitation]
 ) -> ConsumerExplainer:
     """Server-side validator the finalized prompt explicitly depends on.
 
@@ -913,22 +1406,44 @@ def _validate_consumer_explainer_quotes(
        The model's grade is never trusted on its own.
     """
 
-    def _recite(cases: list[ConsumerCase]) -> None:
+    allowed_citations = [
+        item
+        if isinstance(item, SourceCitation)
+        else SourceCitation(
+            document_id="unknown",
+            document_url="",
+            quote=item,
+            verified=False,
+        )
+        for item in allowed_quotes
+        if isinstance(item, SourceCitation) or (isinstance(item, str) and item.strip())
+    ]
+
+    def _recite(cases: Sequence[ConsumerCase]) -> None:
         for case in cases:
             if not case.quote:
                 case.quote = None
                 case.quote_status = "none"
+                case.citation = None
+                case.citations = []
                 continue
-            is_cited = any(case.quote in haystack for haystack in allowed_quotes)
-            if is_cited:
+            matched = _match_source_citations(case.quote, allowed_citations)
+            verified = [citation for citation in matched if citation.document_id != "unknown"]
+            if verified:
                 case.quote_status = "from_extraction"
+                case.citations = verified
+                case.citation = verified[0]
             else:
                 case.quote = None
                 case.quote_status = "none"
+                case.citation = None
+                case.citations = []
 
     _recite(explainer.watch_out_for)
     _recite(explainer.who_gets_your_data)
-    _recite(explainer.what_they_collect)  # type: ignore[arg-type]
+    _recite(explainer.what_they_collect)
+
+    calibrate_consumer_explainer(explainer)
 
     critical_count = sum(
         1
@@ -960,6 +1475,26 @@ def _validate_consumer_explainer_quotes(
                 critical_count,
             )
             explainer.grade = floor
+            explainer.grade_reason = (
+                f"Grade adjusted to {floor}: {critical_count} critical "
+                f"finding{'s' if critical_count != 1 else ''}."
+            )
+    elif critical_count == 0 and len(explainer.good_to_know or []) >= 2:
+        current_index = grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
+        boost_index = max(0, current_index - 1)
+        if boost_index < current_index:
+            improved = grade_order[boost_index]
+            logger.info(
+                "ConsumerExplainer grade boost: %s -> %s (%d good_to_know items)",
+                explainer.grade,
+                improved,
+                len(explainer.good_to_know or []),
+            )
+            explainer.grade = improved
+            if not explainer.grade_reason:
+                explainer.grade_reason = (
+                    "Grade reflects documented protections described in the policies."
+                )
 
     return explainer
 
@@ -969,6 +1504,7 @@ async def generate_consumer_explainer(
     *,
     cancellation_token: CancellationToken | None = None,
     max_retries: int = 2,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> ConsumerExplainer | None:
     """Generate a plain-English consumer explainer for ONE document.
 
@@ -1005,6 +1541,7 @@ async def generate_consumer_explainer(
 
     for attempt in range(max_retries):
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
         try:
             async with usage_tracking(tracker_callback):
                 response = await acompletion_with_fallback(
@@ -1015,6 +1552,7 @@ async def generate_consumer_explainer(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    heartbeat_callback=heartbeat_callback,
                 )
             logger.info("generate_consumer_explainer %s used model %s", document.id, response.model)
 
@@ -1024,7 +1562,7 @@ async def generate_consumer_explainer(
                 raise ValueError("Consumer explainer response was not a JSON object")
 
             explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
-            explainer = _validate_consumer_explainer(explainer, extraction)
+            explainer = _validate_consumer_explainer(explainer, extraction, document)
 
             summary, records = usage_tracker.consume_summary()
             log_usage_summary(
@@ -1067,6 +1605,7 @@ async def generate_product_consumer_explainer(
     *,
     cancellation_token: CancellationToken | None = None,
     max_retries: int = 2,
+    heartbeat_callback: HeartbeatCallback | None = None,
 ) -> ConsumerExplainer | None:
     """Synthesize ONE product-level consumer explainer (roll-up) across all core docs.
 
@@ -1094,14 +1633,14 @@ async def generate_product_consumer_explainer(
         )
         return None
 
-    allowed_quotes: list[str] = []
+    allowed_citations: list[SourceCitation] = []
     doc_inputs: list[dict[str, Any]] = []
     regions: set[str] = set()
     for doc in core_docs:
         extraction = doc.extraction
         if extraction is None:
             continue
-        allowed_quotes.extend(_collect_extraction_quotes(extraction))
+        allowed_citations.extend(_collect_extraction_citations(extraction, doc))
         regions.update(doc.regions or [])
         doc_inputs.append(
             {
@@ -1125,6 +1664,7 @@ async def generate_product_consumer_explainer(
 
     for attempt in range(max_retries):
         await token.check_cancellation()
+        await _maybe_await(heartbeat_callback() if heartbeat_callback else None)
         try:
             async with usage_tracking(tracker_callback):
                 response = await acompletion_with_fallback(
@@ -1135,6 +1675,7 @@ async def generate_product_consumer_explainer(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    heartbeat_callback=heartbeat_callback,
                 )
             logger.info(
                 "generate_product_consumer_explainer %s used model %s", product_slug, response.model
@@ -1145,7 +1686,7 @@ async def generate_product_consumer_explainer(
                 raise ValueError("Product consumer explainer response was not a JSON object")
             explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
             explainer.is_product_rollup = True
-            explainer = _validate_consumer_explainer_quotes(explainer, allowed_quotes)
+            explainer = _validate_consumer_explainer_quotes(explainer, allowed_citations)
 
             summary, records = usage_tracker.consume_summary()
             log_usage_summary(
@@ -1176,6 +1717,19 @@ async def generate_product_consumer_explainer(
         last_exception,
     )
     return None
+
+
+def _normalize_compliance_regime_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Coerce LLM compliance regime fields before model validation."""
+    normalized = dict(payload)
+    rationale = normalized.pop("rationale", None)
+    if rationale is not None and not normalized.get("assessment_notes"):
+        normalized["assessment_notes"] = rationale
+    for key in ("strengths", "gaps"):
+        value = normalized.get(key)
+        if isinstance(value, str):
+            normalized[key] = [value] if value.strip() else []
+    return normalized
 
 
 async def generate_product_compliance(
@@ -1265,7 +1819,7 @@ async def generate_product_compliance(
                     continue
                 try:
                     breakdowns[str(regime)] = ComplianceBreakdown.model_validate(
-                        payload, strict=False
+                        _normalize_compliance_regime_payload(payload), strict=False
                     )
                 except Exception as item_error:  # noqa: BLE001 - skip one bad regime, keep the rest
                     logger.debug(
@@ -1316,6 +1870,7 @@ async def generate_product_overview(
     document_svc: DocumentService | None = None,
     cancellation_token: CancellationToken | None = None,
     on_progress: HeartbeatCallback | None = None,
+    job_id: str | None = None,
 ) -> MetaSummary:
     """
     Generate a cached product overview from analyzed core policy documents.
@@ -1387,6 +1942,12 @@ async def generate_product_overview(
     aggregation = await aggregation_service.build_product_aggregation(
         db, product_id=product.id, product_slug=product_slug
     )
+    document_summaries = [DocumentSummary.from_document(doc) for doc in documents]
+    topic_report = build_product_topic_report(
+        product_slug=product_slug,
+        aggregation=aggregation,
+        documents=document_summaries,
+    )
 
     # Filter to core documents only for the synthesis.
     # Non-core docs (community_guidelines, copyright_policy, etc.) are analysed
@@ -1450,8 +2011,8 @@ async def generate_product_overview(
                     for d in doc.extraction.data_collected
                 ],
                 "data_purposes": [
-                    {"data_type": p.data_type, "purposes": p.purposes}
-                    for p in doc.extraction.data_purposes
+                    {"data_type": data_purpose.data_type, "purposes": data_purpose.purposes}
+                    for data_purpose in doc.extraction.data_purposes
                 ],
                 "third_party_details": [
                     {
@@ -1505,9 +2066,23 @@ async def generate_product_overview(
             + "\n"
         )
 
+    topic_signals = [
+        {
+            "topic": topic.topic,
+            "status": topic.status,
+            "stance": topic.stance,
+            "topic_score": topic.topic_score,
+            "rationale": topic.rationale,
+            "sample_findings": [finding.value for finding in topic.findings[:3]],
+        }
+        for topic in topic_report.topics
+    ]
+
     prompt = f"""Product: {product_slug}
 Core documents analyzed: {len(doc_inputs)} of {len(core_docs)} core documents
 Document types: {", ".join(doc.doc_type for doc in core_docs if doc.analysis)}
+Deterministic per-topic signals:
+{json.dumps(topic_signals, indent=2)}
 {conflicts_section}
 Per-document analyses and extractions:
 {json.dumps(doc_inputs, indent=2)}
@@ -1536,6 +2111,8 @@ Per-document analyses and extractions:
                     ],
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
+                    temperature=0,
+                    heartbeat_callback=on_progress,
                 )
             )
 
@@ -1547,10 +2124,10 @@ Per-document analyses and extractions:
             )
 
             # Cancel pending tasks
-            for p in pending:
-                p.cancel()
+            for pending_task in pending:
+                pending_task.cancel()
                 try:
-                    await p
+                    await pending_task
                 except asyncio.CancelledError:
                     pass
 
@@ -1581,12 +2158,15 @@ Per-document analyses and extractions:
 
         # Parse the product overview
         overview_dict = json.loads(content)
+        _merge_legacy_dimension_justifications(overview_dict)
 
         # Parse contradictions before model validation
         raw_contradictions = overview_dict.pop("contradictions", None)
 
         meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
         meta_summary.coverage = aggregation.coverage
+        if meta_summary.dangers:
+            meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
 
         # Attach contradictions
         if isinstance(raw_contradictions, list):
@@ -1599,19 +2179,94 @@ Per-document analyses and extractions:
             except Exception as e:
                 logger.warning(f"Failed to parse contradictions: {e}")
 
-        # Product risk_score: deterministic blend of core document analyses (privacy
-        # policy weighted highest). LLM overview risk_score is discarded.
-        if meta_summary and core_docs:
-            blended = _weighted_product_risk_score(core_docs)
-            if blended is not None:
-                meta_summary.risk_score = blended
-                meta_summary.verdict = _calculate_verdict(meta_summary.risk_score)
+        # Attach deterministic topic stances used for both UI explainability and scoring.
+        meta_summary.topic_stances = []
+        for topic in topic_report.topics:
+            cited_document_ids: set[str] = set()
+            evidence_count = 0
+            for finding in topic.findings:
+                cited_document_ids.update(finding.document_ids)
+                evidence_count += len(finding.citations)
+            for conflict in topic.conflicts:
+                cited_document_ids.update(conflict.document_ids)
+                evidence_count += len(conflict.citations)
+            primary_finding = _headline_finding_for_topic(topic)
+            primary_conflict = topic.conflicts[0] if topic.conflicts else None
+            supporting_citations = _topic_supporting_citations(topic)
+            if primary_finding and primary_finding.value:
+                headline_claim = _truncate_text(primary_finding.value)
+            elif primary_conflict and primary_conflict.description:
+                headline_claim = _truncate_text(primary_conflict.description)
+            elif topic.status in {"missing", "not_disclosed"}:
+                headline_claim = "No verifiable disclosure found across analyzed documents."
+            else:
+                headline_claim = None
+
+            meta_summary.topic_stances.append(
+                TopicStanceBreakdown(
+                    topic=topic.topic,
+                    status=topic.status,
+                    stance=topic.stance,
+                    topic_score=topic.topic_score,
+                    rationale=topic.rationale,
+                    rationale_key=topic.rationale_key,
+                    rationale_params=topic.rationale_params,
+                    evidence_count=evidence_count,
+                    document_count=len(cited_document_ids),
+                    headline_claim=headline_claim,
+                    supporting_citations=supporting_citations,
+                    conflict_note=_truncate_text(
+                        primary_conflict.description if primary_conflict else None
+                    ),
+                    why_it_matters=_topic_why_it_matters(
+                        topic=str(topic.topic),
+                        status=str(topic.status),
+                        stance=str(topic.stance),
+                        conflict_count=len(topic.conflicts),
+                    ),
+                    recommended_action=_topic_recommended_action(
+                        topic=str(topic.topic),
+                        status=str(topic.status),
+                        stance=str(topic.stance),
+                    ),
+                )
+            )
+
+        topic_rows: dict[InsightCategory, dict[str, Any]] = {
+            topic.topic: {
+                "status": topic.status,
+                "topic_score": topic.topic_score,
+            }
+            for topic in topic_report.topics
+        }
+        topic_blended = compose_product_risk_from_topics(topic_rows)
+        legacy_blended = _weighted_product_risk_score(core_docs)
+        dimension_risk = _calculate_overview_risk_score(meta_summary.scores)
+        if legacy_blended is not None:
+            logger.info(
+                "overview scoring comparison for %s: legacy_doc=%s topic=%s dimension=%s",
+                product_slug,
+                legacy_blended,
+                topic_blended,
+                dimension_risk,
+            )
+        else:
+            logger.info(
+                "overview scoring comparison for %s: topic=%s dimension=%s",
+                product_slug,
+                topic_blended,
+                dimension_risk,
+            )
+
+        _reconcile_meta_summary_risk(meta_summary)
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(
             db,
             product_slug=product_slug,
             meta_summary=meta_summary,
+            job_id=job_id,
+            product_id=product.id,
         )
         logger.info(f"✓ Saved product overview for {product_slug}")
 
@@ -1846,8 +2501,8 @@ async def generate_product_deep_analysis(
                     for d in doc.extraction.data_collected[:20]
                 ],
                 "data_purposes": [
-                    {"data_type": p.data_type, "purposes": p.purposes}
-                    for p in doc.extraction.data_purposes[:20]
+                    {"data_type": data_purpose.data_type, "purposes": data_purpose.purposes}
+                    for data_purpose in doc.extraction.data_purposes[:20]
                 ],
                 "third_party_details": [
                     {

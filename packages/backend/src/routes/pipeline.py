@@ -3,15 +3,13 @@
 Provides a DeepWiki-style API: submit a URL, get a job ID, poll for status.
 """
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
 from src.core.database import get_db
 from src.core.logging import get_logger
-from src.models.pipeline_job import TERMINAL_PIPELINE_STATUSES, PipelineJob
+from src.models.pipeline_job import PipelineJob
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_pipeline_service
 
@@ -151,29 +149,3 @@ async def get_job_status(
     if not job:
         raise HTTPException(status_code=404, detail="Pipeline job not found")
     return job
-
-
-@router.delete("/jobs/{job_id}", status_code=200)
-async def cancel_job(
-    job_id: str,
-    db: AgnosticDatabase = Depends(get_db),
-) -> dict[str, str]:
-    """Cancel a running pipeline job."""
-    pipeline_svc = create_pipeline_service()
-    job = await pipeline_svc.get_job(db, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Pipeline job not found")
-    if job.status in TERMINAL_PIPELINE_STATUSES:
-        raise HTTPException(status_code=409, detail=f"Job already {job.status}")
-
-    repo = PipelineRepository()
-    await repo.update_fields(
-        db,
-        job_id,
-        {
-            "status": "failed",
-            "error": "Cancelled by user",
-            "completed_at": datetime.now(),
-        },
-    )
-    return {"status": "cancelled", "job_id": job_id}

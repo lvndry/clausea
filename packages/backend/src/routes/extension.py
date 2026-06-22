@@ -5,6 +5,7 @@ Provides lightweight endpoints optimized for the browser extension popup.
 
 from typing import Literal
 
+import tldextract
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel, EmailStr
@@ -26,6 +27,7 @@ from src.utils.domain import extract_domain
 logger = get_logger(__name__)
 
 _extension_usage_svc = ExtensionUsageService()
+_TLD = tldextract.TLDExtract(suffix_list_urls=())
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 
@@ -68,6 +70,7 @@ class ExtensionAnalyzeRequest(BaseModel):
     """Request body for triggering analysis from the extension."""
 
     url: str
+    seed_urls: list[str] | None = None
 
 
 class ExtensionAnalyzeResponse(BaseModel):
@@ -321,9 +324,22 @@ async def analyze_url(
     domain = extract_domain(url)
     normalized_url = f"https://{domain}"
 
+    # Validate and cap extension-provided seeds. Only accept URLs whose registered
+    # domain matches the product's domain — this blocks SSRF attempts where a
+    # malicious client could plant seeds pointing at internal network addresses
+    # (e.g. http://192.168.1.1/) and have the server crawler fetch them.
+    # Subdomain variants (fr.shein.com for shein.com) pass because tldextract
+    # compares the registered domain name, ignoring subdomains.
+    product_reg_domain = _TLD(domain).domain
+    seed_urls = [
+        s
+        for s in (payload.seed_urls or [])
+        if s.startswith("http") and _TLD(s).domain == product_reg_domain
+    ][:20] or None
+
     pipeline_svc = create_pipeline_service()
 
-    result = await pipeline_svc.create_job_for_url(db, normalized_url)
+    result = await pipeline_svc.create_job_for_url(db, normalized_url, seed_urls=seed_urls)
 
     if result.get("already_indexed"):
         return ExtensionAnalyzeResponse(

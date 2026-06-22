@@ -18,8 +18,13 @@ from src.models.document import (
 )
 from src.models.product import Product
 from src.repositories.base_repository import BaseRepository
+from src.repositories.product_overview_history_repository import ProductOverviewHistoryRepository
 
 logger = get_logger(__name__)
+
+
+def _product_document_membership_query(product_id: str) -> dict[str, Any]:
+    return {"$or": [{"product_id": product_id}, {"product_ids": product_id}]}
 
 
 class ProductRepository(BaseRepository):
@@ -93,6 +98,25 @@ class ProductRepository(BaseRepository):
         logger.debug(f"Created product {product.slug}")
         return product
 
+    async def add_crawl_seeds(self, db: AgnosticDatabase, product_id: str, urls: list[str]) -> None:
+        """Append URLs to crawl_base_urls, ignoring duplicates already present."""
+        await db.products.update_one(
+            {"id": product_id},
+            {"$addToSet": {"crawl_base_urls": {"$each": urls}}},
+        )
+
+    async def update_name(self, db: AgnosticDatabase, product_id: str, name: str) -> None:
+        """Update the display name of a product.
+
+        Used after a crawl to replace the domain-derived name with the canonical
+        brand name extracted from page metadata (e.g. og:site_name).
+        """
+        await db.products.update_one(
+            {"id": product_id},
+            {"$set": {"name": name}},
+        )
+        logger.debug("Updated product name for %s to '%s'", product_id, name)
+
     async def find_all(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.
 
@@ -114,9 +138,35 @@ class ProductRepository(BaseRepository):
         Returns:
             List of products that have documents
         """
-        # Use aggregation to find distinct product_ids from documents
+        # Use aggregation to find distinct linked product_ids from canonical documents.
         pipeline = [
-            {"$group": {"_id": "$product_id"}},
+            {
+                "$project": {
+                    "linked_product_ids": {
+                        "$concatArrays": [
+                            {
+                                "$cond": [
+                                    {"$isArray": "$product_ids"},
+                                    "$product_ids",
+                                    [],
+                                ]
+                            },
+                            [
+                                {
+                                    "$cond": [
+                                        {"$eq": [{"$type": "$product_id"}, "string"]},
+                                        "$product_id",
+                                        None,
+                                    ]
+                                }
+                            ],
+                        ]
+                    }
+                }
+            },
+            {"$unwind": "$linked_product_ids"},
+            {"$match": {"linked_product_ids": {"$type": "string"}}},
+            {"$group": {"_id": "$linked_product_ids"}},
             {"$project": {"_id": 0, "product_id": "$_id"}},
         ]
         product_ids_data: list[dict[str, Any]] = await db.documents.aggregate(pipeline).to_list(
@@ -189,7 +239,7 @@ class ProductRepository(BaseRepository):
                 db.products.estimated_document_count(),
                 db.products.find().sort("name", 1).skip(skip).limit(limit).to_list(length=limit),
             )
-        return [Product(**p) for p in items_data], total
+        return [Product(**item) for item in items_data], total
 
     # ============================================================================
     # Product Overview Storage Operations
@@ -232,6 +282,8 @@ class ProductRepository(BaseRepository):
         db: AgnosticDatabase,
         product_slug: str,
         meta_summary: MetaSummary,
+        job_id: str | None = None,
+        product_id: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -239,10 +291,23 @@ class ProductRepository(BaseRepository):
             db: Database instance
             product_slug: Product slug
             meta_summary: Overview payload (MetaSummary shape)
+            job_id: Optional pipeline job that produced this overview
+            product_id: Product identifier for the owning product record
         """
         summary_data = meta_summary.model_dump()
         summary_data["product_slug"] = product_slug
+        if product_id is not None:
+            summary_data["product_id"] = product_id
         summary_data["updated_at"] = datetime.now()
+
+        existing = await db.product_overviews.find_one({"product_slug": product_slug})
+        await ProductOverviewHistoryRepository().save_snapshot(
+            db,
+            product_slug=product_slug,
+            overview_data=summary_data,
+            prev_overview_data=existing,
+            job_id=job_id,
+        )
 
         result = await db.product_overviews.update_one(
             {"product_slug": product_slug},
@@ -288,6 +353,27 @@ class ProductRepository(BaseRepository):
             {"product_slug": product_slug}, {"$set": data}, upsert=True
         )
         return result.matched_count > 0 or result.upserted_id is not None
+
+    async def update_product_explainer_grade(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        grade: str,
+        *,
+        grade_reason: str | None = None,
+    ) -> None:
+        """Update the stored explainer grade (and optional grade_reason) for a product.
+
+        Used by the service layer when reconciling legacy explainer rows against
+        the canonical overview score, without rewriting the entire explainer.
+        """
+        update_fields: dict[str, Any] = {"grade": grade, "updated_at": datetime.now()}
+        if grade_reason is not None:
+            update_fields["grade_reason"] = grade_reason
+        await db.product_explainers.update_one(
+            {"product_slug": product_slug},
+            {"$set": update_fields},
+        )
 
     # ============================================================================
     # Compliance Assessment Storage (product-level, per-regime score + why)
@@ -388,9 +474,10 @@ class ProductRepository(BaseRepository):
             Dictionary with total, analyzed, and pending counts, or None on error
         """
         try:
-            total = await db.documents.count_documents({"product_id": product_id})
+            membership = _product_document_membership_query(product_id)
+            total = await db.documents.count_documents(membership)
             analyzed = await db.documents.count_documents(
-                {"product_id": product_id, "analysis": {"$exists": True}}
+                {"$and": [membership, {"analysis": {"$exists": True, "$ne": None}}]}
             )
             pending = max(0, total - analyzed)
             return {
@@ -415,7 +502,7 @@ class ProductRepository(BaseRepository):
         """
         try:
             pipeline = [
-                {"$match": {"product_id": product_id}},
+                {"$match": _product_document_membership_query(product_id)},
                 {"$group": {"_id": "$doc_type", "count": {"$sum": 1}}},
             ]
             agg: list[dict[str, Any]] = await db.documents.aggregate(pipeline).to_list(length=None)

@@ -14,7 +14,7 @@ The wizard has completed a deep integration of PostHog into your Clausea Next.js
 | `newsletter_subscribed`   | User subscribes to newsletter via footer email input              | `components/clausea/PricingAndFooter.tsx`   |
 | `chat_message_sent`       | User sends a message in the chat conversation about a product     | `app/(dashboard)/c/[slug]/page.tsx`         |
 | `product_tab_changed`     | User switches between Overview and Sources tabs on a product page | `app/(dashboard)/products/[slug]/page.tsx`  |
-| `document_source_clicked` | User clicks to view source document details                       | `components/dashboard/sources-list.tsx`     |
+| `document_source_clicked` | User clicks to view source document details                       | `components/dashboard/evidence-list.tsx`    |
 | `cta_hero_clicked`        | User clicks the main call-to-action button in the hero section    | `components/clausea/Hero.tsx`               |
 | `product_sort_changed`    | User changes the sort order of products (name, risk, recent)      | `app/(dashboard)/products/page.tsx`         |
 | `billing_portal_opened`   | User opens the billing portal to manage subscription              | `hooks/useBillingPortal.ts`                 |

@@ -28,7 +28,9 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.models.topic_report import ProductTopicReport
 from src.models.user import UserTier
+from src.repositories.aggregation_repository import AggregationRepository
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
@@ -37,6 +39,7 @@ from src.services.service_factory import (
     create_product_service,
     create_services,
 )
+from src.services.topic_report_service import build_product_topic_report
 
 logger = get_logger(__name__)
 
@@ -156,6 +159,39 @@ async def get_product_overview(
     )
 
 
+@router.get("/{slug}/topics", response_model=ProductTopicReport)
+async def get_product_topics(
+    slug: str,
+    _request: Request,
+    _usage: None = Depends(check_usage_limit),
+    _increment: None = Depends(increment_usage),
+    db: AgnosticDatabase = Depends(get_db),
+    service: ProductService = Depends(create_product_service),
+) -> ProductTopicReport:
+    """Get per-topic cross-document findings with evidence citations."""
+    product = await service.get_product_by_slug(db, slug)
+    if not product:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+
+    aggregation = await AggregationRepository().get(db, product.id)
+    if not aggregation:
+        raise HTTPException(
+            status_code=HTTP_425_TOO_EARLY,
+            detail={
+                "message": "Topic findings are not available yet. Indexation may be in progress.",
+                "code": "topics_not_ready",
+                "product_slug": slug,
+            },
+        )
+
+    documents = await service.get_product_documents(db, slug)
+    return build_product_topic_report(
+        product_slug=slug,
+        aggregation=aggregation,
+        documents=documents,
+    )
+
+
 @router.get("/{slug}/explainer", response_model=ConsumerExplainer)
 async def get_product_explainer(
     slug: str,
@@ -167,6 +203,7 @@ async def get_product_explainer(
 ) -> ConsumerExplainer:
     """Get the plain-English consumer TOS-explainer for a product (the consumer-facing
     output). Does NOT trigger generation — produced by the indexation pipeline.
+    Grade values are reconciled server-side to the canonical product overview score.
 
     Status codes:
         404: No product with this slug.
@@ -239,6 +276,7 @@ async def get_product_analysis(
 @router.get("/{slug}/documents", response_model=list[DocumentSummary])
 async def get_product_documents(
     slug: str,
+    _usage: None = Depends(check_usage_limit),
     user_tier: UserTier = Depends(get_user_tier),
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
@@ -287,7 +325,7 @@ async def get_document_extraction(
     doc = await doc_svc.get_document_by_id(db, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if doc.product_id != product.id:
+    if not doc.is_linked_to_product(product.id):
         raise HTTPException(status_code=404, detail="Document not found for this product")
     if not _can_access_document(
         tier=user_tier,
@@ -355,7 +393,7 @@ async def get_document_deep_analysis_route(
         raise HTTPException(status_code=404, detail="Product not found")
 
     doc = await doc_svc.get_document_by_id(db, document_id)
-    if not doc or doc.product_id != product.id:
+    if not doc or not doc.is_linked_to_product(product.id):
         raise HTTPException(status_code=404, detail="Document not found")
     if not _can_access_document(
         tier=user_tier,
@@ -377,6 +415,7 @@ async def get_document_deep_analysis_route(
 @router.get("/{slug}", response_model=Product)
 async def get_product_by_slug(
     slug: str,
+    _usage: None = Depends(check_usage_limit),
     db: AgnosticDatabase = Depends(get_db),
     service: ProductService = Depends(create_product_service),
 ) -> Product:

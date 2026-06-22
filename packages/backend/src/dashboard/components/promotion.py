@@ -782,9 +782,10 @@ def display_promotion_results(data: dict[str, Any]) -> None:
                 try:
                     with st.spinner("Checking for missing tier fields..."):
                         missing_tier_fields = [
-                            p
-                            for p in products
-                            if not hasattr(p, "visible_to_tiers") or not p.visible_to_tiers
+                            product
+                            for product in products
+                            if not hasattr(product, "visible_to_tiers")
+                            or not product.visible_to_tiers
                         ]
 
                         if not missing_tier_fields:
@@ -822,9 +823,10 @@ def display_promotion_results(data: dict[str, Any]) -> None:
         with col1:
             free_accessible = len(
                 [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.FREE in p.visible_to_tiers
+                    product
+                    for product in products
+                    if hasattr(product, "visible_to_tiers")
+                    and UserTier.FREE in product.visible_to_tiers
                 ]
             )
             st.metric("Free Tier Accessible", free_accessible)
@@ -832,9 +834,10 @@ def display_promotion_results(data: dict[str, Any]) -> None:
         with col2:
             pro_accessible = len(
                 [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.PRO in p.visible_to_tiers
+                    product
+                    for product in products
+                    if hasattr(product, "visible_to_tiers")
+                    and UserTier.PRO in product.visible_to_tiers
                 ]
             )
             st.metric("Pro Tier Accessible", pro_accessible)
@@ -842,9 +845,10 @@ def display_promotion_results(data: dict[str, Any]) -> None:
         with col3:
             premium_only = len(
                 [
-                    p
-                    for p in products
-                    if hasattr(p, "visible_to_tiers") and UserTier.FREE not in p.visible_to_tiers
+                    product
+                    for product in products
+                    if hasattr(product, "visible_to_tiers")
+                    and UserTier.FREE not in product.visible_to_tiers
                 ]
             )
             st.metric("Premium Only", premium_only, delta=f"{premium_only}/{len(products)}")

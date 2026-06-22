@@ -58,6 +58,27 @@ const GRADE_BANDS: GradeBand[] = [
   { min: -Infinity, letter: "E", tone: "bad" },
 ];
 
+export function letterGradeToTone(letter: string): GradeTone {
+  switch (letter.toUpperCase().charAt(0)) {
+    case "A":
+      return "good";
+    case "B":
+      return "ok";
+    case "C":
+      return "warn";
+    default:
+      return "bad";
+  }
+}
+
+export function parseLetterGrade(letter: string): Grade {
+  const normalized = letter.trim().toUpperCase().charAt(0);
+  if (!["A", "B", "C", "D", "E"].includes(normalized)) {
+    return { letter: "—", tone: "warn" };
+  }
+  return { letter: normalized, tone: letterGradeToTone(normalized) };
+}
+
 export function scoreToGrade(
   score: number,
   opts?: { invert?: boolean },
@@ -65,7 +86,9 @@ export function scoreToGrade(
   const clamped = Math.max(0, Math.min(10, score));
   // riskScore is "higher = worse"; inverting maps it onto the "higher = better" bands.
   const effective = opts?.invert ? 10 - clamped : clamped;
-  const band = GRADE_BANDS.find((entry) => effective >= entry.min) ?? GRADE_BANDS[GRADE_BANDS.length - 1];
+  const band =
+    GRADE_BANDS.find((entry) => effective >= entry.min) ??
+    GRADE_BANDS[GRADE_BANDS.length - 1];
   return { letter: band.letter, tone: band.tone };
 }
 

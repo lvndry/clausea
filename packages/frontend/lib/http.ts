@@ -1,5 +1,11 @@
-import { auth } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
 import type { ZodType } from "zod";
+
+import {
+  PREVIEW_TOKEN_COOKIE,
+  PREVIEW_TOKEN_HEADER,
+} from "@/lib/preview-token";
+import { auth } from "@clerk/nextjs/server";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -32,11 +38,21 @@ export async function http(
   let token: string | null | undefined = undefined;
   try {
     token = await userAuth.getToken?.({ template: "default" });
-    if (!token) {
+  } catch (err) {
+    console.warn("[http] getToken template=default failed, falling back:", err);
+  }
+  if (!token) {
+    try {
       token = await userAuth.getToken?.();
+    } catch (err) {
+      console.warn("[http] getToken fallback failed:", err);
     }
-  } catch (_) {
-    // ignore
+  }
+  if (!token) {
+    console.warn(
+      "[http] no token obtained for request to:",
+      typeof input === "string" ? input : input.toString(),
+    );
   }
 
   const mergedHeaders: HeadersInit = {
@@ -46,6 +62,13 @@ export async function http(
   if (token) {
     (mergedHeaders as Record<string, string>)["Authorization"] =
       `Bearer ${token}`;
+  } else {
+    const cookieStore = await cookies();
+    const previewToken = cookieStore.get(PREVIEW_TOKEN_COOKIE)?.value;
+    if (previewToken) {
+      (mergedHeaders as Record<string, string>)[PREVIEW_TOKEN_HEADER] =
+        previewToken;
+    }
   }
 
   let attempt = 0;

@@ -136,6 +136,7 @@ class PaddleConfig:
         self.api_key: str | None = os.getenv("PADDLE_API_KEY")
         self.webhook_secret: str | None = os.getenv("PADDLE_WEBHOOK_SECRET")
         self.environment: str = os.getenv("PADDLE_ENVIRONMENT", "sandbox")
+        self.client_token: str | None = os.getenv("PADDLE_CLIENT_TOKEN")
         self.checkout_url: str | None = os.getenv("PADDLE_CHECKOUT_URL")
         # Pro tier pricing
         self.price_pro_monthly: str | None = os.getenv("PADDLE_PRICE_PRO_MONTHLY")
@@ -152,7 +153,7 @@ class CrawlerConfig:
 
         # --- Concurrency & politeness ---
         self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", "20"))
-        self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "2"))
+        self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "4"))
         self.delay_between_requests: float = float(
             os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.0")
         )

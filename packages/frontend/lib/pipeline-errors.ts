@@ -22,6 +22,10 @@ export const PIPELINE_ERROR_CODE_MESSAGES: Record<string, string> = {
     "Analysis took too long and timed out. Please try again, as large sites may need another attempt.",
   stalled:
     "Analysis stalled with no progress, usually on a site that's hard to crawl or a temporary issue. Please try again.",
+  interrupted:
+    "Analysis was interrupted by a worker restart and will resume automatically.",
+  orphaned:
+    "The analysis worker lost contact with this job (restart, crash, or missing heartbeats). It will be retried automatically.",
 };
 
 export function resolvePipelineErrorMessage(

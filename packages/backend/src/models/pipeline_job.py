@@ -26,16 +26,20 @@ class PipelineErrorCode(StrEnum):
     internal_error = "internal_error"
     timed_out = "timed_out"
     stalled = "stalled"
+    interrupted = "interrupted"
+    orphaned = "orphaned"
+    domain_circuit_breaker = "domain_circuit_breaker"
 
 
 PipelineJobStatus = Literal[
     "pending",
     "crawling",
-    "summarizing",
+    "synthesising",
     "generating_overview",
     "completed",
     "failed",
     "no_documents",
+    "interrupted",
 ]
 
 # Statuses a job can never leave. A job in any of these is "done" and must not be
@@ -43,12 +47,13 @@ PipelineJobStatus = Literal[
 #   - completed:    ran to the end, overview generated
 #   - no_documents: crawl ran to completion but found 0 policy documents (a valid,
 #                   deterministic result — retrying yields the same outcome)
-#   - failed:       interrupted (orphaned/timeout) or errored — eligible for a
-#                   user-initiated retry, but never auto-retriggered
+#   - failed:       interrupted or errored. Auto-retry may re-queue some failed
+#                   jobs (transient/retryable) within a bounded attempt budget.
 TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
     "completed",
     "failed",
     "no_documents",
+    "interrupted",
 )
 
 CrawlErrorType = Literal[
@@ -59,6 +64,42 @@ CrawlErrorType = Literal[
     "content_error",
     "unknown",
 ]
+
+
+# HTTP status codes that indicate a hard anti-bot/access block (not transient errors).
+# 403 Forbidden, 401 Unauthorized, 407 Proxy Auth Required, 451 Unavailable For Legal Reasons.
+_HARD_HTTP_STATUS_CODES: frozenset[int] = frozenset({401, 403, 407, 451})
+
+# Keywords in error messages that signal bot-detection or active access blocks.
+_BOT_DETECTION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "captcha",
+        "cloudflare",
+        "access denied",
+        "bot detection",
+        "bot-detection",
+        "challenge",
+        "security check",
+        "ddos protection",
+        "anti-bot",
+    }
+)
+
+
+def is_hard_crawl_error(error_type: str, status_code: int, error_message: str | None) -> bool:
+    """Return True if this crawl error signals a hard anti-bot or access block.
+
+    Hard failures = bot detection (CAPTCHA, Cloudflare, 403 Forbidden, "Access Denied").
+    Transient failures = network timeouts, DNS errors, 5xx server errors — these should
+    still be retried.
+    """
+    if error_type == "http_error" and status_code in _HARD_HTTP_STATUS_CODES:
+        return True
+    if error_message:
+        msg = error_message.lower()
+        if any(kw in msg for kw in _BOT_DETECTION_KEYWORDS):
+            return True
+    return False
 
 
 def classify_crawl_error(error_message: str | None, status_code: int) -> "CrawlErrorType":
@@ -119,6 +160,7 @@ class PipelineStep(BaseModel):
     progress_percent: float | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    has_explainer: bool | None = None
 
 
 class PipelineJob(BaseModel):
@@ -140,7 +182,7 @@ class PipelineJob(BaseModel):
     steps: list[PipelineStep] = Field(
         default_factory=lambda: [
             PipelineStep(name="crawling"),
-            PipelineStep(name="summarizing"),
+            PipelineStep(name="synthesising"),
             PipelineStep(name="generating_overview"),
         ]
     )
@@ -157,6 +199,15 @@ class PipelineJob(BaseModel):
     last_heartbeat: datetime | None = None
 
     attempts: int = 0  # claims so far; bounds auto-retry of failed/orphaned jobs
+    # Sticky auto-retry guard: when true, stale sweeps won't re-queue this failed job.
+    auto_retry_disabled: bool = False
+    auto_retry_disabled_reason: str | None = None
+
+    # Cumulative count of hard crawl errors (bot detection, 403s, anti-scrape blocks)
+    # accumulated across retries. NOT reset on requeue so the circuit breaker has a
+    # persistent signal. Reaches PIPELINE_DOMAIN_CIRCUIT_BREAKER_THRESHOLD before
+    # the next claim attempt skips the job instead of running it again.
+    accumulated_hard_failure_count: int = 0
 
     # Stats from the crawl phase
     documents_found: int = 0
@@ -170,3 +221,15 @@ class PipelineJob(BaseModel):
     # categorized failure message when crawl_errors is empty but the
     # pipeline still found no policy documents.
     crawl_skip_reasons: list[CrawlSkip] = Field(default_factory=list)
+
+    # Policy-page URLs harvested from the live DOM by the browser extension
+    # (footer links the server crawler cannot reach due to anti-bot walls).
+    # Injected as high-priority seeds at the start of the crawl.
+    seed_urls: list[str] = Field(default_factory=list)
+
+    # When True, the analysis phase skips the content-hash cache and re-runs
+    # LLM analysis on every document even if findings already exist in the DB.
+    force_reanalyze: bool = False
+
+    # Number of documents whose analysis was reused from a prior run (skipped LLM).
+    analyses_skipped: int = 0

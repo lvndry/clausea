@@ -18,8 +18,10 @@ export interface ThirdPartyRecipient {
 }
 
 export interface DetailedScore {
-  score: number;
+  grade: "A" | "B" | "C" | "D" | "E";
   justification: string;
+  /** @deprecated Legacy numeric proxy — prefer `grade`. */
+  score?: number;
 }
 
 export interface DetailedScores {
@@ -43,11 +45,34 @@ export interface CoverageItem {
   notes?: string | null;
 }
 
+export interface TopicStanceBreakdown {
+  topic: string;
+  status: "found" | "missing" | "not_disclosed" | "ambiguous";
+  stance:
+    | "low_risk"
+    | "moderate_risk"
+    | "high_risk"
+    | "not_disclosed"
+    | "mixed";
+  topic_score?: number | null;
+  rationale?: string | null;
+  rationale_key?: string | null;
+  rationale_params?: Record<string, string | number | null> | null;
+  evidence_count?: number | null;
+  document_count?: number | null;
+  headline_claim?: string | null;
+  supporting_citations?: TopicCitation[] | null;
+  conflict_note?: string | null;
+  why_it_matters?: string | null;
+  recommended_action?: string | null;
+}
+
 export interface ComplianceBreakdown {
   score: number;
   status: "Compliant" | "Partially Compliant" | "Non-Compliant" | "Unknown";
   strengths: string[];
   gaps: string[];
+  assessment_notes?: string | null;
 }
 
 export interface ProductOverview {
@@ -55,8 +80,10 @@ export interface ProductOverview {
   product_slug: string;
   company_name?: string | null;
   last_updated: string;
-  verdict: Verdict;
-  risk_score: number;
+  verdict?: Verdict | null;
+  risk_score?: number | null;
+  grade?: "A" | "B" | "C" | "D" | "E" | null;
+  grade_justification?: string | null;
   one_line_summary: string;
   data_collected?: string[] | null;
   data_purposes?: string[] | null;
@@ -74,6 +101,7 @@ export interface ProductOverview {
   compliance_status?: Record<string, number> | null;
   compliance?: Record<string, ComplianceBreakdown> | null;
   privacy_signals?: PrivacySignalsData | null;
+  topic_stances?: TopicStanceBreakdown[] | null;
   coverage?: CoverageItem[] | null;
   contract_clauses?: string[] | null;
 }
@@ -154,4 +182,51 @@ export interface FailedCrawlJob {
   error_detail: string | null;
   crawl_errors: CrawlError[];
   documents_stored?: number;
+}
+
+export interface TopicCitation {
+  document_id: string;
+  document_title?: string | null;
+  document_url?: string | null;
+  quote: string;
+  section_title?: string | null;
+  verified: boolean;
+}
+
+export interface TopicFinding {
+  value: string;
+  document_ids: string[];
+  attributes: Record<string, unknown>[];
+  citations: TopicCitation[];
+}
+
+export interface TopicConflict {
+  description: string;
+  severity?: string | null;
+  document_ids: string[];
+  citations: TopicCitation[];
+}
+
+export interface TopicReportItem {
+  topic: string;
+  coverage_status: "found" | "missing" | "ambiguous" | "not_analyzed";
+  status: "found" | "missing" | "not_disclosed" | "ambiguous";
+  stance:
+    | "low_risk"
+    | "moderate_risk"
+    | "high_risk"
+    | "not_disclosed"
+    | "mixed";
+  topic_score?: number | null;
+  rationale?: string | null;
+  rationale_key?: string | null;
+  rationale_params?: Record<string, string | number | null> | null;
+  findings: TopicFinding[];
+  conflicts: TopicConflict[];
+}
+
+export interface ProductTopicReport {
+  product_slug: string;
+  generated_at?: string | null;
+  topics: TopicReportItem[];
 }

@@ -154,17 +154,22 @@ class TestDocumentAnalysisApplicabilityAlias:
         )
         assert br.applicability == "US-only"
 
+    def test_document_risk_breakdown_no_signal_leaves_overall_risk_unset(self) -> None:
+        br = DocumentRiskBreakdown.model_validate({"risk_by_category": {}})
+        assert br.overall_risk is None
+
 
 # ── DocumentAnalysis risk_score bounds ──────────────────────────────
 
 
 class TestDocumentAnalysisRiskScore:
-    def test_default_risk_score(self) -> None:
+    def test_default_risk_score_is_none(self) -> None:
         analysis = DocumentAnalysis(
             summary="Test",
             scores={"t": DocumentAnalysisScores(score=5, justification="ok")},
         )
-        assert analysis.risk_score == 5
+        assert analysis.risk_score is None
+        assert analysis.verdict is None
 
     def test_risk_score_min_valid(self) -> None:
         analysis = DocumentAnalysis(
@@ -349,8 +354,19 @@ class TestComplianceBreakdown:
             status="Compliant",
             strengths=["Good encryption"],
             gaps=["Missing DPO info"],
+            assessment_notes="Privacy Policy describes security measures.",
         )
         assert breakdown.score == 8
+        assert breakdown.has_rationale() is True
+
+    def test_has_rationale_false_when_empty(self) -> None:
+        breakdown = ComplianceBreakdown(
+            score=7,
+            status="Partially Compliant",
+            strengths=[],
+            gaps=[],
+        )
+        assert breakdown.has_rationale() is False
 
     def test_score_out_of_range(self) -> None:
         with pytest.raises(ValidationError):

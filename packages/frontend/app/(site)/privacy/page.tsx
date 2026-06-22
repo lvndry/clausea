@@ -15,7 +15,7 @@ export default function PrivacyPolicyPage() {
               Privacy Policy
             </h1>
             <p className="text-muted-foreground text-lg">
-              Last updated: January 2025
+              Last updated: June 2026
             </p>
           </div>
 
@@ -134,18 +134,20 @@ export default function PrivacyPolicyPage() {
                 4. Information Sharing and Disclosure
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                We do not sell your personal information. We may share your
-                information only in the following circumstances:
+                We do not sell your personal information or user data. We may
+                share your information only in the following circumstances:
               </p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>
                   <strong className="text-foreground">
                     Service Providers:
                   </strong>{" "}
-                  We may share information with third-party service providers
-                  who perform services on our behalf, such as payment
-                  processing, cloud hosting, and analytics. These providers are
-                  contractually obligated to protect your information.
+                  We use third-party providers to run the Service, including
+                  MongoDB Atlas (database hosting), Railway (application
+                  hosting), and related infrastructure providers. We may also
+                  use providers for payments and analytics. Providers that
+                  process personal data on our behalf are required to protect
+                  it.
                 </li>
                 <li>
                   <strong className="text-foreground">
@@ -231,10 +233,10 @@ export default function PrivacyPolicyPage() {
               <p className="text-muted-foreground leading-relaxed mt-4">
                 To exercise these rights, please contact us at{" "}
                 <a
-                  href="mailto:privacy@clausea.co"
+                  href="mailto:lvndry@protonmail.com"
                   className="text-primary hover:underline"
                 >
-                  privacy@clausea.co
+                  lvndry@protonmail.com
                 </a>
                 . We will respond to your request within 30 days.
               </p>
@@ -311,28 +313,36 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul className="list-disc pl-6 space-y-2 text-muted-foreground">
                 <li>
-                  <span className="text-foreground font-medium">Access</span> — request
-                  a copy of the personal data we hold about you.
+                  <span className="text-foreground font-medium">Access</span> —
+                  request a copy of the personal data we hold about you.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Rectification</span> —
-                  ask us to correct inaccurate or incomplete data.
+                  <span className="text-foreground font-medium">
+                    Rectification
+                  </span>{" "}
+                  — ask us to correct inaccurate or incomplete data.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Erasure</span> — ask us
-                  to delete your personal data, subject to legal retention
-                  requirements.
+                  <span className="text-foreground font-medium">Erasure</span> —
+                  ask us to delete your personal data, subject to legal
+                  retention requirements.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Restriction &amp; objection</span>{" "}
+                  <span className="text-foreground font-medium">
+                    Restriction &amp; objection
+                  </span>{" "}
                   — ask us to limit or stop certain processing.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Portability</span> —
-                  receive your data in a structured, machine-readable format.
+                  <span className="text-foreground font-medium">
+                    Portability
+                  </span>{" "}
+                  — receive your data in a structured, machine-readable format.
                 </li>
                 <li>
-                  <span className="text-foreground font-medium">Withdraw consent</span>{" "}
+                  <span className="text-foreground font-medium">
+                    Withdraw consent
+                  </span>{" "}
                   — where processing is based on consent, withdraw it at any
                   time.
                 </li>
@@ -340,10 +350,10 @@ export default function PrivacyPolicyPage() {
               <p className="text-muted-foreground leading-relaxed">
                 To exercise any of these rights, contact us at{" "}
                 <a
-                  href="mailto:privacy@clausea.co"
+                  href="mailto:lvndry@protonmail.com"
                   className="text-primary hover:underline"
                 >
-                  privacy@clausea.co
+                  lvndry@protonmail.com
                 </a>
                 . You also have the right to lodge a complaint with your local
                 data protection authority.
@@ -374,21 +384,24 @@ export default function PrivacyPolicyPage() {
               <div className="bg-muted/30 p-6 rounded-2xl border border-border mt-4">
                 <p className="text-foreground font-semibold mb-2">Clausea AI</p>
                 <p className="text-muted-foreground">
+                  Created in Paris, France
+                </p>
+                <p className="text-muted-foreground">
                   Email:{" "}
                   <a
-                    href="mailto:contact@clausea.co"
+                    href="mailto:lvndry@protonmail.com"
                     className="text-primary hover:underline"
                   >
-                    contact@clausea.co
+                    lvndry@protonmail.com
                   </a>
                 </p>
                 <p className="text-muted-foreground">
                   General inquiries:{" "}
                   <a
-                    href="mailto:contact@clausea.co"
+                    href="mailto:lvndry@protonmail.com"
                     className="text-primary hover:underline"
                   >
-                    contact@clausea.co
+                    lvndry@protonmail.com
                   </a>
                 </p>
               </div>

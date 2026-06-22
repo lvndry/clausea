@@ -1,0 +1,428 @@
+name: Jazz Code Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+  push:
+    paths:
+      - ".github/workflows/jazz-review.yml"
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: "PR number (required when run from Actions tab)"
+        required: true
+        type: number
+      request:
+        description: "Additional request for the review"
+        required: false
+        type: string
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      pr_head_repo_full_name: ${{ steps.resolve.outputs.pr_head_repo_full_name }}
+      request: ${{ steps.resolve.outputs.request }}
+    steps:
+      - name: Resolve PR context
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            function extractRequest(body) {
+              if (!body) return '';
+              const trimmed = body.trim();
+              const match = trimmed.match(/^\/jazz(?!-review)(?:\s*[:,-])?\s*([\s\S]*)/i);
+              return match?.[1]?.trim() ?? '';
+            }
+
+            let prNumber, baseSha, headSha, prHeadRepoFullName;
+            let request = '';
+
+            if (context.payload.pull_request) {
+              const pr = context.payload.pull_request;
+              prNumber = pr.number;
+              baseSha = pr.base.sha;
+              headSha = pr.head.sha;
+              prHeadRepoFullName = pr.head.repo.full_name;
+            } else if (context.eventName === 'workflow_dispatch') {
+              prNumber = Number(context.payload.inputs.pull_request_number);
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              });
+              baseSha = pr.base.sha;
+              headSha = pr.head.sha;
+              prHeadRepoFullName = pr.head.repo.full_name;
+              request = String(context.payload.inputs.request ?? '').trim();
+            } else if (context.eventName === 'push') {
+              const ref = context.payload.ref ?? '';
+              const branch = ref.replace(/^refs\/heads\//, '');
+              const defaultBranch = context.payload.repository?.default_branch;
+              if (!branch || branch === defaultBranch) {
+                core.notice(`Push to ${branch || '(no branch)'}; no PR context, skipping jazz jobs.`);
+                core.setOutput('pr_number', '');
+                core.setOutput('base_sha', '');
+                core.setOutput('head_sha', context.payload.after ?? '');
+                core.setOutput('pr_head_repo_full_name', '');
+                core.setOutput('request', '');
+                return;
+              }
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${branch}`,
+                state: 'open',
+              });
+              const pr = prs[0];
+              if (!pr) {
+                core.notice(`No open PR for branch ${branch}; skipping jazz jobs.`);
+                core.setOutput('pr_number', '');
+                core.setOutput('base_sha', '');
+                core.setOutput('head_sha', context.payload.after ?? '');
+                core.setOutput('pr_head_repo_full_name', '');
+                core.setOutput('request', '');
+                return;
+              }
+              prNumber = pr.number;
+              baseSha = pr.base.sha;
+              headSha = context.payload.after ?? pr.head.sha;
+              prHeadRepoFullName = pr.head.repo.full_name;
+            } else {
+              const issueNumber = context.payload.issue?.number;
+              if (!issueNumber) {
+                throw new Error('issue_comment event missing issue number');
+              }
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: issueNumber,
+              });
+              prNumber = pr.number;
+              baseSha = pr.base.sha;
+              headSha = pr.head.sha;
+              prHeadRepoFullName = pr.head.repo.full_name;
+              request = extractRequest(context.payload.comment?.body);
+            }
+
+            if (!request) {
+              request = 'Review this pull request and call out anything important.';
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_sha', baseSha);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('pr_head_repo_full_name', prHeadRepoFullName);
+            core.setOutput('request', request);
+
+      - name: React with eyes on triggering comment
+        if: |
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null &&
+          contains(github.event.comment.body, '/jazz') && (
+            github.event.comment.author_association == 'OWNER' ||
+            github.event.comment.author_association == 'MEMBER' ||
+            github.event.comment.author_association == 'COLLABORATOR'
+          ) &&
+          steps.resolve.outputs.pr_head_repo_full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commentId = context.payload.comment?.id;
+            if (!commentId) {
+              core.warning('issue_comment event missing comment id; skipping reaction');
+              return;
+            }
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: commentId,
+                content: 'eyes',
+              });
+            } catch (e) {
+              if (e.status === 422) {
+                core.info('Reaction already present; continuing');
+                return;
+              }
+              if (e.status === 403) {
+                core.warning(`Could not react with eyes (403): ${e.message}`);
+                return;
+              }
+              core.warning(`Could not react with eyes: ${e.message}`);
+            }
+
+  code-review:
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && needs.resolve.outputs.pr_head_repo_full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(github.event.comment.body, '/jazz-review') && (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) && needs.resolve.outputs.pr_head_repo_full_name == github.repository) ||
+      (github.event_name == 'push' && needs.resolve.outputs.pr_number != '' && needs.resolve.outputs.pr_head_repo_full_name == github.repository)
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Jazz
+        run: npm install -g jazz-ai
+
+      - name: Setup Jazz agent and workflow
+        env:
+          PR_BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          mkdir -p "$HOME/.jazz/agents" workflows/code-review
+          cp .github/jazz/agents/ci-reviewer.json "$HOME/.jazz/agents/"
+          sed -e "s/__PR_BASE_SHA__/$PR_BASE_SHA/g" -e "s/__PR_HEAD_SHA__/$PR_HEAD_SHA/g" -e "s|__WORKSPACE__|$WORKSPACE|g" \
+            .github/jazz/workflows/code-review/WORKFLOW.md > workflows/code-review/WORKFLOW.md
+
+      - name: Snapshot PR context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          OUT=/tmp/jazz-pr-context.json
+          if gh pr view "$PR_NUMBER" --repo "$REPO" \
+               --json title,body,labels,comments,reviews \
+               > /tmp/pr-base.json \
+             && gh api "repos/$REPO/pulls/$PR_NUMBER/comments?per_page=100" \
+                  > /tmp/pr-review-comments.json; then
+            jq -s '.[0] + {reviewComments: .[1]}' \
+              /tmp/pr-base.json /tmp/pr-review-comments.json > "$OUT"
+          else
+            echo '{"error":"Failed to fetch PR context; agent will proceed without it."}' > "$OUT"
+          fi
+
+      - name: Run code review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CI: "true"
+          JAZZ_DISABLE_CATCH_UP: "1"
+        run: |
+          jazz --output raw workflow run code-review --auto-approve --agent ci-reviewer \
+            | tee /tmp/jazz-review.txt
+
+      - name: Post review comments
+        if: always()
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('/tmp/jazz-review.txt', 'utf8');
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const headSha = process.env.PR_HEAD_SHA;
+
+            let modelLabel = '';
+            try {
+              const agent = JSON.parse(fs.readFileSync('.github/jazz/agents/ci-reviewer.json', 'utf8'));
+              if (agent.model) modelLabel = `\n\n*Model: ${agent.model}*`;
+            } catch (_) {}
+
+            const extractFencedMarkdown = (text) => {
+              const fourFence = text.match(/````markdown\s*\n([\s\S]*?)\n?````/);
+              if (fourFence) return fourFence[1].trim();
+              const threeFence = text.match(/```markdown\s*\n([\s\S]*?)\n?```/);
+              if (threeFence) return threeFence[1].trim();
+              return null;
+            };
+
+            const extractFencedJson = (text) => {
+              const fourFence = text.match(/````json\s*\n([\s\S]*?)\n?````/);
+              if (fourFence) return fourFence[1].trim();
+              const open = text.lastIndexOf('```json');
+              if (open < 0) return null;
+              const after = text.slice(open + '```json'.length);
+              const close = after.lastIndexOf('```');
+              if (close < 0) return null;
+              return after.slice(0, close).trim();
+            };
+
+            const markdownSummary = extractFencedMarkdown(output);
+
+            let comments = [];
+            const jsonText = extractFencedJson(output);
+            if (jsonText) {
+              try {
+                comments = JSON.parse(jsonText);
+              } catch (e) {
+                console.log('Failed to parse JSON:', e.message);
+              }
+            }
+
+            const summarySection = markdownSummary
+              || (Array.isArray(comments) && comments.length > 0
+                ? `Found ${comments.length} issue(s). See inline comments below.`
+                : 'No issues found.');
+
+            if (!Array.isArray(comments) || comments.length === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `## Jazz Code Review\n\n${summarySection}${modelLabel}`,
+              });
+              return;
+            }
+
+            const sanitized = comments.map(c => {
+              const copy = { ...c };
+              const validStartLine =
+                Number.isInteger(copy.start_line) &&
+                copy.start_line > 0 &&
+                copy.start_line < copy.line;
+              if (!validStartLine) delete copy.start_line;
+              return copy;
+            });
+            const validComments = sanitized.filter(c =>
+              c.path && c.line > 0 && !c.path.startsWith('/') && c.path !== 'NO_DIFF'
+            );
+
+            const invalidComments = sanitized.filter(c => !validComments.includes(c));
+            let reviewBody = `## Jazz Code Review\n\n${summarySection}${modelLabel}`;
+            if (invalidComments.length > 0) {
+              reviewBody += '\n\n### General Comments\n\n';
+              reviewBody += invalidComments.map(c => `- ${c.body}`).join('\n');
+            }
+
+            if (validComments.length > 0) {
+              const { data: prFiles } = await github.rest.pulls.listFiles({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              const deletedPaths = new Set(
+                prFiles.filter((f) => f.status === 'removed').map((f) => f.filename)
+              );
+
+              const diffLines = new Map();
+              for (const file of prFiles) {
+                if (!file.patch) continue;
+                const left = new Set();
+                const right = new Set();
+                const lines = file.patch.split('\n');
+                let oldLine = 0;
+                let newLine = 0;
+                for (const line of lines) {
+                  const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+                  if (hunkMatch) {
+                    oldLine = parseInt(hunkMatch[1], 10);
+                    newLine = parseInt(hunkMatch[2], 10);
+                    continue;
+                  }
+                  if (line.startsWith('\\ ')) continue;
+                  if (line.startsWith('-')) {
+                    left.add(oldLine);
+                    oldLine++;
+                  } else if (line.startsWith('+')) {
+                    right.add(newLine);
+                    newLine++;
+                  } else {
+                    left.add(oldLine);
+                    right.add(newLine);
+                    oldLine++;
+                    newLine++;
+                  }
+                }
+                diffLines.set(file.filename, { left, right });
+              }
+
+              const isLineInDiff = (c) => {
+                const fileDiff = diffLines.get(c.path);
+                if (!fileDiff) return false;
+                const side = deletedPaths.has(c.path) ? 'LEFT' : (c.side || 'RIGHT');
+                const validSet = side === 'LEFT' ? fileDiff.left : fileDiff.right;
+                if (!validSet.has(c.line)) return false;
+                const hasStartLine =
+                  Number.isInteger(c.start_line) && c.start_line > 0 && c.start_line < c.line;
+                if (hasStartLine && !validSet.has(c.start_line)) return false;
+                return true;
+              };
+
+              const inlineComments = validComments.filter(isLineInDiff);
+              const unresolvedComments = validComments.filter(c => !isLineInDiff(c));
+
+              if (unresolvedComments.length > 0) {
+                reviewBody += '\n\n### Comments on lines outside the diff\n\n';
+                reviewBody += unresolvedComments.map(c => `- **${c.path}:${c.line}** — ${c.body}`).join('\n');
+              }
+
+              const mapComment = (c) => {
+                const isDeleted = deletedPaths.has(c.path);
+                const side = isDeleted ? 'LEFT' : (c.side || 'RIGHT');
+                const hasValidRange =
+                  Number.isInteger(c.start_line) &&
+                  Number.isInteger(c.line) &&
+                  c.start_line > 0 &&
+                  c.start_line < c.line;
+                return {
+                  path: c.path,
+                  line: c.line,
+                  ...(hasValidRange && {
+                    start_line: c.start_line,
+                    start_side: side
+                  }),
+                  side,
+                  body: c.body
+                };
+              };
+
+              if (inlineComments.length > 0) {
+                await github.rest.pulls.createReview({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                  commit_id: headSha,
+                  event: 'COMMENT',
+                  body: reviewBody,
+                  comments: inlineComments.map(mapComment)
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: reviewBody
+                });
+              }
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: reviewBody
+              });
+            }

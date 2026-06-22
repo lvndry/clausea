@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from src.utils.grading import GradeLetter, coerce_grade, score_to_grade
+
 logger = logging.getLogger(__name__)
 
 TierRelevance = Literal["core", "extended"]
@@ -35,8 +37,33 @@ CORE_DOC_TYPES = {
 
 
 class DocumentAnalysisScores(BaseModel):
-    score: int
+    """Per-dimension A–E grade with mandatory LLM justification."""
+
+    grade: GradeLetter
     justification: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_score(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "grade" not in data and "score" in data:
+            try:
+                data = dict(data)
+                data["grade"] = score_to_grade(int(data["score"]))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(data.get("grade"), str):
+            data = dict(data)
+            data["grade"] = coerce_grade(data["grade"])
+        return data
+
+    @property
+    def score(self) -> int:
+        """Legacy user-friendliness proxy (0–10) derived from letter grade."""
+        from src.utils.grading import grade_to_user_score
+
+        return grade_to_user_score(self.grade)
 
 
 class EvidenceSpan(BaseModel):
@@ -60,10 +87,32 @@ class EvidenceSpan(BaseModel):
         return self
 
 
+class SourceCitation(BaseModel):
+    """User-facing source metadata for a verified evidence quote."""
+
+    document_id: str
+    document_title: str | None = None
+    document_type: str | None = None
+    document_url: str
+    quote: str
+    section_title: str | None = None
+    start_char: int | None = None
+    end_char: int | None = None
+    content_hash: str | None = None
+    verified: bool = True
+
+
 class ExtractedTextItem(BaseModel):
     """An extracted, normalized text item with evidence."""
 
     value: str
+    materiality: Literal["standard_industry", "notable", "material_risk"] | None = Field(
+        default=None,
+        description=(
+            "Consumer-facing materiality tier from extraction LLM or batch classifier. "
+            "When set, downstream filters prefer this over regex fallback."
+        ),
+    )
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
 
@@ -374,6 +423,40 @@ class CoverageItem(BaseModel):
     evidence_count: int | None = None
 
 
+TopicStatus = Literal["found", "missing", "not_disclosed", "ambiguous"]
+TopicStance = Literal["low_risk", "moderate_risk", "high_risk", "not_disclosed", "mixed"]
+
+
+class TopicStanceBreakdown(BaseModel):
+    """Deterministic per-topic status and risk stance at product level."""
+
+    topic: InsightCategory
+    status: TopicStatus
+    stance: TopicStance
+    topic_score: int | None = Field(default=None, ge=0, le=10)
+    rationale: str | None = None
+    rationale_key: str | None = None
+    rationale_params: dict[str, int | str | None] | None = None
+    evidence_count: int | None = None
+    document_count: int | None = None
+    headline_claim: str | None = None
+    supporting_citations: list["TopicSupportCitation"] = Field(default_factory=list)
+    conflict_note: str | None = None
+    why_it_matters: str | None = None
+    recommended_action: str | None = None
+
+
+class TopicSupportCitation(BaseModel):
+    """Compact citation attached to topic overview cards."""
+
+    document_id: str
+    document_title: str | None = None
+    document_url: str | None = None
+    quote: str
+    section_title: str | None = None
+    verified: bool = True
+
+
 class DocumentAnalysis(BaseModel):
     """
     Full document analysis — narrative, scoring, and clause-level breakdown.
@@ -384,11 +467,27 @@ class DocumentAnalysis(BaseModel):
 
     # Narrative and scoring
     summary: str
-    scores: dict[str, DocumentAnalysisScores]
-    risk_score: int = Field(default=5, ge=0, le=10, description="Overall risk score from 0-10")
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ] = Field(default="moderate", description="Privacy friendliness level based on risk score")
+    scores: dict[str, DocumentAnalysisScores] = Field(default_factory=dict)
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = Field(default=None, description="Privacy friendliness level based on risk score")
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None, description="Overall A–E grade from LLM with server-side validation"
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="Mandatory LLM reasoning for the overall grade",
+    )
     liability_risk: int | None = Field(
         default=None, ge=0, le=10, description="Liability risk score (0-10, for business users)"
     )
@@ -456,8 +555,30 @@ class DocumentAnalysis(BaseModel):
 
 
 class MetaSummaryScore(BaseModel):
-    score: int
+    grade: GradeLetter
     justification: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_score(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "grade" not in data and "score" in data:
+            try:
+                data = dict(data)
+                data["grade"] = score_to_grade(int(data["score"]))
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(data.get("grade"), str):
+            data = dict(data)
+            data["grade"] = coerce_grade(data["grade"])
+        return data
+
+    @property
+    def score(self) -> int:
+        from src.utils.grading import grade_to_user_score
+
+        return grade_to_user_score(self.grade)
 
 
 class MetaSummaryScores(BaseModel):
@@ -494,11 +615,37 @@ class ProductContradiction(BaseModel):
 
 class MetaSummary(BaseModel):
     summary: str
+    headline_claim: str | None = Field(
+        default=None,
+        description=(
+            "One human-friendly sentence summarising the product's single most important "
+            "privacy posture. Generated by the LLM as part of the product overview."
+        ),
+    )
     scores: MetaSummaryScores
-    risk_score: int
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ]
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = Field(
+        default=None,
+        description="Privacy friendliness; derived deterministically from risk_score",
+    )
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None, description="Overall A–E grade from LLM with server-side validation"
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="Mandatory LLM reasoning for the overall grade",
+    )
     keypoints: list[str] = Field(default_factory=list)
     data_collected: list[str] | None = None
     data_purposes: list[str] | None = None
@@ -511,6 +658,7 @@ class MetaSummary(BaseModel):
     privacy_signals: PrivacySignals | None = None
     compliance_status: dict[str, int] | None = None
     coverage: list[CoverageItem] | None = None
+    topic_stances: list[TopicStanceBreakdown] | None = None
     contract_clauses: list[str] | None = None
     contradictions: list[ProductContradiction] | None = None
 
@@ -634,6 +782,10 @@ class ConsumerCase(BaseModel):
     )
     means_for_you: str = ""
     severity: ConsumerSeverity = "medium"
+    materiality: Literal["standard_industry", "notable", "material_risk"] | None = Field(
+        default=None,
+        description="Context-aware materiality from consumer explainer LLM; drives watch-out calibration.",
+    )
     classification: str | None = None
     what_they_get: str | None = Field(
         default=None, description="What the recipient receives, for the who_gets_your_data list."
@@ -643,6 +795,8 @@ class ConsumerCase(BaseModel):
     )
     quote: str | None = None
     quote_status: str = "none"
+    citation: SourceCitation | None = None
+    citations: list[SourceCitation] = Field(default_factory=list)
 
     @field_validator("severity", mode="before")
     @classmethod
@@ -700,7 +854,10 @@ class ConsumerExplainer(BaseModel):
 
     Finding lists are ordered worst-first. ``grade`` is advisory as emitted by
     the model and is re-clamped server-side from ``critical_findings_count`` by
-    the validator in analyser.py.
+    the validator in analyser.py. For product pages, the service layer further
+    reconciles both ``grade`` and ``grade_reason`` to the canonical overview
+    grade, so the explainer's grade always matches the overview's deterministic
+    risk scoring.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -806,7 +963,7 @@ def coerce_doc_type_from_classifier(raw: str | None) -> DocType:
     """
     key = (raw or "other").strip()
     if key in _VALID_DOC_TYPE_VALUES:
-        return key  # type: ignore[return-value]
+        return key  # ty: ignore[invalid-return-type]
     return "other"
 
 
@@ -833,6 +990,16 @@ class ComplianceBreakdown(BaseModel):
     status: Literal["Compliant", "Partially Compliant", "Non-Compliant", "Unknown"]
     strengths: list[str] = Field(description="What they do well.")
     gaps: list[str] = Field(description="What is missing or unclear.")
+    assessment_notes: str | None = Field(
+        default=None,
+        description="Brief summary of the evidence basis for this grade.",
+    )
+
+    def has_rationale(self) -> bool:
+        """True when the grade is backed by visible assessment notes."""
+        if self.assessment_notes and self.assessment_notes.strip():
+            return True
+        return bool(self.strengths or self.gaps)
 
 
 class ProductOverview(BaseModel):
@@ -848,12 +1015,36 @@ class ProductOverview(BaseModel):
     last_updated: datetime | None = None
 
     # Decision Support
-    verdict: Literal[
-        "very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"
-    ]
-    risk_score: int = Field(ge=0, le=10)
+    verdict: (
+        Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
+        | None
+    ) = None
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
     one_line_summary: str = Field(
         examples=["Spotify collects extensive data for ads but offers strong user rights"]
+    )
+    headline_claim: str | None = Field(
+        default=None,
+        description=(
+            "One human-friendly sentence summarising the product's single most important "
+            "privacy posture, as generated by the LLM."
+        ),
+    )
+    grade: Literal["A", "B", "C", "D", "E"] | None = Field(
+        default=None,
+        description="Overall A–E privacy grade from LLM",
+    )
+    grade_justification: str | None = Field(
+        default=None,
+        description="LLM reasoning for the overall grade",
     )
 
     # Core Insights (what users most want to know)
@@ -888,8 +1079,15 @@ class ProductOverview(BaseModel):
     # Compliance status per regulation (e.g., {"GDPR": 8, "CCPA": 7})
     compliance_status: dict[str, int] | None = None
 
+    # Justified per-regime compliance (score + strengths/gaps from product_compliance store)
+    compliance: dict[str, ComplianceBreakdown] | None = Field(
+        default=None,
+        description="Evidence-backed compliance breakdown keyed by regulation.",
+    )
+
     # Quick-scan privacy signals
     privacy_signals: PrivacySignals | None = None
+    topic_stances: list[TopicStanceBreakdown] | None = None
 
     # User Empowerment
     your_rights: list[str] | None = Field(
@@ -938,7 +1136,15 @@ class DocumentSummary(BaseModel):
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = None
-    risk_score: int | None = Field(default=None, ge=0, le=10)
+    risk_score: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Overall risk 0-10; derived deterministically from computed dimension scores "
+            "(not a separate LLM risk assignment)"
+        ),
+    )
     top_concerns: list[str] | None = Field(default=None, description="Top 3 concerns.")
     summary: str | None = Field(
         default=None, description="User-oriented explanation from analysis."
@@ -1054,7 +1260,7 @@ class DocumentSection(BaseModel):
 class DocumentRiskBreakdown(BaseModel):
     """Detailed risk assessment for a document."""
 
-    overall_risk: int = Field(ge=0, le=10)
+    overall_risk: int | None = Field(default=None, ge=0, le=10)
     risk_by_category: dict[str, int] = Field(
         default_factory=dict,
         examples=[{"data_sharing": 8, "retention": 5}],
@@ -1067,12 +1273,13 @@ class DocumentRiskBreakdown(BaseModel):
 
         Without this, a single missing nested field discards the entire document
         analysis. When overall_risk is absent we derive it from risk_by_category
-        (mean), falling back to a neutral 5 only when no category signal exists.
+        (mean). When no category signal exists, overall_risk stays unset.
         """
         if isinstance(data, dict) and data.get("overall_risk") in (None, ""):
             categories = data.get("risk_by_category") or {}
             values = [v for v in categories.values() if isinstance(v, int | float)]
-            data["overall_risk"] = round(sum(values) / len(values)) if values else 5
+            if values:
+                data["overall_risk"] = round(sum(values) / len(values))
         return data
 
     top_concerns: list[str] = Field(default_factory=list, description="Specific concerns.")
@@ -1162,7 +1369,7 @@ class CrossDocumentAnalysis(BaseModel):
         if not v:
             return []
         result = []
-        for item in v:  # type: ignore[union-attr]
+        for item in v:  # ty: ignore[not-iterable]
             if isinstance(item, str):
                 result.append({"topic": item, "severity": "medium"})
             else:
@@ -1456,9 +1663,16 @@ class Document(BaseModel):
     url: str
     title: str | None = None
     product_id: str
+    # Canonical document rows can be shared across multiple products.
+    # product_id remains the canonical owner for backward compatibility, while
+    # product_ids tracks all linked products that can reuse this document.
+    product_ids: list[str] = Field(default_factory=list)
     doc_type: DocType = "other"
     markdown: str
-    text: str
+    # text is a transient derived field — not persisted to MongoDB.
+    # It is auto-populated from markdown when empty (e.g. after a DB load)
+    # so downstream analysis code that reads document.text continues to work.
+    text: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     versions: list[dict[str, Any]] = Field(default_factory=list)
     analysis: DocumentAnalysis | None = None
@@ -1473,6 +1687,38 @@ class Document(BaseModel):
     # freshness window, while older docs are still re-fetched for change detection.
     updated_at: datetime = Field(default_factory=datetime.now)
     tier_relevance: TierRelevance = "extended"
+    content_hash: str | None = None
+    analysis_error: str | None = None
+
+    @model_validator(mode="after")
+    def _populate_text_from_markdown(self) -> "Document":
+        """Back-fill text from markdown when absent (e.g. loaded from DB after cleanup)."""
+        if not self.text and self.markdown:
+            from src.utils.markdown import markdown_to_text
+
+            self.text = markdown_to_text(self.markdown)
+        return self
+
+    @model_validator(mode="after")
+    def _ensure_product_membership(self) -> "Document":
+        linked: list[str] = []
+        for candidate in [self.product_id, *self.product_ids]:
+            if not isinstance(candidate, str):
+                continue
+            normalized = candidate.strip()
+            if normalized and normalized not in linked:
+                linked.append(normalized)
+
+        if not linked:
+            linked = [self.product_id]
+
+        # Keep product_id as the canonical first member.
+        self.product_id = linked[0]
+        self.product_ids = linked
+        return self
+
+    def is_linked_to_product(self, product_id: str) -> bool:
+        return product_id in self.product_ids
 
 
 # Resolve forward references now that all classes are defined.
