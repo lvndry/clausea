@@ -32,6 +32,7 @@ from src.models.pipeline_job import (
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
+from src.repositories.finding_repository import FindingRepository
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.repositories.product_repository import ProductRepository
@@ -371,6 +372,24 @@ class PipelineService:
                         job.started_at = datetime.now()
                         await self._pipeline_repo.update_fields(
                             db, job.id, {"started_at": job.started_at}
+                        )
+
+                    # Purge any findings left over from a previous attempt.
+                    # When a job crashes mid-analysis and is requeued, the per-document
+                    # delete-then-insert loop in rebuild_findings_for_product only clears
+                    # findings for documents it reaches before the next crash. Across
+                    # several crash/retry cycles this causes unbounded accumulation:
+                    # one product reached 7 000+ findings (quota-filling) when the
+                    # expected ceiling is ~100-500. Deleting everything up front makes
+                    # every run a clean rebuild from scratch, keeping the collection bounded.
+                    stale_count = await FindingRepository().delete_findings_for_product(
+                        db, product.id
+                    )
+                    if stale_count:
+                        logger.info(
+                            "Cleared %d stale finding(s) for %s before pipeline run",
+                            stale_count,
+                            job.product_slug,
                         )
 
                     # === Step 1: Crawl ===
