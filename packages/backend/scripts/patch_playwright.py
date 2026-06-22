@@ -53,6 +53,7 @@ def main() -> None:
 
     patched = src
     total_replaced = 0
+    found_patterns = 0
     for old, new in PATCHES:
         count = patched.count(old)
         if count == 0:
@@ -61,12 +62,20 @@ def main() -> None:
         patched = patched.replace(old, new)
         print(f"  Replaced {count}x: {old!r}")
         total_replaced += count
+        found_patterns += 1
 
     if total_replaced == 0:
         print(
             f"Playwright patch: nothing to do in {path} (all patterns absent — likely already applied)"
         )
         return
+
+    if 0 < found_patterns < len(PATCHES):
+        sys.exit(
+            "ERROR: Partial patch applied — some patterns were found but others were missing. "
+            "coreBundle.js will still crash at runtime on unpatched properties. "
+            "Check whether Playwright changed its formatting or variable names."
+        )
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(patched)
