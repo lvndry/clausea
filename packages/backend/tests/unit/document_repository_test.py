@@ -78,7 +78,11 @@ async def test_update_drops_empty_text_when_stored_has_content() -> None:
 
 @pytest.mark.asyncio
 async def test_update_writes_text_when_incoming_has_content() -> None:
-    """Normal path: a full Document with real text writes through unchanged."""
+    """Normal path: a full Document with real content writes markdown through unchanged.
+
+    text is a transient derived field — it is always excluded from MongoDB writes.
+    Only markdown (the canonical representation) is expected in the $set payload.
+    """
     repo = DocumentRepository()
     db, update_one = _fake_db_with_existing(text="old text", markdown="# old")
     full_doc = _make_doc(text="new policy text", markdown="# new")
@@ -88,7 +92,8 @@ async def test_update_writes_text_when_incoming_has_content() -> None:
 
     args, _kwargs = update_one.call_args
     set_payload = args[1]["$set"]
-    assert set_payload["text"] == "new policy text"
+    # text is transient and excluded from MongoDB writes; only markdown is persisted.
+    assert "text" not in set_payload
     assert set_payload["markdown"] == "# new"
 
 
