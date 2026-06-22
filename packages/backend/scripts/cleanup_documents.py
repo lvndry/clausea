@@ -116,16 +116,18 @@ async def run_cleanup() -> None:
             .limit(200)
             .to_list(length=200)
         )
-        avg_text_bytes = (
-            sum(len((doc.get("text") or "").encode()) for doc in sample) / len(sample)
-            if sample
-            else 0.0
-        )
-        estimated_mb = (avg_text_bytes * text_count) / (1024 * 1024)
-        print(
-            f"      Estimated text field size: ~{estimated_mb:.1f} MB "
-            f"(avg {avg_text_bytes / 1024:.1f} KB per non-empty doc, ×{text_count} total)."
-        )
+        if sample:
+            avg_text_bytes = sum(len((doc.get("text") or "").encode()) for doc in sample) / len(
+                sample
+            )
+            estimated_mb = (avg_text_bytes * text_count) / (1024 * 1024)
+            print(
+                f"      Estimated text field size: ~{estimated_mb:.1f} MB "
+                f"(avg {avg_text_bytes / 1024:.1f} KB per non-empty doc, ×{text_count} total)."
+            )
+        else:
+            # All sampled documents had empty/missing text — skip the estimate.
+            print("      Estimated text field size: unavailable (no non-empty docs in sample).")
         print("      Removing 'text' field via $unset …")
         try:
             result = await db.documents.update_many(
@@ -209,7 +211,7 @@ async def run_cleanup() -> None:
     print(f"  'text' field removed from    : {unset_count} documents")
     print(f"  oversized markdown truncated : {truncated_count} documents")
 
-    if unset_count > 0:
+    if unset_count > 0 and avg_text_bytes > 0.0:
         estimated_total_text_mb = (avg_text_bytes * text_count) / (1024 * 1024)
         print(f"  estimated MB freed (text)    : ~{estimated_total_text_mb:.1f} MB")
     if truncated_mb_freed > 0:

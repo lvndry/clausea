@@ -84,8 +84,9 @@ class DocumentStorer:
                     ):
                         markdown = markdown[:_MAX_MARKDOWN_LENGTH] + _MARKDOWN_TRUNCATION_SUFFIX
                         document.markdown = markdown
-                        # Re-derive text from the capped markdown so hash comparisons
-                        # are consistent with what will be stored.
+                        # Re-derive text from the truncated markdown so the content
+                        # fingerprint (computed below) reflects exactly what will be
+                        # stored — not the original pre-truncation content.
                         document.text = markdown_to_text(markdown)
 
                     source_product_id = document.product_id
