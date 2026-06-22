@@ -33,7 +33,7 @@ class DocumentVersionRepository:
             regions=list(existing_doc.regions),
             effective_date=existing_doc.effective_date,
             markdown=existing_doc.markdown,
-            text=existing_doc.text,
+            text=existing_doc.markdown,
             content_hash=existing_doc.content_hash,
             metadata=dict(existing_doc.metadata),
             product_slug=product_slug,

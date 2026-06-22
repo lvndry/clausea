@@ -17,7 +17,6 @@ def _make_document(doc_type: str) -> Document:
         product_id="prod-1",
         doc_type=doc_type,  # type: ignore[arg-type]
         markdown="text",
-        text="text",
     )
 
 

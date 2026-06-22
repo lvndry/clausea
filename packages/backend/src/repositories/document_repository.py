@@ -246,8 +246,8 @@ class DocumentRepository(BaseRepository):
     async def find_by_product_id(self, db: AgnosticDatabase, product_id: str) -> list[Document]:
         """Get all documents for a specific product (listing / light reads).
 
-        Excludes heavy fields (text, markdown, analysis, extraction) from MongoDB.
-        Missing ``text`` / ``markdown`` are filled with empty strings for model validation.
+        Excludes heavy fields (markdown, analysis, extraction) from MongoDB.
+        Missing ``markdown`` is filled with an empty string for model validation.
 
         Args:
             db: Database instance
@@ -256,12 +256,11 @@ class DocumentRepository(BaseRepository):
         Returns:
             List of documents for the product
         """
-        projection = {"text": 0, "markdown": 0, "analysis": 0, "extraction": 0}
+        projection = {"markdown": 0, "analysis": 0, "extraction": 0}
         documents: list[dict[str, Any]] = await db.documents.find(
             _product_membership_query(product_id), projection
         ).to_list(length=None)
         for document in documents:
-            document.setdefault("text", "")
             document.setdefault("markdown", "")
         return [
             Document(**_contextualize_document_for_product(document, product_id))
@@ -283,17 +282,16 @@ class DocumentRepository(BaseRepository):
     async def find_by_product_id_with_analysis(
         self, db: AgnosticDatabase, product_id: str
     ) -> list[Document]:
-        """Get all documents with analysis, excluding heavy body fields (text, markdown, extraction).
+        """Get all documents with analysis, excluding heavy body fields (markdown, extraction).
 
         Use this when DocumentSummary fields are needed but the raw text/markdown is not —
         avoids transferring large body fields over the wire.
         """
-        projection = {"text": 0, "markdown": 0, "extraction": 0}
+        projection = {"markdown": 0, "extraction": 0}
         documents: list[dict[str, Any]] = await db.documents.find(
             _product_membership_query(product_id), projection
         ).to_list(length=None)
         for document in documents:
-            document.setdefault("text", "")
             document.setdefault("markdown", "")
         return [
             Document(**_contextualize_document_for_product(document, product_id))
@@ -401,12 +399,11 @@ class DocumentRepository(BaseRepository):
     async def save(self, db: AgnosticDatabase, document: Document) -> Document:
         """Store a document in the database.
 
-        Refuses to persist a Document whose ``text`` AND ``markdown`` are both
-        effectively empty. Such inserts created the 40-empty-doc graveyard in
-        the past — a Document with no source text is useless for analysis and
-        masks crawl bugs by looking superficially valid in MongoDB. Callers
-        that legitimately need to store empty content (none today) should
-        catch ValueError explicitly.
+        Refuses to persist a Document whose ``markdown`` is effectively empty.
+        Such inserts created the 40-empty-doc graveyard in the past — a Document
+        with no source text is useless for analysis and masks crawl bugs by
+        looking superficially valid in MongoDB. Callers that legitimately need
+        to store empty content (none today) should catch ValueError explicitly.
 
         Args:
             db: Database instance
@@ -416,7 +413,7 @@ class DocumentRepository(BaseRepository):
             The stored document
 
         Raises:
-            ValueError: If text and markdown are both empty / whitespace.
+            ValueError: If markdown is empty / whitespace.
             Exception: If storage fails for other reasons.
         """
         if not (document.markdown or "").strip():
@@ -426,8 +423,7 @@ class DocumentRepository(BaseRepository):
                 f"of persisting a placeholder)."
             )
         try:
-            # text is a transient derived field — exclude it from MongoDB storage.
-            document_dict = document.model_dump(exclude={"text"})
+            document_dict = document.model_dump()
             document_dict["product_ids"] = _merge_product_ids(
                 canonical_product_id=document.product_id,
                 linked_product_ids=document_dict.get("product_ids"),
@@ -489,8 +485,7 @@ class DocumentRepository(BaseRepository):
             Exception: If update fails
         """
         try:
-            # text is a transient derived field — exclude it from MongoDB storage.
-            document_dict = document.model_dump(exclude={"text"})
+            document_dict = document.model_dump()
             incoming_markdown = document_dict.get("markdown") or ""
             guarded_fields = ("analysis", "extraction", "consumer_explainer")
             projection = {

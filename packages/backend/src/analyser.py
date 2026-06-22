@@ -335,7 +335,7 @@ async def analyse_product_documents(
 
 def _compute_document_hash(document: Document) -> str:
     """Compute a hash for the document content to enable caching."""
-    content = f"{document.text}{document.doc_type}"
+    content = f"{document.markdown}{document.doc_type}"
     return hashlib.sha256(content.encode()).hexdigest()
 
 
@@ -958,8 +958,8 @@ async def analyse_document(
     else:
         token = cancellation_token
 
-    if not (document.text or "").strip():
-        logger.info(f"Skipping analysis for document {document.id}: no text content")
+    if not (document.markdown or "").strip():
+        logger.info(f"Skipping analysis for document {document.id}: no content")
         return None
 
     # Check cache if enabled and document already has analysis
@@ -1032,18 +1032,18 @@ Extracted facts (evidence-backed JSON):
     if extracted_prompt is not None:
         prompt = extracted_prompt
     else:
-        # Fallback: raw text path (extraction unavailable)
-        doc_text = document.text or ""
+        # Fallback: raw markdown path (extraction unavailable)
+        doc_markdown = document.markdown or ""
         max_chars = 200000
 
-        if len(doc_text) > max_chars:
+        if len(doc_markdown) > max_chars:
             logger.warning(
-                f"Document {document.id} is very long ({len(doc_text)} chars), truncating for fallback path."
+                f"Document {document.id} is very long ({len(doc_markdown)} chars), truncating for fallback path."
             )
-            doc_text = (
-                doc_text[: max_chars // 2]
+            doc_markdown = (
+                doc_markdown[: max_chars // 2]
                 + "\n\n[... document truncated — set analysis_completeness to 'partial' ...]\n\n"
-                + doc_text[-max_chars // 2 :]
+                + doc_markdown[-max_chars // 2 :]
             )
 
         prompt = f"""Document Title: {document.title or "Not specified"}
@@ -1052,11 +1052,11 @@ Document URL: {document.url}
 Document Regions: {document.regions}
 Document Locale: {document.locale or "Not specified"}
 
-Extraction completeness: PARTIAL — structured extraction unavailable, analyzing raw text.
+Extraction completeness: PARTIAL — structured extraction unavailable, analyzing raw content.
 Set analysis_completeness to 'partial' in your response.
 
 Document content:
-{doc_text}""".strip()
+{doc_markdown}""".strip()
 
     last_exception: Exception | None = None
 

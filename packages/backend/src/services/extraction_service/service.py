@@ -117,7 +117,7 @@ async def extract_document_facts(
         logger.debug(f"Using cached v4 extraction for document {document.id}")
         return document.extraction
 
-    text = document.text or ""
+    text = document.markdown or ""
     chunks = _chunk_text(text, chunk_size=8000, overlap=800)
     logger.debug(f"Chunked document {document.id} into {len(chunks)} chunk(s)")
 

@@ -18,14 +18,13 @@ from src.models.document import Document
 from src.repositories.document_repository import DocumentRepository
 
 
-def _make_doc(text: str, markdown: str) -> Document:
+def _make_doc(markdown: str) -> Document:
     return Document(
         id="doc-1",
         url="https://example.com/policy",
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown=markdown,
-        text=text,
         metadata={},
         versions=[],
         analysis=None,
@@ -64,7 +63,7 @@ async def test_update_excludes_text_from_set_payload() -> None:
     """text is a transient computed field and must never appear in the $set payload."""
     repo = DocumentRepository()
     db, update_one = _fake_db_with_existing(text="real policy content " * 100, markdown="# real")
-    partial_doc = _make_doc(text="", markdown="")
+    partial_doc = _make_doc("")
 
     ok = await repo.update(db, partial_doc)
     assert ok is True
@@ -85,7 +84,7 @@ async def test_update_writes_text_when_incoming_has_content() -> None:
     """
     repo = DocumentRepository()
     db, update_one = _fake_db_with_existing(text="old text", markdown="# old")
-    full_doc = _make_doc(text="new policy text", markdown="# new")
+    full_doc = _make_doc("# new")
 
     ok = await repo.update(db, full_doc)
     assert ok is True
@@ -102,7 +101,7 @@ async def test_update_allows_empty_when_stored_is_also_empty() -> None:
     """Edge case: both sides empty means there is nothing to protect."""
     repo = DocumentRepository()
     db, update_one = _fake_db_with_existing(text="", markdown="")
-    doc = _make_doc(text="", markdown="")
+    doc = _make_doc("")
 
     ok = await repo.update(db, doc)
     assert ok is True
@@ -117,7 +116,7 @@ async def test_update_allows_empty_when_stored_is_also_empty() -> None:
 async def test_update_preserves_canonical_owner_on_product_scoped_write() -> None:
     repo = DocumentRepository()
     db, update_one = _fake_db_with_existing(text="old text", markdown="# old")
-    scoped_doc = _make_doc(text="new text", markdown="# new")
+    scoped_doc = _make_doc("# new")
     scoped_doc.product_id = "prod-2"  # document loaded in product-2 context
     scoped_doc.product_ids = ["prod-2", "prod-1"]
 
@@ -138,7 +137,7 @@ async def test_save_refuses_empty_document() -> None:
     documents_collection.insert_one = AsyncMock()
     db = AsyncMock()
     db.documents = documents_collection
-    doc = _make_doc(text="   ", markdown="")  # whitespace counts as empty
+    doc = _make_doc("")  # whitespace counts as empty
 
     with pytest.raises(ValueError, match="Refusing to store empty document"):
         await repo.save(db, doc)
@@ -152,7 +151,7 @@ async def test_save_accepts_normal_document() -> None:
     documents_collection.insert_one = AsyncMock()
     db = AsyncMock()
     db.documents = documents_collection
-    doc = _make_doc(text="real policy content " * 50, markdown="# real policy")
+    doc = _make_doc("# real policy")
 
     saved = await repo.save(db, doc)
     assert saved is doc
@@ -162,7 +161,7 @@ async def test_save_accepts_normal_document() -> None:
 @pytest.mark.asyncio
 async def test_find_by_product_and_url_scopes_lookup_to_product() -> None:
     repo = DocumentRepository()
-    doc = _make_doc(text="policy text", markdown="# policy")
+    doc = _make_doc("# policy")
     doc.product_id = "prod-primary"
     doc.product_ids = ["prod-primary", "prod-1"]
     documents_collection = AsyncMock()
@@ -210,7 +209,7 @@ async def test_link_to_product_adds_product_membership() -> None:
 @pytest.mark.asyncio
 async def test_find_by_product_id_full_contextualizes_product_id() -> None:
     repo = DocumentRepository()
-    shared_doc = _make_doc(text="policy text", markdown="# policy")
+    shared_doc = _make_doc("# policy")
     shared_doc.product_id = "prod-1"
     shared_doc.product_ids = ["prod-1", "prod-2"]
 

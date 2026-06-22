@@ -157,23 +157,23 @@ async def _run_classify_only(products: list) -> None:
                 spinner="dots",
             ):
                 for doc in documents:
-                    if not doc.text:
-                        logger.info("Skipping doc without text", document_id=doc.id)
+                    if not doc.markdown:
+                        logger.info("Skipping doc without content", document_id=doc.id)
                         continue
                     classification = await analyzer.classify_document(
-                        doc.url, doc.text, doc.metadata
+                        doc.url, doc.markdown, doc.metadata
                     )
                     is_policy = classification.get("is_policy_document", False)
                     doc.doc_type = classification.get("classification", doc.doc_type)
 
-                    locale = await analyzer.detect_locale(doc.text, doc.metadata, doc.url)
+                    locale = await analyzer.detect_locale(doc.markdown, doc.metadata, doc.url)
                     doc.locale = locale.get("locale", doc.locale)
 
-                    regions = await analyzer.detect_regions(doc.text, doc.metadata, doc.url)
+                    regions = await analyzer.detect_regions(doc.markdown, doc.metadata, doc.url)
                     doc.regions = regions.get("regions", doc.regions or [])
 
                     effective_date_str = await analyzer.extract_effective_date(
-                        doc.text, doc.metadata
+                        doc.markdown, doc.metadata
                     )
                     if effective_date_str:
                         try:

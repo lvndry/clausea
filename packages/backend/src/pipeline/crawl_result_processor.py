@@ -33,7 +33,6 @@ from src.pipeline.helpers import (
     logger_analysis,
 )
 from src.pipeline.models import ProcessingStats
-from src.utils.markdown import markdown_to_text
 
 
 class CrawlResultProcessor:
@@ -49,7 +48,7 @@ class CrawlResultProcessor:
         document: Document | None = None
 
         try:
-            text_content = markdown_to_text(result.markdown)
+            text_content = result.markdown
 
             if not text_content or len(text_content.strip()) < 300:
                 text_len = len(text_content.strip()) if text_content else 0
@@ -166,7 +165,6 @@ class CrawlResultProcessor:
                 url=result.url,
                 product_id=product.id,
                 markdown=result.markdown,
-                text=text_content,
                 metadata=result.metadata,
                 doc_type=doc_type,
                 locale=detected_locale,

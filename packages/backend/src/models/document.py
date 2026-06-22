@@ -1669,10 +1669,6 @@ class Document(BaseModel):
     product_ids: list[str] = Field(default_factory=list)
     doc_type: DocType = "other"
     markdown: str
-    # text is a transient derived field — not persisted to MongoDB.
-    # It is auto-populated from markdown when empty (e.g. after a DB load)
-    # so downstream analysis code that reads document.text continues to work.
-    text: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     versions: list[dict[str, Any]] = Field(default_factory=list)
     analysis: DocumentAnalysis | None = None
@@ -1689,15 +1685,6 @@ class Document(BaseModel):
     tier_relevance: TierRelevance = "extended"
     content_hash: str | None = None
     analysis_error: str | None = None
-
-    @model_validator(mode="after")
-    def _populate_text_from_markdown(self) -> "Document":
-        """Back-fill text from markdown when absent (e.g. loaded from DB after cleanup)."""
-        if not self.text and self.markdown:
-            from src.utils.markdown import markdown_to_text
-
-            self.text = markdown_to_text(self.markdown)
-        return self
 
     @model_validator(mode="after")
     def _ensure_product_membership(self) -> "Document":

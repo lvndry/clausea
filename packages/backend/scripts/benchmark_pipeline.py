@@ -108,7 +108,7 @@ async def _run_doc(doc: Document, baseline: bool) -> dict[str, Any]:
         return {
             "doc_id": doc.id,
             "doc_type": doc.doc_type,
-            "text_length": len(doc.text or ""),
+            "text_length": len(doc.markdown or ""),
             "models_used": "",
             "call_count": 0,
             "escalation_count": 0,
@@ -125,7 +125,7 @@ async def _run_doc(doc: Document, baseline: bool) -> dict[str, Any]:
     return {
         "doc_id": doc.id,
         "doc_type": doc.doc_type,
-        "text_length": len(doc.text or ""),
+        "text_length": len(doc.markdown or ""),
         "models_used": "|".join(summary.keys()),
         "call_count": _call_count,
         "escalation_count": 0 if baseline else _escalation_count,

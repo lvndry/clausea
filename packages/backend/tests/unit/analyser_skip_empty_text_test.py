@@ -15,7 +15,6 @@ async def test_analyse_document_skips_when_text_empty() -> None:
         product_id="p1",
         doc_type="privacy_policy",
         markdown="",
-        text="",
     )
     with patch("src.analyser.extract_document_facts", new_callable=AsyncMock) as mock_extract:
         result = await analyse_document(doc, use_cache=False)
@@ -30,7 +29,6 @@ async def test_analyse_document_skips_when_text_whitespace_only() -> None:
         product_id="p1",
         doc_type="privacy_policy",
         markdown="   \n\t  ",
-        text="   \n\t  ",
     )
     with patch("src.analyser.extract_document_facts", new_callable=AsyncMock) as mock_extract:
         result = await analyse_document(doc, use_cache=False)
@@ -60,7 +58,6 @@ async def test_analyse_document_empty_text_does_not_use_cache() -> None:
         product_id="p1",
         doc_type="privacy_policy",
         markdown="",
-        text="",
         metadata={"content_hash": "abc"},
         analysis=cached,
     )

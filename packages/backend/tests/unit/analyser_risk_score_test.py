@@ -54,7 +54,6 @@ def _doc(
         product_id=product_id,
         doc_type=doc_type,  # type: ignore[arg-type]
         markdown="",
-        text="",
         analysis=analysis,
     )
 
