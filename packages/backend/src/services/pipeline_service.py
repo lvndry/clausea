@@ -375,21 +375,29 @@ class PipelineService:
                         )
 
                     # Purge any findings left over from a previous attempt.
-                    # When a job crashes mid-analysis and is requeued, the per-document
-                    # delete-then-insert loop in rebuild_findings_for_product only clears
-                    # findings for documents it reaches before the next crash. Across
-                    # several crash/retry cycles this causes unbounded accumulation:
-                    # one product reached 7 000+ findings (quota-filling) when the
-                    # expected ceiling is ~100-500. Deleting everything up front makes
-                    # every run a clean rebuild from scratch, keeping the collection bounded.
-                    stale_count = await FindingRepository().delete_findings_for_product(
-                        db, product.id
-                    )
-                    logger.info(
-                        "Cleared %d stale finding(s) for %s before pipeline run",
-                        stale_count,
-                        job.product_slug,
-                    )
+                    # On retries (attempts > 1) the per-document delete-then-insert loop
+                    # in rebuild_findings_for_product only clears findings for documents
+                    # it reaches before the next crash. Across several crash/retry cycles
+                    # this causes unbounded accumulation (one product reached 7 000+
+                    # findings, filling the Atlas M0 quota). Purging up front on retries
+                    # makes each retry a clean rebuild while leaving findings intact on
+                    # first-time runs, so a crawl failure never wipes a previously
+                    # successful analysis.
+                    if job.attempts > 1:
+                        stale_count = await FindingRepository().delete_findings_for_product(
+                            db, product.id
+                        )
+                        logger.info(
+                            "Cleared %d stale finding(s) for %s before pipeline retry (attempt %d)",
+                            stale_count,
+                            job.product_slug,
+                            job.attempts,
+                        )
+                    else:
+                        logger.info(
+                            "First attempt for %s — skipping stale findings purge",
+                            job.product_slug,
+                        )
 
                     # === Step 1: Crawl ===
                     job.status = "crawling"
