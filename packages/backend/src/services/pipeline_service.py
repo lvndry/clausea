@@ -385,12 +385,11 @@ class PipelineService:
                     stale_count = await FindingRepository().delete_findings_for_product(
                         db, product.id
                     )
-                    if stale_count:
-                        logger.info(
-                            "Cleared %d stale finding(s) for %s before pipeline run",
-                            stale_count,
-                            job.product_slug,
-                        )
+                    logger.info(
+                        "Cleared %d stale finding(s) for %s before pipeline run",
+                        stale_count,
+                        job.product_slug,
+                    )
 
                     # === Step 1: Crawl ===
                     job.status = "crawling"
