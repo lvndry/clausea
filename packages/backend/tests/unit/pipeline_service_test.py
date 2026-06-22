@@ -27,7 +27,9 @@ def pipeline_service(mock_repo):
 
 @pytest.fixture
 def mock_db():
-    return MagicMock()
+    db = MagicMock()
+    db.findings.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
+    return db
 
 
 @pytest.mark.asyncio
@@ -149,7 +151,7 @@ async def test_run_pipeline_zero_documents_marks_no_documents_not_failed(mock_db
 
     service = PipelineService(pipeline_repo=repo)
 
-    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product = SimpleNamespace(id="test-product-id", slug="test-product", name="Test Product")
     product_svc = MagicMock()
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
 
@@ -213,7 +215,7 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
     repo.update_fields = AsyncMock()
     service = PipelineService(pipeline_repo=repo)
 
-    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product = SimpleNamespace(id="test-product-id", slug="test-product", name="Test Product")
     product_svc = MagicMock()
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
 
@@ -331,7 +333,7 @@ async def test_run_pipeline_no_wall_clock_cap_by_default(mock_db, monkeypatch):
     repo.update_fields = AsyncMock()
     service = PipelineService(pipeline_repo=repo)
 
-    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product = SimpleNamespace(id="test-product-id", slug="test-product", name="Test Product")
     product_svc = MagicMock()
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
 
@@ -379,7 +381,7 @@ async def test_run_pipeline_opt_in_cap_marks_timed_out(mock_db, monkeypatch):
     repo.update_fields = AsyncMock()
     service = PipelineService(pipeline_repo=repo)
 
-    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product = SimpleNamespace(id="test-product-id", slug="test-product", name="Test Product")
     product_svc = MagicMock()
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
 
@@ -428,7 +430,7 @@ async def test_overview_stage_heartbeats_during_synthesis(mock_db):
     repo.update_fields = AsyncMock()
     service = PipelineService(pipeline_repo=repo)
 
-    product = SimpleNamespace(slug="test-product", name="Test Product")
+    product = SimpleNamespace(id="test-product-id", slug="test-product", name="Test Product")
     product_svc = MagicMock()
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
     product_svc.get_product_overview_data = AsyncMock(return_value={"overview": {"summary": "ok"}})
