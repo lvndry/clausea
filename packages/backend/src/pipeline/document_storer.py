@@ -76,17 +76,17 @@ class DocumentStorer:
 
                     # Cap markdown to avoid storing bloated omnibus legal documents.
                     # Idempotent: skip if already truncated from a previous run.
-                    if len(
-                        document.markdown
-                    ) > _MAX_MARKDOWN_LENGTH and not document.markdown.endswith(
+                    # Work with a local variable so the caller's Document is only
+                    # updated when the content actually changes.
+                    markdown = document.markdown
+                    if len(markdown) > _MAX_MARKDOWN_LENGTH and not markdown.endswith(
                         _MARKDOWN_TRUNCATION_SUFFIX
                     ):
-                        document.markdown = (
-                            document.markdown[:_MAX_MARKDOWN_LENGTH] + _MARKDOWN_TRUNCATION_SUFFIX
-                        )
+                        markdown = markdown[:_MAX_MARKDOWN_LENGTH] + _MARKDOWN_TRUNCATION_SUFFIX
+                        document.markdown = markdown
                         # Re-derive text from the capped markdown so hash comparisons
                         # are consistent with what will be stored.
-                        document.text = markdown_to_text(document.markdown)
+                        document.text = markdown_to_text(markdown)
 
                     source_product_id = document.product_id
                     existing_doc = await document_service.get_document_by_url(db, document.url)

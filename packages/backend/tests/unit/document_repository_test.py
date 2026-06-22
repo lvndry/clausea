@@ -60,8 +60,8 @@ def _fake_db_with_existing(text: str, markdown: str) -> tuple[Any, AsyncMock]:
 
 
 @pytest.mark.asyncio
-async def test_update_drops_empty_text_when_stored_has_content() -> None:
-    """Partial-loader regression: empty incoming text must not wipe stored text."""
+async def test_update_excludes_text_from_set_payload() -> None:
+    """text is a transient computed field and must never appear in the $set payload."""
     repo = DocumentRepository()
     db, update_one = _fake_db_with_existing(text="real policy content " * 100, markdown="# real")
     partial_doc = _make_doc(text="", markdown="")
