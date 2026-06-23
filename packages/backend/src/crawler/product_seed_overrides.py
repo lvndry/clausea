@@ -1,7 +1,8 @@
 """Known policy-page seeds for products where discovery from the domain root fails.
 
 Merged into every crawl for the matching product slug (in addition to DB
-``crawl_base_urls``). Use mbasic/lightweight URLs for sites behind anti-bot walls.
+``crawl_base_urls``). Prefer lightweight or plain-text policy URLs when the
+primary site is behind anti-bot walls or heavy client-side rendering.
 """
 
 from __future__ import annotations
