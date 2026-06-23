@@ -111,6 +111,7 @@ def _mock_request(user_id: str | None) -> MagicMock:
         request.state.user = None
     else:
         request.state.user = {"user_id": user_id}
+    request.headers = {}
     return request
 
 
@@ -225,3 +226,52 @@ async def test_check_usage_limit_enforces_signed_in_monthly_limit() -> None:
 
     assert exc_info.value.status_code == 429
     assert "Monthly usage limit" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_skips_pro_users() -> None:
+    request = _mock_request("pro-user-456")
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    db = AsyncMock()
+
+    mock_user = MagicMock()
+    mock_user.tier = UserTier.PRO
+
+    with patch("src.core.tier_deps.create_user_service") as mock_factory:
+        mock_svc = AsyncMock()
+        mock_svc.get_user_by_id.return_value = mock_user
+        mock_factory.return_value = mock_svc
+
+        with patch(
+            "src.core.tier_deps.UsageService.check_usage_limit",
+            new=AsyncMock(),
+        ) as mock_check:
+            result = await check_usage_limit(request=request, db=db)
+
+    assert result is None
+    mock_check.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_usage_limit_rejects_stale_bearer_without_preview_fallback() -> None:
+    request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    request.headers = {
+        "Authorization": "Bearer stale-token",
+        "X-Preview-Token": "preview-token-1",
+    }
+    request.client = MagicMock(host="1.2.3.4")
+    db = AsyncMock()
+
+    with patch(
+        "src.core.tier_deps.clerk_auth_service.verify_token",
+        new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")),
+    ):
+        with patch("src.core.tier_deps._preview_usage_svc") as mock_preview_svc:
+            with pytest.raises(HTTPException) as exc_info:
+                await check_usage_limit(request=request, db=db)
+
+    assert exc_info.value.status_code == 401
+    mock_preview_svc.check_and_increment.assert_not_called()

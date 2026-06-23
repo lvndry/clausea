@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { subscriptionApi } from "@/lib/api/subscriptions";
 import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
 import type {
   DocumentSummary,
@@ -142,6 +143,10 @@ export default function CompanyPage({
     "idle" | "submitting" | "success" | "error"
   >("idle");
   const [notifyError, setNotifyError] = useState<string | null>(null);
+  const [restoreStatus, setRestoreStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   useEffect(() => {
     // If SSR pre-loaded both product and overview, skip client-side fetch entirely
@@ -405,6 +410,23 @@ export default function CompanyPage({
     }
   }
 
+  async function handleRestoreProAccess() {
+    setRestoreStatus("loading");
+    setRestoreError(null);
+    try {
+      await subscriptionApi.syncSubscription();
+      setRestoreStatus("success");
+      window.location.reload();
+    } catch (err) {
+      setRestoreStatus("error");
+      setRestoreError(
+        err instanceof Error
+          ? err.message
+          : "Could not restore your subscription.",
+      );
+    }
+  }
+
   if (loading || (!data && indexationMode === "unknown")) {
     return (
       <div className="space-y-8">
@@ -517,10 +539,23 @@ export default function CompanyPage({
               </h2>
               <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
                 This report is unavailable right now because your monthly quota
-                is exhausted. Upgrade your plan for more analyses, or return
+                is exhausted. If you already have Pro, restore your subscription
+                below. Otherwise upgrade your plan for more analyses, or return
                 after your quota resets.
               </p>
+              {restoreError && (
+                <p className="text-sm text-destructive">{restoreError}</p>
+              )}
               <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={() => void handleRestoreProAccess()}
+                  disabled={restoreStatus === "loading"}
+                  className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                >
+                  {restoreStatus === "loading"
+                    ? "Restoring..."
+                    : "Restore Pro access"}
+                </Button>
                 <Link href="/pricing">
                   <Button className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold">
                     View plans

@@ -35,6 +35,7 @@ export async function http(
   } = options;
 
   const userAuth = await auth();
+  const userId = userAuth.userId;
   let token: string | null | undefined = undefined;
   try {
     token = await userAuth.getToken?.({ template: "default" });
@@ -62,7 +63,7 @@ export async function http(
   if (token) {
     (mergedHeaders as Record<string, string>)["Authorization"] =
       `Bearer ${token}`;
-  } else {
+  } else if (!userId) {
     const cookieStore = await cookies();
     const previewToken = cookieStore.get(PREVIEW_TOKEN_COOKIE)?.value;
     if (previewToken) {
@@ -115,7 +116,7 @@ export async function http(
 }
 
 function shouldRetry(status: number): boolean {
-  return status >= 500 || status === 429;
+  return status >= 500;
 }
 
 function delay(ms: number): Promise<void> {

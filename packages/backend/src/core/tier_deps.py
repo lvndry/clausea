@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 from motor.core import AgnosticDatabase
 
 from src.core.database import get_db
+from src.core.jwt import clerk_auth_service
 from src.models.user import UserTier
 from src.services.product_preview_usage import ProductPreviewUsageService
 from src.services.service_factory import create_user_service
@@ -28,10 +30,44 @@ _METERED_PRODUCT_GET_RE = re.compile(
 _preview_usage_svc = ProductPreviewUsageService()
 
 
-def _get_user_id(request: Request) -> str | None:
+def _user_id_from_state(request: Request) -> str | None:
     user = getattr(request.state, "user", None)
     if user and isinstance(user, dict):
-        return user.get("user_id")
+        user_id = user.get("user_id")
+        if isinstance(user_id, str) and user_id:
+            return user_id
+    return None
+
+
+async def _resolve_request_user_id(request: Request) -> str | None:
+    """Resolve the authenticated user ID from middleware state or Bearer JWT."""
+    user_id = _user_id_from_state(request)
+    if user_id:
+        return user_id
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+
+    token = auth_header.removeprefix("Bearer ").strip()
+    if not token:
+        return None
+
+    try:
+        payload: dict[str, Any] = await clerk_auth_service.verify_token(token)
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+    resolved = payload.get("sub") or payload.get("id")
+    if isinstance(resolved, str) and resolved:
+        request.state.user = {
+            "user_id": resolved,
+            "email": payload.get("email"),
+            "name": payload.get("name"),
+        }
+        return resolved
     return None
 
 
@@ -55,12 +91,17 @@ def _should_increment_preview(request: Request) -> bool:
     return request.url.path.endswith("/overview")
 
 
+def _has_bearer_token(request: Request) -> bool:
+    auth_header = request.headers.get("Authorization", "")
+    return auth_header.startswith("Bearer ") and bool(auth_header.removeprefix("Bearer ").strip())
+
+
 async def require_pro(
     request: Request,
     db: AgnosticDatabase = Depends(get_db),
 ) -> None:
     """Dependency that blocks unauthenticated requests (HTTP 401) and non-PRO users (HTTP 402)."""
-    user_id = _get_user_id(request)
+    user_id = await _resolve_request_user_id(request)
     if user_id in _BYPASS_USER_IDS:
         return
     if user_id is None:
@@ -79,11 +120,17 @@ async def check_usage_limit(
     db: AgnosticDatabase = Depends(get_db),
 ) -> None:
     """Dependency that enforces usage limits for signed-in and anonymous users."""
-    user_id = _get_user_id(request)
+    user_id = await _resolve_request_user_id(request)
     if user_id in _BYPASS_USER_IDS:
         return
 
     if user_id is None:
+        if _has_bearer_token(request):
+            raise HTTPException(
+                status_code=401,
+                detail="Session expired. Please sign in again.",
+            )
+
         if not _is_metered_product_get(request) or _is_crawler_request(request):
             return
 
@@ -102,6 +149,11 @@ async def check_usage_limit(
             )
         return
 
+    user_service = create_user_service()
+    user = await user_service.get_user_by_id(db, user_id)
+    if user and user.tier == UserTier.PRO:
+        return
+
     allowed, _ = await UsageService.check_usage_limit(db, user_id)
     if not allowed:
         raise HTTPException(
@@ -115,9 +167,14 @@ async def increment_usage(
     db: AgnosticDatabase = Depends(get_db),
 ) -> None:
     """Dependency that increments usage counter. Call AFTER successful response."""
-    user_id = _get_user_id(request)
+    user_id = await _resolve_request_user_id(request)
     if user_id in _BYPASS_USER_IDS or user_id is None:
         return
+    user_service = create_user_service()
+    user = await user_service.get_user_by_id(db, user_id)
+    if user and user.tier == UserTier.PRO:
+        return
+
     await UsageService.increment_usage(db, user_id, endpoint=request.url.path)
 
 
@@ -126,7 +183,7 @@ async def get_user_tier(
     db: AgnosticDatabase = Depends(get_db),
 ) -> UserTier:
     """Return the authenticated user's tier, defaulting to FREE."""
-    user_id = _get_user_id(request)
+    user_id = await _resolve_request_user_id(request)
     if user_id in _BYPASS_USER_IDS or user_id is None:
         return UserTier.FREE
 

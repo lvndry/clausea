@@ -14,6 +14,10 @@ from src.core.logging import get_logger
 from src.models.user import UserTier
 from src.services.paddle_service import paddle_service
 from src.services.service_factory import create_user_service
+from src.services.subscription_sync import (
+    apply_subscription_data_to_user,
+    resolve_tier_from_price_id,
+)
 from src.services.user_service import UserService
 
 logger = get_logger(__name__)
@@ -46,18 +50,8 @@ async def handle_subscription_created(
             return
 
         price_id = items[0].get("price", {}).get("id")
-        tier = UserTier.FREE
+        tier = resolve_tier_from_price_id(price_id)
 
-        # Map price_id to tier
-        from src.core.config import config
-
-        if price_id in [
-            config.paddle.price_pro_monthly,
-            config.paddle.price_pro_annual,
-        ]:
-            tier = UserTier.PRO
-
-        # Update user
         user.tier = tier
         user.paddle_customer_id = subscription.get("customer_id")
         user.paddle_subscription_id = subscription.get("id")
@@ -92,17 +86,11 @@ async def handle_subscription_updated(
             return
 
         # Use the found user object directly
-        user_obj = user
-
-        # Update subscription status
-        user_obj.subscription_status = subscription.get("status")
-        user_obj.subscription_current_period_end = datetime.fromisoformat(
-            subscription.get("current_billing_period", {}).get("ends_at").replace("Z", "+00:00")
-        )
+        user_obj = apply_subscription_data_to_user(user, subscription)
 
         await user_service.upsert_user(db, user_obj)
         logger.info(
-            f"Updated subscription status for user {user_obj.id}: {user_obj.subscription_status}"
+            f"Updated subscription status for user {user_obj.id}: {user_obj.subscription_status} (tier={user_obj.tier.value})"
         )
 
     except Exception as e:

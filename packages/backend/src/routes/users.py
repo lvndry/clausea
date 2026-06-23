@@ -30,14 +30,25 @@ async def upsert_user(
     if not current.user_id:
         raise HTTPException(status_code=401, detail="Invalid user")
 
+    user_service = create_user_service()
+    existing = await user_service.get_user_by_id(db, current.user_id)
+
+    profile_data = {
+        "email": req.email or current.email,
+        "first_name": req.first_name,
+        "last_name": req.last_name,
+    }
+
+    if existing:
+        await user_service.update_user_profile(db, current.user_id, profile_data)
+        return {"status": "ok", "user_id": current.user_id}
+
     user = User(
         id=current.user_id,
-        email=req.email or current.email,
+        email=profile_data["email"],
         first_name=req.first_name,
         last_name=req.last_name,
     )
-
-    user_service = create_user_service()
     await user_service.upsert_user(db, user)
 
     return {"status": "ok", "user_id": user.id}

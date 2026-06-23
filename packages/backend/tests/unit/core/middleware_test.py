@@ -233,6 +233,31 @@ class TestDispatchFlow:
         call_next.assert_called_once_with(request)
 
     @pytest.mark.asyncio
+    @patch("src.core.middleware.clerk_auth_service")
+    async def test_public_product_route_honors_jwt(
+        self, mock_clerk: MagicMock, middleware: AuthMiddleware
+    ) -> None:
+        mock_clerk.verify_token = AsyncMock(
+            return_value={"sub": "user_123", "email": "user@example.com"}
+        )
+        request = _make_request(
+            path="/products/acme/overview",
+            headers={"Authorization": "Bearer valid-token"},
+        )
+        call_next = AsyncMock(return_value=MagicMock(status_code=200))
+        await middleware.dispatch(request, call_next)
+        call_next.assert_called_once_with(request)
+        assert request.state.user["user_id"] == "user_123"
+
+    @pytest.mark.asyncio
+    async def test_public_product_route_allows_anonymous(self, middleware: AuthMiddleware) -> None:
+        request = _make_request(path="/products/acme/overview", headers={})
+        call_next = AsyncMock(return_value=MagicMock(status_code=200))
+        response = await middleware.dispatch(request, call_next)
+        assert response.status_code == 200
+        call_next.assert_called_once_with(request)
+
+    @pytest.mark.asyncio
     @patch("src.core.middleware.config")
     async def test_authenticated_request_proceeds(
         self, mock_config: MagicMock, middleware: AuthMiddleware
