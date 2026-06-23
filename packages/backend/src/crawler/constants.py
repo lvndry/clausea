@@ -172,6 +172,9 @@ ACCEPT_HEADER = (
     "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
 )
 
+# Prefer English policy text when sites honor Accept-Language content negotiation.
+DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
+
 # Stealth fallback headers used when the bot UA triggers a JS-shell bot-wall.
 # Only used for the secondary static retry; the primary fetch always uses DEFAULT_USER_AGENT.
 STEALTH_USER_AGENT = (
@@ -199,13 +202,20 @@ MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
 )
 MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
-SPA_HYDRATION_RETRIES = 3
+# Static HTTP bodies smaller than this (or Content-Length below it) are treated as empty
+# shells and always routed through the browser renderer when use_browser is enabled.
+MIN_STATIC_RESPONSE_BYTES = int(os.getenv("CRAWLER_MIN_STATIC_RESPONSE_BYTES", "512"))
+SPA_HYDRATION_RETRIES = int(os.getenv("CRAWLER_SPA_HYDRATION_RETRIES", "5"))
+SPA_HYDRATION_WAIT_BASE_S = float(os.getenv("CRAWLER_SPA_HYDRATION_WAIT_S", "1.5"))
+SPA_HYDRATION_WAIT_STEP_S = float(os.getenv("CRAWLER_SPA_HYDRATION_WAIT_STEP_S", "0.5"))
 MAX_CHILD_SITEMAPS = int(os.getenv("CRAWLER_MAX_CHILD_SITEMAPS", "200"))
 _MAX_GENERIC_CHILD_SITEMAPS = int(os.getenv("CRAWLER_MAX_GENERIC_CHILD_SITEMAPS", "8"))
 MAX_HEADER_BYTES = 65_536
 BROWSER_NAV_TIMEOUT_MS = 20_000
-BROWSER_LOAD_STATE_TIMEOUT_MS = int(os.getenv("CRAWLER_BROWSER_LOAD_STATE_MS", "2000"))
+BROWSER_LOAD_STATE_TIMEOUT_MS = int(os.getenv("CRAWLER_BROWSER_LOAD_STATE_MS", "5000"))
+BROWSER_NETWORKIDLE_TIMEOUT_MS = int(os.getenv("CRAWLER_BROWSER_NETWORKIDLE_MS", "8000"))
 BROWSER_LAUNCH_TIMEOUT_S = float(os.getenv("CRAWLER_BROWSER_LAUNCH_TIMEOUT_S", "60"))
+BROWSER_CONSENT_CLICK_TIMEOUT_MS = int(os.getenv("CRAWLER_BROWSER_CONSENT_CLICK_MS", "2500"))
 MAX_LEGAL_SCORE_SCALE = 10.0
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 

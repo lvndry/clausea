@@ -155,9 +155,16 @@ class CrawlerConfig:
         self.concurrent_limit: int = int(os.getenv("CRAWLER_CONCURRENT_LIMIT", "20"))
         self.browser_concurrency: int = int(os.getenv("CRAWLER_BROWSER_CONCURRENCY", "4"))
         self.delay_between_requests: float = float(
-            os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.0")
+            os.getenv("CRAWLER_DELAY_BETWEEN_REQUESTS", "1.5")
         )
-        self.rate_limit_jitter: float = float(os.getenv("CRAWLER_RATE_LIMIT_JITTER", "0.2"))
+        self.rate_limit_jitter: float = float(os.getenv("CRAWLER_RATE_LIMIT_JITTER", "0.25"))
+        self.browser_extra_delay: float = float(os.getenv("CRAWLER_BROWSER_EXTRA_DELAY", "2.0"))
+        self.browser_failure_backoff_s: float = float(
+            os.getenv("CRAWLER_BROWSER_FAILURE_BACKOFF_S", "3.0")
+        )
+        self.browser_failure_backoff_max_s: float = float(
+            os.getenv("CRAWLER_BROWSER_FAILURE_BACKOFF_MAX_S", "15.0")
+        )
         self.timeout: int = int(os.getenv("CRAWLER_TIMEOUT", "30"))
 
         # --- Pipeline behavior ---

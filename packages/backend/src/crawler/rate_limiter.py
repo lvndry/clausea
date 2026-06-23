@@ -45,7 +45,7 @@ class DomainRateLimiter:
             domain = domain[4:]
         return domain
 
-    async def rate_limit(self, url: str) -> None:
+    async def rate_limit(self, url: str, *, min_delay: float | None = None) -> None:
         domain = self._normalize_domain(url)
 
         if domain not in self.domain_locks:
@@ -53,13 +53,14 @@ class DomainRateLimiter:
             self.domain_last_request[domain] = 0.0
 
         domain_lock = self.domain_locks[domain]
+        effective_delay = max(self.delay_between_requests, min_delay or 0.0)
 
         async with domain_lock:
             last_time = self.domain_last_request[domain]
             elapsed = time.time() - last_time
 
-            if elapsed < self.delay_between_requests:
-                base_sleep = self.delay_between_requests - elapsed
+            if elapsed < effective_delay:
+                base_sleep = effective_delay - elapsed
 
                 if self.jitter > 0:
                     jitter_amt = random.uniform(-self.jitter, self.jitter)

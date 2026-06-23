@@ -33,7 +33,11 @@ from camoufox import AsyncCamoufox
 from playwright.async_api import Browser, BrowserContext, Page, Route
 
 from src.core.logging import get_logger
-from src.crawler.constants import _BLOCKED_ASSETS_RE, BROWSER_LAUNCH_TIMEOUT_S
+from src.crawler.constants import (
+    _BLOCKED_ASSETS_RE,
+    BROWSER_CONSENT_CLICK_TIMEOUT_MS,
+    BROWSER_LAUNCH_TIMEOUT_S,
+)
 from src.utils.perf import _log_browser_processes, _log_top_processes
 
 logger = get_logger(__name__, component="crawler:browser")
@@ -77,6 +81,53 @@ async def _block_heavy_assets(page: Page) -> None:
             pass
 
     await page.route(_BLOCKED_ASSETS_RE, _abort)
+
+
+_CONSENT_CLICK_SELECTORS: tuple[str, ...] = (
+    "#onetrust-accept-btn-handler",
+    "#truste-consent-button",
+    "button[id*='accept']",
+    "button[class*='accept']",
+    "[data-testid*='accept']",
+    "[aria-label*='Accept all']",
+    "[aria-label*='accept all']",
+)
+
+_CONSENT_BUTTON_LABELS: tuple[str, ...] = (
+    "Accept all",
+    "Accept All",
+    "I agree",
+    "Agree",
+    "Allow all",
+    "Allow All",
+    "Got it",
+)
+
+
+async def try_dismiss_consent_banner(page: Page) -> bool:
+    """Click a common cookie/consent accept control so SPA policy content can render."""
+    click_timeout = BROWSER_CONSENT_CLICK_TIMEOUT_MS
+    for selector in _CONSENT_CLICK_SELECTORS:
+        try:
+            locator = page.locator(selector).first
+            await locator.wait_for(state="visible", timeout=500)
+            await locator.click(timeout=click_timeout)
+            await asyncio.sleep(0.4)
+            return True
+        except Exception:
+            continue
+
+    for label in _CONSENT_BUTTON_LABELS:
+        try:
+            locator = page.get_by_role("button", name=label, exact=False).first
+            await locator.wait_for(state="visible", timeout=400)
+            await locator.click(timeout=click_timeout)
+            await asyncio.sleep(0.4)
+            return True
+        except Exception:
+            continue
+
+    return False
 
 
 async def setup_browser(

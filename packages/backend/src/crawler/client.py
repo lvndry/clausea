@@ -53,6 +53,7 @@ from src.crawler.browser import (
     cleanup_browser,
     get_global_browser_slot,
     setup_browser,
+    try_dismiss_consent_banner,
 )
 from src.crawler.constants import (
     _CONSENT_CONTAINER_RE,
@@ -66,9 +67,11 @@ from src.crawler.constants import (
     BROWSER_DOMAIN_FAILURE_CAP,
     BROWSER_LOAD_STATE_TIMEOUT_MS,
     BROWSER_NAV_TIMEOUT_MS,
+    BROWSER_NETWORKIDLE_TIMEOUT_MS,
     CONVERGENCE_LEGAL_SCORE,
     CRAWL_BOT_WALL_ABORT,
     CRAWL_EXHAUSTION_GRACE,
+    DEFAULT_ACCEPT_LANGUAGE,
     DEFAULT_NO_POLICY_PAGE_BUDGET,
     DEFAULT_USER_AGENT,
     MAX_CHILD_SITEMAPS,
@@ -78,7 +81,10 @@ from src.crawler.constants import (
     MAX_RESPONSE_BYTES,
     MIN_CONTENT_LENGTH_FOR_SPA_CHECK,
     MIN_PAGES_PER_SEED,
+    MIN_STATIC_RESPONSE_BYTES,
     SPA_HYDRATION_RETRIES,
+    SPA_HYDRATION_WAIT_BASE_S,
+    SPA_HYDRATION_WAIT_STEP_S,
     STEALTH_ACCEPT_HEADER,
     STEALTH_USER_AGENT,
     english_locale_canonical_key,
@@ -108,12 +114,31 @@ _RENDERABLE_CONTENT_TYPES: tuple[str, ...] = (
 )
 
 
+def static_response_body_too_small(raw: StaticFetchResult, *, threshold: int | None = None) -> bool:
+    """True when the response body (or declared Content-Length) is below the byte threshold."""
+    limit = MIN_STATIC_RESPONSE_BYTES if threshold is None else threshold
+    if raw.raw_bytes is not None:
+        body_bytes = len(raw.raw_bytes)
+    else:
+        body_bytes = len((raw.body or "").encode("utf-8"))
+    if body_bytes < limit:
+        return True
+    declared = raw.headers.get("Content-Length") or raw.headers.get("content-length")
+    if declared:
+        try:
+            return int(declared) < limit and body_bytes < limit
+        except ValueError:
+            return False
+    return False
+
+
 def needs_browser_fallback(raw: StaticFetchResult) -> bool:
     """Return True when a plain-HTTP response is a JS shell warranting headless browser fallback.
 
     Triggers True when any of these hold:
     - HTTP 4xx (except 429, which is a rate-limit hard block the browser cannot bypass)
     - Missing or non-HTML/text/markdown Content-Type
+    - HTTP 200 with body or Content-Length below MIN_STATIC_RESPONSE_BYTES (empty JS shells)
     - HTML body containing a known SPA root element (div#root, div#app, div#__next, …)
       with fewer than MIN_CONTENT_LENGTH_FOR_SPA_CHECK characters of inner text
     - Fewer than MIN_CONTENT_LENGTH_FOR_SPA_CHECK visible characters overall
@@ -128,6 +153,9 @@ def needs_browser_fallback(raw: StaticFetchResult) -> bool:
 
     content_type = (raw.content_type or "").lower().split(";")[0].strip()
     if not any(content_type.startswith(ct) for ct in _RENDERABLE_CONTENT_TYPES):
+        return True
+
+    if raw.status_code == 200 and static_response_body_too_small(raw):
         return True
 
     body = raw.body or ""
@@ -191,6 +219,9 @@ class ClauseaCrawler:
         allowed_paths: list[str] | None = None,
         denied_paths: list[str] | None = None,
         delay_jitter: float = 0.0,
+        browser_extra_delay: float = 2.0,
+        browser_failure_backoff_s: float = 3.0,
+        browser_failure_backoff_max_s: float = 15.0,
         enable_pdf_crawling: bool = False,
         use_tika_for_binaries: bool = False,
         use_pdfminer_for_pdf: bool = False,
@@ -205,6 +236,11 @@ class ClauseaCrawler:
         self.max_concurrent = max_concurrent
         self.delay_between_requests = delay_between_requests
         self.delay_jitter = delay_jitter
+        self.browser_extra_delay = max(0.0, browser_extra_delay)
+        self.browser_failure_backoff_s = max(0.0, browser_failure_backoff_s)
+        self.browser_failure_backoff_max_s = max(
+            self.browser_failure_backoff_s, browser_failure_backoff_max_s
+        )
         self.timeout = timeout
         self.allowed_domains: set[str] | None = set(allowed_domains) if allowed_domains else None
         self.respect_robots_txt = respect_robots_txt
@@ -279,6 +315,7 @@ class ClauseaCrawler:
         self._render_failures: int = 0
         self._render_slot_wait_total: float = 0.0
         self._render_recovered: int = 0
+        self._domain_extra_delay: dict[str, float] = {}
         self._consecutive_browser_failures: int = 0
 
         self.rate_limiter = DomainRateLimiter(
@@ -431,7 +468,11 @@ class ClauseaCrawler:
         await self.rate_limit(url)
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
-        headers = {"User-Agent": self.user_agent, "Accept": ACCEPT_HEADER}
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": ACCEPT_HEADER,
+            "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+        }
         cache_headers = self.http_cache.get_cache_headers(url)
         headers.update(cache_headers)
 
@@ -496,6 +537,7 @@ class ClauseaCrawler:
                     status_code=response.status,
                     content_type=content_type,
                     body=body,
+                    raw_bytes=raw,
                     headers=resp_headers,
                     resolved_url=final_url,
                 )
@@ -528,7 +570,7 @@ class ClauseaCrawler:
             headers = {
                 "User-Agent": STEALTH_USER_AGENT,
                 "Accept": STEALTH_ACCEPT_HEADER,
-                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
             }
             request_args: dict[str, Any] = {"timeout": timeout, "headers": headers}
             if self.proxy:
@@ -813,7 +855,12 @@ class ClauseaCrawler:
         _browser_cleaned_up = False
         try:
             page = await context.new_page()
-            await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
+            await page.set_extra_http_headers(
+                {
+                    "Accept-Encoding": "gzip, deflate",
+                    "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+                }
+            )
             await _block_heavy_assets(page)
 
             nav_timeout_ms = min(self.timeout * 1000, BROWSER_NAV_TIMEOUT_MS)
@@ -828,6 +875,8 @@ class ClauseaCrawler:
             except Exception:
                 pass
 
+            await try_dismiss_consent_banner(page)
+
             title = await page.title()
             content = await page.content()
 
@@ -841,8 +890,9 @@ class ClauseaCrawler:
 
             body_text_len = len(text_content) if text_content else 0
             if body_text_len < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
-                for _ in range(SPA_HYDRATION_RETRIES):
-                    await asyncio.sleep(1)
+                for attempt in range(SPA_HYDRATION_RETRIES):
+                    wait_s = SPA_HYDRATION_WAIT_BASE_S + attempt * SPA_HYDRATION_WAIT_STEP_S
+                    await asyncio.sleep(wait_s)
                     new_content = await page.content()
                     _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
                         self._parse_html_string, new_content, final_url
@@ -860,6 +910,26 @@ class ClauseaCrawler:
                     markdown_content = new_md
                     metadata = new_meta
                     discovered_links = new_links
+
+            if body_text_len < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
+                try:
+                    await page.wait_for_load_state(
+                        "networkidle", timeout=BROWSER_NETWORKIDLE_TIMEOUT_MS
+                    )
+                except Exception:
+                    pass
+                else:
+                    new_content = await page.content()
+                    _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
+                        self._parse_html_string, new_content, final_url
+                    )
+                    new_len = len(new_text) if new_text else 0
+                    if new_len > body_text_len:
+                        text_content = new_text
+                        markdown_content = new_md
+                        metadata = new_meta
+                        discovered_links = new_links
+                        body_text_len = new_len
 
             metadata["_browser_resolved_url"] = final_url
 
@@ -1187,7 +1257,10 @@ class ClauseaCrawler:
     ) -> list[str]:
         parsed_url = urlparse(base_url)
         origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
-        headers = {"User-Agent": self.user_agent}
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+        }
 
         sitemap_candidates: list[str] = []
 
@@ -1566,7 +1639,26 @@ class ClauseaCrawler:
         return metadata
 
     async def rate_limit(self, url: str) -> None:
-        await self.rate_limiter.rate_limit(url)
+        min_delay = self.delay_between_requests
+        if self.robots_checker is not None:
+            robots_delay = self.robots_checker.get_crawl_delay(url)
+            if robots_delay is not None:
+                min_delay = max(min_delay, robots_delay)
+
+        domain = self._normalize_domain(url)
+        min_delay = max(min_delay, self._domain_extra_delay.get(domain, 0.0))
+        await self.rate_limiter.rate_limit(url, min_delay=min_delay)
+
+    def _note_browser_domain_delay(self, url: str, *, failed: bool) -> None:
+        domain = self._normalize_domain(url)
+        if failed:
+            current = self._domain_extra_delay.get(domain, 0.0)
+            self._domain_extra_delay[domain] = min(
+                self.browser_failure_backoff_max_s,
+                max(self.browser_extra_delay, current + self.browser_failure_backoff_s),
+            )
+        else:
+            self._domain_extra_delay[domain] = self.browser_extra_delay
 
     async def _fetch_page_internal(self, session: aiohttp.ClientSession, url: str) -> CrawlResult:
         try:
@@ -1617,13 +1709,14 @@ class ClauseaCrawler:
                         static_unusable = False
 
             is_speculative = self.normalize_url(url) in self._speculative_urls
+            force_browser_render = raw.status_code == 200 and static_response_body_too_small(raw)
 
             if static_unusable and self.use_browser and not is_speculative:
                 relevance = max(
                     self._url_scores.get(self.normalize_url(url), 0.0),
                     self.url_scorer.score_url(effective_url),
                 )
-                if relevance >= self.min_legal_score:
+                if force_browser_render or relevance >= self.min_legal_score:
                     if self._consecutive_browser_failures >= BROWSER_DOMAIN_FAILURE_CAP:
                         logger.debug(
                             "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",
@@ -1650,6 +1743,7 @@ class ClauseaCrawler:
                             browser_page, effective_url
                         ):
                             self._consecutive_browser_failures = 0
+                            self._note_browser_domain_delay(effective_url, failed=False)
                             browser_resolved = browser_page.metadata.pop(
                                 "_browser_resolved_url", None
                             )
@@ -1661,6 +1755,7 @@ class ClauseaCrawler:
                             return self._build_crawl_result(effective_url, browser_page)
 
                         self._consecutive_browser_failures += 1
+                        self._note_browser_domain_delay(effective_url, failed=True)
                         if browser_page is None:
                             self._render_failures += 1
                             if not self._in_render_retry:
@@ -2130,7 +2225,7 @@ class ClauseaCrawler:
                 timeout=timeout,
                 max_line_size=MAX_HEADER_BYTES,
                 max_field_size=MAX_HEADER_BYTES,
-                headers={"Accept-Language": "en-US,en;q=0.9"},
+                headers={"Accept-Language": DEFAULT_ACCEPT_LANGUAGE},
             ) as session:
                 try:
                     sitemap_urls = await self._discover_sitemap_urls(session, base_url)
@@ -2523,6 +2618,7 @@ async def test_specific_url(url: str) -> CrawlResult:
         timeout=timeout,
         max_line_size=MAX_HEADER_BYTES,
         max_field_size=MAX_HEADER_BYTES,
+        headers={"Accept-Language": DEFAULT_ACCEPT_LANGUAGE},
     ) as session:
         result = await crawler.fetch_page(session, url)
 

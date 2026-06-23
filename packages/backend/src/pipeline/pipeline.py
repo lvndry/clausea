@@ -283,6 +283,9 @@ class PolicyDocumentPipeline:
             max_concurrent=self.concurrent_limit,
             delay_between_requests=self.delay_between_requests,
             delay_jitter=config.crawler.rate_limit_jitter,
+            browser_extra_delay=config.crawler.browser_extra_delay,
+            browser_failure_backoff_s=config.crawler.browser_failure_backoff_s,
+            browser_failure_backoff_max_s=config.crawler.browser_failure_backoff_max_s,
             timeout=self.timeout,
             allowed_domains=self._allowed_domains_for_product(product),
             respect_robots_txt=self.respect_robots_txt,
@@ -321,10 +324,8 @@ class PolicyDocumentPipeline:
         return url
 
     def _seed_dedupe_key(self, normalized_url: str) -> tuple[str, str, str, str]:
-        from src.crawler import _TLD_EXTRACT as crawler_tld
-
         parsed = urlparse(normalized_url)
-        ext = crawler_tld(normalized_url)
+        ext = _TLD_EXTRACT(normalized_url)
         registered_domain = f"{ext.domain}.{ext.suffix}" if ext.suffix else ext.domain
         normalized_path = parsed.path.rstrip("/") or "/"
         return (registered_domain, parsed.netloc, ext.subdomain, normalized_path)

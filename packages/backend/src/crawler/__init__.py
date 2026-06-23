@@ -25,6 +25,7 @@ from src.crawler.client import (
     crawl_for_policy_documents,
     main,
     needs_browser_fallback,
+    static_response_body_too_small,
     test_specific_url,
 )
 from src.crawler.constants import (
@@ -38,6 +39,7 @@ from src.crawler.constants import (
     CONVERGENCE_LEGAL_SCORE,
     CRAWL_BOT_WALL_ABORT,
     CRAWL_EXHAUSTION_GRACE,
+    DEFAULT_ACCEPT_LANGUAGE,
     DEFAULT_NO_POLICY_PAGE_BUDGET,
     DEFAULT_USER_AGENT,
     MAX_CHILD_SITEMAPS,
@@ -47,6 +49,7 @@ from src.crawler.constants import (
     MAX_RESPONSE_BYTES,
     MIN_CONTENT_LENGTH_FOR_SPA_CHECK,
     MIN_PAGES_PER_SEED,
+    MIN_STATIC_RESPONSE_BYTES,
     SPA_HYDRATION_RETRIES,
     english_locale_canonical_key,
     locale_canonical_key,
@@ -71,6 +74,7 @@ __all__ = [
     "ContentAnalyzer",
     "CrawlResult",
     "CrawlStats",
+    "DEFAULT_ACCEPT_LANGUAGE",
     "DEFAULT_NO_POLICY_PAGE_BUDGET",
     "DEFAULT_USER_AGENT",
     "DomainRateLimiter",
@@ -82,6 +86,7 @@ __all__ = [
     "MAX_RESPONSE_BYTES",
     "MIN_CONTENT_LENGTH_FOR_SPA_CHECK",
     "MIN_PAGES_PER_SEED",
+    "MIN_STATIC_RESPONSE_BYTES",
     "PageContent",
     "RobotsTxtChecker",
     "SPA_HYDRATION_RETRIES",
@@ -101,5 +106,6 @@ __all__ = [
     "main",
     "needs_browser_fallback",
     "setup_browser",
+    "static_response_body_too_small",
     "test_specific_url",
 ]
