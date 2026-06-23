@@ -78,7 +78,6 @@ def _make_document(extraction: DocumentExtraction | None) -> Document:
         doc_type="privacy_policy",
         title="Privacy Policy",
         markdown="# policy",
-        text="policy body",
         extraction=extraction,
         created_at=datetime(2026, 1, 1),
     )
@@ -340,7 +339,6 @@ def test_enrich_consumer_explainer_backfills_all_matching_source_documents() -> 
             doc_type="privacy_policy",
             title="Privacy Policy",
             markdown="# privacy",
-            text="privacy body",
             extraction=privacy_extraction,
             created_at=datetime(2026, 1, 1),
         ),
@@ -351,7 +349,6 @@ def test_enrich_consumer_explainer_backfills_all_matching_source_documents() -> 
             doc_type="terms_of_service",
             title="Terms of Service",
             markdown="# terms",
-            text="terms body",
             extraction=terms_extraction,
             created_at=datetime(2026, 1, 1),
         ),
@@ -677,7 +674,6 @@ async def test_repository_update_guards_explainer_against_none_wipe() -> None:
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown="",
-        text="",
         consumer_explainer=None,
         created_at=datetime(2026, 1, 1),
     )

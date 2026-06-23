@@ -33,7 +33,6 @@ from src.pipeline.helpers import (
     logger_analysis,
 )
 from src.pipeline.models import ProcessingStats
-from src.utils.markdown import markdown_to_text
 
 
 class CrawlResultProcessor:
@@ -49,10 +48,10 @@ class CrawlResultProcessor:
         document: Document | None = None
 
         try:
-            text_content = markdown_to_text(result.markdown)
+            markdown_content = result.markdown
 
-            if not text_content or len(text_content.strip()) < 300:
-                text_len = len(text_content.strip()) if text_content else 0
+            if not markdown_content or len(markdown_content.strip()) < 300:
+                text_len = len(markdown_content.strip()) if markdown_content else 0
                 self._stats.crawl_skip_reasons.append(
                     {
                         "url": result.url,
@@ -65,7 +64,7 @@ class CrawlResultProcessor:
                 )
                 return None
 
-            if ClauseaCrawler._is_garbled_content(text_content):
+            if ClauseaCrawler._is_garbled_content(markdown_content):
                 self._stats.crawl_skip_reasons.append(
                     {"url": result.url, "reason": "garbled_content", "detail": None}
                 )
@@ -90,7 +89,7 @@ class CrawlResultProcessor:
                 return None
 
             classification = await self._analyzer.classify_document(
-                result.url, text_content, result.metadata, legal_score=result.legal_score
+                result.url, markdown_content, result.metadata, legal_score=result.legal_score
             )
 
             logger_analysis.debug(
@@ -113,7 +112,7 @@ class CrawlResultProcessor:
                 return None
 
             locale_result = await self._analyzer.detect_locale(
-                text_content, result.metadata, result.url
+                markdown_content, result.metadata, result.url
             )
             detected_locale = locale_result.get("locale", "en-US")
             language_name = locale_result.get("language_name", "English")
@@ -139,11 +138,11 @@ class CrawlResultProcessor:
             self._stats.policy_documents_processed += 1
 
             region_detection = await self._analyzer.detect_regions(
-                text_content, result.metadata, result.url
+                markdown_content, result.metadata, result.url
             )
 
             effective_date_str = await self._analyzer.extract_effective_date(
-                text_content, result.metadata
+                markdown_content, result.metadata
             )
             effective_date = None
             if effective_date_str:
@@ -166,7 +165,6 @@ class CrawlResultProcessor:
                 url=result.url,
                 product_id=product.id,
                 markdown=result.markdown,
-                text=text_content,
                 metadata=result.metadata,
                 doc_type=doc_type,
                 locale=detected_locale,

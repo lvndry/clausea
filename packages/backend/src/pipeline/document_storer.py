@@ -37,7 +37,6 @@ from src.pipeline.models import ProcessingStats
 from src.repositories.document_version_repository import DocumentVersionRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service
-from src.utils.markdown import markdown_to_text
 
 _MAX_MARKDOWN_LENGTH = 150_000
 _MARKDOWN_TRUNCATION_SUFFIX = "\n\n[Content truncated at 150,000 characters]"
@@ -84,10 +83,6 @@ class DocumentStorer:
                     ):
                         markdown = markdown[:_MAX_MARKDOWN_LENGTH] + _MARKDOWN_TRUNCATION_SUFFIX
                         document.markdown = markdown
-                        # Re-derive text from the truncated markdown so the content
-                        # fingerprint (computed below) reflects exactly what will be
-                        # stored — not the original pre-truncation content.
-                        document.text = markdown_to_text(markdown)
 
                     source_product_id = document.product_id
                     existing_doc = await document_service.get_document_by_url(db, document.url)
@@ -104,8 +99,8 @@ class DocumentStorer:
 
                     # Cross-run dedup: if the URL is new but there's already a document
                     # for the same product with identical content, link instead of duplicating.
-                    if not existing_doc and document.text and document.text.strip():
-                        content_fp = _content_fingerprint(document.text)
+                    if not existing_doc and document.markdown and document.markdown.strip():
+                        content_fp = _content_fingerprint(document.markdown)
                         existing_doc = await document_service.find_existing_by_content_hash(
                             db, source_product_id, content_fp
                         )
@@ -150,16 +145,16 @@ class DocumentStorer:
 
                         metadata_str = f"|{document.title}|{document.doc_type}|{document.locale}|{','.join(document.regions)}|{document.effective_date}|"
                         current_hash = hashlib.sha256(
-                            (document.text + metadata_str).encode()
+                            (document.markdown + metadata_str).encode()
                         ).hexdigest()
 
                         existing_metadata_str = f"|{existing_doc.title}|{existing_doc.doc_type}|{existing_doc.locale}|{','.join(existing_doc.regions)}|{existing_doc.effective_date}|"
                         existing_hash = hashlib.sha256(
-                            (existing_doc.text + existing_metadata_str).encode()
+                            (existing_doc.markdown + existing_metadata_str).encode()
                         ).hexdigest()
 
                         if current_hash != existing_hash:
-                            if not document.text.strip() and existing_doc.text.strip():
+                            if not document.markdown.strip() and existing_doc.markdown.strip():
                                 logger_storage.warning(
                                     f"refusing to overwrite non-empty document with empty content: {document.url}"
                                 )
@@ -185,7 +180,7 @@ class DocumentStorer:
                                 f"updating existing document with changes: {document.url}"
                             )
                             document.id = existing_doc.id
-                            document.content_hash = _content_fingerprint(document.text)
+                            document.content_hash = _content_fingerprint(document.markdown)
                             await document_service.update_document(db, document)
                             stored_count += 1
                             updated_count += 1
@@ -203,15 +198,15 @@ class DocumentStorer:
                                 )
                                 self._stats.duplicates_skipped += 1
                                 duplicate_count += 1
-                        if document.text and document.text.strip():
+                        if document.markdown and document.markdown.strip():
                             seen_fingerprints[
-                                (source_product_id, _content_fingerprint(document.text))
+                                (source_product_id, _content_fingerprint(document.markdown))
                             ] = document.url
                     else:
-                        if document.text and document.text.strip():
+                        if document.markdown and document.markdown.strip():
                             fp_key = (
                                 source_product_id,
-                                _content_fingerprint(document.text),
+                                _content_fingerprint(document.markdown),
                             )
                             kept_url = seen_fingerprints.get(fp_key)
                             if kept_url and kept_url != document.url:
@@ -225,7 +220,7 @@ class DocumentStorer:
                             seen_fingerprints[fp_key] = document.url
 
                         logger_storage.info(f"storing new document: {document.url}")
-                        document.content_hash = _content_fingerprint(document.text)
+                        document.content_hash = _content_fingerprint(document.markdown)
                         await document_service.store_document(db, document)
                         stored_count += 1
                         stored_delta += 1

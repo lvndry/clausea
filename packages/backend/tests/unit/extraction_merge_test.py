@@ -35,8 +35,7 @@ _DOC = Document(
     url="https://example.com/privacy",
     product_id="prod1",
     doc_type="privacy_policy",
-    markdown="",
-    text="We collect your email address. We retain data for 30 days.",
+    markdown="We collect your email address. We retain data for 30 days.",
 )
 _HASH = "testhash"
 

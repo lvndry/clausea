@@ -116,7 +116,6 @@ class DocumentProcessor:
                 product_id=product_id,
                 doc_type=coerce_doc_type_from_classifier(classification.get("classification")),
                 markdown=text_content,
-                text=text_content,
                 metadata={
                     "filename": filename,
                     "content_type": content_type,

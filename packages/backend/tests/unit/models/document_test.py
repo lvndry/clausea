@@ -383,7 +383,6 @@ class TestDocument:
             product_id="prod1",
             doc_type="privacy_policy",
             markdown="# Privacy Policy",
-            text="Privacy Policy content",
         )
         assert doc.id  # auto-generated
         assert doc.url == "https://example.com/privacy"
@@ -398,7 +397,6 @@ class TestDocument:
                 product_id="prod1",
                 doc_type="invalid_type",  # type: ignore[arg-type]
                 markdown="md",
-                text="text",
             )
 
     def test_unclassified_is_not_a_valid_doc_type(self) -> None:
@@ -408,7 +406,6 @@ class TestDocument:
                 product_id="p1",
                 doc_type="unclassified",  # type: ignore[arg-type]
                 markdown="",
-                text="",
             )
 
     def test_valid_regions(self) -> None:
@@ -417,7 +414,6 @@ class TestDocument:
             product_id="prod1",
             doc_type="privacy_policy",
             markdown="md",
-            text="text",
             regions=["US", "EU"],
         )
         assert doc.regions == ["US", "EU"]
@@ -433,7 +429,6 @@ class TestDocumentSummaryFromDocument:
             product_id="prod1",
             doc_type="privacy_policy",
             markdown="md",
-            text="text",
             title="Privacy Policy",
         )
         summary = DocumentSummary.from_document(doc)
@@ -456,7 +451,6 @@ class TestDocumentSummaryFromDocument:
             product_id="prod1",
             doc_type="privacy_policy",
             markdown="md",
-            text="text",
             analysis=analysis,
         )
         summary = DocumentSummary.from_document(doc)

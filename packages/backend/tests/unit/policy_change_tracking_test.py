@@ -19,7 +19,6 @@ def _doc(**overrides) -> Document:
         "product_id": "prod1",
         "doc_type": "privacy_policy",
         "markdown": "# Privacy",
-        "text": "This is the privacy policy text.",
         "locale": "en-US",
         "regions": ["global"],
         "effective_date": None,
@@ -32,13 +31,6 @@ class TestDiffFields:
     def test_no_change(self) -> None:
         doc = _doc()
         assert _diff_fields(doc, doc) == []
-
-    def test_text_changed(self) -> None:
-        # text is a transient field — it is not persisted or diff-tracked.
-        # Changing text alone (without markdown) is not a meaningful change.
-        old = _doc(text="old text " * 50)
-        new = _doc(text="new text " * 50)
-        assert "text" not in _diff_fields(old, new)
 
     def test_markdown_changed(self) -> None:
         old = _doc(markdown="# Old policy content " * 20)

@@ -41,7 +41,6 @@ def _core_doc() -> Document:
         product_id="p1",
         doc_type="privacy_policy",  # type: ignore[arg-type]
         markdown="",
-        text="",
         analysis=analysis,
     )
 

@@ -25,7 +25,6 @@ class DocumentVersion(BaseModel):
     effective_date: datetime | None = None
     raw_html: str | None = None
     markdown: str | None = None
-    text: str | None = None
     content_hash: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)

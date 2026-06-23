@@ -14,15 +14,14 @@ from src.models.document import Document
 from src.pipeline import PolicyDocumentPipeline
 
 
-def _doc(url: str, text: str) -> Document:
+def _doc(url: str, content: str) -> Document:
     return Document(
         id=url,
         url=url,
         product_id="prod-1",
         doc_type="privacy_policy",
         title="Privacy",
-        text=text,
-        markdown=text,
+        markdown=content,
     )
 
 

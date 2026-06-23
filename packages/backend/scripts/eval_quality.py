@@ -40,7 +40,7 @@ async def main(slug: str) -> None:
             print(f"### [{d.doc_type}] {d.title or '(no title)'}")
             print(f"    url: {d.url}")
             print(f"    locale={d.locale} regions={d.regions} effective_date={d.effective_date}")
-            print(f"    text_len={len(d.text or '')} markdown_len={len(d.markdown or '')}")
+            print(f"    markdown_len={len(d.markdown or '')}")
             if a:
                 print(f"    verdict={a.verdict} risk_score={a.risk_score}")
                 if a.scores:

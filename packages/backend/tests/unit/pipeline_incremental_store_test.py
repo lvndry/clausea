@@ -40,7 +40,6 @@ def _doc(url: str, doc_type: DocType) -> Document:
         product_id="prod-1",
         doc_type=doc_type,
         title="T",
-        text="t" * 400,
         markdown="t",
     )
 

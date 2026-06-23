@@ -41,8 +41,8 @@ def _make_analysis() -> DocumentAnalysis:
 
 
 def _content_hash_for(doc: Document) -> str:
-    """Mirror the hash the extraction service uses (SHA-256 of text+doc_type)."""
-    content = f"{doc.text}{doc.doc_type}"
+    """Mirror the hash the extraction service uses (SHA-256 of markdown+doc_type)."""
+    content = f"{doc.markdown}{doc.doc_type}"
     return hashlib.sha256(content.encode()).hexdigest()
 
 
@@ -54,7 +54,6 @@ def _make_doc_with_current_analysis(doc_id: str, url: str) -> Document:
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown="This is the full policy text " * 30,
-        text="This is the full policy text " * 30,
         analysis=_make_analysis(),
     )
     doc.extraction = DocumentExtraction(
@@ -71,7 +70,6 @@ def _make_doc_without_analysis(doc_id: str, url: str) -> Document:
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown="Brand new policy text " * 30,
-        text="Brand new policy text " * 30,
         analysis=None,
         extraction=None,
     )
@@ -85,7 +83,6 @@ def _make_doc_with_stale_analysis(doc_id: str, url: str) -> Document:
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown="Old policy text " * 30,
-        text="Old policy text " * 30,
         analysis=_make_analysis(),
     )
     # Point the extraction at a *different* content (stale hash).
@@ -117,7 +114,6 @@ def test_up_to_date_false_when_no_extraction() -> None:
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown="text " * 50,
-        text="text " * 50,
         analysis=_make_analysis(),
         extraction=None,
     )

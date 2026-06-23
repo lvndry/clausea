@@ -70,7 +70,7 @@ def _extraction_validator(cluster_name: str):
 
 
 def _compute_content_hash(document: Document) -> str:
-    content = f"{document.text}{document.doc_type}"
+    content = f"{document.markdown}{document.doc_type}"
     return hashlib.sha256(content.encode()).hexdigest()
 
 
@@ -141,7 +141,7 @@ def _chunk_text(text: str, *, chunk_size: int = 8000, overlap: int = 800) -> lis
 
 
 def _make_evidence(document: Document, content_hash: str, quote: str) -> EvidenceSpan:
-    start_char, end_char, verified = resolve_quote_offsets(document.text, quote)
+    start_char, end_char, verified = resolve_quote_offsets(document.markdown, quote)
     return EvidenceSpan(
         document_id=document.id,
         url=document.url,

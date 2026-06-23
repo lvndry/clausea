@@ -292,7 +292,6 @@ async def test_get_product_explainer_backfills_missing_source_citations(
                 doc_type="privacy_policy",
                 title="Privacy Policy",
                 markdown="# Privacy",
-                text="policy body",
                 extraction=extraction,
                 created_at=datetime(2026, 1, 1),
             )
@@ -353,7 +352,6 @@ async def test_get_product_analysis(
         url="https://test.com/privacy",
         product_id="123",
         markdown="# Privacy",
-        text="Privacy",
         analysis=DocumentAnalysis(
             summary='{"summary": "CLEANED SUMMARY", "points": []}',  # Should be cleaned by validator
             scores={
@@ -407,7 +405,6 @@ async def test_get_product_documents(
         url="https://test.com/privacy",
         product_id="123",
         markdown="# Privacy",
-        text="Privacy",
         analysis=DocumentAnalysis(
             summary='{"summary": "JSON SUMMARY", "other": "data"}',
             scores={

@@ -45,7 +45,6 @@ async def migrate() -> None:
                 regions=doc.get("regions") or [],
                 effective_date=doc.get("effective_date"),
                 markdown=doc.get("markdown"),
-                text=doc.get("text"),
                 content_hash=content_hash,
                 metadata=doc.get("metadata") or {},
                 created_at=doc.get("created_at") or datetime.now(),

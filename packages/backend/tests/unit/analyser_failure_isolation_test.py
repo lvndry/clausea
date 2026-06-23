@@ -30,7 +30,6 @@ def _make_doc(doc_id: str, url: str) -> Document:
         product_id="prod-1",
         doc_type="privacy_policy",
         markdown="real policy " * 50,
-        text="real policy " * 50,
         metadata={},
         versions=[],
         analysis=None,
