@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import shortuuid
 from pydantic import BaseModel, Field, field_validator
@@ -16,6 +16,9 @@ from src.models.document import (
     MetaSummary,
     ProductDeepAnalysis,
 )
+
+ConflictSeverity = Literal["low", "medium", "high", "critical"]
+_VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
 
 
 class RollupItem(BaseModel):
@@ -38,16 +41,16 @@ class RollupConflict(BaseModel):
     category: InsightCategory
     description: str
     document_ids: list[str] = Field(default_factory=list)
-    severity: Literal["low", "medium", "high", "critical"] | None = None
+    severity: ConflictSeverity | None = None
 
     @field_validator("severity", mode="before")
     @classmethod
-    def _normalize_severity(cls, value: Any) -> Literal["low", "medium", "high", "critical"] | None:
+    def _normalize_severity(cls, value: Any) -> ConflictSeverity | None:
         if value is None:
             return None
         normalized = str(value).strip().lower()
-        if normalized in {"low", "medium", "high", "critical"}:
-            return normalized  # type: ignore[return-value]
+        if normalized in _VALID_SEVERITIES:
+            return cast(ConflictSeverity, normalized)
         return "medium"
 
 
