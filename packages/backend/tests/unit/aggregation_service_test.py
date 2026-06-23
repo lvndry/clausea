@@ -81,6 +81,43 @@ def test_aggregation_fixture_shape() -> None:
     assert isinstance(payload["findings"], list)
 
 
+def test_slim_aggregation_for_storage_caps_evidence() -> None:
+    from src.models.document import EvidenceSpan
+    from src.models.finding import AggregatedFinding, Aggregation, FindingConflict
+    from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
+
+    service = _service()
+    spans = [
+        EvidenceSpan(
+            document_id="d1", url="https://example.com/privacy", quote=f"quote {idx}", verified=True
+        )
+        for idx in range(TOPIC_CITATION_LIMIT + 3)
+    ]
+    aggregation = Aggregation(
+        product_id="p1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="data_collection",
+                value="Email",
+                documents=["d1"],
+                evidence=spans,
+            )
+        ],
+        conflicts=[
+            FindingConflict(
+                category="data_sale",
+                description="Conflict",
+                evidence=spans,
+            )
+        ],
+    )
+
+    slim = service._slim_aggregation_for_storage(aggregation)
+    assert len(slim.findings[0].evidence) == TOPIC_CITATION_LIMIT
+    assert len(slim.conflicts[0].evidence) == TOPIC_CITATION_LIMIT
+
+
 # ── _findings_from_retention_rules ──────────────────────────────────
 
 

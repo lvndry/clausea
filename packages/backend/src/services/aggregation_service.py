@@ -18,7 +18,7 @@ from src.models.finding import AggregatedFinding, Aggregation, Finding, FindingC
 from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.finding_repository import FindingRepository
-from src.services.evidence_relevance import filter_evidence_spans
+from src.services.evidence_relevance import filter_evidence_spans, select_topic_citations
 from src.services.extraction_service import extract_document_facts
 from src.utils.standard_terms import should_exclude_from_dangers
 
@@ -745,6 +745,36 @@ class AggregationService:
             items.append(CoverageItem(category=category, status=status))
         return items
 
+    def _slim_aggregation_for_storage(self, aggregation: Aggregation) -> Aggregation:
+        """Cap stored evidence to topic citation limits — findings already hold full evidence."""
+        slim_findings = [
+            finding.model_copy(
+                update={
+                    "evidence": select_topic_citations(
+                        finding.evidence,
+                        category=finding.category,
+                        finding_value=finding.value,
+                    )
+                }
+            )
+            for finding in aggregation.findings
+        ]
+        slim_conflicts = [
+            conflict.model_copy(
+                update={
+                    "evidence": select_topic_citations(
+                        conflict.evidence,
+                        category=conflict.category,
+                        finding_value=conflict.description,
+                    )
+                }
+            )
+            for conflict in aggregation.conflicts
+        ]
+        return aggregation.model_copy(
+            update={"findings": slim_findings, "conflicts": slim_conflicts}
+        )
+
     async def build_product_aggregation(
         self, db: AgnosticDatabase, product_id: str, product_slug: str
     ) -> Aggregation:
@@ -766,6 +796,7 @@ class AggregationService:
             conflicts=conflicts,
             coverage=coverage,
         )
+        aggregation = self._slim_aggregation_for_storage(aggregation)
         await self._aggregation_repo.save(db, aggregation)
         if coverage:
             status_counts: dict[str, int] = {}
