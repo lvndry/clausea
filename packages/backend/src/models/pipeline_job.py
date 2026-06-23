@@ -105,6 +105,8 @@ _BOT_DETECTION_KEYWORDS: frozenset[str] = frozenset(
         "security check",
         "ddos protection",
         "anti-bot",
+        "browser rendering failed",
+        "static content unusable",
     }
 )
 
