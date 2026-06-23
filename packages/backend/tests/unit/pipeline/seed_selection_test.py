@@ -143,10 +143,12 @@ def test_product_seed_overrides_merge_for_known_slug() -> None:
         crawl_base_urls=[],
     )
     urls = _pipeline()._get_crawl_urls(product)
-    assert "https://facebook.com" in urls
-    assert "https://mbasic.facebook.com/legal/terms/plain_text_terms" in urls
-    assert "https://mbasic.facebook.com/privacy/policies/cookies/printable" in urls
-    assert "https://mbasic.facebook.com/privacy/policy/printable/version/25862970456621906" in urls
+    assert urls == [
+        "https://facebook.com",
+        "https://mbasic.facebook.com/legal/terms/plain_text_terms",
+        "https://mbasic.facebook.com/privacy/policies/cookies/printable",
+        "https://mbasic.facebook.com/privacy/policy/printable/version/25862970456621906",
+    ]
 
 
 def test_openai_policies_hub_seed_override() -> None:
@@ -158,5 +160,7 @@ def test_openai_policies_hub_seed_override() -> None:
         crawl_base_urls=[],
     )
     urls = _pipeline()._get_crawl_urls(product)
-    assert "https://openai.com" in urls
-    assert "https://openai.com/policies" in urls
+    assert urls == [
+        "https://openai.com",
+        "https://openai.com/policies",
+    ]
