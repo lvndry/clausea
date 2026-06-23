@@ -132,6 +132,40 @@ class PaddleService:
             logger.error(f"Error getting subscription {subscription_id}: {e}")
             raise
 
+    async def list_customers_by_email(self, email: str) -> dict[str, Any]:
+        """List Paddle customers matching an email address."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/customers",
+                    headers=self._get_headers(),
+                    params={"email": email},
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                return response.json()
+
+        except Exception as e:
+            logger.error(f"Error listing customers for {email}: {e}")
+            raise
+
+    async def list_subscriptions_for_customer(self, customer_id: str) -> dict[str, Any]:
+        """List subscriptions for a Paddle customer."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/subscriptions",
+                    headers=self._get_headers(),
+                    params={"customer_id": customer_id, "status": "active"},
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                return response.json()
+
+        except Exception as e:
+            logger.error(f"Error listing subscriptions for customer {customer_id}: {e}")
+            raise
+
     async def cancel_subscription(
         self, subscription_id: str, effective_from: str = "next_billing_period"
     ) -> dict[str, Any]:

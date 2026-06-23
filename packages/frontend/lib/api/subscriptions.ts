@@ -64,6 +64,14 @@ class SubscriptionAPI {
     return this.fetchApi("/me");
   }
 
+  async syncSubscription(): Promise<{
+    tier: string;
+    status: string;
+    synced: boolean;
+  }> {
+    return this.fetchApi("/sync", { method: "POST" });
+  }
+
   async cancelSubscription(): Promise<{ success: boolean; message: string }> {
     return this.fetchApi("/cancel", { method: "POST" });
   }

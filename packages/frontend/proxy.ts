@@ -84,6 +84,13 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
     }
   }
 
+  if (userId) {
+    const response = NextResponse.next();
+    response.cookies.delete(PREVIEW_TOKEN_COOKIE);
+    response.cookies.delete(PV_COOKIE);
+    return response;
+  }
+
   return NextResponse.next();
 });
 

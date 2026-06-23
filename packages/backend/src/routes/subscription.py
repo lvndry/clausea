@@ -15,6 +15,10 @@ from src.core.logging import get_logger
 from src.models.clerkUser import ClerkUser
 from src.services.paddle_service import paddle_service
 from src.services.service_factory import create_user_service
+from src.services.subscription_sync import (
+    sync_user_subscription_from_paddle,
+    user_needs_subscription_sync,
+)
 
 logger = get_logger(__name__)
 
@@ -128,6 +132,9 @@ async def get_my_subscription(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        if user_needs_subscription_sync(user):
+            user = await sync_user_subscription_from_paddle(db, user)
+
         subscription_data: dict[str, Any] = {
             "tier": user.tier.value,
             "status": user.subscription_status or "inactive",
@@ -153,6 +160,41 @@ async def get_my_subscription(
     except Exception as e:
         logger.error(f"Error getting subscription: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve subscription") from e
+
+
+@router.post("/sync")
+async def sync_my_subscription(
+    current: ClerkUser = Depends(get_current_user),
+    db: AgnosticDatabase = Depends(get_db),
+) -> dict[str, Any]:
+    """Reconcile local subscription state with Paddle."""
+    if not current.user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        user_service = create_user_service()
+        user = await user_service.get_user_by_id(db, current.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if not user.paddle_subscription_id:
+            user = await sync_user_subscription_from_paddle(db, user, recover_by_email=True)
+            if not user.paddle_subscription_id:
+                raise HTTPException(status_code=400, detail="No Paddle subscription linked")
+
+        user = await sync_user_subscription_from_paddle(db, user, recover_by_email=True)
+
+        return {
+            "tier": user.tier.value,
+            "status": user.subscription_status or "inactive",
+            "synced": True,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error syncing subscription: {e}")
+        raise HTTPException(status_code=500, detail="Subscription sync failed") from e
 
 
 @router.post("/cancel")

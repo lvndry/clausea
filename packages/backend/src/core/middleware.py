@@ -67,6 +67,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Skip authentication for whitelisted routes
         if self._is_whitelisted(request):
+            if self._is_public_product_get(request):
+                auth_result = await self._authenticate_optional_jwt(request)
+                if auth_result:
+                    request.state.user = auth_result
             return await call_next(request)
 
         # Try different authentication methods
@@ -77,6 +81,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # No valid authentication found
         return JSONResponse(status_code=401, content={"detail": "Authorization required"})
+
+    def _is_public_product_get(self, request: Request) -> bool:
+        return request.method == "GET" and bool(_PUBLIC_PRODUCT_GET_RE.match(request.url.path))
 
     def _is_whitelisted(self, request: Request) -> bool:
         """Check if the request path is whitelisted"""
@@ -182,6 +189,38 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 method=request.method,
             )
+            return None
+
+    async def _authenticate_optional_jwt(self, request: Request) -> dict[str, Any] | None:
+        """Best-effort JWT auth for public product routes.
+
+        Signed-in users send Bearer tokens on product pages, but those routes are
+        public so missing/invalid tokens must not block access.
+        """
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return None
+
+        try:
+            token = auth_header.split(" ")[1]
+            payload: dict[str, Any] = await clerk_auth_service.verify_token(token)
+            user_id = payload.get("sub") or payload.get("id")
+            if not user_id:
+                return None
+
+            user_info = {
+                "user_id": user_id,
+                "email": payload.get("email"),
+                "name": payload.get("name"),
+            }
+            self.logger.info(
+                "Optional JWT authentication on public product route",
+                email=user_info.get("email"),
+                user_id=user_info.get("user_id"),
+                path=request.url.path,
+            )
+            return user_info
+        except Exception:
             return None
 
     def _log_request(self, request: Request) -> None:
