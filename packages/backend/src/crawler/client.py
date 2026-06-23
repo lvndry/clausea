@@ -53,6 +53,7 @@ from src.crawler.browser import (
     cleanup_browser,
     get_global_browser_slot,
     setup_browser,
+    try_dismiss_consent_banner,
 )
 from src.crawler.constants import (
     _CONSENT_CONTAINER_RE,
@@ -66,6 +67,7 @@ from src.crawler.constants import (
     BROWSER_DOMAIN_FAILURE_CAP,
     BROWSER_LOAD_STATE_TIMEOUT_MS,
     BROWSER_NAV_TIMEOUT_MS,
+    BROWSER_NETWORKIDLE_TIMEOUT_MS,
     CONVERGENCE_LEGAL_SCORE,
     CRAWL_BOT_WALL_ABORT,
     CRAWL_EXHAUSTION_GRACE,
@@ -79,6 +81,8 @@ from src.crawler.constants import (
     MIN_CONTENT_LENGTH_FOR_SPA_CHECK,
     MIN_PAGES_PER_SEED,
     SPA_HYDRATION_RETRIES,
+    SPA_HYDRATION_WAIT_BASE_S,
+    SPA_HYDRATION_WAIT_STEP_S,
     STEALTH_ACCEPT_HEADER,
     STEALTH_USER_AGENT,
     english_locale_canonical_key,
@@ -191,6 +195,9 @@ class ClauseaCrawler:
         allowed_paths: list[str] | None = None,
         denied_paths: list[str] | None = None,
         delay_jitter: float = 0.0,
+        browser_extra_delay: float = 2.0,
+        browser_failure_backoff_s: float = 3.0,
+        browser_failure_backoff_max_s: float = 15.0,
         enable_pdf_crawling: bool = False,
         use_tika_for_binaries: bool = False,
         use_pdfminer_for_pdf: bool = False,
@@ -205,6 +212,11 @@ class ClauseaCrawler:
         self.max_concurrent = max_concurrent
         self.delay_between_requests = delay_between_requests
         self.delay_jitter = delay_jitter
+        self.browser_extra_delay = max(0.0, browser_extra_delay)
+        self.browser_failure_backoff_s = max(0.0, browser_failure_backoff_s)
+        self.browser_failure_backoff_max_s = max(
+            self.browser_failure_backoff_s, browser_failure_backoff_max_s
+        )
         self.timeout = timeout
         self.allowed_domains: set[str] | None = set(allowed_domains) if allowed_domains else None
         self.respect_robots_txt = respect_robots_txt
@@ -279,6 +291,7 @@ class ClauseaCrawler:
         self._render_failures: int = 0
         self._render_slot_wait_total: float = 0.0
         self._render_recovered: int = 0
+        self._domain_extra_delay: dict[str, float] = {}
         self._consecutive_browser_failures: int = 0
 
         self.rate_limiter = DomainRateLimiter(
@@ -828,6 +841,8 @@ class ClauseaCrawler:
             except Exception:
                 pass
 
+            await try_dismiss_consent_banner(page)
+
             title = await page.title()
             content = await page.content()
 
@@ -841,8 +856,9 @@ class ClauseaCrawler:
 
             body_text_len = len(text_content) if text_content else 0
             if body_text_len < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
-                for _ in range(SPA_HYDRATION_RETRIES):
-                    await asyncio.sleep(1)
+                for attempt in range(SPA_HYDRATION_RETRIES):
+                    wait_s = SPA_HYDRATION_WAIT_BASE_S + attempt * SPA_HYDRATION_WAIT_STEP_S
+                    await asyncio.sleep(wait_s)
                     new_content = await page.content()
                     _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
                         self._parse_html_string, new_content, final_url
@@ -860,6 +876,26 @@ class ClauseaCrawler:
                     markdown_content = new_md
                     metadata = new_meta
                     discovered_links = new_links
+
+            if body_text_len < MIN_CONTENT_LENGTH_FOR_SPA_CHECK:
+                try:
+                    await page.wait_for_load_state(
+                        "networkidle", timeout=BROWSER_NETWORKIDLE_TIMEOUT_MS
+                    )
+                except Exception:
+                    pass
+                else:
+                    new_content = await page.content()
+                    _, new_text, new_md, new_meta, new_links = await asyncio.to_thread(
+                        self._parse_html_string, new_content, final_url
+                    )
+                    new_len = len(new_text) if new_text else 0
+                    if new_len > body_text_len:
+                        text_content = new_text
+                        markdown_content = new_md
+                        metadata = new_meta
+                        discovered_links = new_links
+                        body_text_len = new_len
 
             metadata["_browser_resolved_url"] = final_url
 
@@ -1566,7 +1602,26 @@ class ClauseaCrawler:
         return metadata
 
     async def rate_limit(self, url: str) -> None:
-        await self.rate_limiter.rate_limit(url)
+        min_delay = self.delay_between_requests
+        if self.robots_checker is not None:
+            robots_delay = self.robots_checker.get_crawl_delay(url)
+            if robots_delay is not None:
+                min_delay = max(min_delay, robots_delay)
+
+        domain = self.rate_limiter._normalize_domain(url)
+        min_delay += self._domain_extra_delay.get(domain, 0.0)
+        await self.rate_limiter.rate_limit(url, min_delay=min_delay)
+
+    def _note_browser_domain_delay(self, url: str, *, failed: bool) -> None:
+        domain = self.rate_limiter._normalize_domain(url)
+        if failed:
+            current = self._domain_extra_delay.get(domain, 0.0)
+            self._domain_extra_delay[domain] = min(
+                self.browser_failure_backoff_max_s,
+                max(self.browser_extra_delay, current + self.browser_failure_backoff_s),
+            )
+        else:
+            self._domain_extra_delay[domain] = self.browser_extra_delay
 
     async def _fetch_page_internal(self, session: aiohttp.ClientSession, url: str) -> CrawlResult:
         try:
@@ -1650,6 +1705,7 @@ class ClauseaCrawler:
                             browser_page, effective_url
                         ):
                             self._consecutive_browser_failures = 0
+                            self._note_browser_domain_delay(effective_url, failed=False)
                             browser_resolved = browser_page.metadata.pop(
                                 "_browser_resolved_url", None
                             )
@@ -1661,6 +1717,7 @@ class ClauseaCrawler:
                             return self._build_crawl_result(effective_url, browser_page)
 
                         self._consecutive_browser_failures += 1
+                        self._note_browser_domain_delay(effective_url, failed=True)
                         if browser_page is None:
                             self._render_failures += 1
                             if not self._in_render_retry:

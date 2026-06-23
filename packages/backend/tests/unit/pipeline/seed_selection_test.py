@@ -132,3 +132,31 @@ async def test_extension_seeds_reach_crawl_multiple(monkeypatch: pytest.MonkeyPa
 
     all_crawled = [url for batch in batches for url in batch]
     assert seed in all_crawled
+
+
+def test_product_seed_overrides_merge_for_known_slug() -> None:
+    product = Product(
+        id="p7",
+        name="Facebook",
+        slug="facebook",
+        domains=["facebook.com"],
+        crawl_base_urls=[],
+    )
+    urls = _pipeline()._get_crawl_urls(product)
+    assert "https://facebook.com" in urls
+    assert "https://mbasic.facebook.com/legal/terms/plain_text_terms" in urls
+    assert "https://mbasic.facebook.com/privacy/policies/cookies/printable" in urls
+    assert "https://mbasic.facebook.com/privacy/policy/printable/version/25862970456621906" in urls
+
+
+def test_openai_policies_hub_seed_override() -> None:
+    product = Product(
+        id="p8",
+        name="OpenAI",
+        slug="openai",
+        domains=["openai.com"],
+        crawl_base_urls=[],
+    )
+    urls = _pipeline()._get_crawl_urls(product)
+    assert "https://openai.com" in urls
+    assert "https://openai.com/policies" in urls

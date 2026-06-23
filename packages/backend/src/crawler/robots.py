@@ -140,32 +140,55 @@ class RobotsTxtChecker:
             parsed["sitemaps"] = sitemaps
         return parsed
 
+    def _resolve_applicable_rules(self, robots_rules: dict[str, Any]) -> dict[str, Any] | None:
+        user_agents = robots_rules.get("user_agents", {})
+
+        user_agent_lower = self.user_agent.lower()
+        if user_agent_lower in user_agents:
+            return user_agents[user_agent_lower]
+
+        matching = [
+            ua
+            for ua in user_agents
+            if ua in user_agent_lower and ua not in self.user_agent_patterns
+        ]
+        if matching:
+            best = max(matching, key=len)
+            return user_agents[best]
+
+        for pattern in self.user_agent_patterns:
+            if pattern in user_agents:
+                return user_agents[pattern]
+
+        return None
+
+    def get_crawl_delay(self, url: str) -> float | None:
+        """Return robots.txt Crawl-delay for this URL's origin, if cached and set."""
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        robots_rules = self.robots_cache.get(base_url)
+        if not robots_rules or robots_rules.get("allow_all"):
+            return None
+
+        applicable_rules = self._resolve_applicable_rules(robots_rules)
+        if not applicable_rules:
+            return None
+
+        delay = applicable_rules.get("crawl_delay")
+        if delay is None:
+            return None
+        try:
+            return max(0.0, float(delay))
+        except (TypeError, ValueError):
+            return None
+
     def _check_url_allowed(self, url: str, robots_rules: dict[str, Any]) -> tuple[bool, str]:
         parsed = urlparse(url)
         path = parsed.path
         if not path:
             path = "/"
 
-        user_agents = robots_rules.get("user_agents", {})
-
-        applicable_rules = None
-        user_agent_lower = self.user_agent.lower()
-
-        if user_agent_lower in user_agents:
-            applicable_rules = user_agents[user_agent_lower]
-        elif matching := [
-            ua
-            for ua in user_agents
-            if ua in user_agent_lower and ua not in self.user_agent_patterns
-        ]:
-            best = max(matching, key=len)
-            applicable_rules = user_agents[best]
-        else:
-            for pattern in self.user_agent_patterns:
-                if pattern in user_agents:
-                    applicable_rules = user_agents[pattern]
-                    break
-
+        applicable_rules = self._resolve_applicable_rules(robots_rules)
         if not applicable_rules:
             return True, "No matching rules found"
 
