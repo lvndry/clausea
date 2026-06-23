@@ -29,6 +29,10 @@ class PipelineErrorCode(StrEnum):
     interrupted = "interrupted"
     orphaned = "orphaned"
     domain_circuit_breaker = "domain_circuit_breaker"
+    access_denied = "access_denied"  # anti-bot / Cloudflare / 403 wall
+    no_policy_found = "no_policy_found"  # crawled OK, no policy pages found
+    site_unavailable = "site_unavailable"  # DNS / SSL / connection failure
+    analysis_failed = "analysis_failed"  # LLM step failed after docs stored
 
 
 PipelineJobStatus = Literal[
@@ -40,25 +44,38 @@ PipelineJobStatus = Literal[
     "failed",
     "no_documents",
     "robots_blocked",
+    "access_denied",
+    "no_policy_found",
+    "site_unavailable",
+    "analysis_failed",
     "interrupted",
 ]
 
 # Statuses a job can never leave. A job in any of these is "done" and must not be
 # treated as active, reused, or retriggered automatically:
-#   - completed:       ran to the end, overview generated
-#   - no_documents:    crawl ran to completion but found 0 policy documents (a valid,
-#                      deterministic result — retrying yields the same outcome)
-#   - robots_blocked:  the site's robots.txt explicitly blocked all seed URLs;
-#                      deterministic — retrying without manual intervention yields the
-#                      same result. Distinct from no_documents so the frontend can show
-#                      a targeted explanation rather than a generic "nothing found".
-#   - failed:          interrupted or errored. Auto-retry may re-queue some failed
-#                      jobs (transient/retryable) within a bounded attempt budget.
+#   - completed:        ran to the end, overview generated.
+#   - no_documents:     crawl ran to completion but found 0 policy documents (kept
+#                       for backward compat; new jobs use no_policy_found instead).
+#   - robots_blocked:   the site's robots.txt explicitly blocked all seed URLs.
+#                       Deterministic — retrying without manual intervention yields the
+#                       same result.
+#   - access_denied:    anti-bot / Cloudflare / consistent 4xx responses; distinct
+#                       from robots.txt blocking. Deterministic.
+#   - no_policy_found:  crawl succeeded (>0 pages downloaded) but classifier found
+#                       zero relevant policy documents.
+#   - site_unavailable: all seed URLs failed at connection level (DNS, SSL, timeout).
+#   - analysis_failed:  crawl + docs stored OK but LLM synthesis or overview threw.
+#   - failed:           interrupted or errored. Auto-retry may re-queue some failed
+#                       jobs (transient/retryable) within a bounded attempt budget.
 TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
     "completed",
     "failed",
     "no_documents",
     "robots_blocked",
+    "access_denied",
+    "no_policy_found",
+    "site_unavailable",
+    "analysis_failed",
     "interrupted",
 )
 

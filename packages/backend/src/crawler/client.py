@@ -2261,6 +2261,10 @@ class ClauseaCrawler:
                 if self.stats.crawled_urls == 0:
                     robots_blocked_count = sum(1 for r in self.results if r.blocked_by_robots_txt)
                     attempted = self.stats.total_urls
+                    failed_results = [
+                        r for r in self.results if not r.success and not r.blocked_by_robots_txt
+                    ]
+
                     if robots_blocked_count > 0 and robots_blocked_count == attempted:
                         self.stats.all_seeds_robots_blocked = True
                         logger.warning(
@@ -2270,6 +2274,86 @@ class ClauseaCrawler:
                             robots_blocked_count,
                             termination_reason,
                         )
+                    elif failed_results:
+                        _conn_keywords = frozenset(
+                            (
+                                "connection",
+                                "dns",
+                                "refused",
+                                "reset",
+                                "ssl",
+                                "certificate",
+                                "timeout",
+                                "timed out",
+                                "network",
+                                "resolve",
+                                "unreachable",
+                            )
+                        )
+                        _bot_keywords = frozenset(
+                            (
+                                "captcha",
+                                "cloudflare",
+                                "access denied",
+                                "bot",
+                                "challenge",
+                                "ddos",
+                                "security check",
+                            )
+                        )
+                        _hard_status_codes = frozenset({401, 403, 407, 429, 451})
+
+                        conn_fails = sum(
+                            1
+                            for r in failed_results
+                            if (
+                                r.error_message
+                                and any(kw in r.error_message.lower() for kw in _conn_keywords)
+                            )
+                            or (not r.error_message and r.status_code == 0)
+                        )
+                        hard_fails = sum(
+                            1
+                            for r in failed_results
+                            if r.status_code in _hard_status_codes
+                            or (
+                                r.error_message
+                                and any(kw in r.error_message.lower() for kw in _bot_keywords)
+                            )
+                        )
+
+                        if conn_fails == len(failed_results):
+                            self.stats.site_unavailable = True
+                            logger.warning(
+                                "Crawl for %s completed with 0 pages — all %d non-robots "
+                                "failure(s) are connection-level (DNS/SSL/timeout) "
+                                "(termination_reason=%s)",
+                                base_url,
+                                len(failed_results),
+                                termination_reason,
+                            )
+                        elif hard_fails > 0:
+                            self.stats.access_denied = True
+                            logger.warning(
+                                "Crawl for %s completed with 0 pages — %d/%d failure(s) "
+                                "are hard HTTP blocks or anti-bot responses "
+                                "(termination_reason=%s)",
+                                base_url,
+                                hard_fails,
+                                len(failed_results),
+                                termination_reason,
+                            )
+                        else:
+                            logger.warning(
+                                "Crawl for %s completed with 0 pages — %d failure(s), "
+                                "mixed or unclassified errors "
+                                "(termination_reason=%s, robots_blocked=%d/%d)",
+                                base_url,
+                                len(failed_results),
+                                termination_reason,
+                                robots_blocked_count,
+                                attempted,
+                            )
                     elif termination_reason == "url_queue_empty":
                         logger.warning(
                             "Crawl for %s completed with 0 pages — URL queue was empty "
@@ -2282,6 +2366,9 @@ class ClauseaCrawler:
                             termination_reason,
                         )
                     elif termination_reason == "bot_wall_abort":
+                        # Bot-wall abort with no concrete failed results recorded —
+                        # treat as access_denied since consecutive failures triggered the abort.
+                        self.stats.access_denied = True
                         logger.warning(
                             "Crawl for %s completed with 0 pages — bot-wall abort triggered "
                             "after %d consecutive failures (termination_reason=%s)",

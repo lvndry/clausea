@@ -26,6 +26,14 @@ export const PIPELINE_ERROR_CODE_MESSAGES: Record<string, string> = {
     "Analysis was interrupted by a worker restart and will resume automatically.",
   orphaned:
     "The analysis worker lost contact with this job (restart, crash, or missing heartbeats). It will be retried automatically.",
+  access_denied:
+    "This site actively blocked our crawler — likely Cloudflare or similar bot protection. This is a restriction set by the site. You can visit their site directly to read their policies.",
+  no_policy_found:
+    "We successfully crawled this site but couldn't find any privacy policy, terms of service, or cookie policy pages. The site may use a non-standard URL structure.",
+  site_unavailable:
+    "We couldn't reach this site — it may be temporarily down, the domain may have moved, or a network issue prevented access. Please try again later.",
+  analysis_failed:
+    "We retrieved the policy documents but encountered an error during AI analysis. This is temporary — please try again.",
 };
 
 export function resolvePipelineErrorMessage(

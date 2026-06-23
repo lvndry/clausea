@@ -96,6 +96,12 @@ class CrawlStats(BaseModel):
     # job.crawl_errors (error_type == "robots_txt_blocked") as the authoritative
     # signal for the "robots_blocked" job status; this field is not read there.
     all_seeds_robots_blocked: bool = False
+    # Set to True when crawled_urls == 0 and all connection attempts failed at the
+    # network layer (DNS failure, SSL error, refused connection, timeout).
+    site_unavailable: bool = False
+    # Set to True when the bot-wall abort triggered with predominantly 4xx/anti-bot
+    # responses (Cloudflare, 403, CAPTCHA). Distinct from robots_txt blocking.
+    access_denied: bool = False
 
     @property
     def elapsed_time(self) -> float:
