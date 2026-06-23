@@ -25,7 +25,6 @@ function parsePreviewViewCount(cookieValue: string | undefined): number {
     return 0;
   }
 
-  // Legacy cookies stored only a count — start fresh with monthly tracking.
   if (!cookieValue.includes(":")) {
     return 0;
   }
