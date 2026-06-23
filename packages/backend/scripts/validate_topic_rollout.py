@@ -106,7 +106,7 @@ async def _validate_slug(
     docs = await doc_svc.get_product_documents(db, product.id)
     doc_summaries = [DocumentSummary.from_document(doc) for doc in docs]
     full_docs = await DocumentRepository().find_by_product_id_full(db, product.id)
-    aggregation = rollup_to_hydrated(
+    hydrated_rollup = rollup_to_hydrated(
         product_id=product.id,
         product_slug=slug,
         rollup=intelligence.rollup,
@@ -114,12 +114,12 @@ async def _validate_slug(
     )
     report_a = build_product_topic_report(
         product_slug=slug,
-        aggregation=aggregation,
+        rollup=hydrated_rollup,
         documents=doc_summaries,
     )
     report_b = build_product_topic_report(
         product_slug=slug,
-        aggregation=aggregation,
+        rollup=hydrated_rollup,
         documents=doc_summaries,
     )
 

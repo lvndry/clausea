@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from src.core.database import get_db
 from src.models.product_intelligence import OverviewSnapshot
 from src.repositories.document_change_repository import DocumentChangeRepository
-from src.repositories.product_overview_history_repository import ProductOverviewHistoryRepository
+from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
 
 router = APIRouter(prefix="/history", tags=["history"])
 
@@ -21,7 +21,7 @@ class DocumentChangeSummary(BaseModel):
     previous_hash: str | None
 
 
-@router.get("/documents/{document_id}/versions", response_model=list[DocumentChangeSummary])
+@router.get("/documents/{document_id}/changes", response_model=list[DocumentChangeSummary])
 async def list_document_changes(
     document_id: str,
     db: AgnosticDatabase = Depends(get_db),
@@ -40,7 +40,7 @@ async def list_document_changes(
     ]
 
 
-@router.get("/documents/{document_id}/versions/{change_id}/diff", response_model=dict[str, str])
+@router.get("/documents/{document_id}/changes/{change_id}/diff", response_model=dict[str, str])
 async def diff_document_changes(
     document_id: str,
     change_id: str,
@@ -64,9 +64,9 @@ async def diff_document_changes(
     }
 
 
-@router.get("/products/{slug}/overview-history", response_model=list[OverviewSnapshot])
-async def list_overview_history(
+@router.get("/products/{slug}/overview-snapshots", response_model=list[OverviewSnapshot])
+async def list_overview_snapshots(
     slug: str,
     db: AgnosticDatabase = Depends(get_db),
 ) -> list[OverviewSnapshot]:
-    return await ProductOverviewHistoryRepository().find_by_product(db, slug)
+    return await ProductIntelligenceRepository().list_overview_history(db, slug)

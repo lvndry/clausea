@@ -75,10 +75,10 @@ from src.prompts.analysis_prompts import (
     PRODUCT_OVERVIEW_PROMPT,
 )
 from src.repositories.document_repository import DocumentRepository
-from src.services.aggregation_service import ProductRollupService
 from src.services.document_service import DocumentService
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
+from src.services.product_rollup_service import ProductRollupService
 from src.services.product_service import ProductService
 from src.services.term_materiality_classifier import filter_danger_strings_llm
 from src.services.topic_report_service import build_product_topic_report
@@ -1934,13 +1934,13 @@ async def generate_product_overview(
     if on_progress is not None:
         await _maybe_await(on_progress())
     rollup_service = ProductRollupService(DocumentRepository())
-    aggregation = await rollup_service.build_product_aggregation(
+    hydrated_rollup = await rollup_service.build_product_rollup(
         db, product_id=product.id, product_slug=product_slug
     )
     document_summaries = [DocumentSummary.from_document(doc) for doc in documents]
     topic_report = build_product_topic_report(
         product_slug=product_slug,
-        aggregation=aggregation,
+        rollup=hydrated_rollup,
         documents=document_summaries,
     )
 
@@ -2053,11 +2053,11 @@ async def generate_product_overview(
     # These are deterministically detected facts (e.g., one doc says data is not sold,
     # another says it can be shared with commercial partners) that the LLM should weigh.
     conflicts_section = ""
-    if aggregation.conflicts:
+    if hydrated_rollup.conflicts:
         conflicts_section = (
             "\nCross-document conflicts detected by the analysis engine "
             "(report these in the contradictions field):\n"
-            + json.dumps([c.model_dump() for c in aggregation.conflicts], indent=2)
+            + json.dumps([c.model_dump() for c in hydrated_rollup.conflicts], indent=2)
             + "\n"
         )
 
@@ -2159,7 +2159,7 @@ Per-document analyses and extractions:
         raw_contradictions = overview_dict.pop("contradictions", None)
 
         meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
-        meta_summary.coverage = aggregation.coverage
+        meta_summary.coverage = hydrated_rollup.coverage
         if meta_summary.dangers:
             meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
 

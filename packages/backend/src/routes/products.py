@@ -192,7 +192,7 @@ async def get_product_topics(
         doc_id for item in intelligence.rollup.items for doc_id in item.document_ids
     } | {doc_id for conflict in intelligence.rollup.conflicts for doc_id in conflict.document_ids}
     documents_for_hydration = [doc for doc in full_docs if doc.id in referenced_ids]
-    aggregation = rollup_to_hydrated(
+    hydrated_rollup = rollup_to_hydrated(
         product_id=product.id,
         product_slug=slug,
         rollup=intelligence.rollup,
@@ -202,7 +202,7 @@ async def get_product_topics(
     documents = await service.get_product_documents(db, slug)
     return build_product_topic_report(
         product_slug=slug,
-        aggregation=aggregation,
+        rollup=hydrated_rollup,
         documents=documents,
     )
 

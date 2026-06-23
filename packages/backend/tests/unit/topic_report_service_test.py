@@ -21,7 +21,7 @@ def _documents() -> list[DocumentSummary]:
 
 
 def test_build_product_topic_report_keeps_all_non_empty_citations() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -52,7 +52,7 @@ def test_build_product_topic_report_keeps_all_non_empty_citations() -> None:
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -62,7 +62,7 @@ def test_build_product_topic_report_keeps_all_non_empty_citations() -> None:
 
 
 def test_build_product_topic_report_keeps_off_topic_quotes_without_pattern_filter() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="figma",
         findings=[
@@ -99,7 +99,7 @@ def test_build_product_topic_report_keeps_off_topic_quotes_without_pattern_filte
 
     report = build_product_topic_report(
         product_slug="figma",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -109,7 +109,7 @@ def test_build_product_topic_report_keeps_off_topic_quotes_without_pattern_filte
 
 
 def test_build_product_topic_report_drops_finding_when_only_empty_evidence() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -130,7 +130,7 @@ def test_build_product_topic_report_drops_finding_when_only_empty_evidence() -> 
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -140,7 +140,7 @@ def test_build_product_topic_report_drops_finding_when_only_empty_evidence() -> 
 
 
 def test_build_product_topic_report_includes_cross_document_citations() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[
@@ -180,7 +180,7 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -198,7 +198,7 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
 
 
 def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[
@@ -209,7 +209,7 @@ def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -223,7 +223,7 @@ def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
 
 
 def test_build_product_topic_report_attaches_conflicts() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[],
@@ -250,7 +250,7 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -267,7 +267,7 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
 
 
 def test_build_product_topic_report_keeps_all_linked_citations() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -293,7 +293,7 @@ def test_build_product_topic_report_keeps_all_linked_citations() -> None:
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -303,7 +303,7 @@ def test_build_product_topic_report_keeps_all_linked_citations() -> None:
 
 
 def test_build_product_topic_report_filters_standard_danger_findings() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -337,7 +337,7 @@ def test_build_product_topic_report_filters_standard_danger_findings() -> None:
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 
@@ -347,7 +347,7 @@ def test_build_product_topic_report_filters_standard_danger_findings() -> None:
 
 
 def test_build_product_topic_report_is_deterministic() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[CoverageItem(category="security", status="missing")],
@@ -373,19 +373,19 @@ def test_build_product_topic_report_is_deterministic() -> None:
     )
     report_one = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
     report_two = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
     assert report_one.model_dump(mode="json") == report_two.model_dump(mode="json")
 
 
 def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_coverage() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[CoverageItem(category="data_collection", status="found")],
@@ -421,7 +421,7 @@ def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_c
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
     topic = next(item for item in report.topics if item.topic == "data_collection")
@@ -430,7 +430,7 @@ def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_c
 
 
 def test_build_product_topic_report_filters_dangers_via_materiality_labels() -> None:
-    aggregation = HydratedRollup(
+    rollup = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -464,7 +464,7 @@ def test_build_product_topic_report_filters_dangers_via_materiality_labels() -> 
 
     report = build_product_topic_report(
         product_slug="example",
-        aggregation=aggregation,
+        rollup=rollup,
         documents=_documents(),
     )
 

@@ -114,8 +114,8 @@ def _services(product_id: str = "p1") -> tuple[MagicMock, MagicMock]:
 async def test_generate_product_overview_passes_product_id_to_save() -> None:
     """generate_product_overview must pass product.id to save_product_overview."""
     product_svc, document_svc = _services(product_id="abc-123")
-    aggregation_service = MagicMock()
-    aggregation_service.build_product_aggregation = AsyncMock(
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
         return_value=MagicMock(
             findings=[],
             coverage=[],
@@ -126,7 +126,7 @@ async def test_generate_product_overview_passes_product_id_to_save() -> None:
     )
 
     with (
-        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),
@@ -266,8 +266,8 @@ def test_transform_to_overview_headline_claim_none_when_missing() -> None:
 async def test_generate_product_overview_parses_headline_claim_from_llm() -> None:
     """generate_product_overview must parse headline_claim from the LLM JSON response."""
     product_svc, document_svc = _services()
-    aggregation_service = MagicMock()
-    aggregation_service.build_product_aggregation = AsyncMock(
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
         return_value=MagicMock(
             findings=[],
             coverage=[],
@@ -281,7 +281,7 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
     )
 
     with (
-        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(payload)),
@@ -304,8 +304,8 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
 async def test_generate_product_overview_headline_claim_none_when_llm_omits_it() -> None:
     """headline_claim must be None when the LLM does not return it."""
     product_svc, document_svc = _services()
-    aggregation_service = MagicMock()
-    aggregation_service.build_product_aggregation = AsyncMock(
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
         return_value=MagicMock(
             findings=[],
             coverage=[],
@@ -316,7 +316,7 @@ async def test_generate_product_overview_headline_claim_none_when_llm_omits_it()
     )
 
     with (
-        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),

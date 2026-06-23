@@ -56,7 +56,7 @@ async def test_get_product_topics_404_when_product_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_product_topics_425_when_aggregation_missing() -> None:
+async def test_get_product_topics_425_when_rollup_missing() -> None:
     service = MagicMock()
     service.get_product_by_slug = AsyncMock(return_value=_product())
 

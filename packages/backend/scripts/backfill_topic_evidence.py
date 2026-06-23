@@ -57,7 +57,7 @@ async def _backfill_slug(
     print(f"[start] {slug}")
     t0 = time.perf_counter()
 
-    aggregation = await rollup_svc.build_product_aggregation(
+    aggregation = await rollup_svc.build_product_rollup(
         db, product_id=product.id, product_slug=slug
     )
     print(
@@ -94,7 +94,7 @@ async def _run(args: argparse.Namespace) -> int:
     from src.core.database import db_session
     from src.core.logging import setup_logging
     from src.repositories.document_repository import DocumentRepository
-    from src.services.aggregation_service import ProductRollupService
+    from src.services.product_rollup_service import ProductRollupService
     from src.services.service_factory import create_document_service, create_product_service
 
     setup_logging()

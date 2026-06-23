@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from src.models.document import Document, EvidenceSpan, InsightCategory
 from src.models.finding import AggregatedFinding, Finding, FindingConflict, HydratedRollup
-from src.services.aggregation_service import ProductRollupService
 from src.services.evidence_relevance import filter_evidence_spans
+from src.services.product_rollup_service import ProductRollupService
 
 
 def _normalize(value: str) -> str:

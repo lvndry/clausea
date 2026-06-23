@@ -13,7 +13,7 @@ from src.models.document import (
 )
 from src.models.finding import Finding
 from src.repositories.document_repository import DocumentRepository
-from src.services.aggregation_service import ProductRollupService
+from src.services.product_rollup_service import ProductRollupService
 
 
 class _DummyRepo:
@@ -68,7 +68,7 @@ def test_build_coverage_marks_missing_when_not_found() -> None:
 
 
 def test_product_rollup_fixture_shape() -> None:
-    fixture_path = Path(__file__).resolve().parents[1] / "fixtures/aggregation_fixture.json"
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures/product_rollup_fixture.json"
     payload = json.loads(fixture_path.read_text())
     assert "coverage" in payload
     assert "items" in payload or "findings" in payload

@@ -1,4 +1,4 @@
-"""Aggregation service for merging findings across documents (v4)."""
+"""Build product rollups from document extractions and persist slim caches."""
 
 from __future__ import annotations
 
@@ -730,7 +730,7 @@ class ProductRollupService:
             generated_at=rollup.generated_at,
         )
 
-    async def build_product_aggregation(
+    async def build_product_rollup(
         self, db: AgnosticDatabase, product_id: str, product_slug: str
     ) -> HydratedRollup:
         findings = await self._collect_findings_from_extractions(

@@ -7,7 +7,7 @@ from typing import Any
 
 from motor.core import AgnosticDatabase
 
-from src.models.product_intelligence import ProductIntelligence, ProductRollup
+from src.models.product_intelligence import OverviewSnapshot, ProductIntelligence, ProductRollup
 from src.repositories.base_repository import BaseRepository
 
 
@@ -83,6 +83,14 @@ class ProductIntelligenceRepository(BaseRepository):
         return await db[self.COLLECTION].count_documents(
             {"overview": {"$exists": True, "$ne": None}}
         )
+
+    async def list_overview_history(
+        self, db: AgnosticDatabase, product_slug: str, limit: int = 50
+    ) -> list[OverviewSnapshot]:
+        intelligence = await self.get_by_slug(db, product_slug)
+        if not intelligence:
+            return []
+        return intelligence.overview_history[:limit]
 
     async def list_sitemap_entries(self, db: AgnosticDatabase) -> list[dict[str, Any]]:
         cursor = db[self.COLLECTION].find(

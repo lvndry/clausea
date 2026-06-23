@@ -79,14 +79,14 @@ def _services() -> tuple[MagicMock, MagicMock]:
     return product_svc, document_svc
 
 
-def _patch_aggregation_and_llm():
-    aggregation = MagicMock()
-    aggregation.conflicts = []
-    aggregation.coverage = []
-    aggregation_service = MagicMock()
-    aggregation_service.build_product_aggregation = AsyncMock(return_value=aggregation)
+def _patch_rollup_and_llm():
+    rollup = MagicMock()
+    rollup.conflicts = []
+    rollup.coverage = []
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(return_value=rollup)
     return (
-        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_overview_response()),
@@ -103,7 +103,7 @@ async def test_overview_fires_heartbeat_at_each_sub_step():
         nonlocal pings
         pings += 1
 
-    agg_patch, llm_patch = _patch_aggregation_and_llm()
+    agg_patch, llm_patch = _patch_rollup_and_llm()
     with agg_patch, llm_patch:
         await generate_product_overview(
             MagicMock(),
@@ -124,7 +124,7 @@ async def test_overview_none_callback_is_noop():
     """A None callback leaves generate_product_overview behaving exactly as before."""
     product_svc, document_svc = _services()
 
-    agg_patch, llm_patch = _patch_aggregation_and_llm()
+    agg_patch, llm_patch = _patch_rollup_and_llm()
     with agg_patch, llm_patch:
         result = await generate_product_overview(
             MagicMock(),
