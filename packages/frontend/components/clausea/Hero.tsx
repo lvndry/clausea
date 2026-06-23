@@ -36,9 +36,8 @@ export default function Hero({
         transition={{ duration: 0.8, delay: 0.1, ease: "easeOut" }}
         className="font-display text-5xl sm:text-6xl md:text-[140px] leading-[0.85] font-medium tracking-tight md:-ml-1.5 text-foreground"
       >
-        Automated
-        <br />
-        Legal Analysis.
+        Privacy Policies
+        <br />& Terms, Made Easy.
       </motion.h1>
       <motion.div
         initial={{ opacity: 0, y: 20 }}

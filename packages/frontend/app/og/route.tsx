@@ -366,7 +366,7 @@ export async function GET(request: NextRequest) {
       >
         <div
           style={{
-            fontSize: 114,
+            fontSize: 96,
             fontWeight: 700,
             color: "#faf9f6",
             lineHeight: 0.88,
@@ -374,11 +374,11 @@ export async function GET(request: NextRequest) {
             fontFamily,
           }}
         >
-          Automated
+          Privacy Policies
         </div>
         <div
           style={{
-            fontSize: 114,
+            fontSize: 96,
             fontWeight: 700,
             color: "#faf9f6",
             lineHeight: 0.88,
@@ -387,7 +387,7 @@ export async function GET(request: NextRequest) {
             fontFamily,
           }}
         >
-          Legal Analysis.
+          & Terms, Made Easy.
         </div>
         <div
           style={{
