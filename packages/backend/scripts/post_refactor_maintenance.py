@@ -114,14 +114,14 @@ async def _unstick_pipeline(db) -> dict[str, int]:
     stats: dict[str, int] = {}
 
     in_progress = ["crawling", "synthesising", "generating_overview"]
-    high_attempt = await db.pipeline_jobs.find(
-        {"status": {"$in": in_progress}, "attempts": {"$gte": HIGH_ATTEMPT_DEFER_THRESHOLD}},
-        {"product_slug": 1, "attempts": 1},
-    ).to_list(length=100)
-    if high_attempt:
-        slugs = [j["product_slug"] for j in high_attempt]
+    high_attempt_filter = {
+        "status": {"$in": in_progress},
+        "attempts": {"$gte": HIGH_ATTEMPT_DEFER_THRESHOLD},
+    }
+    deferred_slugs = await db.pipeline_jobs.distinct("product_slug", high_attempt_filter)
+    if deferred_slugs:
         result = await db.pipeline_jobs.update_many(
-            {"product_slug": {"$in": slugs}, "status": {"$in": in_progress}},
+            high_attempt_filter,
             {
                 "$set": {
                     "status": "failed",
@@ -140,7 +140,8 @@ async def _unstick_pipeline(db) -> dict[str, int]:
         )
         stats["deferred_high_attempt"] = result.modified_count
         print(
-            f"[pipeline] deferred {result.modified_count} high-attempt in-progress job(s): {slugs}"
+            f"[pipeline] deferred {result.modified_count} high-attempt in-progress job(s): "
+            f"{sorted(deferred_slugs)}"
         )
 
     reset_in_progress = await db.pipeline_jobs.update_many(
@@ -242,11 +243,12 @@ async def _unstick_pipeline(db) -> dict[str, int]:
 async def _products_needing_backfill(db) -> list[str]:
     with_docs = set(await db.documents.distinct("product_id"))
     intel_ids = set(await db.product_intelligence.distinct("product_id"))
+    missing_ids = sorted(with_docs - intel_ids)
     missing_shell: list[str] = []
-    for pid in sorted(with_docs - intel_ids):
-        row = await db.products.find_one({"id": pid}, {"slug": 1})
-        if row and row.get("slug"):
-            missing_shell.append(row["slug"])
+    if missing_ids:
+        async for row in db.products.find({"id": {"$in": missing_ids}}, {"slug": 1}):
+            if row.get("slug"):
+                missing_shell.append(row["slug"])
 
     no_overview: list[str] = []
     async for row in db.product_intelligence.find(
