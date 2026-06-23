@@ -41,6 +41,7 @@ def _parse_paddle_datetime(value: str | None) -> datetime | None:
 
 def apply_subscription_data_to_user(user: User, subscription: dict[str, Any]) -> User:
     """Apply Paddle subscription payload fields onto a user record."""
+    user = user.model_copy()
     items = subscription.get("items", [])
     price_id = items[0].get("price", {}).get("id") if items else None
     status = subscription.get("status")
@@ -72,7 +73,11 @@ def apply_subscription_data_to_user(user: User, subscription: dict[str, Any]) ->
 
 def user_needs_subscription_sync(user: User) -> bool:
     """Return True when local subscription state may be stale."""
-    return user.tier != UserTier.PRO and bool(user.paddle_subscription_id)
+    if not user.paddle_subscription_id:
+        return False
+    if user.tier == UserTier.PRO and user.subscription_status in _ACTIVE_SUBSCRIPTION_STATUSES:
+        return False
+    return True
 
 
 async def sync_user_subscription_from_paddle(

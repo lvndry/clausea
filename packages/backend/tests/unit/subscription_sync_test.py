@@ -41,6 +41,7 @@ def test_apply_subscription_data_to_user_sets_pro_tier() -> None:
     assert updated.tier == UserTier.PRO
     assert updated.paddle_subscription_id == "sub_123"
     assert updated.subscription_status == "active"
+    assert user.tier == UserTier.FREE
 
 
 def test_user_needs_subscription_sync_when_pro() -> None:
@@ -49,8 +50,20 @@ def test_user_needs_subscription_sync_when_pro() -> None:
         email="test@example.com",
         tier=UserTier.PRO,
         paddle_subscription_id="sub_123",
+        subscription_status="active",
     )
     assert user_needs_subscription_sync(user) is False
+
+
+def test_user_needs_subscription_sync_when_pro_with_canceled_status() -> None:
+    user = User(
+        id="user-1",
+        email="test@example.com",
+        tier=UserTier.PRO,
+        paddle_subscription_id="sub_123",
+        subscription_status="canceled",
+    )
+    assert user_needs_subscription_sync(user) is True
 
 
 def test_apply_subscription_data_to_user_downgrades_paused_tier() -> None:

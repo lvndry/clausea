@@ -216,9 +216,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 "email": payload.get("email"),
                 "name": payload.get("name"),
             }
-            self.logger.info(
+            self.logger.debug(
                 "Optional JWT authentication on public product route",
-                email=user_info.get("email"),
                 user_id=user_info.get("user_id"),
                 path=request.url.path,
             )
