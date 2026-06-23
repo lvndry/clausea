@@ -72,7 +72,10 @@ async def _cancel_zombie_tasks(running: dict[asyncio.Task[None], str]) -> int:
     if not running:
         return 0
 
-    job_ids = list(running.values())
+    # Snapshot before the async DB round-trip so tasks claimed while we await
+    # are not accidentally cancelled.
+    snapshot = list(running.items())
+    job_ids = [job_id for _, job_id in snapshot]
     try:
         async with db_session() as db:
             cursor = db[PipelineRepository.COLLECTION].find(
@@ -86,7 +89,7 @@ async def _cancel_zombie_tasks(running: dict[asyncio.Task[None], str]) -> int:
 
     orphanable = set(ORPHANABLE_PIPELINE_STATUSES)
     cancelled = 0
-    for task, job_id in list(running.items()):
+    for task, job_id in snapshot:
         status = statuses.get(job_id)
         if status in orphanable:
             continue
