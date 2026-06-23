@@ -30,7 +30,10 @@ class DocumentChangeRepository(BaseRepository):
             if product:
                 product_slug = product.get("slug")
 
-        if not existing_doc.product_id or not existing_doc.content_hash:
+        if not existing_doc.product_id:
+            return
+
+        if not existing_doc.content_hash:
             return
 
         await self.record(

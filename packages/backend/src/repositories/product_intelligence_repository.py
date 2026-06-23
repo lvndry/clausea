@@ -11,6 +11,14 @@ from src.models.product_intelligence import OverviewSnapshot, ProductIntelligenc
 from src.repositories.base_repository import BaseRepository
 
 
+def _row_to_intelligence(row: dict[str, Any] | None) -> ProductIntelligence | None:
+    if not row:
+        return None
+    data = dict(row)
+    data.pop("_id", None)
+    return ProductIntelligence.model_validate(data)
+
+
 class ProductIntelligenceRepository(BaseRepository):
     COLLECTION = "product_intelligence"
 
@@ -18,13 +26,34 @@ class ProductIntelligenceRepository(BaseRepository):
         self, db: AgnosticDatabase, product_id: str
     ) -> ProductIntelligence | None:
         row = await db[self.COLLECTION].find_one({"product_id": product_id})
-        return ProductIntelligence.model_validate(row) if row else None
+        return _row_to_intelligence(row)
 
     async def get_by_slug(
         self, db: AgnosticDatabase, product_slug: str
     ) -> ProductIntelligence | None:
         row = await db[self.COLLECTION].find_one({"product_slug": product_slug})
-        return ProductIntelligence.model_validate(row) if row else None
+        return _row_to_intelligence(row)
+
+    async def ensure_shell(
+        self, db: AgnosticDatabase, *, product_id: str, product_slug: str
+    ) -> ProductIntelligence:
+        existing = await self.get_by_product_id(db, product_id)
+        if existing:
+            return existing
+        now = datetime.now()
+        shell = ProductIntelligence(product_id=product_id, product_slug=product_slug)
+        await db[self.COLLECTION].update_one(
+            {"product_id": product_id},
+            {
+                "$setOnInsert": {
+                    **shell.model_dump(mode="json"),
+                    "generated_at": now,
+                    "updated_at": now,
+                }
+            },
+            upsert=True,
+        )
+        return (await self.get_by_product_id(db, product_id)) or shell
 
     async def upsert(self, db: AgnosticDatabase, intelligence: ProductIntelligence) -> None:
         data = intelligence.model_dump(mode="json")

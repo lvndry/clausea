@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import shortuuid
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.models.document import (
     ComplianceBreakdown,
@@ -24,7 +24,11 @@ class RollupItem(BaseModel):
     category: InsightCategory
     value: str
     document_ids: list[str] = Field(default_factory=list)
-    attributes: list[dict[str, Any]] = Field(default_factory=list)
+    attributes: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=50,
+        description="Per-document attribute dicts merged from findings (materiality, etc.).",
+    )
     confidence: float | None = None
 
 
@@ -34,7 +38,17 @@ class RollupConflict(BaseModel):
     category: InsightCategory
     description: str
     document_ids: list[str] = Field(default_factory=list)
-    severity: str | None = None
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _normalize_severity(cls, value: Any) -> Literal["low", "medium", "high", "critical"] | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized in {"low", "medium", "high", "critical"}:
+            return normalized  # type: ignore[return-value]
+        return "medium"
 
 
 class ProductRollup(BaseModel):
@@ -65,7 +79,7 @@ class ProductIntelligence(BaseModel):
     id: str = Field(default_factory=shortuuid.uuid)
     product_id: str
     product_slug: str
-    source_hashes: dict[str, str] = Field(default_factory=dict)
+    source_hashes: dict[str, str] = Field(default_factory=dict, max_length=10_000)
 
     rollup: ProductRollup | None = None
     overview: MetaSummary | None = None

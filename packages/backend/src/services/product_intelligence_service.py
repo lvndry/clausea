@@ -67,12 +67,9 @@ class ProductIntelligenceService:
     async def ensure_shell(
         self, db: AgnosticDatabase, *, product_id: str, product_slug: str
     ) -> ProductIntelligence:
-        existing = await self._intelligence_repo.get_by_product_id(db, product_id)
-        if existing:
-            return existing
-        intelligence = ProductIntelligence(product_id=product_id, product_slug=product_slug)
-        await self._intelligence_repo.upsert(db, intelligence)
-        return intelligence
+        return await self._intelligence_repo.ensure_shell(
+            db, product_id=product_id, product_slug=product_slug
+        )
 
     async def compute_source_hashes(self, db: AgnosticDatabase, product_id: str) -> dict[str, str]:
         documents = await self._document_repo.find_by_product_id(db, product_id)
@@ -144,11 +141,16 @@ class ProductIntelligenceService:
             history = history[:_OVERVIEW_HISTORY_CAP]
 
         now = datetime.now()
-        intelligence.overview = meta_summary
-        intelligence.overview_history = history
-        intelligence.overview_generated_at = now
-        intelligence.updated_at = now
-        await self._intelligence_repo.upsert(db, intelligence)
+        await self._intelligence_repo.upsert_fields(
+            db,
+            product_id,
+            {
+                "product_slug": product_slug,
+                "overview": meta_summary.model_dump(mode="json"),
+                "overview_history": [snapshot.model_dump(mode="json") for snapshot in history],
+                "overview_generated_at": now,
+            },
+        )
         await self.update_product_stats(db, product_id=product_id, product_slug=product_slug)
 
     async def save_explainer(
