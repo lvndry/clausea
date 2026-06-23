@@ -91,6 +91,9 @@ async def _cancel_zombie_tasks(running: dict[asyncio.Task[None], str]) -> int:
     cancelled = 0
     for task, job_id in snapshot:
         status = statuses.get(job_id)
+        if status is None:
+            # Job absent from query (replication lag, etc.) — don't kill on missing data.
+            continue
         if status in orphanable:
             continue
         if task.done():

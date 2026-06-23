@@ -88,7 +88,7 @@ async def test_cancel_zombie_tasks_cancels_failed_jobs() -> None:
 
         assert cancelled == 1
         await asyncio.sleep(0)
-        assert zombie_task.cancelled() or zombie_task.cancelling()
+        assert zombie_task.cancelled()
     finally:
         await _cancel_hanging_task(zombie_task)
 
@@ -154,9 +154,9 @@ async def test_cancel_zombie_tasks_does_not_cancel_tasks_added_during_db_query()
         await add_task
         assert new_task is not None
         assert cancelled == 1
-        assert zombie_task.cancelled() or zombie_task.cancelling()
+        await asyncio.sleep(0)
+        assert zombie_task.cancelled()
         assert not new_task.cancelled()
-        assert not new_task.cancelling()
     finally:
         add_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -164,3 +164,28 @@ async def test_cancel_zombie_tasks_does_not_cancel_tasks_added_during_db_query()
         await _cancel_hanging_task(zombie_task)
         if new_task is not None:
             await _cancel_hanging_task(new_task)
+
+
+@pytest.mark.asyncio
+async def test_cancel_zombie_tasks_skips_jobs_missing_from_db() -> None:
+    async def _hang_forever() -> None:
+        await asyncio.Event().wait()
+
+    active_task = asyncio.create_task(_hang_forever())
+    running = {active_task: "job-missing-from-db"}
+
+    collection = MagicMock()
+    collection.find.return_value = _FakeCursor([])
+    db = MagicMock()
+    db.__getitem__.return_value = collection
+
+    try:
+        with patch("worker.db_session") as mock_session:
+            mock_session.return_value.__aenter__ = AsyncMock(return_value=db)
+            mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            cancelled = await _cancel_zombie_tasks(running)
+
+        assert cancelled == 0
+        assert not active_task.cancelled()
+    finally:
+        await _cancel_hanging_task(active_task)
