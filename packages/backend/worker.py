@@ -21,7 +21,11 @@ from aiohttp import web
 from src.core.database import close_motor_client, db_session
 from src.core.logging import get_logger, setup_logging
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
-from src.repositories.pipeline_repository import PipelineRepository, StaleReapContext
+from src.repositories.pipeline_repository import (
+    ORPHANABLE_PIPELINE_STATUSES,
+    PipelineRepository,
+    StaleReapContext,
+)
 from src.services.service_factory import create_pipeline_service
 
 logger = get_logger(__name__)
@@ -59,7 +63,55 @@ async def _start_health_server() -> web.AppRunner:
     return runner
 
 
-async def _sweep_stale(repo: PipelineRepository) -> None:
+async def _cancel_zombie_tasks(running: dict[asyncio.Task[None], str]) -> int:
+    """Cancel in-process tasks whose job is no longer in-progress in MongoDB.
+
+    The stale sweep marks wedged jobs as failed in the DB but previously left the
+    matching asyncio tasks running, which blocked concurrency slots until redeploy.
+    """
+    if not running:
+        return 0
+
+    # Snapshot before the async DB round-trip so tasks claimed while we await
+    # are not accidentally cancelled.
+    snapshot = list(running.items())
+    job_ids = [job_id for _, job_id in snapshot]
+    try:
+        async with db_session() as db:
+            cursor = db[PipelineRepository.COLLECTION].find(
+                {"id": {"$in": job_ids}},
+                {"id": 1, "status": 1},
+            )
+            statuses = {doc["id"]: doc["status"] async for doc in cursor}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Zombie task check failed (continuing): %s", exc)
+        return 0
+
+    orphanable = set(ORPHANABLE_PIPELINE_STATUSES)
+    cancelled = 0
+    for task, job_id in snapshot:
+        status = statuses.get(job_id)
+        if status is None:
+            # Job absent from query (replication lag, etc.) — don't kill on missing data.
+            continue
+        if status in orphanable:
+            continue
+        if task.done():
+            continue
+        task.cancel()
+        cancelled += 1
+        logger.warning(
+            "Cancelled zombie task for job %s (db status=%s)",
+            job_id,
+            status or "missing",
+        )
+    return cancelled
+
+
+async def _sweep_stale(
+    repo: PipelineRepository,
+    running: dict[asyncio.Task[None], str] | None = None,
+) -> None:
     """Self-heal the queue (boot + periodic): re-queue interrupted/failed jobs, then
     reap crash-orphaned in-progress jobs — retries are unlimited.
 
@@ -81,6 +133,10 @@ async def _sweep_stale(repo: PipelineRepository) -> None:
             logger.info("Reaped %d stale job(s) as failed", reaped)
         if requeued:
             logger.info("Re-queued %d failed job(s) for retry", requeued)
+        if running is not None:
+            zombies = await _cancel_zombie_tasks(running)
+            if zombies:
+                logger.info("Cancelled %d zombie in-process task(s)", zombies)
     except Exception as exc:  # noqa: BLE001 - the queue self-heal must not kill the worker
         logger.error("Stale sweep failed (continuing): %s", exc, exc_info=True)
 
@@ -202,7 +258,7 @@ async def _run_worker_loop(
 
     while not stop.is_set():
         if loop.time() - last_sweep >= _STALE_SWEEP_SECONDS:
-            await _sweep_stale(repo)
+            await _sweep_stale(repo, running)
             last_sweep = loop.time()
 
         if loop.time() - last_monitoring_sweep >= _MONITORING_SWEEP_SECONDS:
@@ -210,6 +266,8 @@ async def _run_worker_loop(
             last_monitoring_sweep = loop.time()
 
         if len(running) >= _CONCURRENCY:
+            # Stale sweep may have failed jobs in DB while asyncio tasks still hold slots.
+            await _cancel_zombie_tasks(running)
             await _sleep_or_stop(stop, _POLL_SECONDS)
             continue
 
