@@ -36,7 +36,6 @@ from dotenv import load_dotenv
 from src.core.config import config, discovery_crawl_limits
 from src.core.database import db_session
 from src.crawler import ClauseaCrawler, CrawlResult
-from src.crawler.product_seed_overrides import crawl_seed_overrides_for_slug
 from src.models.crawl import CrawlSession
 from src.models.document import Document
 from src.models.pipeline_job import classify_crawl_error
@@ -342,10 +341,7 @@ class PolicyDocumentPipeline:
                 seen_dedup_keys.add(key)
                 urls.append(normalized)
 
-        extra_seeds = list(product.crawl_base_urls or []) + crawl_seed_overrides_for_slug(
-            product.slug
-        )
-        for base_url in extra_seeds:
+        for base_url in product.crawl_base_urls or []:
             normalized = self._normalize_url(base_url)
             key = self._seed_dedupe_key(normalized)
             if key not in seen_dedup_keys:
@@ -457,9 +453,7 @@ class PolicyDocumentPipeline:
 
         trusted_urls: frozenset[str] = frozenset(
             self._normalize_url(u)
-            for u in (
-                list(product.crawl_base_urls or []) + crawl_seed_overrides_for_slug(product.slug)
-            )
+            for u in (product.crawl_base_urls or [])
             if self._normalize_url(u)
         )
 
