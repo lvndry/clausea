@@ -523,7 +523,11 @@ class PipelineService:
                             for err in job.crawl_errors
                             if err.error_type == "robots_txt_blocked"
                         ]
-                        if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
+                        if (
+                            robots_blocked
+                            and len(robots_blocked) == len(job.crawl_errors)
+                            and not job.crawl_skip_reasons
+                        ):
                             # All attempted URLs were blocked by robots.txt — this is a
                             # distinct, deterministic outcome that the frontend surfaces
                             # with a dedicated "blocked by robots.txt" message instead of
@@ -535,6 +539,7 @@ class PipelineService:
                                 "We were unable to crawl any policy documents."
                             )
                         elif robots_blocked:
+                            job.status = "robots_blocked"
                             job.error = PipelineErrorCode.crawl_robots_blocked
                             job.error_detail = (
                                 f"Some pages were blocked by robots.txt ({len(robots_blocked)} "

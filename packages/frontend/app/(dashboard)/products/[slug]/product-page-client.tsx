@@ -523,7 +523,7 @@ export default function CompanyPage({
               {product.name}
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
-              {isRobotsBlocked
+              {isRobotsBlocked || allRobotsBlockedLegacy
                 ? `${product.name} doesn't allow automated access to their policies.`
                 : isEmpty
                   ? "We could not find any policy documents to analyze for this company."
@@ -545,7 +545,7 @@ export default function CompanyPage({
                     strokeWidth={1.5}
                   />
                   <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                    {isRobotsBlocked
+                    {isRobotsBlocked || allRobotsBlockedLegacy
                       ? "Automated Access Blocked"
                       : isEmpty
                         ? "No Documents Found"
@@ -636,11 +636,39 @@ export default function CompanyPage({
                   </div>
                 )}
 
-                {/* Manual retry — available for failed jobs but not for deterministic
-                    terminal outcomes (robots_blocked, no_documents) where a re-run
-                    produces the same result without external changes. */}
-                {!isRobotsBlocked && (
-                  <div className="pt-2">
+                {/* Manual retry — active for transient failures; disabled (with explanation)
+                    for deterministic outcomes where a re-run produces the same result.
+                    WCAG 2.1 AA: users must understand why an action is unavailable. */}
+                <div className="pt-2">
+                  {isRobotsBlocked || allRobotsBlockedLegacy ? (
+                    <>
+                      <Button
+                        disabled
+                        className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                      >
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        Try again
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Retry is not available — {product.name} blocks automated
+                        access. You may check back later if this changes.
+                      </p>
+                    </>
+                  ) : isEmpty ? (
+                    <>
+                      <Button
+                        disabled
+                        className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                      >
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        Try again
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Retry is not available — no policy documents were found
+                        and a re-run would produce the same result.
+                      </p>
+                    </>
+                  ) : (
                     <Button
                       onClick={handleRetry}
                       className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
@@ -648,8 +676,8 @@ export default function CompanyPage({
                       <RotateCcw className="mr-2 h-3.5 w-3.5" />
                       Try again
                     </Button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           )}

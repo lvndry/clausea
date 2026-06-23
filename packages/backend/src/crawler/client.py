@@ -2257,7 +2257,12 @@ class ClauseaCrawler:
 
                 self._report_crawl_progress(force=True)
 
+                if not stop_requested:
+                    await self._drain_render_retries(session)
+
                 # Diagnostic: warn when a crawl completes with 0 successfully crawled pages.
+                # Runs after _drain_render_retries so that any pages it adds are counted first,
+                # preventing false positives on all_seeds_robots_blocked.
                 if self.stats.crawled_urls == 0:
                     robots_blocked_count = sum(1 for r in self.results if r.blocked_by_robots_txt)
                     attempted = self.stats.total_urls
@@ -2300,9 +2305,6 @@ class ClauseaCrawler:
                             robots_blocked_count,
                             self._sitemap_seeded,
                         )
-
-                if not stop_requested:
-                    await self._drain_render_retries(session)
 
             return self.results
         finally:
