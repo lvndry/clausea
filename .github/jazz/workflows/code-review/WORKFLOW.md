@@ -280,12 +280,12 @@ No text before, between, or after those blocks.
 Structure the verdict as follows — in this order:
 
 ```
-**[N] files reviewed** | **[area]**: backend / frontend / mixed / extension
+**[N] files reviewed** | **area**: [backend / frontend / mixed / extension]
 
 **Merge readiness**: LGTM | SOFT BLOCK | NEEDS WORK
 
 [If SOFT BLOCK or NEEDS WORK: bulleted list of findings by severity]
-[If any non-anchorable findings: inline as "- **path/file.py:NN** — **Severity**: ..."]
+[If any non-anchorable findings: inline as "- **path/file.py:NN** — **[Severity]**: ..."]
 [If any prior findings still open: "Prior finding unresolved: [brief]"]
 
 **Checked clean**: [comma-separated list of areas with no issues found — only areas that were checked]
@@ -319,8 +319,8 @@ Outer fences must use four backticks to avoid collisions with triple-backtick sn
 
 **Merge readiness**: NEEDS WORK
 
-- **Critical** — `packages/backend/src/services/document_service.py:42`: can throw when `document` is None in the retry path (see inline comment)
-- **High** — `packages/frontend/app/page.tsx:18`: unnecessary `"use client"` boundary causes full subtree to hydrate on the client
+- **packages/backend/src/services/document_service.py:42** — **Critical**: can throw when `document` is None in the retry path (see inline comment)
+- **packages/frontend/app/page.tsx:18** — **High**: unnecessary `"use client"` boundary causes full subtree to hydrate on the client
 - **packages/backend/src/routes/paddle.py:60** — **High**: `subscription.get("started_at").replace(...)` raises `AttributeError` when the field is absent; use `_parse_paddle_datetime` instead
 
 **Checked clean**: correctness (normal paths), TypeScript, a11y, performance
@@ -377,6 +377,6 @@ GitHub rejects comments on lines not present in diff hunks. A comment placed on 
 
 **Before including any comment in the JSON array:**
 
-1. Run `git_diff` for the specific file and confirm the `line` number appears in a `@@` hunk.
+1. Confirm the `line` number appears in a `@@` hunk in the already-loaded diff content — do not re-run `git_diff`.
 2. Prefer commenting on changed (`+`) lines when possible.
-3. If the relevant code is outside the diff (context lines, unchanged functions, other files): **do not include it in the JSON.** Instead, put the finding in the verdict markdown as `- **path/file.py:NN** — **Severity**: [body]`. Do not create a `### Comments on lines outside the diff` section — that pattern creates a confusing duplicate structure in the review body. Just put it in the verdict inline with your other findings.
+3. If the relevant code is outside the diff (context lines, unchanged functions, other files): **do not include it in the JSON.** Instead, put the finding in the verdict markdown as `- **path/file.py:NN** — **[Severity]**: [body]`. Do not create a `### Comments on lines outside the diff` section — that pattern creates a confusing duplicate structure in the review body. Just put it in the verdict inline with your other findings.
