@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.models.document import Document, EvidenceSpan, InsightCategory
 from src.models.finding import AggregatedFinding, Finding, FindingConflict, HydratedRollup
+from src.repositories.document_repository import DocumentRepository
 from src.services.evidence_relevance import filter_evidence_spans
 from src.services.product_rollup_service import ProductRollupService
 
@@ -13,7 +14,7 @@ def _normalize(value: str) -> str:
 
 
 def _findings_for_documents(documents: list[Document], product_id: str) -> list[Finding]:
-    service = ProductRollupService.__new__(ProductRollupService)
+    service = ProductRollupService(DocumentRepository())
     findings: list[Finding] = []
     for doc in documents:
         if not doc.extraction:

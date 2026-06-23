@@ -265,12 +265,12 @@ async def get_supported_domains(
         {"stats.has_overview": True, "domains": {"$exists": True, "$ne": []}},
         {"domains": 1},
     ).to_list(length=None)
-    domains: list[str] = []
+    domains_set: set[str] = set()
     for product in results:
         for domain in product.get("domains") or []:
-            if domain and domain not in domains:
-                domains.append(domain)
-    return domains
+            if domain:
+                domains_set.add(domain)
+    return sorted(domains_set)
 
 
 @router.post("/analyze", response_model=ExtensionAnalyzeResponse, status_code=202)

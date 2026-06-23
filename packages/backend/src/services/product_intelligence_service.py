@@ -204,9 +204,10 @@ class ProductIntelligenceService:
             "stats.document_count": document_count,
             "stats.has_overview": intelligence is not None and intelligence.overview is not None,
             "stats.last_indexed_at": datetime.now(),
+            "stats.risk_score": (
+                intelligence.overview.risk_score if intelligence and intelligence.overview else None
+            ),
         }
-        if intelligence and intelligence.overview and intelligence.overview.risk_score is not None:
-            stats["stats.risk_score"] = intelligence.overview.risk_score
         await db.products.update_one({"id": product_id}, {"$set": stats})
 
     async def delete_for_product(self, db: AgnosticDatabase, product_id: str) -> int:

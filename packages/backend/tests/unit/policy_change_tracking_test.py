@@ -119,6 +119,17 @@ class TestDocumentChangeRepository:
         assert inserted["content_hash"] == "hash456"
 
     @pytest.mark.asyncio
+    async def test_record_document_update_skips_without_product_id(self) -> None:
+        db = self._changes_db()
+
+        existing = _doc(product_id="", content_hash="hash789")
+        await DocumentChangeRepository().record_document_update(
+            db, existing_doc=existing, job_id="job123", changed_fields=["markdown"]
+        )
+
+        db.__getitem__.return_value.insert_one.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_record_document_update_skips_without_content_hash(self) -> None:
         db = self._changes_db()
         db.products = MagicMock()
