@@ -81,6 +81,7 @@ from src.crawler.constants import (
     MAX_RESPONSE_BYTES,
     MIN_CONTENT_LENGTH_FOR_SPA_CHECK,
     MIN_PAGES_PER_SEED,
+    MIN_STATIC_RESPONSE_BYTES,
     SPA_HYDRATION_RETRIES,
     SPA_HYDRATION_WAIT_BASE_S,
     SPA_HYDRATION_WAIT_STEP_S,
@@ -113,12 +114,31 @@ _RENDERABLE_CONTENT_TYPES: tuple[str, ...] = (
 )
 
 
+def static_response_body_too_small(raw: StaticFetchResult, *, threshold: int | None = None) -> bool:
+    """True when the response body (or declared Content-Length) is below the byte threshold."""
+    limit = MIN_STATIC_RESPONSE_BYTES if threshold is None else threshold
+    if raw.raw_bytes is not None:
+        body_bytes = len(raw.raw_bytes)
+    else:
+        body_bytes = len((raw.body or "").encode("utf-8"))
+    if body_bytes < limit:
+        return True
+    declared = raw.headers.get("Content-Length") or raw.headers.get("content-length")
+    if declared:
+        try:
+            return int(declared) < limit and body_bytes < limit
+        except ValueError:
+            return False
+    return False
+
+
 def needs_browser_fallback(raw: StaticFetchResult) -> bool:
     """Return True when a plain-HTTP response is a JS shell warranting headless browser fallback.
 
     Triggers True when any of these hold:
     - HTTP 4xx (except 429, which is a rate-limit hard block the browser cannot bypass)
     - Missing or non-HTML/text/markdown Content-Type
+    - HTTP 200 with body or Content-Length below MIN_STATIC_RESPONSE_BYTES (empty JS shells)
     - HTML body containing a known SPA root element (div#root, div#app, div#__next, …)
       with fewer than MIN_CONTENT_LENGTH_FOR_SPA_CHECK characters of inner text
     - Fewer than MIN_CONTENT_LENGTH_FOR_SPA_CHECK visible characters overall
@@ -133,6 +153,9 @@ def needs_browser_fallback(raw: StaticFetchResult) -> bool:
 
     content_type = (raw.content_type or "").lower().split(";")[0].strip()
     if not any(content_type.startswith(ct) for ct in _RENDERABLE_CONTENT_TYPES):
+        return True
+
+    if raw.status_code == 200 and static_response_body_too_small(raw):
         return True
 
     body = raw.body or ""
@@ -514,6 +537,7 @@ class ClauseaCrawler:
                     status_code=response.status,
                     content_type=content_type,
                     body=body,
+                    raw_bytes=raw,
                     headers=resp_headers,
                     resolved_url=final_url,
                 )
@@ -1685,13 +1709,14 @@ class ClauseaCrawler:
                         static_unusable = False
 
             is_speculative = self.normalize_url(url) in self._speculative_urls
+            force_browser_render = raw.status_code == 200 and static_response_body_too_small(raw)
 
             if static_unusable and self.use_browser and not is_speculative:
                 relevance = max(
                     self._url_scores.get(self.normalize_url(url), 0.0),
                     self.url_scorer.score_url(effective_url),
                 )
-                if relevance >= self.min_legal_score:
+                if force_browser_render or relevance >= self.min_legal_score:
                     if self._consecutive_browser_failures >= BROWSER_DOMAIN_FAILURE_CAP:
                         logger.debug(
                             "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",

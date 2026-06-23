@@ -4,8 +4,8 @@ These tests exercise the standalone helper function in isolation — no network,
 no browser, no full crawler setup required.
 """
 
-from src.crawler import StaticFetchResult, needs_browser_fallback
-from src.crawler.constants import MIN_CONTENT_LENGTH_FOR_SPA_CHECK
+from src.crawler import StaticFetchResult, needs_browser_fallback, static_response_body_too_small
+from src.crawler.constants import MIN_CONTENT_LENGTH_FOR_SPA_CHECK, MIN_STATIC_RESPONSE_BYTES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -17,12 +17,14 @@ def _raw(
     status_code: int = 200,
     content_type: str = "text/html; charset=utf-8",
     body: str = "",
+    headers: dict[str, str] | None = None,
 ) -> StaticFetchResult:
     return StaticFetchResult(
         url="https://example.com/privacy",
         status_code=status_code,
         content_type=content_type,
         body=body,
+        headers=headers or {},
     )
 
 
@@ -191,3 +193,20 @@ class TestVisibleTextLength:
         raw = _raw(body=html_with_scripts)
         # Despite the large script payload, visible text is tiny → fallback needed
         assert needs_browser_fallback(raw) is True
+
+
+class TestStaticResponseBodySize:
+    def test_empty_body_with_zero_content_length(self):
+        raw = _raw(body="", headers={"Content-Length": "0"})
+        assert static_response_body_too_small(raw) is True
+        assert needs_browser_fallback(raw) is True
+
+    def test_body_above_threshold_no_force(self):
+        body = "a" * (MIN_STATIC_RESPONSE_BYTES + 50)
+        raw = _raw(body=body)
+        assert static_response_body_too_small(raw) is False
+
+    def test_small_body_below_threshold(self):
+        raw = _raw(body="<html><body></body></html>")
+        assert len(raw.body.encode()) < MIN_STATIC_RESPONSE_BYTES
+        assert static_response_body_too_small(raw) is True

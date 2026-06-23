@@ -202,6 +202,9 @@ MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
 )
 MIN_CONTENT_LENGTH_FOR_SPA_CHECK = 500
+# Static HTTP bodies smaller than this (or Content-Length below it) are treated as empty
+# shells and always routed through the browser renderer when use_browser is enabled.
+MIN_STATIC_RESPONSE_BYTES = int(os.getenv("CRAWLER_MIN_STATIC_RESPONSE_BYTES", "512"))
 SPA_HYDRATION_RETRIES = int(os.getenv("CRAWLER_SPA_HYDRATION_RETRIES", "5"))
 SPA_HYDRATION_WAIT_BASE_S = float(os.getenv("CRAWLER_SPA_HYDRATION_WAIT_S", "1.5"))
 SPA_HYDRATION_WAIT_STEP_S = float(os.getenv("CRAWLER_SPA_HYDRATION_WAIT_STEP_S", "0.5"))
