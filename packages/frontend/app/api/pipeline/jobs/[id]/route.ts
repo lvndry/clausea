@@ -7,10 +7,18 @@ import { httpJson } from "@lib/http";
 type PipelineJobStatus =
   | "pending"
   | "crawling"
+  | "synthesising"
   | "summarizing"
   | "generating_overview"
   | "completed"
-  | "failed";
+  | "failed"
+  | "no_documents"
+  | "robots_blocked"
+  | "access_denied"
+  | "no_policy_found"
+  | "site_unavailable"
+  | "analysis_failed"
+  | "interrupted";
 
 interface PipelineStep {
   name: string;

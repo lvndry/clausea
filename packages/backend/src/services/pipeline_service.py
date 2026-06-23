@@ -28,6 +28,7 @@ from src.models.pipeline_job import (
     CrawlSkip,
     PipelineErrorCode,
     PipelineJob,
+    is_hard_crawl_error,
 )
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
@@ -517,32 +518,108 @@ class PipelineService:
                         else:
                             job.status = "no_documents"
 
-                        # Build a descriptive error based on crawl error types
-                        robots_blocked = [
-                            err
-                            for err in job.crawl_errors
-                            if err.error_type == "robots_txt_blocked"
+                        # Classify the terminal outcome from the crawl's error signals.
+                        # Priority order: robots_blocked > site_unavailable > access_denied
+                        # > no_policy_found (pages fetched, none matched) > fallback errors.
+                        _robots_errs = [
+                            e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
                         ]
-                        if (
-                            robots_blocked
-                            and len(robots_blocked) == len(job.crawl_errors)
-                            and not job.crawl_skip_reasons
-                        ):
-                            # All attempted URLs were blocked by robots.txt — this is a
-                            # distinct, deterministic outcome that the frontend surfaces
-                            # with a dedicated "blocked by robots.txt" message instead of
-                            # the generic "no documents found" state.
+                        _non_robots_errs = [
+                            e for e in job.crawl_errors if e.error_type != "robots_txt_blocked"
+                        ]
+                        _conn_errs = [
+                            e
+                            for e in _non_robots_errs
+                            if e.error_type in ("network_error", "timeout")
+                        ]
+                        _hard_errs = [
+                            e
+                            for e in _non_robots_errs
+                            if is_hard_crawl_error(e.error_type, e.status_code, e.error_message)
+                        ]
+
+                        if _robots_errs and not _non_robots_errs:
+                            # All attempted URLs were blocked by robots.txt — deterministic,
+                            # targeted outcome surfaced to the user with dedicated copy.
                             job.status = "robots_blocked"
                             job.error = PipelineErrorCode.crawl_robots_blocked
                             job.error_detail = (
                                 "This site blocks automated access via robots.txt. "
                                 "We were unable to crawl any policy documents."
                             )
-                        elif robots_blocked:
-                            job.status = "robots_blocked"
+                        elif job.status == "no_documents":
+                            # Only apply specific new statuses when there are no existing
+                            # docs (job.status was set to "no_documents" in the else branch
+                            # above). For jobs with existing docs we leave the status
+                            # unchanged so the partial-block signal is informational only.
+                            if (
+                                _non_robots_errs
+                                and _conn_errs
+                                and len(_conn_errs) == len(_non_robots_errs)
+                            ):
+                                # All failures are connection-level (DNS, SSL, timeout, refused)
+                                # and there are no robots-txt blocks — site is unreachable.
+                                job.status = "site_unavailable"
+                                job.error = PipelineErrorCode.site_unavailable
+                                job.error_detail = (
+                                    f"Could not connect to {len(_non_robots_errs)} seed URL(s). "
+                                    "The site may be temporarily down, the domain may have changed, "
+                                    "or a network-level block is in place."
+                                )
+                            elif (
+                                _non_robots_errs
+                                and _hard_errs
+                                and len(_hard_errs) == len(_non_robots_errs)
+                            ):
+                                # All failures are hard HTTP/anti-bot blocks (403/401/429/451 or
+                                # Cloudflare/CAPTCHA) — the site is actively denying access.
+                                job.status = "access_denied"
+                                job.error = PipelineErrorCode.access_denied
+                                job.error_detail = (
+                                    f"Access was denied for {len(_non_robots_errs)} URL(s). "
+                                    "The site is blocking automated access with anti-bot protection, "
+                                    "Cloudflare, or consistent 4xx responses."
+                                )
+                            elif job.crawl_skip_reasons:
+                                # Pages were fetched OK but none passed the policy classifier —
+                                # the site is accessible but has no detectable policy documents.
+                                counts: dict[str, int] = {}
+                                for skip in job.crawl_skip_reasons:
+                                    counts[skip.reason] = counts.get(skip.reason, 0) + 1
+                                breakdown = ", ".join(
+                                    f"{n}× {reason}"
+                                    for reason, n in sorted(counts.items(), key=lambda kv: -kv[1])
+                                )
+                                job.status = "no_policy_found"
+                                job.error = PipelineErrorCode.no_policy_found
+                                job.error_detail = (
+                                    f"{len(job.crawl_skip_reasons)} page(s) fetched but all "
+                                    f"rejected by content filters ({breakdown}). "
+                                    "See crawl_skip_reasons for the per-URL detail."
+                                )
+                            elif _robots_errs:
+                                # Partial robots block mixed with other errors.
+                                job.error = PipelineErrorCode.crawl_robots_blocked
+                                job.error_detail = (
+                                    f"Some pages were blocked by robots.txt ({len(_robots_errs)} "
+                                    f"of {len(job.crawl_errors)} failed URLs). "
+                                    "No policy documents could be found."
+                                )
+                            elif job.crawl_errors:
+                                job.error = PipelineErrorCode.crawl_failed
+                                job.error_detail = (
+                                    f"Crawling failed for {len(job.crawl_errors)} URL(s). "
+                                    "No policy documents could be found."
+                                )
+                            else:
+                                job.error = PipelineErrorCode.no_documents_found
+                                job.error_detail = "No policy documents found on this site"
+                        elif _robots_errs:
+                            # Partial robots block on a job that had existing docs —
+                            # informational only, status remains unchanged.
                             job.error = PipelineErrorCode.crawl_robots_blocked
                             job.error_detail = (
-                                f"Some pages were blocked by robots.txt ({len(robots_blocked)} "
+                                f"Some pages were blocked by robots.txt ({len(_robots_errs)} "
                                 f"of {len(job.crawl_errors)} failed URLs). "
                                 "No policy documents could be found."
                             )
@@ -551,23 +628,6 @@ class PipelineService:
                             job.error_detail = (
                                 f"Crawling failed for {len(job.crawl_errors)} URL(s). "
                                 "No policy documents could be found."
-                            )
-                        elif job.crawl_skip_reasons:
-                            # Categorize: which filter rejected the URLs? This gives the
-                            # operator a concrete next action (tune classifier, enable JS
-                            # rendering, etc.) instead of the prior opaque message.
-                            counts: dict[str, int] = {}
-                            for skip in job.crawl_skip_reasons:
-                                counts[skip.reason] = counts.get(skip.reason, 0) + 1
-                            breakdown = ", ".join(
-                                f"{n}× {reason}"
-                                for reason, n in sorted(counts.items(), key=lambda kv: -kv[1])
-                            )
-                            job.error = PipelineErrorCode.no_documents_found
-                            job.error_detail = (
-                                f"{len(job.crawl_skip_reasons)} URLs fetched but all "
-                                f"rejected by content filters ({breakdown}). "
-                                "See crawl_skip_reasons for the per-URL detail."
                             )
                         else:
                             job.error = PipelineErrorCode.no_documents_found
@@ -595,7 +655,13 @@ class PipelineService:
                         # no overview) and reappearing in the product list is confusing.
                         # The pipeline job is kept as a failure record; the product is
                         # re-created automatically if the user retries the URL later.
-                        if job.status in ("no_documents", "robots_blocked"):
+                        if job.status in (
+                            "no_documents",
+                            "robots_blocked",
+                            "access_denied",
+                            "no_policy_found",
+                            "site_unavailable",
+                        ):
                             try:
                                 doc_count = await db.documents.count_documents(
                                     {"product_id": product.id}
@@ -681,14 +747,54 @@ class PipelineService:
                             message="Retrying LLM analysis…",
                         )
 
-                    analysis_result = await analyse_product_documents(
-                        db,
-                        job.product_slug,
-                        doc_svc,
-                        progress_callback=_on_synthesise_progress,
-                        force_reanalyze=job.force_reanalyze,
-                        heartbeat_callback=_on_synthesise_heartbeat,
-                    )
+                    try:
+                        analysis_result = await analyse_product_documents(
+                            db,
+                            job.product_slug,
+                            doc_svc,
+                            progress_callback=_on_synthesise_progress,
+                            force_reanalyze=job.force_reanalyze,
+                            heartbeat_callback=_on_synthesise_heartbeat,
+                        )
+                    except (asyncio.CancelledError, _PipelineStalled):
+                        raise
+                    except Exception as synth_exc:
+                        job.status = "analysis_failed"
+                        job.error = PipelineErrorCode.analysis_failed
+                        job.error_detail = (
+                            f"Document analysis raised an unexpected error: {synth_exc}"
+                        )
+                        job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
+                        await self._update_step(db, job, "synthesising", "failed", str(synth_exc))
+                        await self._update_step(
+                            db, job, "generating_overview", "failed", "Skipped — synthesis failed"
+                        )
+                        await self._pipeline_repo.update(db, job)
+                        logger.error(
+                            "Synthesis raised unexpectedly for %s: %s",
+                            job.product_slug,
+                            synth_exc,
+                            exc_info=True,
+                        )
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "Document analysis failed",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "analysis-failed admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
+                        return
                     analysed_docs = analysis_result.documents
                     job.analyses_skipped = analysis_result.analyses_skipped
 
@@ -715,7 +821,7 @@ class PipelineService:
                     no_analysis = bool(analysed_docs) and analysed_count == 0
                     core_wipeout = bool(core_docs) and core_analysed == 0
                     if no_analysis or core_wipeout:
-                        job.status = "failed"
+                        job.status = "analysis_failed"
                         if core_wipeout and not no_analysis:
                             job.error = PipelineErrorCode.core_docs_unanalyzed
                             job.error_detail = (
@@ -739,6 +845,7 @@ class PipelineService:
                                 f"0 of {len(analysed_docs)} documents could be analyzed"
                             )
                         job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
                         await self._update_step(
                             db,
                             job,
@@ -754,6 +861,23 @@ class PipelineService:
                             "Skipped - no analyzed documents",
                         )
                         await self._pipeline_repo.update(db, job)
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "Document analysis returned no results",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "analysis-failed admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
                         return
 
                     await self._update_step(
@@ -790,15 +914,54 @@ class PipelineService:
                             message="Generating privacy overview...",
                         )
 
-                    await generate_product_overview(
-                        db,
-                        job.product_slug,
-                        force_regenerate=True,
-                        product_svc=product_svc_for_overview,
-                        document_svc=doc_svc_for_overview,
-                        on_progress=_on_overview_progress,
-                        job_id=job.id,
-                    )
+                    try:
+                        await generate_product_overview(
+                            db,
+                            job.product_slug,
+                            force_regenerate=True,
+                            product_svc=product_svc_for_overview,
+                            document_svc=doc_svc_for_overview,
+                            on_progress=_on_overview_progress,
+                            job_id=job.id,
+                        )
+                    except (asyncio.CancelledError, _PipelineStalled):
+                        raise
+                    except Exception as overview_exc:
+                        job.status = "analysis_failed"
+                        job.error = PipelineErrorCode.analysis_failed
+                        job.error_detail = (
+                            f"Overview generation raised an unexpected error: {overview_exc}"
+                        )
+                        job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
+                        await self._update_step(
+                            db, job, "generating_overview", "failed", str(overview_exc)
+                        )
+                        await self._pipeline_repo.update(db, job)
+                        logger.error(
+                            "Overview generation raised unexpectedly for %s: %s",
+                            job.product_slug,
+                            overview_exc,
+                            exc_info=True,
+                        )
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "Overview generation failed",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "analysis-failed admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
+                        return
 
                     # Verify the overview actually persisted — same truthfulness lesson as
                     # the analysis-persistence bug: never report "completed" off an

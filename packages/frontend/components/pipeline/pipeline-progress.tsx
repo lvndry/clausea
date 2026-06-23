@@ -34,11 +34,17 @@ interface PipelineStep {
 type PipelineJobStatus =
   | "pending"
   | "crawling"
+  | "synthesising"
   | "summarizing"
   | "generating_overview"
   | "completed"
   | "failed"
-  | "no_documents";
+  | "no_documents"
+  | "robots_blocked"
+  | "access_denied"
+  | "no_policy_found"
+  | "site_unavailable"
+  | "analysis_failed";
 
 interface PipelineJobData {
   id: string;
@@ -248,6 +254,17 @@ function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
   );
 }
 
+const TERMINAL_STATUSES: PipelineJobStatus[] = [
+  "completed",
+  "failed",
+  "no_documents",
+  "robots_blocked",
+  "access_denied",
+  "no_policy_found",
+  "site_unavailable",
+  "analysis_failed",
+];
+
 export function PipelineProgress({
   jobId,
   onComplete,
@@ -262,10 +279,7 @@ export function PipelineProgress({
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
 
-  const isTerminal =
-    job?.status === "completed" ||
-    job?.status === "failed" ||
-    job?.status === "no_documents";
+  const isTerminal = job !== null && TERMINAL_STATUSES.includes(job.status);
 
   const clearScheduledPoll = useCallback(() => {
     if (timeoutRef.current) {
@@ -315,11 +329,7 @@ export function PipelineProgress({
       const data: PipelineJobData = await res.json();
       setJob(data);
 
-      if (
-        data.status === "completed" ||
-        data.status === "failed" ||
-        data.status === "no_documents"
-      ) {
+      if (TERMINAL_STATUSES.includes(data.status)) {
         clearScheduledPoll();
         if (data.status === "completed" && onComplete) {
           onComplete(data.product_slug);
@@ -436,8 +446,14 @@ export function PipelineProgress({
           className={cn(
             "transition-all duration-300",
             job.status === "completed" && "border-green-500/50",
-            job.status === "failed" && "border-destructive/50",
-            job.status === "no_documents" && "border-amber-500/50",
+            (job.status === "failed" || job.status === "analysis_failed") &&
+              "border-destructive/50",
+            (job.status === "no_documents" ||
+              job.status === "no_policy_found" ||
+              job.status === "robots_blocked" ||
+              job.status === "access_denied" ||
+              job.status === "site_unavailable") &&
+              "border-amber-500/50",
           )}
         >
           <CardContent className="p-5 space-y-4">
@@ -447,11 +463,19 @@ export function PipelineProgress({
                 <h3 className="text-sm font-bold font-display text-foreground">
                   {job.status === "completed"
                     ? `${job.product_name} is ready`
-                    : job.status === "no_documents"
+                    : job.status === "no_documents" ||
+                        job.status === "no_policy_found"
                       ? `No policy documents found for ${job.product_name}`
-                      : job.status === "failed"
-                        ? `Analysis failed for ${job.product_name}`
-                        : `Analyzing ${job.product_name}...`}
+                      : job.status === "robots_blocked"
+                        ? `${job.product_name} blocks automated access`
+                        : job.status === "access_denied"
+                          ? `${job.product_name} blocked our access`
+                          : job.status === "site_unavailable"
+                            ? `${job.product_name} is unreachable`
+                            : job.status === "failed" ||
+                                job.status === "analysis_failed"
+                              ? `Analysis failed for ${job.product_name}`
+                              : `Analyzing ${job.product_name}...`}
                 </h3>
                 <p className="text-xs text-muted-foreground truncate max-w-xs">
                   {job.url}
@@ -477,9 +501,13 @@ export function PipelineProgress({
                 transition={{ duration: 0.5, ease: "easeOut" }}
                 className={cn(
                   "h-full rounded-full",
-                  job.status === "failed"
+                  job.status === "failed" || job.status === "analysis_failed"
                     ? "bg-destructive"
-                    : job.status === "no_documents"
+                    : job.status === "no_documents" ||
+                        job.status === "no_policy_found" ||
+                        job.status === "robots_blocked" ||
+                        job.status === "access_denied" ||
+                        job.status === "site_unavailable"
                       ? "bg-amber-500"
                       : job.status === "completed"
                         ? "bg-green-500"

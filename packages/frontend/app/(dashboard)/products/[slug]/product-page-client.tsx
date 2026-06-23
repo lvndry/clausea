@@ -129,6 +129,14 @@ export default function CompanyPage({
   const [emptyJob, setEmptyJob] = useState<FailedCrawlJob | null>(null);
   const [robotsBlockedJob, setRobotsBlockedJob] =
     useState<FailedCrawlJob | null>(null);
+  const [accessDeniedJob, setAccessDeniedJob] = useState<FailedCrawlJob | null>(
+    null,
+  );
+  const [noPolicyJob, setNoPolicyJob] = useState<FailedCrawlJob | null>(null);
+  const [siteUnavailableJob, setSiteUnavailableJob] =
+    useState<FailedCrawlJob | null>(null);
+  const [analysisFailedJob, setAnalysisFailedJob] =
+    useState<FailedCrawlJob | null>(null);
   const [notifyEmail, setNotifyEmail] = useState("");
   const [notifyStatus, setNotifyStatus] = useState<
     "idle" | "submitting" | "success" | "error"
@@ -244,6 +252,42 @@ export default function CompanyPage({
           return;
         }
 
+        if (latestJob?.status === "access_denied") {
+          setAccessDeniedJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+          });
+          return;
+        }
+
+        if (latestJob?.status === "no_policy_found") {
+          setNoPolicyJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+          });
+          return;
+        }
+
+        if (latestJob?.status === "site_unavailable") {
+          setSiteUnavailableJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+          });
+          return;
+        }
+
+        if (latestJob?.status === "analysis_failed") {
+          setAnalysisFailedJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+          });
+          return;
+        }
+
         if (latestJob?.status === "no_documents") {
           setEmptyJob({
             error: latestJob.error,
@@ -326,6 +370,10 @@ export default function CompanyPage({
     setFailedJob(null);
     setEmptyJob(null);
     setRobotsBlockedJob(null);
+    setAccessDeniedJob(null);
+    setNoPolicyJob(null);
+    setSiteUnavailableJob(null);
+    setAnalysisFailedJob(null);
     setActiveJobId(null);
     setIndexationMode("indexing");
     await ensurePipelineRunning(slug, product);
@@ -495,16 +543,29 @@ export default function CompanyPage({
 
     // If product exists but indexation isn't ready, show the indexation message + email capture
     if (product && indexationMode === "indexing") {
-      // Terminal outcomes that must NOT retrigger the pipeline:
-      //   - robotsBlockedJob (robots_blocked): site blocks all crawlers. No retry —
-      //                a re-run yields the same result until the site changes robots.txt.
-      //   - emptyJob  (no_documents): crawl finished, found nothing. No retry —
-      //                a re-run yields the same result.
-      //   - failedJob (failed):       interrupted/errored. Offer a manual Retry.
-      const terminalJob = robotsBlockedJob ?? emptyJob ?? failedJob;
+      // Terminal outcomes grouped by retry eligibility:
+      //   - robotsBlockedJob (robots_blocked): deterministic. No retry.
+      //   - accessDeniedJob  (access_denied):  deterministic. No retry.
+      //   - emptyJob         (no_documents):   deterministic. No retry.
+      //   - noPolicyJob      (no_policy_found): site structure may change. Offer retry.
+      //   - siteUnavailableJob (site_unavailable): transient. Offer retry.
+      //   - analysisFailedJob  (analysis_failed): transient. Offer retry.
+      //   - failedJob        (failed):          interrupted/errored. Offer retry.
+      const terminalJob =
+        robotsBlockedJob ??
+        accessDeniedJob ??
+        noPolicyJob ??
+        siteUnavailableJob ??
+        analysisFailedJob ??
+        emptyJob ??
+        failedJob;
       const isRobotsBlocked = robotsBlockedJob !== null;
+      const isAccessDenied = accessDeniedJob !== null;
       const isEmpty = emptyJob !== null;
       const isFailed = failedJob !== null;
+      const isNoPolicyFound = noPolicyJob !== null;
+      const isSiteUnavailable = siteUnavailableJob !== null;
+      const isAnalysisFailed = analysisFailedJob !== null;
       // The crawl succeeded (documents were stored) but a later stage — document
       // analysis or overview synthesis — failed. Don't blame the crawl in this case.
       const isAnalysisFailure =
@@ -513,6 +574,7 @@ export default function CompanyPage({
       // Legacy derived detection for old jobs that predate the robots_blocked status.
       const allRobotsBlockedLegacy =
         !isRobotsBlocked &&
+        !isAccessDenied &&
         crawlErrors.length > 0 &&
         crawlErrors.every((e) => e.error_type === "robots_txt_blocked");
 
@@ -525,13 +587,21 @@ export default function CompanyPage({
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
               {isRobotsBlocked || allRobotsBlockedLegacy
                 ? `${product.name} doesn't allow automated access to their policies.`
-                : isEmpty
-                  ? "We could not find any policy documents to analyze for this company."
-                  : isAnalysisFailure
-                    ? "We found this company's policy documents but couldn't complete the analysis. This is usually temporary — please try again."
-                    : isFailed
-                      ? "We were unable to crawl this company's policy documents."
-                      : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
+                : isAccessDenied
+                  ? `${product.name} actively blocked our crawler. You can visit their site directly to read their policies.`
+                  : isNoPolicyFound
+                    ? "We crawled this site but couldn't find any policy pages."
+                    : isSiteUnavailable
+                      ? "We couldn't reach this site — it may be temporarily down or the domain may have changed."
+                      : isAnalysisFailed
+                        ? "We retrieved the policy documents but encountered an error during AI analysis. Please try again."
+                        : isEmpty
+                          ? "We could not find any policy documents to analyze for this company."
+                          : isAnalysisFailure
+                            ? "We found this company's policy documents but couldn't complete the analysis. This is usually temporary — please try again."
+                            : isFailed
+                              ? "We were unable to crawl this company's policy documents."
+                              : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
             </p>
           </div>
 
@@ -547,11 +617,19 @@ export default function CompanyPage({
                   <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
                     {isRobotsBlocked || allRobotsBlockedLegacy
                       ? "Automated Access Blocked"
-                      : isEmpty
-                        ? "No Documents Found"
-                        : isAnalysisFailure
-                          ? "Analysis Failed"
-                          : "Crawl Failed"}
+                      : isAccessDenied
+                        ? "Access Blocked"
+                        : isNoPolicyFound
+                          ? "No Policy Pages Found"
+                          : isSiteUnavailable
+                            ? "Site Unreachable"
+                            : isAnalysisFailed
+                              ? "Analysis Failed"
+                              : isEmpty
+                                ? "No Documents Found"
+                                : isAnalysisFailure
+                                  ? "Analysis Failed"
+                                  : "Crawl Failed"}
                   </h3>
                 </div>
               </div>
@@ -559,15 +637,13 @@ export default function CompanyPage({
                 {allRobotsBlockedLegacy || isRobotsBlocked ? (
                   <div className="space-y-3">
                     <h2 className="text-xl font-display font-medium text-foreground">
-                      {product.name} doesn&apos;t allow automated access to
-                      their policies
+                      Blocked by robots.txt
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      {product.name}&apos;s robots.txt explicitly blocks
-                      crawlers from reading their pages. We&apos;re unable to
-                      analyze their privacy policy or terms of service until
-                      they allow automated access. You may review their policies
-                      directly on their website.
+                      <strong>{product.name}</strong> explicitly restricts
+                      automated access via their robots.txt file. Their policy
+                      documents cannot be retrieved programmatically. You can
+                      visit their site directly to read their policies.
                     </p>
                     {crawlErrors.length > 0 && (
                       <div className="space-y-2 pt-2">
@@ -590,14 +666,29 @@ export default function CompanyPage({
                       </div>
                     )}
                   </div>
+                ) : isAccessDenied ? (
+                  <div className="space-y-3">
+                    <h2 className="text-xl font-display font-medium text-foreground">
+                      Blocked by bot protection
+                    </h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {PIPELINE_ERROR_CODE_MESSAGES["access_denied"]}
+                    </p>
+                  </div>
                 ) : (
                   <div className="space-y-3">
                     <h2 className="text-xl font-display font-medium text-foreground">
-                      {isEmpty
-                        ? "No policy documents found on this site"
-                        : isAnalysisFailure
-                          ? "We found documents but couldn't analyze them"
-                          : "Unable to crawl policy documents"}
+                      {isNoPolicyFound
+                        ? "No policy pages found on this site"
+                        : isSiteUnavailable
+                          ? "This site is unreachable right now"
+                          : isAnalysisFailed
+                            ? "Analysis failed — please try again"
+                            : isEmpty
+                              ? "No policy documents found on this site"
+                              : isAnalysisFailure
+                                ? "We found documents but couldn't analyze them"
+                                : "Unable to crawl policy documents"}
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       {(terminalJob.error
@@ -652,6 +743,21 @@ export default function CompanyPage({
                       <p className="text-xs text-muted-foreground mt-2">
                         Retry is not available — {product.name} blocks automated
                         access. You may check back later if this changes.
+                      </p>
+                    </>
+                  ) : isAccessDenied ? (
+                    <>
+                      <Button
+                        disabled
+                        className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                      >
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        Try again
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Retry is not available — {product.name} uses bot
+                        protection that blocks automated access. You may check
+                        back later.
                       </p>
                     </>
                   ) : isEmpty ? (
