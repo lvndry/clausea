@@ -30,10 +30,12 @@ from src.models.document import (
 from src.models.product import Product
 from src.models.topic_report import ProductTopicReport
 from src.models.user import UserTier
-from src.repositories.aggregation_repository import AggregationRepository
+from src.repositories.document_repository import DocumentRepository
+from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
+from src.services.rollup_hydration import rollup_to_aggregation
 from src.services.service_factory import (
     create_indexation_notification_service,
     create_product_service,
@@ -173,8 +175,8 @@ async def get_product_topics(
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
-    aggregation = await AggregationRepository().get(db, product.id)
-    if not aggregation:
+    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    if not intelligence or not intelligence.rollup:
         raise HTTPException(
             status_code=HTTP_425_TOO_EARLY,
             detail={
@@ -183,6 +185,19 @@ async def get_product_topics(
                 "product_slug": slug,
             },
         )
+
+    doc_repo = DocumentRepository()
+    full_docs = await doc_repo.find_by_product_id_full(db, product.id)
+    referenced_ids = {
+        doc_id for item in intelligence.rollup.items for doc_id in item.document_ids
+    } | {doc_id for conflict in intelligence.rollup.conflicts for doc_id in conflict.document_ids}
+    documents_for_hydration = [doc for doc in full_docs if doc.id in referenced_ids]
+    aggregation = rollup_to_aggregation(
+        product_id=product.id,
+        product_slug=slug,
+        rollup=intelligence.rollup,
+        documents=documents_for_hydration,
+    )
 
     documents = await service.get_product_documents(db, slug)
     return build_product_topic_report(

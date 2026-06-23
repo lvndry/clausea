@@ -74,9 +74,7 @@ from src.prompts.analysis_prompts import (
     PRODUCT_DEEP_ANALYSIS_PROMPT,
     PRODUCT_OVERVIEW_PROMPT,
 )
-from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
-from src.repositories.finding_repository import FindingRepository
 from src.services.aggregation_service import AggregationService
 from src.services.document_service import DocumentService
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
@@ -1935,10 +1933,7 @@ async def generate_product_overview(
     await token.check_cancellation()
     if on_progress is not None:
         await _maybe_await(on_progress())
-    aggregation_service = AggregationService(
-        DocumentRepository(), FindingRepository(), AggregationRepository()
-    )
-    await aggregation_service.rebuild_findings_for_product(db, product.id)
+    aggregation_service = AggregationService(DocumentRepository())
     aggregation = await aggregation_service.build_product_aggregation(
         db, product_id=product.id, product_slug=product_slug
     )

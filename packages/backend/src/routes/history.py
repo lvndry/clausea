@@ -6,18 +6,20 @@ from motor.core import AgnosticDatabase
 from pydantic import BaseModel
 
 from src.core.database import get_db
-from src.models.product_overview_history import ProductOverviewHistory
+from src.models.product_intelligence import OverviewSnapshot
+from src.repositories.document_change_repository import DocumentChangeRepository
 from src.repositories.product_overview_history_repository import ProductOverviewHistoryRepository
 
 router = APIRouter(prefix="/history", tags=["history"])
 
 
-class DocumentVersionSummary(BaseModel):
+class DocumentChangeSummary(BaseModel):
     id: str
     created_at: datetime
-    changed_fields: list[str] | None
+    changed_fields: list[str]
     job_id: str | None
-    content_hash: str | None
+    content_hash: str
+    previous_hash: str | None
 
 
 class DiffResponse(BaseModel):
@@ -26,26 +28,43 @@ class DiffResponse(BaseModel):
     unified_diff: str
 
 
-@router.get("/documents/{document_id}/versions", response_model=list[DocumentVersionSummary])
+@router.get("/documents/{document_id}/versions", response_model=list[DocumentChangeSummary])
 async def list_document_versions(
     document_id: str,
     db: AgnosticDatabase = Depends(get_db),
-) -> list[DocumentVersionSummary]:
+) -> list[DocumentChangeSummary]:
+    changes = await DocumentChangeRepository().list_for_document(db, document_id)
+    if changes:
+        return [
+            DocumentChangeSummary(
+                id=change.id,
+                created_at=change.created_at,
+                changed_fields=change.changed_fields,
+                job_id=change.job_id,
+                content_hash=change.content_hash,
+                previous_hash=change.previous_hash,
+            )
+            for change in changes
+        ]
+
+    # Legacy fallback for rows recorded before document_changes migration.
     cursor = (
         db.document_versions.find(
-            {"document_id": document_id}, {"text": 0, "markdown": 0, "raw_html": 0}
+            {"document_id": document_id},
+            {"text": 0, "markdown": 0, "raw_html": 0},
         )
         .sort("created_at", -1)
         .limit(50)
     )
     rows = await cursor.to_list(length=50)
     return [
-        DocumentVersionSummary(
+        DocumentChangeSummary(
             id=str(row.get("id", "")),
             created_at=row.get("created_at"),
-            changed_fields=row.get("changed_fields"),
+            changed_fields=row.get("changed_fields") or [],
             job_id=row.get("job_id"),
-            content_hash=row.get("content_hash"),
+            content_hash=row.get("content_hash") or "",
+            previous_hash=None,
         )
         for row in rows
     ]
@@ -66,8 +85,8 @@ async def diff_document_versions(
         sort=[("created_at", -1)],
     )
 
-    text_a = (previous or {}).get("text") or ""
-    text_b = target.get("text") or ""
+    text_a = (previous or {}).get("markdown") or (previous or {}).get("text") or ""
+    text_b = target.get("markdown") or target.get("text") or ""
     diff_lines = list(
         difflib.unified_diff(
             text_a.splitlines(keepends=True),
@@ -80,13 +99,15 @@ async def diff_document_versions(
     return DiffResponse(
         version_a_id=previous.get("id") if previous else None,
         version_b_id=version_id,
-        unified_diff="".join(diff_lines),
+        unified_diff="".join(diff_lines)
+        if diff_lines
+        else "Diff unavailable for slim change records.",
     )
 
 
-@router.get("/products/{slug}/overview-history", response_model=list[ProductOverviewHistory])
+@router.get("/products/{slug}/overview-history", response_model=list[OverviewSnapshot])
 async def list_overview_history(
     slug: str,
     db: AgnosticDatabase = Depends(get_db),
-) -> list[ProductOverviewHistory]:
+) -> list[OverviewSnapshot]:
     return await ProductOverviewHistoryRepository().find_by_product(db, slug)

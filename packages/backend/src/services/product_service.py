@@ -221,20 +221,14 @@ class ProductService:
         counts["documents_deleted"] = documents_deleted
         counts["documents_unlinked"] = documents_unlinked
 
-        result = await db.findings.delete_many({"product_id": product_id})
-        counts["findings"] = result.deleted_count
-
         result = await db.pipeline_jobs.delete_many({"product_slug": product.slug})
         counts["pipeline_jobs"] = result.deleted_count
 
-        result = await db.product_overviews.delete_many({"product_slug": product.slug})
-        counts["product_overviews"] = result.deleted_count
+        result = await db.product_intelligence.delete_many({"product_id": product_id})
+        counts["product_intelligence"] = result.deleted_count
 
-        result = await db.deep_analyses.delete_many({"product_slug": product.slug})
-        counts["deep_analyses"] = result.deleted_count
-
-        result = await db.aggregations.delete_many({"product_id": product_id})
-        counts["aggregations"] = result.deleted_count
+        result = await db.document_changes.delete_many({"product_id": product_id})
+        counts["document_changes"] = result.deleted_count
 
         session_docs = await db.crawl_sessions.find({"product_id": product_id}, {"id": 1}).to_list(
             length=None

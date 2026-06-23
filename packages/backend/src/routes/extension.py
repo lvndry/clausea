@@ -261,21 +261,16 @@ async def get_supported_domains(
     1. Pre-cache which domains to watch for
     2. Show "X domains protected" in the popup
     """
-    pipeline = [
-        {
-            "$lookup": {
-                "from": "documents",
-                "localField": "id",
-                "foreignField": "product_id",
-                "as": "docs",
-            }
-        },
-        {"$match": {"docs": {"$ne": []}, "domains": {"$exists": True, "$ne": []}}},
-        {"$unwind": "$domains"},
-        {"$group": {"_id": "$domains"}},
-    ]
-    results = await db.products.aggregate(pipeline).to_list(length=None)
-    return [r["_id"] for r in results if r.get("_id")]
+    results = await db.products.find(
+        {"stats.has_overview": True, "domains": {"$exists": True, "$ne": []}},
+        {"domains": 1},
+    ).to_list(length=None)
+    domains: list[str] = []
+    for product in results:
+        for domain in product.get("domains") or []:
+            if domain and domain not in domains:
+                domains.append(domain)
+    return domains
 
 
 @router.post("/analyze", response_model=ExtensionAnalyzeResponse, status_code=202)

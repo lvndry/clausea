@@ -1,4 +1,4 @@
-"""Aggregation repository for data access operations."""
+"""Legacy aggregation repository — reads old collection for migration scripts only."""
 
 from __future__ import annotations
 
@@ -9,14 +9,9 @@ from src.repositories.base_repository import BaseRepository
 
 
 class AggregationRepository(BaseRepository):
-    """Repository for product-level aggregations."""
-
     async def save(self, db: AgnosticDatabase, aggregation: Aggregation) -> None:
-        data = aggregation.model_dump()
-        await db.aggregations.update_one(
-            {"product_id": aggregation.product_id}, {"$set": data}, upsert=True
-        )
+        raise NotImplementedError("aggregations collection is deprecated; use product_intelligence")
 
     async def get(self, db: AgnosticDatabase, product_id: str) -> Aggregation | None:
-        data = await db.aggregations.find_one({"product_id": product_id})
-        return Aggregation(**data) if data else None
+        row = await db.aggregations.find_one({"product_id": product_id})
+        return Aggregation(**row) if row else None

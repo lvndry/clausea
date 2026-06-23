@@ -1,7 +1,7 @@
 """Tests for policy change tracking: _diff_fields, DocumentVersionRepository, MonitoringScheduleRepository."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -74,35 +74,40 @@ class TestDocumentVersionRepository:
     @pytest.mark.asyncio
     async def test_archive_inserts_version(self) -> None:
         db = MagicMock()
-        db.document_versions = MagicMock()
-        db.document_versions.insert_one = AsyncMock()
         db.products = MagicMock()
         db.products.find_one = AsyncMock(return_value={"slug": "acme"})
 
-        existing = _doc()
-        repo = DocumentVersionRepository()
-        await repo.archive(db, existing, job_id="job123", changed_fields=["text"])
+        existing = _doc(content_hash="hash123")
+        with patch(
+            "src.repositories.document_version_repository.DocumentChangeRepository.record",
+            AsyncMock(),
+        ) as record_mock:
+            await DocumentVersionRepository().archive(
+                db, existing, job_id="job123", changed_fields=["text"]
+            )
 
-        db.document_versions.insert_one.assert_called_once()
-        inserted = db.document_versions.insert_one.call_args[0][0]
-        assert inserted["document_id"] == existing.id
-        assert inserted["job_id"] == "job123"
-        assert inserted["changed_fields"] == ["text"]
-        assert inserted["product_slug"] == "acme"
+        record_mock.assert_awaited_once()
+        change = record_mock.call_args[0][1]
+        assert change.document_id == existing.id
+        assert change.job_id == "job123"
+        assert change.changed_fields == ["text"]
+        assert change.product_slug == "acme"
 
     @pytest.mark.asyncio
     async def test_archive_with_no_job_id(self) -> None:
         db = MagicMock()
-        db.document_versions = MagicMock()
-        db.document_versions.insert_one = AsyncMock()
         db.products = MagicMock()
         db.products.find_one = AsyncMock(return_value=None)
 
-        existing = _doc()
-        await DocumentVersionRepository().archive(db, existing, job_id=None, changed_fields=[])
+        existing = _doc(content_hash="hash123")
+        with patch(
+            "src.repositories.document_version_repository.DocumentChangeRepository.record",
+            AsyncMock(),
+        ) as record_mock:
+            await DocumentVersionRepository().archive(db, existing, job_id=None, changed_fields=[])
 
-        inserted = db.document_versions.insert_one.call_args[0][0]
-        assert inserted["job_id"] is None
+        change = record_mock.call_args[0][1]
+        assert change.job_id is None
 
 
 class TestMonitoringScheduleRepository:

@@ -176,78 +176,76 @@ async def ensure_user_indexes(db: AgnosticDatabase) -> None:
             logger.warning(f"Could not create index on users.email: {e}")
 
 
+async def ensure_product_intelligence_indexes(db: AgnosticDatabase) -> None:
+    """Ensure indexes exist on the product_intelligence collection."""
+    try:
+        await db.product_intelligence.create_index(
+            "product_id", unique=True, name="idx_intelligence_product_id", background=True
+        )
+        logger.info("Created unique index on product_intelligence.product_id")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug("Index on product_intelligence.product_id already exists")
+        else:
+            logger.warning(f"Could not create index on product_intelligence.product_id: {e}")
+
+    try:
+        await db.product_intelligence.create_index(
+            "product_slug", unique=True, name="idx_intelligence_product_slug", background=True
+        )
+        logger.info("Created unique index on product_intelligence.product_slug")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "already exists" in error_msg or "duplicate key" in error_msg:
+            logger.debug("Index on product_intelligence.product_slug already exists")
+        else:
+            logger.warning(f"Could not create index on product_intelligence.product_slug: {e}")
+
+
+async def ensure_document_change_indexes(db: AgnosticDatabase) -> None:
+    """Ensure indexes exist on the document_changes collection."""
+    try:
+        await db.document_changes.create_index(
+            [("document_id", 1), ("created_at", -1)],
+            name="idx_docchange_doc_recent",
+            background=True,
+        )
+        logger.info("Created index on document_changes.(document_id, created_at)")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.debug("Index on document_changes.(document_id, created_at) already exists")
+        else:
+            logger.warning(f"Could not create index on document_changes: {e}")
+
+    try:
+        await db.document_changes.create_index(
+            "product_id", name="idx_docchange_product_id", background=True
+        )
+        logger.info("Created index on document_changes.product_id")
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            logger.debug("Index on document_changes.product_id already exists")
+        else:
+            logger.warning(f"Could not create index on document_changes.product_id: {e}")
+
+
 async def ensure_finding_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the findings collection."""
+    """Legacy findings collection — indexes retained for migration cleanup only."""
     try:
         await db.findings.create_index("product_id", name="idx_finding_product_id", background=True)
-        logger.info("Created index on findings.product_id")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg:
-            logger.debug("Index on findings.product_id already exists")
-        else:
-            logger.warning(f"Could not create index on findings.product_id: {e}")
-
-    try:
-        await db.findings.create_index(
-            "document_id", name="idx_finding_document_id", background=True
-        )
-        logger.info("Created index on findings.document_id")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg:
-            logger.debug("Index on findings.document_id already exists")
-        else:
-            logger.warning(f"Could not create index on findings.document_id: {e}")
-
-
-async def ensure_product_overview_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the product_overviews collection."""
-    try:
-        await db.product_overviews.create_index(
-            "product_slug", unique=True, name="idx_overview_slug", background=True
-        )
-        logger.info("Created unique index on product_overviews.product_slug")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg or "duplicate key" in error_msg:
-            logger.debug(
-                "Index on product_overviews.product_slug already exists or has duplicate values"
-            )
-        else:
-            logger.warning(f"Could not create index on product_overviews.product_slug: {e}")
-
-
-async def ensure_deep_analysis_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the deep_analyses collection."""
-    try:
-        await db.deep_analyses.create_index(
-            "product_slug", unique=True, name="idx_deep_analysis_slug", background=True
-        )
-        logger.info("Created unique index on deep_analyses.product_slug")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg or "duplicate key" in error_msg:
-            logger.debug(
-                "Index on deep_analyses.product_slug already exists or has duplicate values"
-            )
-        else:
-            logger.warning(f"Could not create index on deep_analyses.product_slug: {e}")
+    except Exception:
+        pass
 
 
 async def ensure_aggregation_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the aggregations collection."""
+    """Legacy aggregations collection — indexes retained for migration cleanup only."""
     try:
         await db.aggregations.create_index(
             "product_id", unique=True, name="idx_aggregation_product_id", background=True
         )
-        logger.info("Created unique index on aggregations.product_id")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg or "duplicate key" in error_msg:
-            logger.debug("Index on aggregations.product_id already exists or has duplicate values")
-        else:
-            logger.warning(f"Could not create index on aggregations.product_id: {e}")
+    except Exception:
+        pass
 
 
 async def ensure_document_version_indexes(db: AgnosticDatabase) -> None:
@@ -430,13 +428,27 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     await ensure_product_indexes(db)
     await ensure_document_indexes(db)
     await ensure_finding_indexes(db)
-    await ensure_product_overview_indexes(db)
-    await ensure_deep_analysis_indexes(db)
+    await ensure_product_intelligence_indexes(db)
+    await ensure_document_change_indexes(db)
     await ensure_aggregation_indexes(db)
     await ensure_document_version_indexes(db)
     await ensure_monitoring_schedule_indexes(db)
     await ensure_overview_history_indexes(db)
     await ensure_pipeline_indexes(db)
+
+    # TTL on terminal pipeline jobs (90 days)
+    try:
+        await db.pipeline_jobs.create_index(
+            "completed_at",
+            expireAfterSeconds=90 * 24 * 3600,
+            name="ttl_pipeline_jobs_terminal_90d",
+            partialFilterExpression={"active": False},
+            background=True,
+        )
+        logger.info("Created TTL index on pipeline_jobs.completed_at")
+    except Exception as e:
+        if "already exists" not in str(e).lower():
+            logger.warning(f"Could not create TTL index on pipeline_jobs.completed_at: {e}")
 
     # TTL indexes for ephemeral crawl data
     try:

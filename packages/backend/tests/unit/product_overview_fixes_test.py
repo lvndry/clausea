@@ -180,26 +180,17 @@ async def test_product_service_passes_product_id_to_repo() -> None:
 
 @pytest.mark.asyncio
 async def test_product_repo_writes_product_id_to_summary_data() -> None:
-    """ProductRepository.save_product_overview must write product_id into the upserted doc."""
+    """ProductRepository.save_product_overview delegates to ProductIntelligenceService."""
     from src.repositories.product_repository import ProductRepository as Repo
 
     mock_db = MagicMock()
-    mock_db.product_overviews = MagicMock()
-    mock_db.product_overviews.find_one = AsyncMock(return_value=None)
-    mock_db.product_overviews.update_one = AsyncMock(
-        return_value=MagicMock(matched_count=0, modified_count=0, upserted_id="new")
-    )
-
-    history_repo_mock = MagicMock()
-    history_repo_mock.save_snapshot = AsyncMock(return_value=None)
-
     meta = _make_meta_summary()
     repo = Repo()
 
     with patch(
-        "src.repositories.product_repository.ProductOverviewHistoryRepository",
-        return_value=history_repo_mock,
-    ):
+        "src.repositories.product_repository.ProductIntelligenceService.save_overview",
+        AsyncMock(return_value=None),
+    ) as save_mock:
         await repo.save_product_overview(
             mock_db,
             product_slug="test-slug",
@@ -207,37 +198,25 @@ async def test_product_repo_writes_product_id_to_summary_data() -> None:
             product_id="prod-456",
         )
 
-    mock_db.product_overviews.update_one.assert_awaited_once()
-    _args, _kwargs = mock_db.product_overviews.update_one.call_args
-    upserted_doc = _args[1]["$set"]
-    assert upserted_doc.get("product_id") == "prod-456", (
-        "product_id must be written into the $set payload"
-    )
-    assert upserted_doc.get("product_slug") == "test-slug"
+    save_mock.assert_awaited_once()
+    assert save_mock.call_args.kwargs["product_id"] == "prod-456"
+    assert save_mock.call_args.kwargs["product_slug"] == "test-slug"
 
 
 @pytest.mark.asyncio
 async def test_product_repo_omits_product_id_when_none() -> None:
-    """product_id=None must not be written as a null field (avoids overwriting valid data)."""
+    """product_id=None resolves product id from slug before save."""
     from src.repositories.product_repository import ProductRepository as Repo
 
     mock_db = MagicMock()
-    mock_db.product_overviews = MagicMock()
-    mock_db.product_overviews.find_one = AsyncMock(return_value=None)
-    mock_db.product_overviews.update_one = AsyncMock(
-        return_value=MagicMock(matched_count=0, modified_count=0, upserted_id="new")
-    )
-
-    history_repo_mock = MagicMock()
-    history_repo_mock.save_snapshot = AsyncMock(return_value=None)
-
     meta = _make_meta_summary()
     repo = Repo()
+    repo.find_by_slug = AsyncMock(return_value=MagicMock(id="resolved-id"))
 
     with patch(
-        "src.repositories.product_repository.ProductOverviewHistoryRepository",
-        return_value=history_repo_mock,
-    ):
+        "src.repositories.product_repository.ProductIntelligenceService.save_overview",
+        AsyncMock(return_value=None),
+    ) as save_mock:
         await repo.save_product_overview(
             mock_db,
             product_slug="test-slug",
@@ -245,9 +224,7 @@ async def test_product_repo_omits_product_id_when_none() -> None:
             product_id=None,
         )
 
-    _args, _ = mock_db.product_overviews.update_one.call_args
-    upserted_doc = _args[1]["$set"]
-    assert "product_id" not in upserted_doc, "product_id must not be written when it is None"
+    assert save_mock.call_args.kwargs["product_id"] == "resolved-id"
 
 
 # ---------------------------------------------------------------------------
