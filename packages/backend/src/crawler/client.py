@@ -71,6 +71,7 @@ from src.crawler.constants import (
     CONVERGENCE_LEGAL_SCORE,
     CRAWL_BOT_WALL_ABORT,
     CRAWL_EXHAUSTION_GRACE,
+    DEFAULT_ACCEPT_LANGUAGE,
     DEFAULT_NO_POLICY_PAGE_BUDGET,
     DEFAULT_USER_AGENT,
     MAX_CHILD_SITEMAPS,
@@ -444,7 +445,11 @@ class ClauseaCrawler:
         await self.rate_limit(url)
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
-        headers = {"User-Agent": self.user_agent, "Accept": ACCEPT_HEADER}
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": ACCEPT_HEADER,
+            "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+        }
         cache_headers = self.http_cache.get_cache_headers(url)
         headers.update(cache_headers)
 
@@ -541,7 +546,7 @@ class ClauseaCrawler:
             headers = {
                 "User-Agent": STEALTH_USER_AGENT,
                 "Accept": STEALTH_ACCEPT_HEADER,
-                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
             }
             request_args: dict[str, Any] = {"timeout": timeout, "headers": headers}
             if self.proxy:
@@ -826,7 +831,12 @@ class ClauseaCrawler:
         _browser_cleaned_up = False
         try:
             page = await context.new_page()
-            await page.set_extra_http_headers({"Accept-Encoding": "gzip, deflate"})
+            await page.set_extra_http_headers(
+                {
+                    "Accept-Encoding": "gzip, deflate",
+                    "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+                }
+            )
             await _block_heavy_assets(page)
 
             nav_timeout_ms = min(self.timeout * 1000, BROWSER_NAV_TIMEOUT_MS)
@@ -1223,7 +1233,10 @@ class ClauseaCrawler:
     ) -> list[str]:
         parsed_url = urlparse(base_url)
         origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
-        headers = {"User-Agent": self.user_agent}
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+        }
 
         sitemap_candidates: list[str] = []
 
@@ -2187,7 +2200,7 @@ class ClauseaCrawler:
                 timeout=timeout,
                 max_line_size=MAX_HEADER_BYTES,
                 max_field_size=MAX_HEADER_BYTES,
-                headers={"Accept-Language": "en-US,en;q=0.9"},
+                headers={"Accept-Language": DEFAULT_ACCEPT_LANGUAGE},
             ) as session:
                 try:
                     sitemap_urls = await self._discover_sitemap_urls(session, base_url)
@@ -2580,6 +2593,7 @@ async def test_specific_url(url: str) -> CrawlResult:
         timeout=timeout,
         max_line_size=MAX_HEADER_BYTES,
         max_field_size=MAX_HEADER_BYTES,
+        headers={"Accept-Language": DEFAULT_ACCEPT_LANGUAGE},
     ) as session:
         result = await crawler.fetch_page(session, url)
 

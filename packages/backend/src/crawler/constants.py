@@ -172,6 +172,9 @@ ACCEPT_HEADER = (
     "text/markdown, text/html;q=0.9, text/plain;q=0.8, application/json;q=0.7, */*;q=0.5"
 )
 
+# Prefer English policy text when sites honor content negotiation (e.g. Meta mbasic legal pages).
+DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
+
 # Stealth fallback headers used when the bot UA triggers a JS-shell bot-wall.
 # Only used for the secondary static retry; the primary fetch always uses DEFAULT_USER_AGENT.
 STEALTH_USER_AGENT = (

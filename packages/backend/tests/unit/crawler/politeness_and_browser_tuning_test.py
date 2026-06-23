@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.crawler import ClauseaCrawler
+from src.crawler.constants import DEFAULT_ACCEPT_LANGUAGE
 from src.crawler.rate_limiter import DomainRateLimiter
 from src.crawler.robots import RobotsTxtChecker
 
@@ -82,3 +83,39 @@ async def test_try_dismiss_consent_banner_clicks_visible_accept() -> None:
 
     assert clicked is True
     locator.click.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_static_fetch_sends_accept_language() -> None:
+    from yarl import URL as YarlURL
+
+    crawler = ClauseaCrawler(respect_robots_txt=False)
+    captured_headers: dict[str, str] = {}
+    html = b"<html><body>privacy policy terms of service we collect your data</body></html>"
+
+    class FakeContent:
+        async def read(self, _limit: int) -> bytes:
+            return html
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.status = 200
+            self.headers = {"content-type": "text/html; charset=utf-8"}
+            self.charset = "utf-8"
+            self.url = YarlURL("https://example.com/legal/terms")
+            self.content = FakeContent()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return FakeResponse()
+
+    await crawler._static_fetch(FakeSession(), "https://example.com/legal/terms")  # type: ignore[arg-type]
+
+    assert captured_headers["Accept-Language"] == DEFAULT_ACCEPT_LANGUAGE
