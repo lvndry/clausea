@@ -110,20 +110,20 @@ async def try_dismiss_consent_banner(page: Page) -> bool:
     for selector in _CONSENT_CLICK_SELECTORS:
         try:
             locator = page.locator(selector).first
-            if await locator.is_visible(timeout=500):
-                await locator.click(timeout=click_timeout)
-                await asyncio.sleep(0.4)
-                return True
+            await locator.wait_for(state="visible", timeout=500)
+            await locator.click(timeout=click_timeout)
+            await asyncio.sleep(0.4)
+            return True
         except Exception:
             continue
 
     for label in _CONSENT_BUTTON_LABELS:
         try:
             locator = page.get_by_role("button", name=label, exact=False).first
-            if await locator.is_visible(timeout=400):
-                await locator.click(timeout=click_timeout)
-                await asyncio.sleep(0.4)
-                return True
+            await locator.wait_for(state="visible", timeout=400)
+            await locator.click(timeout=click_timeout)
+            await asyncio.sleep(0.4)
+            return True
         except Exception:
             continue
 

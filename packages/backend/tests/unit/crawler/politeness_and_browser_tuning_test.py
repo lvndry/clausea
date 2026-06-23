@@ -75,13 +75,14 @@ async def test_try_dismiss_consent_banner_clicks_visible_accept() -> None:
 
     page = MagicMock()
     locator = MagicMock()
-    locator.is_visible = AsyncMock(return_value=True)
+    locator.wait_for = AsyncMock()
     locator.click = AsyncMock()
     page.locator.return_value.first = locator
 
     clicked = await try_dismiss_consent_banner(page)
 
     assert clicked is True
+    locator.wait_for.assert_awaited_once_with(state="visible", timeout=500)
     locator.click.assert_awaited_once()
 
 

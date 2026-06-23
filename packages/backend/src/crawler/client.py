@@ -1621,12 +1621,12 @@ class ClauseaCrawler:
             if robots_delay is not None:
                 min_delay = max(min_delay, robots_delay)
 
-        domain = self.rate_limiter._normalize_domain(url)
-        min_delay += self._domain_extra_delay.get(domain, 0.0)
+        domain = self._normalize_domain(url)
+        min_delay = max(min_delay, self._domain_extra_delay.get(domain, 0.0))
         await self.rate_limiter.rate_limit(url, min_delay=min_delay)
 
     def _note_browser_domain_delay(self, url: str, *, failed: bool) -> None:
-        domain = self.rate_limiter._normalize_domain(url)
+        domain = self._normalize_domain(url)
         if failed:
             current = self._domain_extra_delay.get(domain, 0.0)
             self._domain_extra_delay[domain] = min(
