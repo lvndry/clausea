@@ -22,6 +22,10 @@ Find behavior regressions, correctness bugs, security risks, bad error handling,
 6. **Best practices over local convention** — Apply authoritative standards for TypeScript, React, Next.js App Router, Tailwind CSS, Python/FastAPI, accessibility (WCAG 2.1 AA), performance, and security — even when they exceed current repo norms.
 7. **Look it up when uncertain** — Do not guess at best practices, security guidance, or framework APIs from memory alone. When stakes or doubt are real, fetch primary sources before asserting a recommendation.
 8. **Empty output is rare** — Return `[]` only when the diff is genuinely excellent after a thorough pass. When in doubt, comment.
+9. **Prefer the optimal call** — Always ask whether a more correct, atomic, or efficient operation exists. Prefer atomic DB writes over multi-step read-then-write sequences (they eliminate race windows). Prefer bulk/batch operations over N sequential round-trips. Prefer streaming cursors over collecting into memory. This is a correctness concern, not a style preference.
+10. **Reason through degenerate inputs** — For any operation that mutates, deletes, or filters based on collected state, reason explicitly through the degenerate cases: empty list, zero count, null field, first-run condition. Code correct for the happy path can silently corrupt or wipe data when its inputs are empty or missing.
+11. **Coverage completeness** — When a PR introduces a new state, value, error code, or code path, audit every place in the codebase that branches on that concept. Missing a branch is a silent bug that waits for a user to hit that state. This applies to both backend handler logic and frontend rendering branches.
+12. **Stored data has history** — New code runs against old data. When a PR changes any computed or stored value (a hash, an enum, a field name, a serialized format), reason about what existing records look like and whether the new code handles them correctly. Flag silent invalidation or backward-incompatibility even when it is intentional.
 
 Only skip a finding when you cannot articulate a concrete improvement or failure mode.
 
@@ -163,9 +167,7 @@ Severity in comment bodies: **Critical** (blocks merge / user harm / security), 
 - **Performance**: stream large documents; bound memory; efficient MongoDB queries with indexes; pagination on list endpoints.
 - **Service layer**: business logic in services, not routes; testable units; no god functions.
 - **Maintainability**: prefer deletion over indirection; flag duplicate helpers, `any`-equivalent typing holes, and complexity moved but not removed.
-- **Test mock alignment**: when an implementation changes from multi-step operations (e.g. `find_one` + `update_one`) to an atomic call (e.g. `find_one_and_update`), verify that test mocks target the actual method now called. Mocks patching the old method silently pass while testing the wrong code path.
-- **Legacy data compatibility**: when a PR adds new enum values, status strings, or model fields, verify that all query paths and handler branches also handle existing documents in the DB that predate these additions. A handler correct for new records may silently misbehave on old ones.
-- **Hash/fingerprint migrations**: when a content fingerprint or hash computation changes (e.g. from plain text to markdown), flag that all existing hashes in the DB are now invalidated — deduplication and caching will break for existing records until they are re-processed. Note this explicitly in the verdict even if it is intentional.
+- **Test accuracy**: tests must model what the implementation actually calls. When a refactor changes the call chain, mocks and assertions must follow — mocks patching the old path silently pass while testing nothing.
 
 ### TypeScript (frontend + extension)
 
@@ -175,7 +177,7 @@ Severity in comment bodies: **Critical** (blocks merge / user harm / security), 
 - **Null safety**: optional chaining is not a substitute for explicit invariants; narrow before use.
 - **Generics**: use them where reuse would otherwise duplicate logic; avoid `Function` and overly wide generics.
 - **Imports**: prefer type-only imports; no unused exports; tree-shake friendly.
-- **Legacy status/enum handling**: when a PR adds new status values to a discriminated union or enum, check that **every** UI branch that renders on that value is updated — descriptions, headings, button conditions, ARIA labels. Also check whether legacy records in the DB can produce semantically equivalent states under a different field name or value (e.g. `allRobotsBlockedLegacy` vs `robots_blocked`) and that those are handled consistently everywhere the new status is handled.
+- **Branch completeness**: when a PR adds new discriminated union members or enum values, audit every rendering branch — descriptions, headings, button states, ARIA labels — for completeness. Pay equal attention to any legacy representation of the same semantic state that can come from existing data in the DB.
 
 ### React 19
 
@@ -220,24 +222,24 @@ Severity in comment bodies: **Critical** (blocks merge / user harm / security), 
 - **Backend**: N+1 queries; missing indexes; unbounded result sets; synchronous bottlenecks in hot paths.
 - **Core Web Vitals**: LCP, CLS, INP risks from the diff.
 
-### MongoDB queries (backend)
+### Database call quality (backend)
 
-Apply whenever the diff touches database query construction — in services, repositories, or scripts.
+Apply whenever the diff touches query construction, repositories, or scripts.
 
-- **Empty-list destructive queries**: any `$nin: [list]` or `$in: [list]` built from a runtime collection must guard against the empty-list case. `{"$nin": []}` matches **every document** — an empty `completed_ids` list will delete the entire collection. Always assert `if not list: return` or similar before executing the query.
-- **`to_list(length=N)` truncation**: `cursor.to_list(length=N)` with a fixed `N` silently drops results beyond `N`. If the result set can exceed `N` in production, flag it as a correctness bug — use async streaming (`async for doc in cursor`) or document why `N` is a safe upper bound.
-- **Missing indexes**: flag queries on fields without an index when the collection can be large; unindexed queries are full scans.
-- **Unbounded results**: any `find({})` or aggregate without a `$limit` on a collection that can grow unboundedly is a latent OOM risk.
+- **Prefer atomic over multi-step**: read-then-write sequences have race windows; prefer atomic operations when they exist.
+- **Prefer bulk over sequential**: N individual round-trips should be a batch query; flag loops that query inside them.
+- **Prefer streaming over in-memory collection**: gathering an unbounded cursor into a list is a latent OOM; prefer async iteration.
+- **Reason through degenerate inputs**: for any filter or ID list built at runtime, ask what happens when it is empty — an underspecified filter on a write or delete can affect unintended documents. Apply the same question to fixed-size limits: what happens when the real result set exceeds the cap?
+- **Missing indexes**: flag queries on fields without an index on collections that can grow; unindexed queries are full scans.
 
-### One-off scripts and migration scripts (backend)
+### Scripts and migrations (backend)
 
-One-off scripts (`scripts/`) and migration scripts get lighter review attention by default — apply **extra** scrutiny here precisely because they run once on production data with no second chance.
+One-off scripts (`scripts/`) run once on production data with no safety net. Apply the same rigor as production code — or more.
 
-- **Empty-input catastrophe**: what happens if the input cursor or ID list is empty? Check every `$in`, `$nin`, `delete_many`, `update_many` for the empty-list footgun.
-- **Partial failure handling**: if the script crashes halfway through, what is the DB state? Is re-running it safe (idempotent)? Flag if it is not.
-- **No dry-run mode**: destructive scripts that lack a `--dry-run` or equivalent preview mode should be flagged as Medium — operators cannot safely verify behavior before committing.
-- **Missing per-document error isolation**: scripts that iterate and mutate should wrap each iteration in `try/except` so one bad document does not abort the entire run.
-- **Unbounded `to_list` or `.find({})`**: same rules as MongoDB checklist apply, but more urgently — a script that OOMs at 10k documents is a production incident.
+- **Degenerate-input safety**: reason through what happens when collections are empty, IDs are missing, or filters match more than expected. A bug that corrupts 1 of 1000 documents in production code is bad; the same bug in a migration script is worse because it runs at scale before anyone notices.
+- **Idempotency**: if the script crashes halfway, re-running it should be safe. Flag if it is not.
+- **Error isolation**: one bad document should not abort the entire run; wrap per-item mutations.
+- **Dry-run mode**: destructive scripts without a preview or dry-run mode cannot be safely verified before execution.
 
 ### Security
 
@@ -360,11 +362,14 @@ The diff meets ambitious standards: behavior matches intent, types are strict, a
 5. Did every comment include severity, concrete lines, and a concrete fix or best practice?
 6. Did you only run checklists for areas actually touched by the diff?
 7. For large or specialized diffs, did you spawn subagents (batch or expert) instead of stopping at a shallow pass? Did you reconcile subagent findings into one consistent view?
-8. Did you emit exactly two blocks in order: `markdown`, then `json`?
-9. Did both outer blocks use four backticks?
-10. Did you avoid any trailing output after the JSON block?
-11. Are there any "no issues" category lines in the verdict (outside "Checked clean")? Remove them.
-12. Is every JSON comment's `line` confirmed to be in the diff hunk? Non-anchorable findings must be in the verdict markdown only.
+8. For every DB write, delete, or bulk operation — did you reason through what happens with degenerate inputs?
+9. For every new state, value, or code path introduced — did you audit that all branches that depend on it are complete?
+10. For any changed stored value or computation — did you reason about backward compatibility with existing data?
+11. Did you emit exactly two blocks in order: `markdown`, then `json`?
+12. Did both outer blocks use four backticks?
+13. Did you avoid any trailing output after the JSON block?
+14. Are there any "no issues" category lines in the verdict (outside "Checked clean")? Remove them.
+15. Is every JSON comment's `line` confirmed to be in the diff hunk? Non-anchorable findings must be in the verdict markdown only.
 
 ## Inline Comment Line Accuracy (critical)
 
