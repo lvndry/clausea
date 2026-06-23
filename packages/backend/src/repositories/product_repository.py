@@ -18,7 +18,8 @@ from src.models.document import (
 )
 from src.models.product import Product
 from src.repositories.base_repository import BaseRepository
-from src.repositories.product_overview_history_repository import ProductOverviewHistoryRepository
+from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
+from src.services.product_intelligence_service import ProductIntelligenceService
 
 logger = get_logger(__name__)
 
@@ -246,36 +247,23 @@ class ProductRepository(BaseRepository):
     # ============================================================================
 
     async def list_analyzed_overviews(self, db: AgnosticDatabase) -> list[dict[str, Any]]:
-        """Slug + last-updated for every product that has a completed overview.
+        return await ProductIntelligenceRepository().list_sitemap_entries(db)
 
-        Used to build the sitemap: only analyzed products carry real content worth
-        indexing (the rest render an 'indexation in progress' placeholder).
-        """
-        cursor = db.product_overviews.find({}, {"_id": 0, "product_slug": 1, "updated_at": 1})
-        return await cursor.to_list(length=None)
-
-    async def count_product_overviews(self, db: AgnosticDatabase) -> int:
-        """Count products that have a completed analysis (a stored overview).
-
-        Uses estimated_document_count() — an O(1) metadata read — since this counts
-        the whole collection with no filter (consistent with get_products_paginated).
-        """
-        return await db.product_overviews.estimated_document_count()
+    async def count_products_with_overview(self, db: AgnosticDatabase) -> int:
+        return await ProductIntelligenceRepository().count_with_overview(db)
 
     async def get_product_overview(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        """Get the stored product overview data for a product.
-
-        Args:
-            db: Database instance
-            product_slug: Product slug
-
-        Returns:
-            Dictionary with 'overview' key, or None
-        """
-        stored_data = await db.product_overviews.find_one({"product_slug": product_slug})
-        return {"overview": stored_data} if stored_data else None
+        intelligence = await ProductIntelligenceRepository().get_by_slug(db, product_slug)
+        if not intelligence or not intelligence.overview:
+            return None
+        overview_data = intelligence.overview.model_dump(mode="json")
+        overview_data["product_slug"] = product_slug
+        overview_data["product_id"] = intelligence.product_id
+        if intelligence.overview_generated_at:
+            overview_data["updated_at"] = intelligence.overview_generated_at
+        return {"overview": overview_data}
 
     async def save_product_overview(
         self,
@@ -285,52 +273,27 @@ class ProductRepository(BaseRepository):
         job_id: str | None = None,
         product_id: str | None = None,
     ) -> None:
-        """Save the product overview payload to the database.
-
-        Args:
-            db: Database instance
-            product_slug: Product slug
-            meta_summary: Overview payload (MetaSummary shape)
-            job_id: Optional pipeline job that produced this overview
-            product_id: Product identifier for the owning product record
-        """
-        summary_data = meta_summary.model_dump()
-        summary_data["product_slug"] = product_slug
-        if product_id is not None:
-            summary_data["product_id"] = product_id
-        summary_data["updated_at"] = datetime.now()
-
-        existing = await db.product_overviews.find_one({"product_slug": product_slug})
-        await ProductOverviewHistoryRepository().save_snapshot(
+        if product_id is None:
+            product = await self.find_by_slug(db, product_slug)
+            if not product:
+                raise ValueError(f"Product not found for slug {product_slug}")
+            product_id = product.id
+        await ProductIntelligenceService().save_overview(
             db,
+            product_id=product_id,
             product_slug=product_slug,
-            overview_data=summary_data,
-            prev_overview_data=existing,
+            meta_summary=meta_summary,
             job_id=job_id,
         )
-
-        result = await db.product_overviews.update_one(
-            {"product_slug": product_slug},
-            {"$set": summary_data},
-            upsert=True,
-        )
-        logger.info(
-            "Saved product overview for %s (matched=%s modified=%s upserted_id=%s)",
-            product_slug,
-            result.matched_count,
-            result.modified_count,
-            getattr(result, "upserted_id", None),
-        )
+        logger.info("Saved product overview for %s", product_slug)
 
     async def delete_product_overview(self, db: AgnosticDatabase, product_slug: str) -> None:
-        """Delete the stored product overview for a product.
-
-        Args:
-            db: Database instance
-            product_slug: Product slug
-        """
-        await db.product_overviews.delete_one({"product_slug": product_slug})
-        logger.debug(f"Deleted product overview for {product_slug}")
+        intelligence = await ProductIntelligenceRepository().get_by_slug(db, product_slug)
+        if not intelligence:
+            return
+        intelligence.overview = None
+        await ProductIntelligenceRepository().upsert(db, intelligence)
+        logger.debug("Deleted product overview for %s", product_slug)
 
     # ============================================================================
     # Consumer Explainer Storage (product-level roll-up, consumer-facing)
@@ -339,20 +302,25 @@ class ProductRepository(BaseRepository):
     async def get_product_explainer(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        """Get the stored product-level consumer explainer, or None."""
-        return await db.product_explainers.find_one({"product_slug": product_slug}, {"_id": 0})
+        intelligence = await ProductIntelligenceRepository().get_by_slug(db, product_slug)
+        if not intelligence or not intelligence.explainer:
+            return None
+        data = intelligence.explainer.model_dump(mode="json")
+        data["product_slug"] = product_slug
+        return data
 
     async def save_product_explainer(
         self, db: AgnosticDatabase, product_slug: str, explainer: ConsumerExplainer
     ) -> bool:
-        """Upsert the product-level consumer explainer. Returns True when it landed."""
-        data = explainer.model_dump()
-        data["product_slug"] = product_slug
-        data["updated_at"] = datetime.now()
-        result = await db.product_explainers.update_one(
-            {"product_slug": product_slug}, {"$set": data}, upsert=True
+        product = await self.find_by_slug(db, product_slug)
+        if not product:
+            return False
+        return await ProductIntelligenceService().save_explainer(
+            db,
+            product_id=product.id,
+            product_slug=product_slug,
+            explainer=explainer,
         )
-        return result.matched_count > 0 or result.upserted_id is not None
 
     async def update_product_explainer_grade(
         self,
@@ -362,29 +330,24 @@ class ProductRepository(BaseRepository):
         *,
         grade_reason: str | None = None,
     ) -> None:
-        """Update the stored explainer grade (and optional grade_reason) for a product.
-
-        Used by the service layer when reconciling legacy explainer rows against
-        the canonical overview score, without rewriting the entire explainer.
-        """
-        update_fields: dict[str, Any] = {"grade": grade, "updated_at": datetime.now()}
+        intelligence = await ProductIntelligenceRepository().get_by_slug(db, product_slug)
+        if not intelligence or not intelligence.explainer:
+            return
+        intelligence.explainer.grade = grade
         if grade_reason is not None:
-            update_fields["grade_reason"] = grade_reason
-        await db.product_explainers.update_one(
-            {"product_slug": product_slug},
-            {"$set": update_fields},
-        )
-
-    # ============================================================================
-    # Compliance Assessment Storage (product-level, per-regime score + why)
-    # ============================================================================
+            intelligence.explainer.grade_reason = grade_reason
+        intelligence.updated_at = datetime.now()
+        await ProductIntelligenceRepository().upsert(db, intelligence)
 
     async def get_product_compliance(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        """Get the stored per-regime compliance breakdown ({regime: {...}}), or None."""
-        stored = await db.product_compliance.find_one({"product_slug": product_slug})
-        return stored.get("compliance") if stored else None
+        intelligence = await ProductIntelligenceRepository().get_by_slug(db, product_slug)
+        if not intelligence or not intelligence.compliance:
+            return None
+        return {
+            regime: bd.model_dump(mode="json") for regime, bd in intelligence.compliance.items()
+        }
 
     async def save_product_compliance(
         self,
@@ -392,40 +355,27 @@ class ProductRepository(BaseRepository):
         product_slug: str,
         compliance: dict[str, ComplianceBreakdown],
     ) -> bool:
-        """Upsert the per-regime compliance breakdown. Returns True when it landed."""
-        data = {
-            "product_slug": product_slug,
-            "compliance": {regime: bd.model_dump() for regime, bd in compliance.items()},
-            "updated_at": datetime.now(),
-        }
-        result = await db.product_compliance.update_one(
-            {"product_slug": product_slug}, {"$set": data}, upsert=True
+        product = await self.find_by_slug(db, product_slug)
+        if not product:
+            return False
+        return await ProductIntelligenceService().save_compliance(
+            db,
+            product_id=product.id,
+            product_slug=product_slug,
+            compliance=compliance,
         )
-        return result.matched_count > 0 or result.upserted_id is not None
-
-    # ============================================================================
-    # Deep Analysis Storage Operations
-    # ============================================================================
 
     async def get_deep_analysis(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        """Get the stored deep analysis data for a product.
-
-        Args:
-            db: Database instance
-            product_slug: Product slug
-
-        Returns:
-            Dictionary with 'deep_analysis' and 'document_signature' keys, or None
-        """
-        stored_data = await db.deep_analyses.find_one({"product_slug": product_slug})
-        if not stored_data:
+        intelligence = await ProductIntelligenceRepository().get_by_slug(db, product_slug)
+        if not intelligence or not intelligence.deep_analysis:
             return None
-
+        stored = intelligence.deep_analysis.model_dump(mode="json")
+        stored["product_slug"] = product_slug
         return {
-            "deep_analysis": stored_data,
-            "document_signature": stored_data.get("document_signature"),
+            "deep_analysis": stored,
+            "document_signature": intelligence.deep_analysis_document_signature,
         }
 
     async def save_deep_analysis(
@@ -435,26 +385,20 @@ class ProductRepository(BaseRepository):
         deep_analysis: ProductDeepAnalysis,
         document_signature: str,
     ) -> None:
-        """Save the deep analysis to the database with document signature.
-
-        Args:
-            db: Database instance
-            product_slug: Product slug
-            deep_analysis: ProductDeepAnalysis object to save
-            document_signature: Hash signature of all document contents
-        """
-        analysis_data = deep_analysis.model_dump()
-        analysis_data["product_slug"] = product_slug
-        analysis_data["document_signature"] = document_signature
-        analysis_data["updated_at"] = datetime.now()
-
-        await db.deep_analyses.update_one(
-            {"product_slug": product_slug},
-            {"$set": analysis_data},
-            upsert=True,
+        product = await self.find_by_slug(db, product_slug)
+        if not product:
+            raise ValueError(f"Product not found for slug {product_slug}")
+        await ProductIntelligenceService().save_deep_analysis(
+            db,
+            product_id=product.id,
+            product_slug=product_slug,
+            deep_analysis=deep_analysis,
+            document_signature=document_signature,
         )
         logger.debug(
-            f"Saved deep analysis for {product_slug} with signature {document_signature[:16]}..."
+            "Saved deep analysis for %s with signature %s...",
+            product_slug,
+            document_signature[:16],
         )
 
     # ============================================================================

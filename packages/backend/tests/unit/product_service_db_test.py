@@ -25,7 +25,6 @@ def mock_db() -> MagicMock:
     db = MagicMock()
     # Mocking collections for legacy or direct access tests if any remain
     db.products = AsyncMock()
-    db.product_overviews = AsyncMock()
     db.documents = MagicMock()
     db.documents.find_one = AsyncMock()
     db.documents.insert_one = AsyncMock()
@@ -314,7 +313,7 @@ async def test_get_product_analysis(
     mock_document_repo: MagicMock,
     mock_db: MagicMock,
 ) -> None:
-    # Mock overview payload (stored in product_overviews)
+    # Mock overview payload (stored in product_intelligence)
     mock_product_repo.get_product_overview.return_value = {
         "overview": {
             "summary": "Test summary",
@@ -433,12 +432,12 @@ async def test_get_product_documents(
 async def test_count_analyzed_products(
     product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
 ) -> None:
-    mock_product_repo.count_product_overviews = AsyncMock(return_value=7)
+    mock_product_repo.count_products_with_overview = AsyncMock(return_value=7)
 
     count = await product_service.count_analyzed_products(mock_db)
 
     assert count == 7
-    mock_product_repo.count_product_overviews.assert_awaited_once_with(mock_db)
+    mock_product_repo.count_products_with_overview.assert_awaited_once_with(mock_db)
 
 
 @pytest.mark.asyncio

@@ -82,9 +82,9 @@ async def review(db, product_svc, doc_svc, slug: str) -> None:
             f"clauses={nclauses} regions={d.regions}{flag}"
         )
 
-    ov_doc = await db.product_overviews.find_one({"product_slug": slug})
+    intelligence = await db.product_intelligence.find_one({"product_slug": slug})
+    grade = (intelligence or {}).get("overview", {}).get("grade") if intelligence else None
     if overview:
-        grade = (ov_doc or {}).get("grade")
         ps = getattr(overview, "privacy_signals", None)
         ndangers = len(getattr(overview, "dangers", None) or [])
         print(

@@ -34,7 +34,7 @@ from src.pipeline.helpers import (
     logger_storage,
 )
 from src.pipeline.models import ProcessingStats
-from src.repositories.document_version_repository import DocumentVersionRepository
+from src.repositories.document_change_repository import DocumentChangeRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.service_factory import create_document_service
 
@@ -172,8 +172,11 @@ class DocumentStorer:
                                 ),
                             ]
                             changed = _diff_fields(existing_doc, document)
-                            await DocumentVersionRepository().archive(
-                                db, existing_doc, job_id=self._job_id, changed_fields=changed
+                            await DocumentChangeRepository().record_document_update(
+                                db,
+                                existing_doc=existing_doc,
+                                job_id=self._job_id,
+                                changed_fields=changed,
                             )
 
                             logger_storage.info(

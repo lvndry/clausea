@@ -33,10 +33,10 @@ from src.models.pipeline_job import (
 from src.models.product import Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
-from src.repositories.finding_repository import FindingRepository
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
 from src.repositories.pipeline_repository import PipelineRepository
 from src.repositories.product_repository import ProductRepository
+from src.services.product_intelligence_service import ProductIntelligenceService
 from src.services.service_factory import create_document_service, create_product_service
 from src.utils.domain import extract_domain as _extract_domain
 
@@ -375,28 +375,10 @@ class PipelineService:
                             db, job.id, {"started_at": job.started_at}
                         )
 
-                    # Purge any findings left over from a previous attempt.
-                    # On retries (attempts > 1) the per-document delete-then-insert loop
-                    # in rebuild_findings_for_product only clears findings for documents
-                    # it reaches before the next crash. Across several crash/retry cycles
-                    # this causes unbounded accumulation (one product reached 7 000+
-                    # findings, filling the Atlas M0 quota). Purging up front on retries
-                    # makes each retry a clean rebuild while leaving findings intact on
-                    # first-time runs, so a crawl failure never wipes a previously
-                    # successful analysis.
                     if job.attempts > 1:
-                        stale_count = await FindingRepository().delete_findings_for_product(
-                            db, product.id
-                        )
                         logger.info(
-                            "Cleared %d stale finding(s) for %s before pipeline retry (attempt %d)",
-                            stale_count,
-                            job.product_slug,
+                            "Pipeline retry attempt %d for %s",
                             job.attempts,
-                        )
-                    else:
-                        logger.info(
-                            "First attempt for %s — skipping stale findings purge",
                             job.product_slug,
                         )
 
@@ -1102,6 +1084,12 @@ class PipelineService:
                     job.status = "completed"
                     job.completed_at = datetime.now()
                     await self._pipeline_repo.update(db, job)
+                    if job.product_id:
+                        await ProductIntelligenceService().update_product_stats(
+                            db,
+                            product_id=job.product_id,
+                            product_slug=job.product_slug,
+                        )
                     logger.info(
                         f"Pipeline job {job.id} completed for {job.product_slug} "
                         f"({job.documents_stored} documents)"

@@ -12,10 +12,8 @@ from src.models.document import (
     PrivacySignals,
 )
 from src.models.finding import Finding
-from src.repositories.aggregation_repository import AggregationRepository
 from src.repositories.document_repository import DocumentRepository
-from src.repositories.finding_repository import FindingRepository
-from src.services.aggregation_service import AggregationService
+from src.services.product_rollup_service import ProductRollupService
 
 
 class _DummyRepo:
@@ -23,12 +21,8 @@ class _DummyRepo:
         return []
 
 
-def _service() -> AggregationService:
-    return AggregationService(
-        cast(DocumentRepository, _DummyRepo()),
-        cast(FindingRepository, _DummyRepo()),
-        cast(AggregationRepository, _DummyRepo()),
-    )
+def _service() -> ProductRollupService:
+    return ProductRollupService(cast(DocumentRepository, _DummyRepo()))
 
 
 def test_aggregate_findings_dedupes_by_category_and_value() -> None:
@@ -73,12 +67,11 @@ def test_build_coverage_marks_missing_when_not_found() -> None:
     assert status_by_category["data_collection"] == "missing"
 
 
-def test_aggregation_fixture_shape() -> None:
-    fixture_path = Path(__file__).resolve().parents[1] / "fixtures/aggregation_fixture.json"
+def test_product_rollup_fixture_shape() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures/product_rollup_fixture.json"
     payload = json.loads(fixture_path.read_text())
     assert "coverage" in payload
-    assert "findings" in payload
-    assert isinstance(payload["findings"], list)
+    assert "items" in payload or "findings" in payload
 
 
 # ── _findings_from_retention_rules ──────────────────────────────────

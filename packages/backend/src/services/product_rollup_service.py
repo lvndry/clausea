@@ -1,4 +1,4 @@
-"""Aggregation service for merging findings across documents (v4)."""
+"""Build product rollups from document extractions and persist slim caches."""
 
 from __future__ import annotations
 
@@ -14,27 +14,25 @@ from src.models.document import (
     DocumentExtraction,
     InsightCategory,
 )
-from src.models.finding import AggregatedFinding, Aggregation, Finding, FindingConflict
-from src.repositories.aggregation_repository import AggregationRepository
+from src.models.finding import AggregatedFinding, Finding, FindingConflict, HydratedRollup
+from src.models.product_intelligence import ProductRollup, RollupConflict, RollupItem
 from src.repositories.document_repository import DocumentRepository
-from src.repositories.finding_repository import FindingRepository
 from src.services.evidence_relevance import filter_evidence_spans
 from src.services.extraction_service import extract_document_facts
+from src.services.product_intelligence_service import ProductIntelligenceService
 from src.utils.standard_terms import should_exclude_from_dangers
 
 
-class AggregationService:
-    """Builds and stores product-level aggregations from v4 extractions."""
+class ProductRollupService:
+    """Builds product rollups from document extractions and persists slim caches."""
 
     def __init__(
         self,
         document_repo: DocumentRepository,
-        finding_repo: FindingRepository,
-        aggregation_repo: AggregationRepository,
+        intelligence_service: ProductIntelligenceService | None = None,
     ) -> None:
         self._document_repo = document_repo
-        self._finding_repo = finding_repo
-        self._aggregation_repo = aggregation_repo
+        self._intelligence_service = intelligence_service or ProductIntelligenceService()
         self._logger = get_logger(__name__)
 
     @staticmethod
@@ -634,28 +632,140 @@ class AggregationService:
     # Top-level operations
     # ------------------------------------------------------------------
 
-    async def rebuild_findings_for_product(
-        self, db: AgnosticDatabase, product_id: str
+    async def _collect_findings_from_extractions(
+        self,
+        db: AgnosticDatabase,
+        product_id: str,
+        *,
+        persist_extractions: bool,
     ) -> list[Finding]:
-        # Must use the *_full loader: find_by_product_id projects out text/markdown
-        # and replaces them with "". Passing such a partial Document to update()
-        # would $set those empty strings back to MongoDB, wiping the source text.
         documents = await self._document_repo.find_by_product_id_full(db, product_id)
         all_findings: list[Finding] = []
 
         for doc in documents:
             extraction = await extract_document_facts(doc, use_cache=True)
             doc.extraction = extraction
-            await self._document_repo.update(db, doc)
+            if persist_extractions:
+                await self._document_repo.update(db, doc)
 
-            await self._finding_repo.delete_findings_for_document(db, doc.id)
             findings = self._extraction_to_findings(
                 product_id=doc.product_id, document_id=doc.id, extraction=extraction
             )
-            await self._finding_repo.create_many(db, findings)
             all_findings.extend(findings)
 
         return all_findings
+
+    def _aggregate_findings_slim(self, findings: list[Finding]) -> list[RollupItem]:
+        grouped: dict[tuple[str, str], RollupItem] = {}
+        for finding in findings:
+            key = (
+                finding.category,
+                finding.normalized_value or self._normalize_value(finding.value),
+            )
+            if key not in grouped:
+                grouped[key] = RollupItem(
+                    category=finding.category,
+                    value=finding.value,
+                    document_ids=[finding.document_id],
+                    attributes=[finding.attributes] if finding.attributes else [],
+                    confidence=finding.confidence,
+                )
+            else:
+                grouped[key].document_ids.append(finding.document_id)
+                if finding.attributes:
+                    grouped[key].attributes.append(finding.attributes)
+        for item in grouped.values():
+            item.document_ids = list(dict.fromkeys(item.document_ids))
+        return list(grouped.values())
+
+    def _detect_conflicts_slim(self, findings: list[Finding]) -> list[RollupConflict]:
+        conflicts: list[RollupConflict] = []
+        conflictable: set[str] = {
+            "data_sale",
+            "retention",
+            "ai_training",
+            "breach_notification",
+            "children",
+        }
+        by_category: dict[InsightCategory, dict[str, list[str]]] = {}
+        for finding in findings:
+            if finding.category not in conflictable:
+                continue
+            normalized = finding.normalized_value or self._normalize_value(finding.value)
+            by_category.setdefault(finding.category, {}).setdefault(normalized, []).append(
+                finding.document_id
+            )
+
+        for category, value_map in by_category.items():
+            if len(value_map) <= 1:
+                continue
+            doc_ids: list[str] = []
+            for ids in value_map.values():
+                doc_ids.extend(ids)
+            conflicts.append(
+                RollupConflict(
+                    category=category,
+                    description=f"Conflicting statements for {category}",
+                    document_ids=list(dict.fromkeys(doc_ids)),
+                )
+            )
+        return conflicts
+
+    def _rollup_to_hydrated(
+        self,
+        *,
+        product_id: str,
+        product_slug: str,
+        rollup: ProductRollup,
+        findings: list[Finding],
+    ) -> HydratedRollup:
+        aggregated = self._aggregate_findings(findings)
+        conflicts = self._detect_conflicts(findings)
+        return HydratedRollup(
+            product_id=product_id,
+            product_slug=product_slug,
+            findings=aggregated,
+            conflicts=conflicts,
+            coverage=rollup.coverage,
+            generated_at=rollup.generated_at,
+        )
+
+    async def build_product_rollup(
+        self, db: AgnosticDatabase, product_id: str, product_slug: str
+    ) -> HydratedRollup:
+        findings = await self._collect_findings_from_extractions(
+            db, product_id, persist_extractions=True
+        )
+        analyzed_docs = len({finding.document_id for finding in findings})
+        rollup = ProductRollup(
+            coverage=self._build_coverage(findings, analyzed_docs=analyzed_docs),
+            items=self._aggregate_findings_slim(findings),
+            conflicts=self._detect_conflicts_slim(findings),
+        )
+        source_hashes = await self._intelligence_service.compute_source_hashes(db, product_id)
+        await self._intelligence_service.save_rollup(
+            db,
+            product_id=product_id,
+            product_slug=product_slug,
+            rollup=rollup,
+            source_hashes=source_hashes,
+        )
+        if rollup.coverage:
+            status_counts: dict[str, int] = {}
+            for item in rollup.coverage:
+                status_counts[item.status] = status_counts.get(item.status, 0) + 1
+            self._logger.info(
+                "Rollup coverage summary",
+                product_slug=product_slug,
+                total_categories=len(rollup.coverage),
+                status_counts=status_counts,
+            )
+        return self._rollup_to_hydrated(
+            product_id=product_id,
+            product_slug=product_slug,
+            rollup=rollup,
+            findings=findings,
+        )
 
     def _aggregate_findings(self, findings: list[Finding]) -> list[AggregatedFinding]:
         grouped: dict[tuple[str, str], AggregatedFinding] = {}
@@ -744,37 +854,3 @@ class AggregationService:
                 status = "missing"
             items.append(CoverageItem(category=category, status=status))
         return items
-
-    async def build_product_aggregation(
-        self, db: AgnosticDatabase, product_id: str, product_slug: str
-    ) -> Aggregation:
-        findings = await self._finding_repo.find_by_product(db, product_id)
-        # Derive analyzed-doc count from the findings themselves: findings are produced
-        # only from a document's extraction, so a distinct document_id here means that
-        # document was extracted+analysed. (The previous find_by_product_id load
-        # projected OUT `extraction`, so the count was always 0 and every coverage
-        # category was wrongly reported "not_analyzed" despite real findings existing.)
-        analyzed_docs = len({finding.document_id for finding in findings})
-        aggregated_findings = self._aggregate_findings(findings)
-        coverage = self._build_coverage(findings, analyzed_docs=analyzed_docs)
-        conflicts = self._detect_conflicts(findings)
-
-        aggregation = Aggregation(
-            product_id=product_id,
-            product_slug=product_slug,
-            findings=aggregated_findings,
-            conflicts=conflicts,
-            coverage=coverage,
-        )
-        await self._aggregation_repo.save(db, aggregation)
-        if coverage:
-            status_counts: dict[str, int] = {}
-            for item in coverage:
-                status_counts[item.status] = status_counts.get(item.status, 0) + 1
-            self._logger.info(
-                "Aggregation coverage summary",
-                product_slug=product_slug,
-                total_categories=len(coverage),
-                status_counts=status_counts,
-            )
-        return aggregation

@@ -72,11 +72,13 @@ async def _validate_slug(
     db,
     product_svc,
     doc_svc,
-    aggregation_repo,
+    intelligence_repo,
     max_drift: int,
 ) -> SlugValidation:
     from src.analyser import _weighted_product_risk_score
     from src.models.document import DocumentSummary
+    from src.repositories.document_repository import DocumentRepository
+    from src.services.rollup_hydration import rollup_to_hydrated
     from src.services.topic_report_service import build_product_topic_report
     from src.services.topic_stance_service import compose_product_risk_from_topics
 
@@ -92,25 +94,32 @@ async def _validate_slug(
             failures=["product not found"],
         )
 
-    aggregation = await aggregation_repo.get(db, product.id)
-    if not aggregation:
+    intelligence = await intelligence_repo.get_by_slug(db, slug)
+    if not intelligence or not intelligence.rollup:
         return SlugValidation(
             slug=slug,
             ok=False,
             checks=checks,
-            failures=["aggregation not found"],
+            failures=["product rollup not found"],
         )
 
     docs = await doc_svc.get_product_documents(db, product.id)
     doc_summaries = [DocumentSummary.from_document(doc) for doc in docs]
+    full_docs = await DocumentRepository().find_by_product_id_full(db, product.id)
+    hydrated_rollup = rollup_to_hydrated(
+        product_id=product.id,
+        product_slug=slug,
+        rollup=intelligence.rollup,
+        documents=full_docs,
+    )
     report_a = build_product_topic_report(
         product_slug=slug,
-        aggregation=aggregation,
+        rollup=hydrated_rollup,
         documents=doc_summaries,
     )
     report_b = build_product_topic_report(
         product_slug=slug,
-        aggregation=aggregation,
+        rollup=hydrated_rollup,
         documents=doc_summaries,
     )
 
@@ -175,13 +184,13 @@ async def _run(args: argparse.Namespace) -> int:
 
     from src.core.database import db_session
     from src.core.logging import setup_logging
-    from src.repositories.aggregation_repository import AggregationRepository
+    from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
     from src.services.service_factory import create_document_service, create_product_service
 
     setup_logging()
     product_svc = create_product_service()
     doc_svc = create_document_service()
-    aggregation_repo = AggregationRepository()
+    intelligence_repo = ProductIntelligenceRepository()
 
     results: list[SlugValidation] = []
     async with db_session() as db:
@@ -192,7 +201,7 @@ async def _run(args: argparse.Namespace) -> int:
                     db=db,
                     product_svc=product_svc,
                     doc_svc=doc_svc,
-                    aggregation_repo=aggregation_repo,
+                    intelligence_repo=intelligence_repo,
                     max_drift=args.max_drift,
                 )
             )

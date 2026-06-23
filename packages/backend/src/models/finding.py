@@ -47,15 +47,12 @@ class FindingConflict(BaseModel):
     severity: str | None = None
 
 
-class Aggregation(BaseModel):
-    """Product-level aggregation of findings and conflicts."""
+class HydratedRollup(BaseModel):
+    """In-memory product rollup with evidence for topic reports and overview synthesis."""
 
-    id: str = Field(default_factory=shortuuid.uuid)
     product_id: str
     product_slug: str
-    source_version_ids: list[str] = Field(default_factory=list)
     coverage: list[CoverageItem] | None = None
     findings: list[AggregatedFinding] = Field(default_factory=list)
     conflicts: list[FindingConflict] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
     generated_at: datetime = Field(default_factory=datetime.now)

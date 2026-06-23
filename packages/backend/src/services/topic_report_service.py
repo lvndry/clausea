@@ -1,9 +1,9 @@
-"""Build product-level topic reports with citations from aggregations."""
+"""Build product-level topic reports with citations from hydrated rollups."""
 
 from __future__ import annotations
 
 from src.models.document import DocumentSummary, EvidenceSpan, InsightCategory
-from src.models.finding import Aggregation
+from src.models.finding import HydratedRollup
 from src.models.topic_report import (
     ProductTopicReport,
     TopicCitation,
@@ -76,27 +76,27 @@ def _build_citations(
 
 
 def build_product_topic_report(
-    *, product_slug: str, aggregation: Aggregation, documents: list[DocumentSummary]
+    *, product_slug: str, rollup: HydratedRollup, documents: list[DocumentSummary]
 ) -> ProductTopicReport:
-    """Build per-topic output from stored aggregation + document metadata."""
+    """Build per-topic output from hydrated rollup + document metadata."""
     documents_by_id = {document.id: document for document in documents}
 
     topics_by_category: dict[InsightCategory, TopicReportItem] = {}
 
-    if aggregation.coverage:
-        for item in aggregation.coverage:
+    if rollup.coverage:
+        for item in rollup.coverage:
             topics_by_category[item.category] = TopicReportItem(
                 topic=item.category,
                 coverage_status=item.status,
             )
 
     stance_rows = evaluate_topic_stances(
-        findings=aggregation.findings,
-        conflicts=aggregation.conflicts,
-        coverage=aggregation.coverage,
+        findings=rollup.findings,
+        conflicts=rollup.conflicts,
+        coverage=rollup.coverage,
     )
 
-    for finding in aggregation.findings:
+    for finding in rollup.findings:
         if finding.category == "dangers" and should_exclude_from_dangers(
             finding.value, materiality=finding_materiality_label(finding.attributes)
         ):
@@ -137,7 +137,7 @@ def build_product_topic_report(
             )
         )
 
-    for conflict in aggregation.conflicts:
+    for conflict in rollup.conflicts:
         if conflict.category not in topics_by_category:
             topics_by_category[conflict.category] = TopicReportItem(
                 topic=conflict.category,
@@ -192,6 +192,6 @@ def build_product_topic_report(
 
     return ProductTopicReport(
         product_slug=product_slug,
-        generated_at=aggregation.generated_at,
+        generated_at=rollup.generated_at,
         topics=sorted(topics_by_category.values(), key=lambda item: item.topic),
     )

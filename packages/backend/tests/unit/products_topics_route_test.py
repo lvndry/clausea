@@ -4,8 +4,8 @@ import pytest
 from fastapi import HTTPException
 
 from src.models.document import CoverageItem, DocumentSummary, EvidenceSpan
-from src.models.finding import AggregatedFinding, Aggregation
 from src.models.product import Product
+from src.models.product_intelligence import ProductIntelligence, ProductRollup, RollupItem
 from src.models.user import UserTier
 from src.routes.products import get_product_topics
 
@@ -21,25 +21,20 @@ def _product() -> Product:
     )
 
 
-def _aggregation() -> Aggregation:
-    return Aggregation(
+def _intelligence() -> ProductIntelligence:
+    return ProductIntelligence(
         product_id="product_1",
         product_slug="example",
-        coverage=[CoverageItem(category="data_collection", status="found")],
-        findings=[
-            AggregatedFinding(
-                category="data_collection",
-                value="Email",
-                documents=["doc_1"],
-                evidence=[
-                    EvidenceSpan(
-                        document_id="doc_1",
-                        url="https://example.com/privacy",
-                        quote="We collect your email.",
-                    )
-                ],
-            )
-        ],
+        rollup=ProductRollup(
+            coverage=[CoverageItem(category="data_collection", status="found")],
+            items=[
+                RollupItem(
+                    category="data_collection",
+                    value="Email",
+                    document_ids=["doc_1"],
+                )
+            ],
+        ),
     )
 
 
@@ -61,11 +56,14 @@ async def test_get_product_topics_404_when_product_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_product_topics_425_when_aggregation_missing() -> None:
+async def test_get_product_topics_425_when_rollup_missing() -> None:
     service = MagicMock()
     service.get_product_by_slug = AsyncMock(return_value=_product())
 
-    with patch("src.routes.products.AggregationRepository.get", AsyncMock(return_value=None)):
+    with patch(
+        "src.routes.products.ProductIntelligenceRepository.get_by_product_id",
+        AsyncMock(return_value=None),
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await get_product_topics(
                 slug="example",
@@ -96,8 +94,41 @@ async def test_get_product_topics_returns_topic_report() -> None:
         ]
     )
 
-    with patch(
-        "src.routes.products.AggregationRepository.get", AsyncMock(return_value=_aggregation())
+    from src.models.document import Document, DocumentExtraction, ExtractedDataItem
+
+    doc = Document(
+        id="doc_1",
+        product_id="product_1",
+        url="https://example.com/privacy",
+        title="Privacy Policy",
+        doc_type="privacy_policy",
+        markdown="We collect your email.",
+        extraction=DocumentExtraction(
+            source_content_hash="abc",
+            data_collected=[
+                ExtractedDataItem(
+                    data_type="Email",
+                    evidence=[
+                        EvidenceSpan(
+                            document_id="doc_1",
+                            quote="We collect your email.",
+                            url="https://example.com/privacy",
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+
+    with (
+        patch(
+            "src.routes.products.ProductIntelligenceRepository.get_by_product_id",
+            AsyncMock(return_value=_intelligence()),
+        ),
+        patch(
+            "src.routes.products.DocumentRepository.find_by_product_id_full",
+            AsyncMock(return_value=[doc]),
+        ),
     ):
         result = await get_product_topics(
             slug="example",

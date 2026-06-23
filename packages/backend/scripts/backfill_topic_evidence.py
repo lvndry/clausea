@@ -1,4 +1,4 @@
-"""Backfill findings/aggregations/overview for selected products.
+"""Backfill rollups and overviews for selected products.
 
 Usage:
     uv run python scripts/backfill_topic_evidence.py figma github mistralai
@@ -9,7 +9,7 @@ Notes:
 - By default this uses local MONGO_URI.
 - --use-production switches to PRODUCTION_MONGO_URI.
 - Overview regeneration can trigger LLM synthesis; use --skip-overview to rebuild
-  only findings/aggregations.
+  only the product rollup cache.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-overview",
         action="store_true",
-        help="Only rebuild findings/aggregations; do not regenerate overview",
+        help="Only rebuild rollups; do not regenerate overview",
     )
     return parser.parse_args()
 
@@ -46,7 +46,7 @@ async def _backfill_slug(
     db,
     product_svc,
     doc_svc,
-    aggregation_svc,
+    rollup_svc,
     skip_overview: bool,
 ) -> None:
     product = await product_svc.get_product_by_slug(db, slug)
@@ -57,12 +57,11 @@ async def _backfill_slug(
     print(f"[start] {slug}")
     t0 = time.perf_counter()
 
-    await aggregation_svc.rebuild_findings_for_product(db, product.id)
-    aggregation = await aggregation_svc.build_product_aggregation(
+    aggregation = await rollup_svc.build_product_rollup(
         db, product_id=product.id, product_slug=slug
     )
     print(
-        f"  aggregation: findings={len(aggregation.findings)} conflicts={len(aggregation.conflicts)} "
+        f"  rollup: findings={len(aggregation.findings)} conflicts={len(aggregation.conflicts)} "
         f"coverage={len(aggregation.coverage)}"
     )
 
@@ -94,21 +93,15 @@ async def _run(args: argparse.Namespace) -> int:
 
     from src.core.database import db_session
     from src.core.logging import setup_logging
-    from src.repositories.aggregation_repository import AggregationRepository
     from src.repositories.document_repository import DocumentRepository
-    from src.repositories.finding_repository import FindingRepository
-    from src.services.aggregation_service import AggregationService
+    from src.services.product_rollup_service import ProductRollupService
     from src.services.service_factory import create_document_service, create_product_service
 
     setup_logging()
 
     product_svc = create_product_service()
     doc_svc = create_document_service()
-    aggregation_svc = AggregationService(
-        document_repo=DocumentRepository(),
-        finding_repo=FindingRepository(),
-        aggregation_repo=AggregationRepository(),
-    )
+    rollup_svc = ProductRollupService(document_repo=DocumentRepository())
 
     async with db_session() as db:
         for slug in args.slugs:
@@ -117,7 +110,7 @@ async def _run(args: argparse.Namespace) -> int:
                 db=db,
                 product_svc=product_svc,
                 doc_svc=doc_svc,
-                aggregation_svc=aggregation_svc,
+                rollup_svc=rollup_svc,
                 skip_overview=args.skip_overview,
             )
     return 0

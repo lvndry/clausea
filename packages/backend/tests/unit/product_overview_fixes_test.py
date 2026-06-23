@@ -1,9 +1,4 @@
-"""Tests for product_id and headline_claim fixes in product overview pipeline.
-
-Bug 1: product_id was never written to product_overviews documents.
-Bug 2: headline_claim was absent from MetaSummary / PRODUCT_OVERVIEW_JSON_SCHEMA
-       so it was never populated from the LLM response.
-"""
+"""Tests for product_id and headline_claim fixes in product overview pipeline."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -119,9 +114,8 @@ def _services(product_id: str = "p1") -> tuple[MagicMock, MagicMock]:
 async def test_generate_product_overview_passes_product_id_to_save() -> None:
     """generate_product_overview must pass product.id to save_product_overview."""
     product_svc, document_svc = _services(product_id="abc-123")
-    aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
-    aggregation_service.build_product_aggregation = AsyncMock(
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
         return_value=MagicMock(
             findings=[],
             coverage=[],
@@ -132,7 +126,7 @@ async def test_generate_product_overview_passes_product_id_to_save() -> None:
     )
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),
@@ -180,26 +174,17 @@ async def test_product_service_passes_product_id_to_repo() -> None:
 
 @pytest.mark.asyncio
 async def test_product_repo_writes_product_id_to_summary_data() -> None:
-    """ProductRepository.save_product_overview must write product_id into the upserted doc."""
+    """ProductRepository.save_product_overview delegates to ProductIntelligenceService."""
     from src.repositories.product_repository import ProductRepository as Repo
 
     mock_db = MagicMock()
-    mock_db.product_overviews = MagicMock()
-    mock_db.product_overviews.find_one = AsyncMock(return_value=None)
-    mock_db.product_overviews.update_one = AsyncMock(
-        return_value=MagicMock(matched_count=0, modified_count=0, upserted_id="new")
-    )
-
-    history_repo_mock = MagicMock()
-    history_repo_mock.save_snapshot = AsyncMock(return_value=None)
-
     meta = _make_meta_summary()
     repo = Repo()
 
     with patch(
-        "src.repositories.product_repository.ProductOverviewHistoryRepository",
-        return_value=history_repo_mock,
-    ):
+        "src.repositories.product_repository.ProductIntelligenceService.save_overview",
+        AsyncMock(return_value=None),
+    ) as save_mock:
         await repo.save_product_overview(
             mock_db,
             product_slug="test-slug",
@@ -207,37 +192,25 @@ async def test_product_repo_writes_product_id_to_summary_data() -> None:
             product_id="prod-456",
         )
 
-    mock_db.product_overviews.update_one.assert_awaited_once()
-    _args, _kwargs = mock_db.product_overviews.update_one.call_args
-    upserted_doc = _args[1]["$set"]
-    assert upserted_doc.get("product_id") == "prod-456", (
-        "product_id must be written into the $set payload"
-    )
-    assert upserted_doc.get("product_slug") == "test-slug"
+    save_mock.assert_awaited_once()
+    assert save_mock.call_args.kwargs["product_id"] == "prod-456"
+    assert save_mock.call_args.kwargs["product_slug"] == "test-slug"
 
 
 @pytest.mark.asyncio
 async def test_product_repo_omits_product_id_when_none() -> None:
-    """product_id=None must not be written as a null field (avoids overwriting valid data)."""
+    """product_id=None resolves product id from slug before save."""
     from src.repositories.product_repository import ProductRepository as Repo
 
     mock_db = MagicMock()
-    mock_db.product_overviews = MagicMock()
-    mock_db.product_overviews.find_one = AsyncMock(return_value=None)
-    mock_db.product_overviews.update_one = AsyncMock(
-        return_value=MagicMock(matched_count=0, modified_count=0, upserted_id="new")
-    )
-
-    history_repo_mock = MagicMock()
-    history_repo_mock.save_snapshot = AsyncMock(return_value=None)
-
     meta = _make_meta_summary()
     repo = Repo()
+    repo.find_by_slug = AsyncMock(return_value=MagicMock(id="resolved-id"))
 
     with patch(
-        "src.repositories.product_repository.ProductOverviewHistoryRepository",
-        return_value=history_repo_mock,
-    ):
+        "src.repositories.product_repository.ProductIntelligenceService.save_overview",
+        AsyncMock(return_value=None),
+    ) as save_mock:
         await repo.save_product_overview(
             mock_db,
             product_slug="test-slug",
@@ -245,9 +218,7 @@ async def test_product_repo_omits_product_id_when_none() -> None:
             product_id=None,
         )
 
-    _args, _ = mock_db.product_overviews.update_one.call_args
-    upserted_doc = _args[1]["$set"]
-    assert "product_id" not in upserted_doc, "product_id must not be written when it is None"
+    assert save_mock.call_args.kwargs["product_id"] == "resolved-id"
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +266,8 @@ def test_transform_to_overview_headline_claim_none_when_missing() -> None:
 async def test_generate_product_overview_parses_headline_claim_from_llm() -> None:
     """generate_product_overview must parse headline_claim from the LLM JSON response."""
     product_svc, document_svc = _services()
-    aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
-    aggregation_service.build_product_aggregation = AsyncMock(
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
         return_value=MagicMock(
             findings=[],
             coverage=[],
@@ -311,7 +281,7 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
     )
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(payload)),
@@ -334,9 +304,8 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
 async def test_generate_product_overview_headline_claim_none_when_llm_omits_it() -> None:
     """headline_claim must be None when the LLM does not return it."""
     product_svc, document_svc = _services()
-    aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
-    aggregation_service.build_product_aggregation = AsyncMock(
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
         return_value=MagicMock(
             findings=[],
             coverage=[],
@@ -347,7 +316,7 @@ async def test_generate_product_overview_headline_claim_none_when_llm_omits_it()
     )
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),

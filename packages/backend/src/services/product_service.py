@@ -221,20 +221,14 @@ class ProductService:
         counts["documents_deleted"] = documents_deleted
         counts["documents_unlinked"] = documents_unlinked
 
-        result = await db.findings.delete_many({"product_id": product_id})
-        counts["findings"] = result.deleted_count
-
         result = await db.pipeline_jobs.delete_many({"product_slug": product.slug})
         counts["pipeline_jobs"] = result.deleted_count
 
-        result = await db.product_overviews.delete_many({"product_slug": product.slug})
-        counts["product_overviews"] = result.deleted_count
+        result = await db.product_intelligence.delete_many({"product_id": product_id})
+        counts["product_intelligence"] = result.deleted_count
 
-        result = await db.deep_analyses.delete_many({"product_slug": product.slug})
-        counts["deep_analyses"] = result.deleted_count
-
-        result = await db.aggregations.delete_many({"product_id": product_id})
-        counts["aggregations"] = result.deleted_count
+        result = await db.document_changes.delete_many({"product_id": product_id})
+        counts["document_changes"] = result.deleted_count
 
         session_docs = await db.crawl_sessions.find({"product_id": product_id}, {"id": 1}).to_list(
             length=None
@@ -272,7 +266,7 @@ class ProductService:
 
     async def count_analyzed_products(self, db: AgnosticDatabase) -> int:
         """Count products with a completed analysis (a stored overview)."""
-        return await self._product_repo.count_product_overviews(db)
+        return await self._product_repo.count_products_with_overview(db)
 
     async def list_analyzed_products_for_sitemap(
         self, db: AgnosticDatabase
@@ -328,7 +322,7 @@ class ProductService:
         """Get the product-level consumer explainer with canonical grade.
 
         Product pages treat overview scoring as the single source of truth.
-        The explainer grade is therefore reconciled against product_overviews
+        The explainer grade is therefore reconciled against product_intelligence overview data
         before returning, and legacy mismatches are repaired best-effort.
         Stored explainers also get verified source citations backfilled on read
         from the product's core document extractions when missing.

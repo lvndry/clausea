@@ -168,9 +168,9 @@ class PromotionManager:
         """Promote documents from local to production by completely replacing production collection."""
         return await self._promote_collection("documents", dry_run)
 
-    async def promote_product_overviews(self, dry_run: bool = True) -> dict[str, Any]:
-        """Promote product overviews from local to production by completely replacing production collection."""
-        return await self._promote_collection("product_overviews", dry_run)
+    async def promote_product_intelligence(self, dry_run: bool = True) -> dict[str, Any]:
+        """Promote product intelligence from local to production."""
+        return await self._promote_collection("product_intelligence", dry_run)
 
     async def promote_users_to_tier_system(self, dry_run: bool = True) -> dict[str, Any]:
         """Promote existing users to include tier and monthly_usage fields."""
@@ -254,7 +254,7 @@ class PromotionManager:
             "products",
             "documents",
             "users",
-            "product_overviews",
+            "product_intelligence",
         ]
         stats = {}
 
@@ -335,9 +335,9 @@ class PromotionManager:
         """Download documents from production to local by completely replacing local collection."""
         return await self._download_collection("documents", dry_run)
 
-    async def download_product_overviews(self, dry_run: bool = True) -> dict[str, Any]:
-        """Download product overviews from production to local by completely replacing local collection."""
-        return await self._download_collection("product_overviews", dry_run)
+    async def download_product_intelligence(self, dry_run: bool = True) -> dict[str, Any]:
+        """Download product intelligence from production to local."""
+        return await self._download_collection("product_intelligence", dry_run)
 
     async def run_full_download(self, dry_run: bool = True) -> dict[str, Any]:
         """Run a full download of all data from production to local."""
@@ -347,13 +347,13 @@ class PromotionManager:
             summary = await self.get_promotion_summary()
             products_result = await self.download_products(dry_run)
             documents_result = await self.download_documents(dry_run)
-            product_overviews_result = await self.download_product_overviews(dry_run)
+            product_intelligence_result = await self.download_product_intelligence(dry_run)
 
             return {
                 "summary": summary,
                 "products": products_result,
                 "documents": documents_result,
-                "product_overviews": product_overviews_result,
+                "product_intelligence": product_intelligence_result,
                 "dry_run": dry_run,
                 "timestamp": datetime.now().isoformat(),
             }
@@ -369,14 +369,14 @@ class PromotionManager:
             summary = await self.get_promotion_summary()
             products_result = await self.promote_products(dry_run)
             documents_result = await self.promote_documents(dry_run)
-            product_overviews_result = await self.promote_product_overviews(dry_run)
+            product_intelligence_result = await self.promote_product_intelligence(dry_run)
             users_result = await self.promote_users_to_tier_system(dry_run)
 
             return {
                 "summary": summary,
                 "products": products_result,
                 "documents": documents_result,
-                "product_overviews": product_overviews_result,
+                "product_intelligence": product_intelligence_result,
                 "users": users_result,
                 "dry_run": dry_run,
                 "timestamp": datetime.now().isoformat(),

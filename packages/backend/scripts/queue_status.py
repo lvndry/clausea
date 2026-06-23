@@ -22,7 +22,9 @@ async def main() -> None:
     async for row in db.pipeline_jobs.aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
         by_status[row["_id"]] = row["n"]
 
-    overviews = await db.product_overviews.count_documents({})
+    overviews = await db.product_intelligence.count_documents(
+        {"overview": {"$exists": True, "$ne": None}}
+    )
     total = sum(by_status.values())
 
     order = [

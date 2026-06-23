@@ -1,92 +1,94 @@
-import difflib
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from motor.core import AgnosticDatabase
 from pydantic import BaseModel
+from starlette.status import HTTP_404_NOT_FOUND
 
 from src.core.database import get_db
-from src.models.product_overview_history import ProductOverviewHistory
-from src.repositories.product_overview_history_repository import ProductOverviewHistoryRepository
+from src.core.tier_deps import check_usage_limit, increment_usage
+from src.models.product_intelligence import OverviewSnapshot
+from src.repositories.document_change_repository import DocumentChangeRepository
+from src.repositories.document_repository import DocumentRepository
+from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
+from src.services.product_service import ProductService
+from src.services.service_factory import create_product_service
 
 router = APIRouter(prefix="/history", tags=["history"])
 
 
-class DocumentVersionSummary(BaseModel):
+class DocumentChangeSummary(BaseModel):
     id: str
     created_at: datetime
-    changed_fields: list[str] | None
+    changed_fields: list[str]
     job_id: str | None
-    content_hash: str | None
+    content_hash: str
+    previous_hash: str | None
 
 
-class DiffResponse(BaseModel):
-    version_a_id: str | None
-    version_b_id: str
-    unified_diff: str
-
-
-@router.get("/documents/{document_id}/versions", response_model=list[DocumentVersionSummary])
-async def list_document_versions(
+@router.get("/documents/{document_id}/changes", response_model=list[DocumentChangeSummary])
+async def list_document_changes(
     document_id: str,
+    _usage: None = Depends(check_usage_limit),
+    _increment: None = Depends(increment_usage),
     db: AgnosticDatabase = Depends(get_db),
-) -> list[DocumentVersionSummary]:
-    cursor = (
-        db.document_versions.find(
-            {"document_id": document_id}, {"text": 0, "markdown": 0, "raw_html": 0}
-        )
-        .sort("created_at", -1)
-        .limit(50)
-    )
-    rows = await cursor.to_list(length=50)
+) -> list[DocumentChangeSummary]:
+    document = await DocumentRepository().find_by_id(db, document_id)
+    if not document:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Document not found")
+
+    changes = await DocumentChangeRepository().list_for_document(db, document_id)
     return [
-        DocumentVersionSummary(
-            id=str(row.get("id", "")),
-            created_at=row.get("created_at"),
-            changed_fields=row.get("changed_fields"),
-            job_id=row.get("job_id"),
-            content_hash=row.get("content_hash"),
+        DocumentChangeSummary(
+            id=change.id,
+            created_at=change.created_at,
+            changed_fields=change.changed_fields,
+            job_id=change.job_id,
+            content_hash=change.content_hash,
+            previous_hash=change.previous_hash,
         )
-        for row in rows
+        for change in changes
     ]
 
 
-@router.get("/documents/{document_id}/versions/{version_id}/diff", response_model=DiffResponse)
-async def diff_document_versions(
+@router.get("/documents/{document_id}/changes/{change_id}/diff", response_model=dict[str, str])
+async def diff_document_changes(
     document_id: str,
-    version_id: str,
+    change_id: str,
+    _usage: None = Depends(check_usage_limit),
+    _increment: None = Depends(increment_usage),
     db: AgnosticDatabase = Depends(get_db),
-) -> DiffResponse:
-    target = await db.document_versions.find_one({"id": version_id, "document_id": document_id})
-    if not target:
-        raise HTTPException(status_code=404, detail="Version not found")
+) -> dict[str, str]:
+    document = await DocumentRepository().find_by_id(db, document_id)
+    if not document:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Document not found")
 
-    previous = await db.document_versions.find_one(
-        {"document_id": document_id, "created_at": {"$lt": target["created_at"]}},
-        sort=[("created_at", -1)],
-    )
+    change = await db.document_changes.find_one({"id": change_id, "document_id": document_id})
+    if not change:
+        raise HTTPException(status_code=404, detail="Change record not found")
 
-    text_a = (previous or {}).get("text") or ""
-    text_b = target.get("text") or ""
-    diff_lines = list(
-        difflib.unified_diff(
-            text_a.splitlines(keepends=True),
-            text_b.splitlines(keepends=True),
-            fromfile="previous",
-            tofile="current",
-            n=3,
-        )
-    )
-    return DiffResponse(
-        version_a_id=previous.get("id") if previous else None,
-        version_b_id=version_id,
-        unified_diff="".join(diff_lines),
-    )
+    current_text = document.markdown or ""
+    return {
+        "change_id": change_id,
+        "message": (
+            "Full historical diffs are not stored. Compare current document text against "
+            "recorded content hashes."
+        ),
+        "content_hash": change.get("content_hash") or "",
+        "previous_hash": change.get("previous_hash") or "",
+        "current_excerpt": current_text[:500],
+    }
 
 
-@router.get("/products/{slug}/overview-history", response_model=list[ProductOverviewHistory])
-async def list_overview_history(
+@router.get("/products/{slug}/overview-snapshots", response_model=list[OverviewSnapshot])
+async def list_overview_snapshots(
     slug: str,
+    _usage: None = Depends(check_usage_limit),
+    _increment: None = Depends(increment_usage),
     db: AgnosticDatabase = Depends(get_db),
-) -> list[ProductOverviewHistory]:
-    return await ProductOverviewHistoryRepository().find_by_product(db, slug)
+    service: ProductService = Depends(create_product_service),
+) -> list[OverviewSnapshot]:
+    product = await service.get_product_by_slug(db, slug)
+    if not product:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+    return await ProductIntelligenceRepository().list_overview_history(db, slug)

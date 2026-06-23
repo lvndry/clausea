@@ -56,6 +56,13 @@ repos:
         types: [file]
         types_or: [ts, tsx]
 
+      - id: backend-typecheck
+        name: Backend type check (ty)
+        entry: bash -c 'cd packages/backend && uv run ty check --exclude tests/'
+        language: system
+        files: ^packages/backend/
+        pass_filenames: false
+
       # Backend tests (only if tests exist)
       - id: backend-tests
         name: Backend Tests
