@@ -2257,6 +2257,50 @@ class ClauseaCrawler:
 
                 self._report_crawl_progress(force=True)
 
+                # Diagnostic: warn when a crawl completes with 0 successfully crawled pages.
+                if self.stats.crawled_urls == 0:
+                    robots_blocked_count = sum(1 for r in self.results if r.blocked_by_robots_txt)
+                    attempted = self.stats.total_urls
+                    if robots_blocked_count > 0 and robots_blocked_count == attempted:
+                        self.stats.all_seeds_robots_blocked = True
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages — all %d attempted URL(s) "
+                            "were blocked by robots.txt (termination_reason=%s)",
+                            base_url,
+                            robots_blocked_count,
+                            termination_reason,
+                        )
+                    elif termination_reason == "url_queue_empty":
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages — URL queue was empty "
+                            "after seeding (sitemap_seeded=%s, robots_blocked=%d/%d, "
+                            "termination_reason=%s)",
+                            base_url,
+                            self._sitemap_seeded,
+                            robots_blocked_count,
+                            attempted,
+                            termination_reason,
+                        )
+                    elif termination_reason == "bot_wall_abort":
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages — bot-wall abort triggered "
+                            "after %d consecutive failures (termination_reason=%s)",
+                            base_url,
+                            self._consecutive_blocked,
+                            termination_reason,
+                        )
+                    else:
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages "
+                            "(termination_reason=%s, total_attempted=%d, "
+                            "robots_blocked=%d, sitemap_seeded=%s)",
+                            base_url,
+                            termination_reason,
+                            attempted,
+                            robots_blocked_count,
+                            self._sitemap_seeded,
+                        )
+
                 if not stop_requested:
                     await self._drain_render_retries(session)
 
