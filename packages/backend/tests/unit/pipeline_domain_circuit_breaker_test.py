@@ -35,6 +35,13 @@ from src.repositories.pipeline_repository import PipelineRepository
         ("unknown", 0, "Blocked by Cloudflare DDoS protection", True),
         # Hard: "Access Denied" in message
         ("http_error", 403, "Access Denied — automated access not allowed", True),
+        # Hard: SPA returned 200 but browser render could not extract policy text
+        (
+            "unknown",
+            200,
+            "Static content unusable and browser rendering failed",
+            True,
+        ),
         # Transient: network timeout
         ("timeout", 0, "Request timed out after 30s", False),
         # Transient: network/DNS error

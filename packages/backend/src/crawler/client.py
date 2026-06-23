@@ -149,6 +149,15 @@ def needs_browser_fallback(raw: StaticFetchResult) -> bool:
     return len(soup.get_text(" ", strip=True)) < MIN_CONTENT_LENGTH_FOR_SPA_CHECK
 
 
+def _is_pdf_response(content_type: str, url: str) -> bool:
+    """True when a response should be parsed as PDF (not other application/* blobs)."""
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct in ("application/pdf", "application/x-pdf"):
+        return True
+    path = urlparse(url).path.lower()
+    return path.endswith(".pdf") and ct in ("application/octet-stream", "binary/octet-stream")
+
+
 # ---- ClauseaCrawler ----------------------------------------------------------------
 
 
@@ -182,7 +191,7 @@ class ClauseaCrawler:
         allowed_paths: list[str] | None = None,
         denied_paths: list[str] | None = None,
         delay_jitter: float = 0.0,
-        enable_binary_crawling: bool = False,
+        enable_pdf_crawling: bool = False,
         use_tika_for_binaries: bool = False,
         use_pdfminer_for_pdf: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
@@ -214,7 +223,7 @@ class ClauseaCrawler:
         self.allowed_paths = allowed_paths
         self.denied_paths = denied_paths
 
-        self.enable_binary_crawling = enable_binary_crawling
+        self.enable_pdf_crawling = enable_pdf_crawling
         self.use_tika_for_binaries = use_tika_for_binaries
         self.use_pdfminer_for_pdf = use_pdfminer_for_pdf
 
@@ -279,7 +288,7 @@ class ClauseaCrawler:
         binary_exclusions = "jpg|jpeg|png|gif|css|js|ico"
         first_pattern = (
             rf"\.(?:{binary_exclusions})$"
-            if self.enable_binary_crawling
+            if self.enable_pdf_crawling
             else r"\.(?:pdf|jpg|jpeg|png|gif|css|js|ico)$"
         )
         self.compiled_skip_patterns = [
@@ -576,7 +585,7 @@ class ClauseaCrawler:
             )
         )
         if not is_text_type:
-            return await self._extract_binary_content(raw, url)
+            return await self._extract_pdf_content(raw, url)
 
         if "markdown" in ct:
             return await asyncio.to_thread(self._extract_markdown_content, raw, url)
@@ -740,12 +749,10 @@ class ClauseaCrawler:
             status_code=raw.status_code,
         )
 
-    async def _extract_binary_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
-        if not self.enable_binary_crawling:
+    async def _extract_pdf_content(self, raw: StaticFetchResult, url: str) -> PageContent | None:
+        if not self.enable_pdf_crawling:
             return None
-        if "application/pdf" not in raw.content_type and not raw.content_type.startswith(
-            "application/"
-        ):
+        if not _is_pdf_response(raw.content_type, url):
             return None
         if not raw.raw_bytes:
             return None
@@ -758,8 +765,9 @@ class ClauseaCrawler:
             prefer_tika=self.use_tika_for_binaries,
             prefer_pdfminer=self.use_pdfminer_for_pdf,
         )
-        filename = urlparse(url).path.split("/")[-1] or "document"
-        text_content = await processor._extract_text(raw.raw_bytes, filename, raw.content_type)
+        filename = urlparse(url).path.split("/")[-1] or "document.pdf"
+        content_type = "application/pdf"
+        text_content = await processor._extract_text(raw.raw_bytes, filename, content_type)
 
         if not text_content:
             return None

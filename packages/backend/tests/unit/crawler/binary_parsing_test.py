@@ -44,9 +44,9 @@ async def test_document_processor_pdf_fallbacks_are_invoked():
 
 
 @pytest.mark.asyncio
-async def test_crawler_respects_enable_binary_crawling_flag(monkeypatch):
-    # Create a crawler that enables binary crawling and disables robots.txt checking
-    crawler = ClauseaCrawler(enable_binary_crawling=True, respect_robots_txt=False)
+async def test_crawler_respects_enable_pdf_crawling_flag(monkeypatch):
+    # PDF crawling enabled: fetch and extract policy PDFs (e.g. CDN-hosted legal docs).
+    crawler = ClauseaCrawler(enable_pdf_crawling=True, respect_robots_txt=False)
 
     # Mock an aiohttp response via a lightweight fake
     class FakeResponse:
@@ -90,3 +90,43 @@ async def test_crawler_respects_enable_binary_crawling_flag(monkeypatch):
     assert res.success is True
     assert "legal pdf content" in res.content
     assert res.metadata.get("content-type") == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_crawler_skips_non_pdf_application_types_when_pdf_crawling_enabled(monkeypatch):
+    crawler = ClauseaCrawler(enable_pdf_crawling=True, respect_robots_txt=False)
+
+    class FakeResponse:
+        def __init__(self, status, headers, content_bytes, url: str = ""):
+            self.status = status
+            self.headers = headers
+            self._content = content_bytes
+            self.url = url
+            self.charset = None
+            self.content = _FakeContent(content_bytes)
+
+        async def read(self):
+            return self._content
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            return FakeResponse(
+                200,
+                {"content-type": "application/json"},
+                b'{"not": "a policy"}',
+                url=url,
+            )
+
+    session = FakeSession()
+    res = await crawler._fetch_page_internal(
+        cast(aiohttp.ClientSession, session), "https://cdn.example.com/blob/data"
+    )
+
+    assert res.success is False
+    assert "Unsupported content type" in (res.error_message or "")

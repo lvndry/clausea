@@ -300,6 +300,7 @@ class PolicyDocumentPipeline:
             result_callback=result_callback,
             stop_callback=stop_callback,
             recently_stored_urls=recently_stored_urls,
+            enable_pdf_crawling=True,
         )
 
     async def _store_documents(self, documents: list[Document]) -> int:
