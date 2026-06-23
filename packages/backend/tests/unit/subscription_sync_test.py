@@ -53,6 +53,26 @@ def test_user_needs_subscription_sync_when_pro() -> None:
     assert user_needs_subscription_sync(user) is False
 
 
+def test_apply_subscription_data_to_user_downgrades_paused_tier() -> None:
+    user = User(id="user-1", email="test@example.com", tier=UserTier.PRO)
+    subscription = {
+        "id": "sub_123",
+        "customer_id": "ctm_123",
+        "status": "paused",
+        "started_at": "2026-01-01T00:00:00Z",
+        "current_billing_period": {"ends_at": "2026-02-01T00:00:00Z"},
+        "items": [{"price": {"id": "pri_monthly"}}],
+    }
+
+    with patch("src.services.subscription_sync.config") as mock_config:
+        mock_config.paddle.price_pro_monthly = "pri_monthly"
+        mock_config.paddle.price_pro_annual = "pri_annual"
+        updated = apply_subscription_data_to_user(user, subscription)
+
+    assert updated.tier == UserTier.FREE
+    assert updated.subscription_status == "paused"
+
+
 def test_user_needs_subscription_sync_when_free_with_subscription() -> None:
     user = User(
         id="user-1",

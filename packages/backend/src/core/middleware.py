@@ -202,7 +202,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return None
 
         try:
-            token = auth_header.split(" ")[1]
+            token = auth_header.removeprefix("Bearer ").strip()
+            if not token:
+                return None
+
             payload: dict[str, Any] = await clerk_auth_service.verify_token(token)
             user_id = payload.get("sub") or payload.get("id")
             if not user_id:

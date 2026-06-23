@@ -177,12 +177,9 @@ async def sync_my_subscription(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        if not user.paddle_subscription_id:
-            user = await sync_user_subscription_from_paddle(db, user, recover_by_email=True)
-            if not user.paddle_subscription_id:
-                raise HTTPException(status_code=400, detail="No Paddle subscription linked")
-
         user = await sync_user_subscription_from_paddle(db, user, recover_by_email=True)
+        if not user.paddle_subscription_id:
+            raise HTTPException(status_code=400, detail="No Paddle subscription linked")
 
         return {
             "tier": user.tier.value,

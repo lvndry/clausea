@@ -48,7 +48,7 @@ def apply_subscription_data_to_user(user: User, subscription: dict[str, Any]) ->
 
     if status in _ACTIVE_SUBSCRIPTION_STATUSES:
         user.tier = tier
-    elif status == "canceled":
+    else:
         user.tier = UserTier.FREE
 
     user.paddle_customer_id = subscription.get("customer_id") or user.paddle_customer_id
@@ -82,10 +82,7 @@ async def sync_user_subscription_from_paddle(
     subscription_id = user.paddle_subscription_id
 
     if not subscription_id and recover_by_email:
-        user = await _recover_subscription_by_email(db, user)
-        subscription_id = user.paddle_subscription_id
-        if not subscription_id:
-            return user
+        return await _recover_subscription_by_email(db, user)
 
     if not subscription_id:
         return user
