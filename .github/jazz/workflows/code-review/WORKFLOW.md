@@ -163,6 +163,9 @@ Severity in comment bodies: **Critical** (blocks merge / user harm / security), 
 - **Performance**: stream large documents; bound memory; efficient MongoDB queries with indexes; pagination on list endpoints.
 - **Service layer**: business logic in services, not routes; testable units; no god functions.
 - **Maintainability**: prefer deletion over indirection; flag duplicate helpers, `any`-equivalent typing holes, and complexity moved but not removed.
+- **Test mock alignment**: when an implementation changes from multi-step operations (e.g. `find_one` + `update_one`) to an atomic call (e.g. `find_one_and_update`), verify that test mocks target the actual method now called. Mocks patching the old method silently pass while testing the wrong code path.
+- **Legacy data compatibility**: when a PR adds new enum values, status strings, or model fields, verify that all query paths and handler branches also handle existing documents in the DB that predate these additions. A handler correct for new records may silently misbehave on old ones.
+- **Hash/fingerprint migrations**: when a content fingerprint or hash computation changes (e.g. from plain text to markdown), flag that all existing hashes in the DB are now invalidated — deduplication and caching will break for existing records until they are re-processed. Note this explicitly in the verdict even if it is intentional.
 
 ### TypeScript (frontend + extension)
 
@@ -172,6 +175,7 @@ Severity in comment bodies: **Critical** (blocks merge / user harm / security), 
 - **Null safety**: optional chaining is not a substitute for explicit invariants; narrow before use.
 - **Generics**: use them where reuse would otherwise duplicate logic; avoid `Function` and overly wide generics.
 - **Imports**: prefer type-only imports; no unused exports; tree-shake friendly.
+- **Legacy status/enum handling**: when a PR adds new status values to a discriminated union or enum, check that **every** UI branch that renders on that value is updated — descriptions, headings, button conditions, ARIA labels. Also check whether legacy records in the DB can produce semantically equivalent states under a different field name or value (e.g. `allRobotsBlockedLegacy` vs `robots_blocked`) and that those are handled consistently everywhere the new status is handled.
 
 ### React 19
 
@@ -215,6 +219,25 @@ Severity in comment bodies: **Critical** (blocks merge / user harm / security), 
 - **Frontend**: bundle size; unnecessary client JS; waterfall requests; unbounded lists without virtualization; layout thrashing from animations.
 - **Backend**: N+1 queries; missing indexes; unbounded result sets; synchronous bottlenecks in hot paths.
 - **Core Web Vitals**: LCP, CLS, INP risks from the diff.
+
+### MongoDB queries (backend)
+
+Apply whenever the diff touches database query construction — in services, repositories, or scripts.
+
+- **Empty-list destructive queries**: any `$nin: [list]` or `$in: [list]` built from a runtime collection must guard against the empty-list case. `{"$nin": []}` matches **every document** — an empty `completed_ids` list will delete the entire collection. Always assert `if not list: return` or similar before executing the query.
+- **`to_list(length=N)` truncation**: `cursor.to_list(length=N)` with a fixed `N` silently drops results beyond `N`. If the result set can exceed `N` in production, flag it as a correctness bug — use async streaming (`async for doc in cursor`) or document why `N` is a safe upper bound.
+- **Missing indexes**: flag queries on fields without an index when the collection can be large; unindexed queries are full scans.
+- **Unbounded results**: any `find({})` or aggregate without a `$limit` on a collection that can grow unboundedly is a latent OOM risk.
+
+### One-off scripts and migration scripts (backend)
+
+One-off scripts (`scripts/`) and migration scripts get lighter review attention by default — apply **extra** scrutiny here precisely because they run once on production data with no second chance.
+
+- **Empty-input catastrophe**: what happens if the input cursor or ID list is empty? Check every `$in`, `$nin`, `delete_many`, `update_many` for the empty-list footgun.
+- **Partial failure handling**: if the script crashes halfway through, what is the DB state? Is re-running it safe (idempotent)? Flag if it is not.
+- **No dry-run mode**: destructive scripts that lack a `--dry-run` or equivalent preview mode should be flagged as Medium — operators cannot safely verify behavior before committing.
+- **Missing per-document error isolation**: scripts that iterate and mutate should wrap each iteration in `try/except` so one bad document does not abort the entire run.
+- **Unbounded `to_list` or `.find({})`**: same rules as MongoDB checklist apply, but more urgently — a script that OOMs at 10k documents is a production incident.
 
 ### Security
 
