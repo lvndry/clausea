@@ -26,7 +26,12 @@ _TERMINAL_STATUSES = list(TERMINAL_PIPELINE_STATUSES)
 # Statuses for a job that was actively executing and can be left orphaned by a worker
 # crash. A "pending" job is only queued — never started — so a restart must leave it
 # pending for the worker to pick up, not fail it. Only these can be marked stale.
-_ORPHANABLE_STATUSES = ["crawling", "synthesising", "generating_overview"]
+ORPHANABLE_PIPELINE_STATUSES: tuple[str, ...] = (
+    "crawling",
+    "synthesising",
+    "generating_overview",
+)
+_ORPHANABLE_STATUSES = list(ORPHANABLE_PIPELINE_STATUSES)
 
 logger = get_logger(__name__)
 
