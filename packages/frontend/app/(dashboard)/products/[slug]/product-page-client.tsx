@@ -127,6 +127,8 @@ export default function CompanyPage({
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [failedJob, setFailedJob] = useState<FailedCrawlJob | null>(null);
   const [emptyJob, setEmptyJob] = useState<FailedCrawlJob | null>(null);
+  const [robotsBlockedJob, setRobotsBlockedJob] =
+    useState<FailedCrawlJob | null>(null);
   const [notifyEmail, setNotifyEmail] = useState("");
   const [notifyStatus, setNotifyStatus] = useState<
     "idle" | "submitting" | "success" | "error"
@@ -233,6 +235,15 @@ export default function CompanyPage({
           return;
         }
 
+        if (latestJob?.status === "robots_blocked") {
+          setRobotsBlockedJob({
+            error: latestJob.error,
+            error_detail: latestJob.error_detail ?? null,
+            crawl_errors: latestJob.crawl_errors ?? [],
+          });
+          return;
+        }
+
         if (latestJob?.status === "no_documents") {
           setEmptyJob({
             error: latestJob.error,
@@ -314,6 +325,7 @@ export default function CompanyPage({
     if (!product) return;
     setFailedJob(null);
     setEmptyJob(null);
+    setRobotsBlockedJob(null);
     setActiveJobId(null);
     setIndexationMode("indexing");
     await ensurePipelineRunning(slug, product);
@@ -484,10 +496,13 @@ export default function CompanyPage({
     // If product exists but indexation isn't ready, show the indexation message + email capture
     if (product && indexationMode === "indexing") {
       // Terminal outcomes that must NOT retrigger the pipeline:
+      //   - robotsBlockedJob (robots_blocked): site blocks all crawlers. No retry —
+      //                a re-run yields the same result until the site changes robots.txt.
       //   - emptyJob  (no_documents): crawl finished, found nothing. No retry —
       //                a re-run yields the same result.
       //   - failedJob (failed):       interrupted/errored. Offer a manual Retry.
-      const terminalJob = emptyJob ?? failedJob;
+      const terminalJob = robotsBlockedJob ?? emptyJob ?? failedJob;
+      const isRobotsBlocked = robotsBlockedJob !== null;
       const isEmpty = emptyJob !== null;
       const isFailed = failedJob !== null;
       // The crawl succeeded (documents were stored) but a later stage — document
@@ -495,7 +510,9 @@ export default function CompanyPage({
       const isAnalysisFailure =
         isFailed && (failedJob?.documents_stored ?? 0) > 0;
       const crawlErrors = terminalJob?.crawl_errors ?? [];
-      const allRobotsBlocked =
+      // Legacy derived detection for old jobs that predate the robots_blocked status.
+      const allRobotsBlockedLegacy =
+        !isRobotsBlocked &&
         crawlErrors.length > 0 &&
         crawlErrors.every((e) => e.error_type === "robots_txt_blocked");
 
@@ -506,13 +523,15 @@ export default function CompanyPage({
               {product.name}
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
-              {isEmpty
-                ? "We could not find any policy documents to analyze for this company."
-                : isAnalysisFailure
-                  ? "We found this company's policy documents but couldn't complete the analysis. This is usually temporary — please try again."
-                  : isFailed
-                    ? "We were unable to crawl this company's policy documents."
-                    : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
+              {isRobotsBlocked || allRobotsBlockedLegacy
+                ? `${product.name} doesn't allow automated access to their policies.`
+                : isEmpty
+                  ? "We could not find any policy documents to analyze for this company."
+                  : isAnalysisFailure
+                    ? "We found this company's policy documents but couldn't complete the analysis. This is usually temporary — please try again."
+                    : isFailed
+                      ? "We were unable to crawl this company's policy documents."
+                      : "Indexation is in progress for this company. Our systems are currently mapping the privacy landscape. Please return shortly once the analysis is complete."}
             </p>
           </div>
 
@@ -526,44 +545,50 @@ export default function CompanyPage({
                     strokeWidth={1.5}
                   />
                   <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-foreground">
-                    {isEmpty
-                      ? "No Documents Found"
-                      : isAnalysisFailure
-                        ? "Analysis Failed"
-                        : "Crawl Failed"}
+                    {isRobotsBlocked || allRobotsBlockedLegacy
+                      ? "Automated Access Blocked"
+                      : isEmpty
+                        ? "No Documents Found"
+                        : isAnalysisFailure
+                          ? "Analysis Failed"
+                          : "Crawl Failed"}
                   </h3>
                 </div>
               </div>
               <div className="p-6 space-y-4">
-                {allRobotsBlocked ? (
+                {allRobotsBlockedLegacy || isRobotsBlocked ? (
                   <div className="space-y-3">
                     <h2 className="text-xl font-display font-medium text-foreground">
-                      Blocked by robots.txt
+                      {product.name} doesn&apos;t allow automated access to
+                      their policies
                     </h2>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      This website restricts automated access via its robots.txt
-                      file. Our crawler was unable to fetch any policy
-                      documents. You may need to review their policies manually
-                      on their website.
+                      {product.name}&apos;s robots.txt explicitly blocks
+                      crawlers from reading their pages. We&apos;re unable to
+                      analyze their privacy policy or terms of service until
+                      they allow automated access. You may review their policies
+                      directly on their website.
                     </p>
-                    <div className="space-y-2 pt-2">
-                      {crawlErrors.map((err) => (
-                        <div
-                          key={err.url}
-                          className="flex items-start gap-2 text-xs text-muted-foreground"
-                        >
-                          <ShieldBan className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                          <a
-                            href={err.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-mono text-[11px] underline decoration-muted-foreground/30 hover:decoration-foreground break-all"
+                    {crawlErrors.length > 0 && (
+                      <div className="space-y-2 pt-2">
+                        {crawlErrors.map((err) => (
+                          <div
+                            key={err.url}
+                            className="flex items-start gap-2 text-xs text-muted-foreground"
                           >
-                            {err.url}
-                          </a>
-                        </div>
-                      ))}
-                    </div>
+                            <ShieldBan className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                            <a
+                              href={err.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-mono text-[11px] underline decoration-muted-foreground/30 hover:decoration-foreground break-all"
+                            >
+                              {err.url}
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -611,17 +636,47 @@ export default function CompanyPage({
                   </div>
                 )}
 
-                {/* Manual retry — available for any terminal non-success outcome.
-                    Even when no documents were found and no error occurred, the
-                    crawler may have improved since, so allow another attempt. */}
+                {/* Manual retry — active for transient failures; disabled (with explanation)
+                    for deterministic outcomes where a re-run produces the same result.
+                    WCAG 2.1 AA: users must understand why an action is unavailable. */}
                 <div className="pt-2">
-                  <Button
-                    onClick={handleRetry}
-                    className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
-                  >
-                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                    Try again
-                  </Button>
+                  {isRobotsBlocked || allRobotsBlockedLegacy ? (
+                    <>
+                      <Button
+                        disabled
+                        className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                      >
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        Try again
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Retry is not available — {product.name} blocks automated
+                        access. You may check back later if this changes.
+                      </p>
+                    </>
+                  ) : isEmpty ? (
+                    <>
+                      <Button
+                        disabled
+                        className="h-11 px-6 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                      >
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        Try again
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Retry is not available — no policy documents were found
+                        and a re-run would produce the same result.
+                      </p>
+                    </>
+                  ) : (
+                    <Button
+                      onClick={handleRetry}
+                      className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+                    >
+                      <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                      Try again
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
