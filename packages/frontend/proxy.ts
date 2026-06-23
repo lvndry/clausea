@@ -10,8 +10,37 @@ const CRAWLER_UA =
 // /products/[slug] — anything under /products/ with at least one more segment
 const PRODUCT_DETAIL_RE = /^\/products\/[^/]+/;
 
-const FREE_PRODUCT_VIEWS = 5;
+const FREE_PRODUCT_VIEWS = 15;
 const PV_COOKIE = "__pv";
+
+function currentPreviewMonthKey(): string {
+  const now = new Date();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `${now.getUTCFullYear()}-${month}`;
+}
+
+function parsePreviewViewCount(cookieValue: string | undefined): number {
+  const monthKey = currentPreviewMonthKey();
+  if (!cookieValue) {
+    return 0;
+  }
+
+  if (!cookieValue.includes(":")) {
+    return 0;
+  }
+
+  const [storedMonth, countPart] = cookieValue.split(":", 2);
+  if (storedMonth !== monthKey) {
+    return 0;
+  }
+
+  const count = Number.parseInt(countPart ?? "0", 10);
+  return Number.isNaN(count) ? 0 : count;
+}
+
+function formatPreviewViewCookie(count: number): string {
+  return `${currentPreviewMonthKey()}:${count}`;
+}
 
 const isProtectedRoute = createRouteMatcher([
   "/dashboard(.*)",
@@ -52,8 +81,9 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
         request.headers.get("purpose") === "prefetch";
       if (isPrefetch) return NextResponse.next();
 
-      const raw = parseInt(request.cookies.get(PV_COOKIE)?.value ?? "0", 10);
-      const count = isNaN(raw) ? 0 : raw;
+      const count = parsePreviewViewCount(
+        request.cookies.get(PV_COOKIE)?.value,
+      );
 
       if (count >= FREE_PRODUCT_VIEWS) {
         const signInUrl = new URL("/sign-in", request.url);
@@ -62,7 +92,7 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
       }
 
       const response = NextResponse.next();
-      response.cookies.set(PV_COOKIE, String(count + 1), {
+      response.cookies.set(PV_COOKIE, formatPreviewViewCookie(count + 1), {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
