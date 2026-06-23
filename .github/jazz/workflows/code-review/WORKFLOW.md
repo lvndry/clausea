@@ -79,10 +79,12 @@ Use `http_request` to consult authoritative sources when you are not confident i
 
 1. **Load intent and prior discussion**
    - Read `/tmp/jazz-pr-context.json` when available.
-   - Extract intended product behavior and already-reported issues.
+   - Extract the PR's intended behavior from `title` and `body`.
+   - Extract already-reported issues from the `reviews` array. Identify which reviews come from `github-actions[bot]` (prior Jazz runs) and which are from humans. Build a deduplicated list of open issues — both Jazz-raised and human-raised. You will skip re-reporting these in Step 8.
 
 2. **Load full change scope**
    - `git_diff` with `nameOnly: true` to get all changed files.
+   - Classify the diff by area: backend-only, frontend-only, mixed, extension, infra. This determines which checklists (Step 6) apply.
    - Read diff content for all files (batched if large).
 
 3. **Read beyond hunks when needed**
@@ -100,19 +102,28 @@ Use `http_request` to consult authoritative sources when you are not confident i
    - Are normal paths and failure paths both coherent?
    - Could this degrade Clausea's document analysis quality or UX in real usage?
 
-6. **Run engineering quality check by area** (see detailed checklists below)
+6. **Run engineering quality check by area**
+   - Only run checklists for areas the diff actually touches. A backend-only diff does not get Tailwind or Next.js RSC checks. A copy-update diff does not get Python async checks.
+   - See detailed checklists below.
 
 7. **Spawn expert subagents when warranted**
    - Large PR → batch parallelism (see Parallel and Expert Subagents).
    - Specialized diff → delegate to a focused reviewer for that domain before finalizing.
    - If you skipped delegation and the diff clearly needed it, you did not finish the review.
+   - **After subagents complete:** reconcile all findings into one unified view before emitting. Resolve any conflicting severity ratings — the final verdict must be a single authoritative assessment. Do not repeat the same finding from multiple subagents.
 
 8. **De-duplicate and calibrate**
-   - Do not repeat issues already clearly raised in human review comments unless unresolved and still important.
+   - Cross-reference every finding against the list of already-reported issues (built in Step 1).
+   - **Skip any finding that was already clearly raised** in a prior Jazz review or human comment, unless it was marked resolved but the code still shows the problem.
+   - When a prior finding remains unresolved and important, mention it once in the verdict: _"Prior finding still unresolved: [brief description]"_ — do not re-file it as a new inline comment.
    - Keep findings that have concrete improvement paths — including maintainability, typing, a11y, and performance.
 
-9. **Emit final output in required format**
-   - Exactly two fenced blocks in the required order (see Output Format).
+9. **Validate all inline comment line numbers before emitting**
+   - For every finding you intend to include in the JSON array, verify the `line` number appears in the diff hunk for that file (see "Inline Comment Line Accuracy" below).
+   - **If the line is not in the diff:** include the finding in the verdict markdown only (not in the JSON). Use the compact format: `- **path/to/file:NN** — **[Severity]**: [finding body]`. Do not create a separate `### Comments on lines outside the diff` section — fold these directly into the verdict under the relevant finding category.
+
+10. **Emit final output in required format**
+    - Exactly two fenced blocks in the required order (see Output Format).
 
 ### Parallel and Expert Subagents
 
@@ -139,7 +150,9 @@ When delegating:
 
 ## Engineering Quality Checklists
 
-Apply **all** relevant sections. Severity in comment bodies: **Critical** (blocks merge / user harm / security), **High** (real bug or significant debt), **Medium** (clear improvement), **Low** (still worth fixing if diff touches it).
+Apply **only the sections relevant to the diff**. If the changed files are backend-only, skip TypeScript, React, Next.js, Tailwind, and extension checklists. If the changed files are frontend-only, skip Python and MongoDB checklists. Use judgment — a mixed PR applies all relevant sections.
+
+Severity in comment bodies: **Critical** (blocks merge / user harm / security), **High** (real bug or significant debt), **Medium** (clear improvement), **Low** (still worth fixing if diff touches it).
 
 ### Python (backend)
 
@@ -226,6 +239,7 @@ A valid finding does **not**:
 - dismiss issues because existing code does the same thing
 - hide behind "style preference" when a named best practice applies
 - speculate without a reachable failure mode or improvement path
+- repeat an issue already clearly raised by a prior Jazz review or human comment
 
 ## Output Format (strict)
 
@@ -238,14 +252,26 @@ No text before, between, or after those blocks.
 
 ### Block 1: Markdown verdict (required, non-empty)
 
-This is a review verdict, not a PR summary.
+Structure the verdict as follows — in this order:
 
-Must include:
+```
+**[N] files reviewed** | **[area]**: backend / frontend / mixed / extension
 
-- files reviewed (count or short list)
-- overall quality assessment (strict — "acceptable" requires justification)
-- what you found (or a clear "excellent" verdict with what you verified)
-- categories checked (correctness, security, TypeScript, Next.js/RSC, Tailwind, a11y, performance)
+**Merge readiness**: LGTM | SOFT BLOCK | NEEDS WORK
+
+[If SOFT BLOCK or NEEDS WORK: bulleted list of findings by severity]
+[If any non-anchorable findings: inline as "- **path/file.py:NN** — **Severity**: ..."]
+[If any prior findings still open: "Prior finding unresolved: [brief]"]
+
+**Checked clean**: [comma-separated list of areas with no issues found — only areas that were checked]
+```
+
+**Merge readiness** definitions:
+- **LGTM** — no issues found; the diff meets ambitious standards
+- **SOFT BLOCK** — Medium/Low issues only; mergeable after author review, not a hard blocker
+- **NEEDS WORK** — one or more Critical or High issues found; should not merge until resolved
+
+**Do not** list per-category "No issues" lines for areas without findings. Do not include boilerplate like "Tailwind/Styling: No issues — uses existing design tokens." Fold all clean areas into the single "Checked clean" line at the end. If a checklist section was not applicable to this diff (e.g. no frontend files changed), omit it from "Checked clean" entirely.
 
 ### Block 2: JSON inline comments (required, may be empty)
 
@@ -263,9 +289,17 @@ Outer fences must use four backticks to avoid collisions with triple-backtick sn
 
 ### Example (issues found)
 
-```markdown
-Reviewed 4 files. Found 3 issues: one Critical async I/O bug in document parsing, one High unnecessary `"use client"` boundary, and one Medium Tailwind token bypass using hardcoded colors instead of `@theme` variables.
-```
+````markdown
+**4 files reviewed** | **area**: mixed (backend + frontend)
+
+**Merge readiness**: NEEDS WORK
+
+- **Critical** — `packages/backend/src/services/document_service.py:42`: can throw when `document` is None in the retry path (see inline comment)
+- **High** — `packages/frontend/app/page.tsx:18`: unnecessary `"use client"` boundary causes full subtree to hydrate on the client
+- **packages/backend/src/routes/paddle.py:60** — **High**: `subscription.get("started_at").replace(...)` raises `AttributeError` when the field is absent; use `_parse_paddle_datetime` instead
+
+**Checked clean**: correctness (normal paths), TypeScript, a11y, performance
+````
 
 ````json
 [
@@ -280,9 +314,15 @@ Reviewed 4 files. Found 3 issues: one Critical async I/O bug in document parsing
 
 ### Example (no issues)
 
-```markdown
-Reviewed 6 files. The diff meets ambitious standards: behavior matches intent, types are strict, RSC/client boundaries are correct, Tailwind uses design tokens, and a11y attributes are present on interactive elements. Verified call sites, error paths, and security boundaries. No issues found.
-```
+````markdown
+**6 files reviewed** | **area**: backend
+
+**Merge readiness**: LGTM
+
+The diff meets ambitious standards: behavior matches intent, types are strict, async hygiene is correct, MongoDB queries use existing indexes, and error paths are coherent.
+
+**Checked clean**: correctness, Python async, error handling, security, performance, MongoDB
+````
 
 ```json
 []
@@ -291,21 +331,24 @@ Reviewed 6 files. The diff meets ambitious standards: behavior matches intent, t
 ## Self-check Before Emitting
 
 1. Did you prioritize intent and behavior, not feature description?
-2. Did you challenge weak patterns instead of deferring to existing code?
-3. For unfamiliar patterns or "better practice" recommendations, did you verify against authoritative sources when doubt remained?
-4. Did every comment include severity, concrete lines, and a concrete fix or best practice?
-5. Did you run the TypeScript, Next.js, Tailwind, React, a11y, performance, and security checklists for touched areas?
-6. For large or specialized diffs, did you spawn subagents (batch or expert) instead of stopping at a shallow pass?
-7. Did you emit exactly two blocks in order: `markdown`, then `json`?
-8. Did both outer blocks use four backticks?
-9. Did you avoid any trailing output after the JSON block?
+2. Did you check prior Jazz reviews and human comments and skip already-reported issues?
+3. Did you challenge weak patterns instead of deferring to existing code?
+4. For unfamiliar patterns or "better practice" recommendations, did you verify against authoritative sources when doubt remained?
+5. Did every comment include severity, concrete lines, and a concrete fix or best practice?
+6. Did you only run checklists for areas actually touched by the diff?
+7. For large or specialized diffs, did you spawn subagents (batch or expert) instead of stopping at a shallow pass? Did you reconcile subagent findings into one consistent view?
+8. Did you emit exactly two blocks in order: `markdown`, then `json`?
+9. Did both outer blocks use four backticks?
+10. Did you avoid any trailing output after the JSON block?
+11. Are there any "no issues" category lines in the verdict (outside "Checked clean")? Remove them.
+12. Is every JSON comment's `line` confirmed to be in the diff hunk? Non-anchorable findings must be in the verdict markdown only.
 
 ## Inline Comment Line Accuracy (critical)
 
-GitHub rejects comments on lines not present in diff hunks.
+GitHub rejects comments on lines not present in diff hunks. A comment placed on a wrong line fails silently and wastes reviewer attention.
 
-Before outputting each comment:
+**Before including any comment in the JSON array:**
 
-1. Confirm `line` exists in the diff hunk.
+1. Run `git_diff` for the specific file and confirm the `line` number appears in a `@@` hunk.
 2. Prefer commenting on changed (`+`) lines when possible.
-3. If relevant code is outside hunks, attach to the nearest valid line in the hunk and explain context in `body`.
+3. If the relevant code is outside the diff (context lines, unchanged functions, other files): **do not include it in the JSON.** Instead, put the finding in the verdict markdown as `- **path/file.py:NN** — **Severity**: [body]`. Do not create a `### Comments on lines outside the diff` section — that pattern creates a confusing duplicate structure in the review body. Just put it in the verdict inline with your other findings.
