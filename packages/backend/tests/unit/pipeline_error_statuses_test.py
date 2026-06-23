@@ -9,11 +9,12 @@ Covers:
 
 from contextlib import ExitStack, asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
 from src.analyser import AnalysisResult
+from src.models.document import Document
 from src.models.pipeline_job import PipelineErrorCode, PipelineJob
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.pipeline_service import PipelineService
@@ -347,9 +348,12 @@ async def test_analysis_failed_when_overview_raises(mock_db):
     doc_svc = MagicMock()
     doc_svc.get_product_documents_by_slug = AsyncMock(return_value=[])
 
-    analysed_docs = [SimpleNamespace(analysis=object(), doc_type="privacy_policy")]
+    analysed_doc = create_autospec(Document, instance=True)
+    analysed_doc.analysis = object()
+    analysed_doc.doc_type = "privacy_policy"
+    analysed_docs = [analysed_doc]
     analyse_mock = AsyncMock(
-        return_value=AnalysisResult(documents=analysed_docs, analyses_skipped=0)  # ty: ignore[invalid-argument-type]
+        return_value=AnalysisResult(documents=analysed_docs, analyses_skipped=0)
     )
     overview_mock = AsyncMock(side_effect=RuntimeError("Overview LLM timed out"))
 

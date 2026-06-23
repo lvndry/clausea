@@ -256,7 +256,7 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
     ):
         await service.run_pipeline("job-analysis")
 
-    assert job.status == "failed"
+    assert job.status == "analysis_failed"
     assert job.error == PipelineErrorCode.all_analysis_failed
     assert "could not analyze" in (job.error_detail or "").lower()
     # Crawl succeeded, so the truthful frontend can tell this is an analysis failure.

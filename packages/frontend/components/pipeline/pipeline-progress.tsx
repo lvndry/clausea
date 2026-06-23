@@ -254,6 +254,17 @@ function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
   );
 }
 
+const TERMINAL_STATUSES: PipelineJobStatus[] = [
+  "completed",
+  "failed",
+  "no_documents",
+  "robots_blocked",
+  "access_denied",
+  "no_policy_found",
+  "site_unavailable",
+  "analysis_failed",
+];
+
 export function PipelineProgress({
   jobId,
   onComplete,
@@ -267,17 +278,6 @@ export function PipelineProgress({
   const inFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
-
-  const TERMINAL_STATUSES: PipelineJobStatus[] = [
-    "completed",
-    "failed",
-    "no_documents",
-    "robots_blocked",
-    "access_denied",
-    "no_policy_found",
-    "site_unavailable",
-    "analysis_failed",
-  ];
 
   const isTerminal = job !== null && TERMINAL_STATUSES.includes(job.status);
 
@@ -329,17 +329,7 @@ export function PipelineProgress({
       const data: PipelineJobData = await res.json();
       setJob(data);
 
-      const terminalStatuses: PipelineJobStatus[] = [
-        "completed",
-        "failed",
-        "no_documents",
-        "robots_blocked",
-        "access_denied",
-        "no_policy_found",
-        "site_unavailable",
-        "analysis_failed",
-      ];
-      if (terminalStatuses.includes(data.status)) {
+      if (TERMINAL_STATUSES.includes(data.status)) {
         clearScheduledPoll();
         if (data.status === "completed" && onComplete) {
           onComplete(data.product_slug);

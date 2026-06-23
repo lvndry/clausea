@@ -2156,6 +2156,7 @@ class ClauseaCrawler:
                 found_policy = False
                 stop_requested = False
                 termination_reason = "unknown"
+                failed_results: list[CrawlResult] = []
                 while len(self.visited_urls) < self.max_pages:
                     batch = []
                     batch_size = min(self.max_concurrent, self.max_pages - len(self.visited_urls))
@@ -2201,6 +2202,8 @@ class ClauseaCrawler:
                             self._consecutive_blocked += 1
                             if result.blocked_by_robots_txt:
                                 self.results.append(result)
+                            else:
+                                failed_results.append(result)
 
                         if depth < self.max_depth and result.discovered_links:
                             self.add_urls_to_queue(
@@ -2261,10 +2264,9 @@ class ClauseaCrawler:
                 if self.stats.crawled_urls == 0:
                     robots_blocked_count = sum(1 for r in self.results if r.blocked_by_robots_txt)
                     attempted = self.stats.total_urls
-                    failed_results = [
-                        r for r in self.results if not r.success and not r.blocked_by_robots_txt
-                    ]
 
+                    # `failed_results` was populated inside the crawl loop (non-robots
+                    # failures are never added to self.results, only to failed_results).
                     if robots_blocked_count > 0 and robots_blocked_count == attempted:
                         self.stats.all_seeds_robots_blocked = True
                         logger.warning(
@@ -2303,24 +2305,32 @@ class ClauseaCrawler:
                         )
                         _hard_status_codes = frozenset({401, 403, 407, 429, 451})
 
-                        conn_fails = sum(
-                            1
+                        # Classify conn-level first; hard-block is only checked on results
+                        # not already classified, so the two sets are mutually exclusive.
+                        conn_results = [
+                            r
                             for r in failed_results
                             if (
                                 r.error_message
                                 and any(kw in r.error_message.lower() for kw in _conn_keywords)
                             )
                             or (not r.error_message and r.status_code == 0)
-                        )
-                        hard_fails = sum(
-                            1
+                        ]
+                        conn_fails = len(conn_results)
+                        conn_result_set = {id(r) for r in conn_results}
+                        hard_results = [
+                            r
                             for r in failed_results
-                            if r.status_code in _hard_status_codes
-                            or (
-                                r.error_message
-                                and any(kw in r.error_message.lower() for kw in _bot_keywords)
+                            if id(r) not in conn_result_set
+                            and (
+                                r.status_code in _hard_status_codes
+                                or (
+                                    r.error_message
+                                    and any(kw in r.error_message.lower() for kw in _bot_keywords)
+                                )
                             )
-                        )
+                        ]
+                        hard_fails = len(hard_results)
 
                         if conn_fails == len(failed_results):
                             self.stats.site_unavailable = True

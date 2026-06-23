@@ -765,6 +765,7 @@ class PipelineService:
                             f"Document analysis raised an unexpected error: {synth_exc}"
                         )
                         job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
                         await self._update_step(db, job, "synthesising", "failed", str(synth_exc))
                         await self._update_step(
                             db, job, "generating_overview", "failed", "Skipped — synthesis failed"
@@ -776,6 +777,23 @@ class PipelineService:
                             synth_exc,
                             exc_info=True,
                         )
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "Document analysis failed",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "analysis-failed admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
                         return
                     analysed_docs = analysis_result.documents
                     job.analyses_skipped = analysis_result.analyses_skipped
@@ -803,7 +821,7 @@ class PipelineService:
                     no_analysis = bool(analysed_docs) and analysed_count == 0
                     core_wipeout = bool(core_docs) and core_analysed == 0
                     if no_analysis or core_wipeout:
-                        job.status = "failed"
+                        job.status = "analysis_failed"
                         if core_wipeout and not no_analysis:
                             job.error = PipelineErrorCode.core_docs_unanalyzed
                             job.error_detail = (
@@ -827,6 +845,7 @@ class PipelineService:
                                 f"0 of {len(analysed_docs)} documents could be analyzed"
                             )
                         job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
                         await self._update_step(
                             db,
                             job,
@@ -842,6 +861,23 @@ class PipelineService:
                             "Skipped - no analyzed documents",
                         )
                         await self._pipeline_repo.update(db, job)
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "Document analysis returned no results",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "analysis-failed admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
                         return
 
                     await self._update_step(
@@ -897,6 +933,7 @@ class PipelineService:
                             f"Overview generation raised an unexpected error: {overview_exc}"
                         )
                         job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
                         await self._update_step(
                             db, job, "generating_overview", "failed", str(overview_exc)
                         )
@@ -907,6 +944,23 @@ class PipelineService:
                             overview_exc,
                             exc_info=True,
                         )
+                        try:
+                            from src.services.email_service import get_email_service
+
+                            await get_email_service().send_no_documents_alert(
+                                product_name=product.name,
+                                product_slug=job.product_slug,
+                                url=job.url,
+                                reason=job.error_detail or "Overview generation failed",
+                                crawl_error_count=len(job.crawl_errors),
+                                skip_count=len(job.crawl_skip_reasons),
+                            )
+                        except Exception as alert_exc:  # noqa: BLE001
+                            logger.warning(
+                                "analysis-failed admin alert failed",
+                                product_slug=job.product_slug,
+                                error=str(alert_exc),
+                            )
                         return
 
                     # Verify the overview actually persisted — same truthfulness lesson as

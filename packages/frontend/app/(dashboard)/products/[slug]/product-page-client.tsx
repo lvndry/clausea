@@ -553,12 +553,12 @@ export default function CompanyPage({
       //   - failedJob        (failed):          interrupted/errored. Offer retry.
       const terminalJob =
         robotsBlockedJob ??
-        emptyJob ??
-        failedJob ??
         accessDeniedJob ??
         noPolicyJob ??
         siteUnavailableJob ??
-        analysisFailedJob;
+        analysisFailedJob ??
+        emptyJob ??
+        failedJob;
       const isRobotsBlocked = robotsBlockedJob !== null;
       const isAccessDenied = accessDeniedJob !== null;
       const isEmpty = emptyJob !== null;
