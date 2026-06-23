@@ -91,6 +91,10 @@ class CrawlStats(BaseModel):
     crawled_urls: int = 0
     failed_urls: int = 0
     start_time: float = Field(default_factory=time.time)
+    # Set to True when crawled_urls == 0 and every attempted URL was refused by the
+    # site's robots.txt. Lets the pipeline emit a targeted "robots_blocked" job
+    # status rather than the generic "no_documents" outcome.
+    all_seeds_robots_blocked: bool = False
 
     @property
     def elapsed_time(self) -> float:

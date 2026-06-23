@@ -39,20 +39,26 @@ PipelineJobStatus = Literal[
     "completed",
     "failed",
     "no_documents",
+    "robots_blocked",
     "interrupted",
 ]
 
 # Statuses a job can never leave. A job in any of these is "done" and must not be
 # treated as active, reused, or retriggered automatically:
-#   - completed:    ran to the end, overview generated
-#   - no_documents: crawl ran to completion but found 0 policy documents (a valid,
-#                   deterministic result — retrying yields the same outcome)
-#   - failed:       interrupted or errored. Auto-retry may re-queue some failed
-#                   jobs (transient/retryable) within a bounded attempt budget.
+#   - completed:       ran to the end, overview generated
+#   - no_documents:    crawl ran to completion but found 0 policy documents (a valid,
+#                      deterministic result — retrying yields the same outcome)
+#   - robots_blocked:  the site's robots.txt explicitly blocked all seed URLs;
+#                      deterministic — retrying without manual intervention yields the
+#                      same result. Distinct from no_documents so the frontend can show
+#                      a targeted explanation rather than a generic "nothing found".
+#   - failed:          interrupted or errored. Auto-retry may re-queue some failed
+#                      jobs (transient/retryable) within a bounded attempt budget.
 TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
     "completed",
     "failed",
     "no_documents",
+    "robots_blocked",
     "interrupted",
 )
 

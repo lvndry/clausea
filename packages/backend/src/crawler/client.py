@@ -2146,7 +2146,6 @@ class ClauseaCrawler:
                         self._sitemap_seeded = True
                 except Exception:
                     logger.debug("Sitemap discovery failed; continuing without sitemap")
-
                 semaphore = asyncio.Semaphore(self.max_concurrent)
 
                 async def process_url(url: str) -> CrawlResult:
@@ -2156,6 +2155,7 @@ class ClauseaCrawler:
                 pages_since_policy_hit = 0
                 found_policy = False
                 stop_requested = False
+                termination_reason = "unknown"
                 while len(self.visited_urls) < self.max_pages:
                     batch = []
                     batch_size = min(self.max_concurrent, self.max_pages - len(self.visited_urls))
@@ -2170,6 +2170,7 @@ class ClauseaCrawler:
                             self.visited_urls.add(url)
 
                     if not batch:
+                        termination_reason = "url_queue_empty"
                         break
 
                     tasks = [process_url(url) for url, _depth in batch]
@@ -2212,6 +2213,7 @@ class ClauseaCrawler:
                         await self._emit_result(result)
                         if await self._should_stop_early():
                             stop_requested = True
+                            termination_reason = "stop_requested"
                             break
 
                     self._report_crawl_progress()
@@ -2220,15 +2222,84 @@ class ClauseaCrawler:
                         break
 
                     if self._has_converged(found_policy, pages_since_policy_hit):
+                        termination_reason = "converged"
                         break
 
                     if self._relevance_exhausted():
+                        termination_reason = "relevance_exhausted"
+                        logger.warning(
+                            "Crawl for %s terminated: relevance exhausted after %d pages "
+                            "(no high-scoring URLs remain in frontier, "
+                            "crawled=%d, policy_pages=%d)",
+                            base_url,
+                            self.stats.total_urls,
+                            self.stats.crawled_urls,
+                            self._policy_pages_found,
+                        )
                         break
 
                     if self._consecutive_blocked >= CRAWL_BOT_WALL_ABORT:
+                        termination_reason = "bot_wall_abort"
+                        logger.warning(
+                            "Crawl for %s aborted: %d consecutive URL failures "
+                            "(CRAWL_BOT_WALL_ABORT=%d) — likely a bot-wall or auth gate. "
+                            "crawled=%d, failed=%d",
+                            base_url,
+                            self._consecutive_blocked,
+                            CRAWL_BOT_WALL_ABORT,
+                            self.stats.crawled_urls,
+                            self.stats.failed_urls,
+                        )
                         break
 
+                else:
+                    termination_reason = "page_budget_reached"
+
                 self._report_crawl_progress(force=True)
+
+                # Diagnostic: warn when a crawl completes with 0 successfully crawled pages.
+                if self.stats.crawled_urls == 0:
+                    robots_blocked_count = sum(1 for r in self.results if r.blocked_by_robots_txt)
+                    attempted = self.stats.total_urls
+                    if robots_blocked_count > 0 and robots_blocked_count == attempted:
+                        self.stats.all_seeds_robots_blocked = True
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages — all %d attempted URL(s) "
+                            "were blocked by robots.txt (termination_reason=%s)",
+                            base_url,
+                            robots_blocked_count,
+                            termination_reason,
+                        )
+                    elif termination_reason == "url_queue_empty":
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages — URL queue was empty "
+                            "after seeding (sitemap_seeded=%s, robots_blocked=%d/%d, "
+                            "termination_reason=%s)",
+                            base_url,
+                            self._sitemap_seeded,
+                            robots_blocked_count,
+                            attempted,
+                            termination_reason,
+                        )
+                    elif termination_reason == "bot_wall_abort":
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages — bot-wall abort triggered "
+                            "after %d consecutive failures (termination_reason=%s)",
+                            base_url,
+                            self._consecutive_blocked,
+                            termination_reason,
+                        )
+                    else:
+                        logger.warning(
+                            "Crawl for %s completed with 0 pages "
+                            "(termination_reason=%s, total_attempted=%d, "
+                            "robots_blocked=%d, sitemap_seeded=%s)",
+                            base_url,
+                            termination_reason,
+                            attempted,
+                            robots_blocked_count,
+                            self._sitemap_seeded,
+                        )
 
                 if not stop_requested:
                     await self._drain_render_retries(session)

@@ -524,6 +524,11 @@ class PipelineService:
                             if err.error_type == "robots_txt_blocked"
                         ]
                         if robots_blocked and len(robots_blocked) == len(job.crawl_errors):
+                            # All attempted URLs were blocked by robots.txt — this is a
+                            # distinct, deterministic outcome that the frontend surfaces
+                            # with a dedicated "blocked by robots.txt" message instead of
+                            # the generic "no documents found" state.
+                            job.status = "robots_blocked"
                             job.error = PipelineErrorCode.crawl_robots_blocked
                             job.error_detail = (
                                 "This site blocks automated access via robots.txt. "
@@ -585,7 +590,7 @@ class PipelineService:
                         # no overview) and reappearing in the product list is confusing.
                         # The pipeline job is kept as a failure record; the product is
                         # re-created automatically if the user retries the URL later.
-                        if job.status == "no_documents":
+                        if job.status in ("no_documents", "robots_blocked"):
                             try:
                                 doc_count = await db.documents.count_documents(
                                     {"product_id": product.id}
