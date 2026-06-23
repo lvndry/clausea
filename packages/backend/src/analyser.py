@@ -75,7 +75,7 @@ from src.prompts.analysis_prompts import (
     PRODUCT_OVERVIEW_PROMPT,
 )
 from src.repositories.document_repository import DocumentRepository
-from src.services.aggregation_service import AggregationService
+from src.services.aggregation_service import ProductRollupService
 from src.services.document_service import DocumentService
 from src.services.evidence_relevance import TOPIC_CITATION_LIMIT
 from src.services.extraction_service import extract_document_facts
@@ -1933,8 +1933,8 @@ async def generate_product_overview(
     await token.check_cancellation()
     if on_progress is not None:
         await _maybe_await(on_progress())
-    aggregation_service = AggregationService(DocumentRepository())
-    aggregation = await aggregation_service.build_product_aggregation(
+    rollup_service = ProductRollupService(DocumentRepository())
+    aggregation = await rollup_service.build_product_aggregation(
         db, product_id=product.id, product_slug=product_slug
     )
     document_summaries = [DocumentSummary.from_document(doc) for doc in documents]

@@ -3,7 +3,7 @@
 This script:
 1. Renames the 'companies' collection to 'products'
 2. Updates all 'company_id' fields to 'product_id' in the 'documents' collection
-3. Updates all 'company_slug' fields to 'product_slug' in product_overviews and deep_analyses collections
+3. Updates all 'company_slug' fields to 'product_slug' in product_intelligence
 """
 
 import asyncio
@@ -46,38 +46,26 @@ async def migrate_companies_to_products():
         )
         logger.info(f"✓ Updated {result.modified_count} documents")
 
-        # Step 3: Update company_slug to product_slug in product_overviews
-        logger.info("Updating 'company_slug' to 'product_slug' in product_overviews collection...")
-        result = await db.product_overviews.update_many(
+        # Step 3: Update company_slug to product_slug in product_intelligence
+        logger.info(
+            "Updating 'company_slug' to 'product_slug' in product_intelligence collection..."
+        )
+        result = await db.product_intelligence.update_many(
             {"company_slug": {"$exists": True}},
             {"$rename": {"company_slug": "product_slug"}},
         )
-        logger.info(f"✓ Updated {result.modified_count} product_overviews")
+        logger.info(f"✓ Updated {result.modified_count} product_intelligence docs")
 
-        # Step 4: Update company_slug to product_slug in deep_analyses
-        logger.info("Updating 'company_slug' to 'product_slug' in deep_analyses collection...")
-        result = await db.deep_analyses.update_many(
-            {"company_slug": {"$exists": True}},
-            {"$rename": {"company_slug": "product_slug"}},
-        )
-        logger.info(f"✓ Updated {result.modified_count} deep_analyses")
-
-        # Step 5: Update company_id references in product_overviews and deep_analyses if they exist
-        logger.info("Checking for company_id references in product_overviews...")
-        result = await db.product_overviews.update_many(
+        # Step 4: Update company_id references in product_intelligence if they exist
+        logger.info("Checking for company_id references in product_intelligence...")
+        result = await db.product_intelligence.update_many(
             {"company_id": {"$exists": True}},
             {"$rename": {"company_id": "product_id"}},
         )
         if result.modified_count > 0:
-            logger.info(f"✓ Updated {result.modified_count} product_overviews with company_id")
-
-        logger.info("Checking for company_id references in deep_analyses...")
-        result = await db.deep_analyses.update_many(
-            {"company_id": {"$exists": True}},
-            {"$rename": {"company_id": "product_id"}},
-        )
-        if result.modified_count > 0:
-            logger.info(f"✓ Updated {result.modified_count} deep_analyses with company_id")
+            logger.info(
+                f"✓ Updated {result.modified_count} product_intelligence docs with company_id"
+            )
 
         logger.info("✅ Migration completed successfully!")
 

@@ -224,7 +224,7 @@ class DocumentService:
         Batch analysers (e.g. ``analyse_product_documents``) should pass ``False`` so each
         document save does not wipe the overview row; the pipeline then replaces it in
         ``generate_product_overview``. Otherwise a later partial re-run can leave
-        ``product_overviews`` empty forever if overview generation does not run again.
+        ``product_intelligence`` empty forever if overview generation does not run again.
 
         Args:
             db: Database instance

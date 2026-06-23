@@ -42,7 +42,7 @@ MAX_PIPELINE_FAILURE_RATE = 0.10
 EMPTY_TEXT_THRESHOLD_CHARS = 500
 PIPELINE_LOOKBACK_DAYS = 7
 
-# Fields on the stored MetaSummary in the product_overviews collection.
+# Fields on the stored MetaSummary in product_intelligence.overview.
 # The API later transforms summary → one_line_summary (product_service.py:475).
 # We measure the underlying storage shape, not the API shape.
 REQUIRED_OVERVIEW_FIELDS = (
@@ -63,7 +63,9 @@ async def collect_metrics() -> dict[str, Any]:
 
         # Coverage gates.
         products_with_documents = len(await db.documents.distinct("product_id"))
-        product_overview_count = await db.product_overviews.count_documents({})
+        product_overview_count = await db.product_intelligence.count_documents(
+            {"overview": {"$exists": True, "$ne": None}}
+        )
 
         # Empty-text documents — a doc that crawled but holds no real policy text.
         documents_with_empty_text = await db.documents.count_documents(
@@ -86,10 +88,12 @@ async def collect_metrics() -> dict[str, Any]:
 
         # Overviews missing required fields.
         overviews_missing_fields: list[dict[str, Any]] = []
-        async for ov in db.product_overviews.find(
-            {}, {"product_slug": 1, **dict.fromkeys(REQUIRED_OVERVIEW_FIELDS, 1)}
+        async for ov in db.product_intelligence.find(
+            {"overview": {"$exists": True, "$ne": None}},
+            {"product_slug": 1, "overview": 1},
         ):
-            missing = [f for f in REQUIRED_OVERVIEW_FIELDS if not ov.get(f)]
+            overview = ov.get("overview") or {}
+            missing = [f for f in REQUIRED_OVERVIEW_FIELDS if not overview.get(f)]
             if missing:
                 overviews_missing_fields.append(
                     {"product_slug": ov.get("product_slug"), "missing": missing}
@@ -162,7 +166,7 @@ async def collect_metrics() -> dict[str, Any]:
             "products_with_documents": products_with_documents,
             "documents_with_extraction": docs_with_extraction,
             "documents_with_analysis": docs_with_analysis,
-            "product_overviews": product_overview_count,
+            "products_with_overview": product_overview_count,
         },
         "pipeline_jobs_last_7d": {
             "total": jobs_recent,
@@ -194,7 +198,7 @@ def format_human(report: dict[str, Any]) -> str:
     out.append(f"  documents_total          : {t['documents_total']}")
     out.append(f"  documents_with_extraction: {t['documents_with_extraction']}")
     out.append(f"  documents_with_analysis  : {t['documents_with_analysis']}")
-    out.append(f"  product_overviews        : {t['product_overviews']}")
+    out.append(f"  products_with_overview   : {t['products_with_overview']}")
 
     pj = report["pipeline_jobs_last_7d"]
     out.append("")

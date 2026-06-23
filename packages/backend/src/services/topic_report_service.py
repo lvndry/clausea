@@ -1,9 +1,9 @@
-"""Build product-level topic reports with citations from aggregations."""
+"""Build product-level topic reports with citations from hydrated rollups."""
 
 from __future__ import annotations
 
 from src.models.document import DocumentSummary, EvidenceSpan, InsightCategory
-from src.models.finding import Aggregation
+from src.models.finding import HydratedRollup
 from src.models.topic_report import (
     ProductTopicReport,
     TopicCitation,
@@ -76,7 +76,7 @@ def _build_citations(
 
 
 def build_product_topic_report(
-    *, product_slug: str, aggregation: Aggregation, documents: list[DocumentSummary]
+    *, product_slug: str, aggregation: HydratedRollup, documents: list[DocumentSummary]
 ) -> ProductTopicReport:
     """Build per-topic output from stored aggregation + document metadata."""
     documents_by_id = {document.id: document for document in documents}

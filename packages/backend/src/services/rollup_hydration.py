@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from src.models.document import Document, EvidenceSpan, InsightCategory
-from src.models.finding import AggregatedFinding, Aggregation, Finding, FindingConflict
-from src.models.product_intelligence import ProductRollup
-from src.services.aggregation_service import AggregationService
+from src.models.finding import AggregatedFinding, Finding, FindingConflict, HydratedRollup
+from src.services.aggregation_service import ProductRollupService
 from src.services.evidence_relevance import filter_evidence_spans
 
 
 def _normalize(value: str) -> str:
-    return AggregationService._normalize_value(value)
+    return ProductRollupService._normalize_value(value)
 
 
 def _findings_for_documents(documents: list[Document], product_id: str) -> list[Finding]:
-    service = AggregationService.__new__(AggregationService)
+    service = ProductRollupService.__new__(ProductRollupService)
     findings: list[Finding] = []
     for doc in documents:
         if not doc.extraction:
@@ -50,14 +49,14 @@ def _evidence_for_item(
     return filter_evidence_spans(evidence, category=category, finding_value=value)
 
 
-def rollup_to_aggregation(
+def rollup_to_hydrated(
     *,
     product_id: str,
     product_slug: str,
-    rollup: ProductRollup,
+    rollup,
     documents: list[Document],
-) -> Aggregation:
-    """Convert stored slim rollup to Aggregation with hydrated evidence."""
+) -> HydratedRollup:
+    """Convert stored slim rollup to HydratedRollup with evidence for topic reports."""
     findings = _findings_for_documents(documents, product_id)
     aggregated: list[AggregatedFinding] = []
     for item in rollup.items:
@@ -81,13 +80,8 @@ def rollup_to_aggregation(
     conflicts: list[FindingConflict] = []
     for conflict in rollup.conflicts:
         category_findings = [f for f in findings if f.category == conflict.category]
-        conflict_values = {
-            f.normalized_value or _normalize(f.value)
-            for f in category_findings
-            if f.document_id in conflict.document_ids
-        }
         evidence: list[EvidenceSpan] = []
-        if len(conflict_values) > 1:
+        if len({f.normalized_value or _normalize(f.value) for f in category_findings}) > 1:
             for finding in category_findings:
                 if finding.document_id in conflict.document_ids:
                     evidence.extend(finding.evidence)
@@ -103,7 +97,7 @@ def rollup_to_aggregation(
             )
         )
 
-    return Aggregation(
+    return HydratedRollup(
         product_id=product_id,
         product_slug=product_slug,
         coverage=rollup.coverage,

@@ -1,9 +1,4 @@
-"""Tests for product_id and headline_claim fixes in product overview pipeline.
-
-Bug 1: product_id was never written to product_overviews documents.
-Bug 2: headline_claim was absent from MetaSummary / PRODUCT_OVERVIEW_JSON_SCHEMA
-       so it was never populated from the LLM response.
-"""
+"""Tests for product_id and headline_claim fixes in product overview pipeline."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -120,7 +115,6 @@ async def test_generate_product_overview_passes_product_id_to_save() -> None:
     """generate_product_overview must pass product.id to save_product_overview."""
     product_svc, document_svc = _services(product_id="abc-123")
     aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(
         return_value=MagicMock(
             findings=[],
@@ -132,7 +126,7 @@ async def test_generate_product_overview_passes_product_id_to_save() -> None:
     )
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),
@@ -273,7 +267,6 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
     """generate_product_overview must parse headline_claim from the LLM JSON response."""
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(
         return_value=MagicMock(
             findings=[],
@@ -288,7 +281,7 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
     )
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(payload)),
@@ -312,7 +305,6 @@ async def test_generate_product_overview_headline_claim_none_when_llm_omits_it()
     """headline_claim must be None when the LLM does not return it."""
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(
         return_value=MagicMock(
             findings=[],
@@ -324,7 +316,7 @@ async def test_generate_product_overview_headline_claim_none_when_llm_omits_it()
     )
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),

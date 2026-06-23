@@ -249,7 +249,7 @@ class ProductRepository(BaseRepository):
     async def list_analyzed_overviews(self, db: AgnosticDatabase) -> list[dict[str, Any]]:
         return await ProductIntelligenceRepository().list_sitemap_entries(db)
 
-    async def count_product_overviews(self, db: AgnosticDatabase) -> int:
+    async def count_products_with_overview(self, db: AgnosticDatabase) -> int:
         return await ProductIntelligenceRepository().count_with_overview(db)
 
     async def get_product_overview(

@@ -119,15 +119,15 @@ def show_promotion() -> None:
 
                         with col3:
                             st.metric(
-                                "Product Overviews (Local)",
+                                "Product Intelligence (Local)",
                                 summary.get("collections", {})
-                                .get("product_overviews", {})
+                                .get("product_intelligence", {})
                                 .get("local_count", 0),
                             )
                             st.metric(
-                                "Product Overviews (Production)",
+                                "Product Intelligence (Production)",
                                 summary.get("collections", {})
-                                .get("product_overviews", {})
+                                .get("product_intelligence", {})
                                 .get("production_count", 0),
                             )
 
@@ -306,11 +306,15 @@ def show_promotion() -> None:
                 )
 
         with col4:
-            if st.button("Download Overviews Only", type="secondary", key="download_overviews"):
+            if st.button(
+                "Download Product Intelligence Only",
+                type="secondary",
+                key="download_product_intelligence",
+            ):
                 run_operation(
                     api_url,
-                    "/promotion/download-product-overviews",
-                    "Product overviews download",
+                    "/promotion/download-product-intelligence",
+                    "Product intelligence download",
                     "download",
                     {"dry_run": False},
                 )
@@ -407,15 +411,15 @@ def display_download_results(data: dict[str, Any]) -> None:
                         st.metric("Documents (Production)", documents.get("production_count", 0))
 
                 with col3:
-                    product_overviews = collections.get("product_overviews", {})
-                    if isinstance(product_overviews, dict):
+                    product_intelligence = collections.get("product_intelligence", {})
+                    if isinstance(product_intelligence, dict):
                         st.metric(
-                            "Product Overviews (Local)",
-                            product_overviews.get("local_count", 0),
+                            "Product Intelligence (Local)",
+                            product_intelligence.get("local_count", 0),
                         )
                         st.metric(
-                            "Product Overviews (Production)",
-                            product_overviews.get("production_count", 0),
+                            "Product Intelligence (Production)",
+                            product_intelligence.get("production_count", 0),
                         )
 
     # Single collection result
@@ -520,20 +524,22 @@ def display_promotion_results(data: dict[str, Any]) -> None:
                         )
 
                 with col3:
-                    product_overviews = collections.get("product_overviews", {})
-                    if isinstance(product_overviews, dict):
+                    product_intelligence = collections.get("product_intelligence", {})
+                    if isinstance(product_intelligence, dict):
                         st.metric(
-                            "Product Overviews (Local)",
-                            product_overviews.get("local_count", 0),
+                            "Product Intelligence (Local)",
+                            product_intelligence.get("local_count", 0),
                         )
                         st.metric(
-                            "Product Overviews (Production)",
-                            product_overviews.get("production_count", 0),
+                            "Product Intelligence (Production)",
+                            product_intelligence.get("production_count", 0),
                         )
                     else:
                         st.metric(
-                            "Product Overviews",
-                            product_overviews if isinstance(product_overviews, int | float) else 0,
+                            "Product Intelligence",
+                            product_intelligence
+                            if isinstance(product_intelligence, int | float)
+                            else 0,
                         )
 
     # Promotion results

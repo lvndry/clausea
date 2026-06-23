@@ -230,56 +230,6 @@ async def ensure_document_change_indexes(db: AgnosticDatabase) -> None:
             logger.warning(f"Could not create index on document_changes.product_id: {e}")
 
 
-async def ensure_finding_indexes(db: AgnosticDatabase) -> None:
-    """Legacy findings collection — indexes retained for migration cleanup only."""
-    try:
-        await db.findings.create_index("product_id", name="idx_finding_product_id", background=True)
-    except Exception:
-        pass
-
-
-async def ensure_aggregation_indexes(db: AgnosticDatabase) -> None:
-    """Legacy aggregations collection — indexes retained for migration cleanup only."""
-    try:
-        await db.aggregations.create_index(
-            "product_id", unique=True, name="idx_aggregation_product_id", background=True
-        )
-    except Exception:
-        pass
-
-
-async def ensure_document_version_indexes(db: AgnosticDatabase) -> None:
-    """Ensure indexes exist on the document_versions collection."""
-    try:
-        await db.document_versions.create_index(
-            [("document_id", 1), ("created_at", -1)],
-            name="idx_docversion_doc_recent",
-            background=True,
-        )
-        logger.info("Created index on document_versions.(document_id, created_at)")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "already exists" in error_msg:
-            logger.debug("Index on document_versions.(document_id, created_at) already exists")
-        else:
-            logger.warning(
-                f"Could not create index on document_versions.(document_id, created_at): {e}"
-            )
-
-    try:
-        await db.document_versions.create_index(
-            [("product_slug", 1), ("created_at", -1)],
-            name="idx_docversion_product_recent",
-            background=True,
-        )
-        logger.info("Created index on document_versions.(product_slug, created_at)")
-    except Exception as e:
-        if "already exists" in str(e).lower():
-            logger.debug("Index on document_versions.(product_slug, created_at) already exists")
-        else:
-            logger.warning(f"Could not create index on document_versions.(product_slug): {e}")
-
-
 async def ensure_monitoring_schedule_indexes(db: AgnosticDatabase) -> None:
     try:
         await db.monitoring_schedules.create_index(
@@ -304,21 +254,6 @@ async def ensure_monitoring_schedule_indexes(db: AgnosticDatabase) -> None:
             logger.debug("Index on monitoring_schedules.next_crawl_due_at already exists")
         else:
             logger.warning(f"Could not create index on monitoring_schedules.next_crawl_due_at: {e}")
-
-
-async def ensure_overview_history_indexes(db: AgnosticDatabase) -> None:
-    try:
-        await db.product_overview_history.create_index(
-            [("product_slug", 1), ("snapshot_at", -1)],
-            name="idx_overview_history_product_recent",
-            background=True,
-        )
-        logger.info("Created index on product_overview_history.(product_slug, snapshot_at)")
-    except Exception as e:
-        if "already exists" in str(e).lower():
-            logger.debug("Index on product_overview_history already exists")
-        else:
-            logger.warning(f"Could not create index on product_overview_history: {e}")
 
 
 async def ensure_pipeline_indexes(db: AgnosticDatabase) -> None:
@@ -427,13 +362,9 @@ async def ensure_all_indexes(db: AgnosticDatabase) -> None:
     await ensure_user_indexes(db)
     await ensure_product_indexes(db)
     await ensure_document_indexes(db)
-    await ensure_finding_indexes(db)
     await ensure_product_intelligence_indexes(db)
     await ensure_document_change_indexes(db)
-    await ensure_aggregation_indexes(db)
-    await ensure_document_version_indexes(db)
     await ensure_monitoring_schedule_indexes(db)
-    await ensure_overview_history_indexes(db)
     await ensure_pipeline_indexes(db)
 
     # TTL on terminal pipeline jobs (90 days)

@@ -375,15 +375,6 @@ class PipelineService:
                             db, job.id, {"started_at": job.started_at}
                         )
 
-                    # Purge any findings left over from a previous attempt.
-                    # On retries (attempts > 1) the per-document delete-then-insert loop
-                    # in rebuild_findings_for_product only clears findings for documents
-                    # it reaches before the next crash. Across several crash/retry cycles
-                    # this causes unbounded accumulation (one product reached 7 000+
-                    # findings, filling the Atlas M0 quota). Purging up front on retries
-                    # makes each retry a clean rebuild while leaving findings intact on
-                    # first-time runs, so a crawl failure never wipes a previously
-                    # successful analysis.
                     if job.attempts > 1:
                         logger.info(
                             "Pipeline retry attempt %d for %s",

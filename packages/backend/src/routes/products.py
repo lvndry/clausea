@@ -35,7 +35,7 @@ from src.repositories.product_intelligence_repository import ProductIntelligence
 from src.services.document_service import DocumentService
 from src.services.extraction_service import extract_document_facts
 from src.services.product_service import ProductService
-from src.services.rollup_hydration import rollup_to_aggregation
+from src.services.rollup_hydration import rollup_to_hydrated
 from src.services.service_factory import (
     create_indexation_notification_service,
     create_product_service,
@@ -192,7 +192,7 @@ async def get_product_topics(
         doc_id for item in intelligence.rollup.items for doc_id in item.document_ids
     } | {doc_id for conflict in intelligence.rollup.conflicts for doc_id in conflict.document_ids}
     documents_for_hydration = [doc for doc in full_docs if doc.id in referenced_ids]
-    aggregation = rollup_to_aggregation(
+    aggregation = rollup_to_hydrated(
         product_id=product.id,
         product_slug=slug,
         rollup=intelligence.rollup,

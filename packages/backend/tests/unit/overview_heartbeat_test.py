@@ -1,11 +1,11 @@
 """The overview synthesis fires its liveness ping at each long sub-step boundary.
 
-`generate_product_overview` runs a findings rebuild + aggregation and an LLM synthesis with
-no DB write of its own. On a large core-doc set that span can outlast the pipeline stall
-window, so it accepts an `on_progress` callback fired before each long sub-step. The pipeline
-wires that to its job-heartbeat write; outside the pipeline a None callback must be a no-op.
+`generate_product_overview` runs rollup build and an LLM synthesis with no DB write of its own.
+On a large core-doc set that span can outlast the pipeline stall window, so it accepts an
+`on_progress` callback fired before each long sub-step. The pipeline wires that to its
+job-heartbeat write; outside the pipeline a None callback must be a no-op.
 
-The LLM, aggregation engine, and services are all mocked — no real network or DB calls.
+The LLM, rollup engine, and services are all mocked — no real network or DB calls.
 """
 
 from __future__ import annotations
@@ -84,10 +84,9 @@ def _patch_aggregation_and_llm():
     aggregation.conflicts = []
     aggregation.coverage = []
     aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(return_value=aggregation)
     return (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_overview_response()),
@@ -115,7 +114,7 @@ async def test_overview_fires_heartbeat_at_each_sub_step():
             on_progress=on_progress,
         )
 
-    # One ping before the aggregation rebuild and one before the LLM synthesis — the two
+    # One ping before the rollup build and one before the LLM synthesis — the two
     # spans that can each run long enough to stall an otherwise-healthy job.
     assert pings == 2
 

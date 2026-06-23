@@ -27,9 +27,7 @@ def pipeline_service(mock_repo):
 
 @pytest.fixture
 def mock_db():
-    db = MagicMock()
-    db.findings.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
-    return db
+    return MagicMock()
 
 
 @pytest.mark.asyncio

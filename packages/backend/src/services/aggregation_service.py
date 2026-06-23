@@ -14,7 +14,7 @@ from src.models.document import (
     DocumentExtraction,
     InsightCategory,
 )
-from src.models.finding import AggregatedFinding, Aggregation, Finding, FindingConflict
+from src.models.finding import AggregatedFinding, Finding, FindingConflict, HydratedRollup
 from src.models.product_intelligence import ProductRollup, RollupConflict, RollupItem
 from src.repositories.document_repository import DocumentRepository
 from src.services.evidence_relevance import filter_evidence_spans
@@ -23,21 +23,17 @@ from src.services.product_intelligence_service import ProductIntelligenceService
 from src.utils.standard_terms import should_exclude_from_dangers
 
 
-class AggregationService:
-    """Builds product rollups from document extractions and persists to product_intelligence."""
+class ProductRollupService:
+    """Builds product rollups from document extractions and persists slim caches."""
 
     def __init__(
         self,
         document_repo: DocumentRepository,
-        finding_repo: object | None = None,
-        aggregation_repo: object | None = None,
         intelligence_service: ProductIntelligenceService | None = None,
     ) -> None:
         self._document_repo = document_repo
         self._intelligence_service = intelligence_service or ProductIntelligenceService()
         self._logger = get_logger(__name__)
-        # Legacy constructor args ignored — findings/aggregations collections removed.
-        _ = finding_repo, aggregation_repo
 
     @staticmethod
     def _normalize_value(value: str) -> str:
@@ -636,14 +632,6 @@ class AggregationService:
     # Top-level operations
     # ------------------------------------------------------------------
 
-    async def rebuild_findings_for_product(
-        self, db: AgnosticDatabase, product_id: str
-    ) -> list[Finding]:
-        """Ensure extractions are fresh on all product documents (in-memory findings returned)."""
-        return await self._collect_findings_from_extractions(
-            db, product_id, persist_extractions=True
-        )
-
     async def _collect_findings_from_extractions(
         self,
         db: AgnosticDatabase,
@@ -723,18 +711,17 @@ class AggregationService:
             )
         return conflicts
 
-    def _rollup_to_aggregation(
+    def _rollup_to_hydrated(
         self,
         *,
         product_id: str,
         product_slug: str,
         rollup: ProductRollup,
         findings: list[Finding],
-    ) -> Aggregation:
-        """Build API-compatible Aggregation with evidence for in-process consumers."""
+    ) -> HydratedRollup:
         aggregated = self._aggregate_findings(findings)
         conflicts = self._detect_conflicts(findings)
-        return Aggregation(
+        return HydratedRollup(
             product_id=product_id,
             product_slug=product_slug,
             findings=aggregated,
@@ -743,9 +730,9 @@ class AggregationService:
             generated_at=rollup.generated_at,
         )
 
-    async def build_product_rollup(
+    async def build_product_aggregation(
         self, db: AgnosticDatabase, product_id: str, product_slug: str
-    ) -> ProductRollup:
+    ) -> HydratedRollup:
         findings = await self._collect_findings_from_extractions(
             db, product_id, persist_extractions=True
         )
@@ -773,7 +760,12 @@ class AggregationService:
                 total_categories=len(rollup.coverage),
                 status_counts=status_counts,
             )
-        return rollup
+        return self._rollup_to_hydrated(
+            product_id=product_id,
+            product_slug=product_slug,
+            rollup=rollup,
+            findings=findings,
+        )
 
     def _aggregate_findings(self, findings: list[Finding]) -> list[AggregatedFinding]:
         grouped: dict[tuple[str, str], AggregatedFinding] = {}
@@ -862,40 +854,3 @@ class AggregationService:
                 status = "missing"
             items.append(CoverageItem(category=category, status=status))
         return items
-
-    async def build_product_aggregation(
-        self, db: AgnosticDatabase, product_id: str, product_slug: str
-    ) -> Aggregation:
-        findings = await self._collect_findings_from_extractions(
-            db, product_id, persist_extractions=False
-        )
-        analyzed_docs = len({finding.document_id for finding in findings})
-        rollup = ProductRollup(
-            coverage=self._build_coverage(findings, analyzed_docs=analyzed_docs),
-            items=self._aggregate_findings_slim(findings),
-            conflicts=self._detect_conflicts_slim(findings),
-        )
-        source_hashes = await self._intelligence_service.compute_source_hashes(db, product_id)
-        await self._intelligence_service.save_rollup(
-            db,
-            product_id=product_id,
-            product_slug=product_slug,
-            rollup=rollup,
-            source_hashes=source_hashes,
-        )
-        if rollup.coverage:
-            status_counts: dict[str, int] = {}
-            for item in rollup.coverage:
-                status_counts[item.status] = status_counts.get(item.status, 0) + 1
-            self._logger.info(
-                "Aggregation coverage summary",
-                product_slug=product_slug,
-                total_categories=len(rollup.coverage),
-                status_counts=status_counts,
-            )
-        return self._rollup_to_aggregation(
-            product_id=product_id,
-            product_slug=product_slug,
-            rollup=rollup,
-            findings=findings,
-        )

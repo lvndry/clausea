@@ -49,11 +49,11 @@ async def promote_documents(dry_run: bool) -> dict[str, Any]:
     return result
 
 
-async def promote_product_overviews(dry_run: bool) -> dict[str, Any]:
-    """Promote product overviews."""
+async def promote_product_intelligence(dry_run: bool) -> dict[str, Any]:
+    """Promote product intelligence."""
     promotion_manager = PromotionManager()
     await promotion_manager.connect_databases()
-    result: dict[str, Any] = await promotion_manager.promote_product_overviews(dry_run=dry_run)
+    result: dict[str, Any] = await promotion_manager.promote_product_intelligence(dry_run=dry_run)
     await promotion_manager.close_connections()
     return result
 
@@ -95,10 +95,10 @@ async def download_documents(dry_run: bool) -> dict[str, Any]:
     return result
 
 
-async def download_product_overviews(dry_run: bool) -> dict[str, Any]:
-    """Download product overviews from production to local."""
+async def download_product_intelligence(dry_run: bool) -> dict[str, Any]:
+    """Download product intelligence from production to local."""
     promotion_manager = PromotionManager()
     await promotion_manager.connect_databases()
-    result: dict[str, Any] = await promotion_manager.download_product_overviews(dry_run=dry_run)
+    result: dict[str, Any] = await promotion_manager.download_product_intelligence(dry_run=dry_run)
     await promotion_manager.close_connections()
     return result

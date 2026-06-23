@@ -1,4 +1,3 @@
-import difflib
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,87 +21,47 @@ class DocumentChangeSummary(BaseModel):
     previous_hash: str | None
 
 
-class DiffResponse(BaseModel):
-    version_a_id: str | None
-    version_b_id: str
-    unified_diff: str
-
-
 @router.get("/documents/{document_id}/versions", response_model=list[DocumentChangeSummary])
-async def list_document_versions(
+async def list_document_changes(
     document_id: str,
     db: AgnosticDatabase = Depends(get_db),
 ) -> list[DocumentChangeSummary]:
     changes = await DocumentChangeRepository().list_for_document(db, document_id)
-    if changes:
-        return [
-            DocumentChangeSummary(
-                id=change.id,
-                created_at=change.created_at,
-                changed_fields=change.changed_fields,
-                job_id=change.job_id,
-                content_hash=change.content_hash,
-                previous_hash=change.previous_hash,
-            )
-            for change in changes
-        ]
-
-    # Legacy fallback for rows recorded before document_changes migration.
-    cursor = (
-        db.document_versions.find(
-            {"document_id": document_id},
-            {"text": 0, "markdown": 0, "raw_html": 0},
-        )
-        .sort("created_at", -1)
-        .limit(50)
-    )
-    rows = await cursor.to_list(length=50)
     return [
         DocumentChangeSummary(
-            id=str(row.get("id", "")),
-            created_at=row.get("created_at"),
-            changed_fields=row.get("changed_fields") or [],
-            job_id=row.get("job_id"),
-            content_hash=row.get("content_hash") or "",
-            previous_hash=None,
+            id=change.id,
+            created_at=change.created_at,
+            changed_fields=change.changed_fields,
+            job_id=change.job_id,
+            content_hash=change.content_hash,
+            previous_hash=change.previous_hash,
         )
-        for row in rows
+        for change in changes
     ]
 
 
-@router.get("/documents/{document_id}/versions/{version_id}/diff", response_model=DiffResponse)
-async def diff_document_versions(
+@router.get("/documents/{document_id}/versions/{change_id}/diff", response_model=dict[str, str])
+async def diff_document_changes(
     document_id: str,
-    version_id: str,
+    change_id: str,
     db: AgnosticDatabase = Depends(get_db),
-) -> DiffResponse:
-    target = await db.document_versions.find_one({"id": version_id, "document_id": document_id})
-    if not target:
-        raise HTTPException(status_code=404, detail="Version not found")
+) -> dict[str, str]:
+    change = await db.document_changes.find_one({"id": change_id, "document_id": document_id})
+    if not change:
+        raise HTTPException(status_code=404, detail="Change record not found")
 
-    previous = await db.document_versions.find_one(
-        {"document_id": document_id, "created_at": {"$lt": target["created_at"]}},
-        sort=[("created_at", -1)],
-    )
-
-    text_a = (previous or {}).get("markdown") or (previous or {}).get("text") or ""
-    text_b = target.get("markdown") or target.get("text") or ""
-    diff_lines = list(
-        difflib.unified_diff(
-            text_a.splitlines(keepends=True),
-            text_b.splitlines(keepends=True),
-            fromfile="previous",
-            tofile="current",
-            n=3,
-        )
-    )
-    return DiffResponse(
-        version_a_id=previous.get("id") if previous else None,
-        version_b_id=version_id,
-        unified_diff="".join(diff_lines)
-        if diff_lines
-        else "Diff unavailable for slim change records.",
-    )
+    current = await db.documents.find_one({"id": document_id}, {"markdown": 1})
+    current_text = (current or {}).get("markdown") or ""
+    return {
+        "change_id": change_id,
+        "message": (
+            "Full historical diffs are not stored. Compare current document text against "
+            "recorded content hashes."
+        ),
+        "content_hash": change.get("content_hash") or "",
+        "previous_hash": change.get("previous_hash") or "",
+        "current_excerpt": current_text[:500],
+    }
 
 
 @router.get("/products/{slug}/overview-history", response_model=list[OverviewSnapshot])

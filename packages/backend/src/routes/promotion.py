@@ -114,23 +114,23 @@ async def promote_documents_only(request: PromotionRequest) -> PromotionResponse
         ) from e
 
 
-@router.post("/promote-product-overviews", response_model=PromotionResponse)
-async def promote_product_overviews_only(request: PromotionRequest) -> PromotionResponse:
-    """Promote only product overviews from local to production."""
+@router.post("/promote-product-intelligence", response_model=PromotionResponse)
+async def promote_product_intelligence_only(request: PromotionRequest) -> PromotionResponse:
+    """Promote only product intelligence from local to production."""
     try:
-        result = await promotion_service.promote_product_overviews(dry_run=request.dry_run)
+        result = await promotion_service.promote_product_intelligence(dry_run=request.dry_run)
 
         action = "dry run" if request.dry_run else "actual"
         return PromotionResponse(
             success=True,
-            message=f"Product overviews {action} promotion completed successfully",
+            message=f"Product intelligence {action} promotion completed successfully",
             data=result,
         )
     except Exception as e:
-        logger.exception("Error in product overviews promotion", error=str(e))
+        logger.exception("Error in product intelligence promotion", error=str(e))
         raise HTTPException(
             status_code=500,
-            detail="Unable to promote product overviews. Please try again later.",
+            detail="Unable to promote product intelligence. Please try again later.",
         ) from e
 
 
@@ -214,21 +214,21 @@ async def download_documents_only(request: PromotionRequest) -> PromotionRespons
         ) from e
 
 
-@router.post("/download-product-overviews", response_model=PromotionResponse)
-async def download_product_overviews_only(request: PromotionRequest) -> PromotionResponse:
-    """Download only product overviews from production to local."""
+@router.post("/download-product-intelligence", response_model=PromotionResponse)
+async def download_product_intelligence_only(request: PromotionRequest) -> PromotionResponse:
+    """Download only product intelligence from production to local."""
     try:
-        result = await promotion_service.download_product_overviews(dry_run=request.dry_run)
+        result = await promotion_service.download_product_intelligence(dry_run=request.dry_run)
 
         action = "dry run" if request.dry_run else "actual"
         return PromotionResponse(
             success=True,
-            message=f"Product overviews {action} download completed successfully",
+            message=f"Product intelligence {action} download completed successfully",
             data=result,
         )
     except Exception as e:
-        logger.exception("Error in product overviews download", error=str(e))
+        logger.exception("Error in product intelligence download", error=str(e))
         raise HTTPException(
             status_code=500,
-            detail="Unable to download product overviews. Please try again later.",
+            detail="Unable to download product intelligence. Please try again later.",
         ) from e

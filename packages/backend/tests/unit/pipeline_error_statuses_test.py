@@ -22,9 +22,7 @@ from src.services.pipeline_service import PipelineService
 
 @pytest.fixture
 def mock_db():
-    db = MagicMock()
-    db.findings.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
-    return db
+    return MagicMock()
 
 
 def _make_job(job_id: str = "job-test") -> PipelineJob:

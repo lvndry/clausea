@@ -266,7 +266,7 @@ class ProductService:
 
     async def count_analyzed_products(self, db: AgnosticDatabase) -> int:
         """Count products with a completed analysis (a stored overview)."""
-        return await self._product_repo.count_product_overviews(db)
+        return await self._product_repo.count_products_with_overview(db)
 
     async def list_analyzed_products_for_sitemap(
         self, db: AgnosticDatabase
@@ -322,7 +322,7 @@ class ProductService:
         """Get the product-level consumer explainer with canonical grade.
 
         Product pages treat overview scoring as the single source of truth.
-        The explainer grade is therefore reconciled against product_overviews
+        The explainer grade is therefore reconciled against product_intelligence overview data
         before returning, and legacy mismatches are repaired best-effort.
         Stored explainers also get verified source citations backfilled on read
         from the product's core document extractions when missing.

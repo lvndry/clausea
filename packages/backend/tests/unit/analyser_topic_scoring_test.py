@@ -6,7 +6,7 @@ from litellm import ModelResponse
 
 from src.analyser import generate_product_overview
 from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores, EvidenceSpan
-from src.models.finding import AggregatedFinding, Aggregation
+from src.models.finding import AggregatedFinding, HydratedRollup
 
 
 def _core_doc() -> Document:
@@ -70,8 +70,8 @@ def _services() -> tuple[MagicMock, MagicMock]:
     return product_svc, document_svc
 
 
-def _aggregation() -> Aggregation:
-    return Aggregation(
+def _aggregation() -> HydratedRollup:
+    return HydratedRollup(
         product_id="p1",
         product_slug="example",
         findings=[
@@ -112,12 +112,11 @@ def _aggregation() -> Aggregation:
 async def test_generate_product_overview_llm_call_is_temperature_zero() -> None:
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(return_value=_aggregation())
     llm_mock = AsyncMock(return_value=_overview_response())
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
         patch("src.analyser.acompletion_with_fallback", llm_mock),
     ):
         await generate_product_overview(
@@ -136,11 +135,10 @@ async def test_generate_product_overview_llm_call_is_temperature_zero() -> None:
 async def test_generate_product_overview_uses_llm_grades() -> None:
     product_svc, document_svc = _services()
     aggregation_service = MagicMock()
-    aggregation_service.rebuild_findings_for_product = AsyncMock(return_value=None)
     aggregation_service.build_product_aggregation = AsyncMock(return_value=_aggregation())
 
     with (
-        patch("src.analyser.AggregationService", return_value=aggregation_service),
+        patch("src.analyser.ProductRollupService", return_value=aggregation_service),
         patch(
             "src.analyser.acompletion_with_fallback", AsyncMock(return_value=_overview_response())
         ),

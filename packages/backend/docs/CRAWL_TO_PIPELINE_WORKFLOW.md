@@ -37,7 +37,7 @@ flowchart TB
     EX["extraction_service.extract_document_facts"]
     AD["analyser.analyse_document"]
     GO["analyser.generate_product_overview"]
-    AGG["AggregationService"]
+    AGG["ProductRollupService"]
   end
 
   subgraph persistence [MongoDB]

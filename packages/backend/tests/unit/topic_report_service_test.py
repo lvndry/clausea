@@ -1,5 +1,5 @@
 from src.models.document import CoverageItem, DocumentSummary, EvidenceSpan
-from src.models.finding import AggregatedFinding, Aggregation, FindingConflict
+from src.models.finding import AggregatedFinding, FindingConflict, HydratedRollup
 from src.services.topic_report_service import build_product_topic_report
 
 
@@ -21,7 +21,7 @@ def _documents() -> list[DocumentSummary]:
 
 
 def test_build_product_topic_report_keeps_all_non_empty_citations() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -62,7 +62,7 @@ def test_build_product_topic_report_keeps_all_non_empty_citations() -> None:
 
 
 def test_build_product_topic_report_keeps_off_topic_quotes_without_pattern_filter() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="figma",
         findings=[
@@ -109,7 +109,7 @@ def test_build_product_topic_report_keeps_off_topic_quotes_without_pattern_filte
 
 
 def test_build_product_topic_report_drops_finding_when_only_empty_evidence() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -140,7 +140,7 @@ def test_build_product_topic_report_drops_finding_when_only_empty_evidence() -> 
 
 
 def test_build_product_topic_report_includes_cross_document_citations() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[
@@ -198,7 +198,7 @@ def test_build_product_topic_report_includes_cross_document_citations() -> None:
 
 
 def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[
@@ -223,7 +223,7 @@ def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
 
 
 def test_build_product_topic_report_attaches_conflicts() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[],
@@ -267,7 +267,7 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
 
 
 def test_build_product_topic_report_keeps_all_linked_citations() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -303,7 +303,7 @@ def test_build_product_topic_report_keeps_all_linked_citations() -> None:
 
 
 def test_build_product_topic_report_filters_standard_danger_findings() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
@@ -347,7 +347,7 @@ def test_build_product_topic_report_filters_standard_danger_findings() -> None:
 
 
 def test_build_product_topic_report_is_deterministic() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[CoverageItem(category="security", status="missing")],
@@ -385,7 +385,7 @@ def test_build_product_topic_report_is_deterministic() -> None:
 
 
 def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_coverage() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         coverage=[CoverageItem(category="data_collection", status="found")],
@@ -430,7 +430,7 @@ def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_c
 
 
 def test_build_product_topic_report_filters_dangers_via_materiality_labels() -> None:
-    aggregation = Aggregation(
+    aggregation = HydratedRollup(
         product_id="product_1",
         product_slug="example",
         findings=[
