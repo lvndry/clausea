@@ -27,6 +27,7 @@ from src.routes import (
     subscription,
     users,
 )
+from src.services.migration_service import MigrationService
 
 setup_logging()
 logger = structlog.get_logger(service="main")
@@ -46,6 +47,9 @@ async def _initialize_database() -> None:
             return
 
         async with db_session() as db:
+            # Migrations first: they may create/rename collections that the
+            # index step below then builds against.
+            await MigrationService().run_pending(db)
             await ensure_all_indexes(db)
             # Reap orphaned jobs first (frees the active slot), THEN build the partial
             # unique index that enforces at-most-one active job per product.
