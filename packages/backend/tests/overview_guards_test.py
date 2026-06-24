@@ -1,14 +1,12 @@
+from src.analyzers.llm_review import LLMReviewCheck, LLMReviewResult
 from src.analyzers.overview_guards import (
     OverviewValidationResult,
     check_actions_actionable,
     check_dangers_benefits_balance,
     check_e_grade_on_silence,
-    check_generic_headline_opener,
-    check_jargon,
     check_rights_have_paths,
-    find_internal_state_language,
     find_long_sentences,
-    find_unsupported_strong_claims,
+    merge_llm_review,
     validate_headline_length,
     validate_headline_not_empty,
     validate_overview,
@@ -74,24 +72,6 @@ def test_validate_headline_not_empty_adequate_evidence_accepts_filled() -> None:
     assert validate_headline_not_empty("Coinbase sells data.", has_adequate_evidence=True) is True
 
 
-def test_find_internal_state_language_clean_text() -> None:
-    assert find_internal_state_language("Coinbase shares data with advertisers.") == []
-
-
-def test_find_internal_state_language_detects_phrases() -> None:
-    text = "Based on the extraction of the document and the policy bundle we conclude."
-    hits = find_internal_state_language(text)
-    assert "the extraction" in hits
-    assert "the document" in hits
-    assert "the policy bundle" in hits
-
-
-def test_find_internal_state_language_case_insensitive() -> None:
-    assert find_internal_state_language("The Provided Documents say little.") == [
-        "the provided documents"
-    ]
-
-
 def test_find_long_sentences_none_when_short() -> None:
     assert find_long_sentences("Short sentence. Another one!") == []
 
@@ -130,53 +110,6 @@ def test_check_e_grade_on_silence_not_enough_silence() -> None:
     assert check_e_grade_on_silence("E", stances) is False
 
 
-def test_find_unsupported_strong_claims_coinbase_case() -> None:
-    headline = "Coinbase sells user identifiers to advertisers like Meta"
-    summary = "Coinbase shares identifiers for advertising."
-    citations = [{"quote": "we share identifiers for advertising", "verified": True}]
-    privacy_signals = {"sells_data": "unclear"}
-    unsupported = find_unsupported_strong_claims(headline, summary, citations, privacy_signals)
-    assert "sells user" in unsupported
-
-
-def test_find_unsupported_strong_claims_supported_by_signal() -> None:
-    headline = "Spotify sells your listening history to advertisers."
-    summary = ""
-    citations = []
-    privacy_signals = {"sells_data": "yes"}
-    assert find_unsupported_strong_claims(headline, summary, citations, privacy_signals) == []
-
-
-def test_find_unsupported_strong_claims_supported_by_verified_quote() -> None:
-    headline = "App collects biometric data from face scans."
-    summary = ""
-    citations = [{"quote": "we collect biometric face scan data", "verified": True}]
-    privacy_signals = None
-    assert find_unsupported_strong_claims(headline, summary, citations, privacy_signals) == []
-
-
-def test_find_unsupported_strong_claims_ignores_unverified_citations() -> None:
-    headline = "App collects biometric data from face scans."
-    summary = ""
-    citations = [{"quote": "we collect biometric face scan data", "verified": False}]
-    privacy_signals = None
-    assert "biometric" in find_unsupported_strong_claims(
-        headline, summary, citations, privacy_signals
-    )
-
-
-def test_find_unsupported_strong_claims_no_strong_phrases() -> None:
-    headline = "Coinbase offers a self-service deletion path."
-    summary = "Account deletion is available in settings."
-    assert find_unsupported_strong_claims(headline, summary, [], None) == []
-
-
-def test_find_unsupported_strong_claims_regex_patterns() -> None:
-    headline = "Service retains your data indefinitely after deletion."
-    summary = ""
-    assert "retains.*indefinitely" in find_unsupported_strong_claims(headline, summary, [], None)
-
-
 def test_check_dangers_benefits_balance_few_dangers_ok() -> None:
     assert check_dangers_benefits_balance(["a", "b"], [], "anything") is True
 
@@ -187,21 +120,10 @@ def test_check_dangers_benefits_balance_enough_benefits_ok() -> None:
     assert check_dangers_benefits_balance(dangers, benefits, "no ack") is True
 
 
-def test_check_dangers_benefits_balance_imbalance_without_ack_fails() -> None:
+def test_check_dangers_benefits_balance_imbalance_fails() -> None:
     dangers = ["d"] * 6
     benefits = ["only one"]
-    assert (
-        check_dangers_benefits_balance(dangers, benefits, "The product is broadly risky.") is False
-    )
-
-
-def test_check_dangers_benefits_balance_imbalance_with_ack_passes() -> None:
-    dangers = ["d"] * 6
-    benefits = ["only one"]
-    assert (
-        check_dangers_benefits_balance(dangers, benefits, "The documents describe few protections.")
-        is True
-    )
+    assert check_dangers_benefits_balance(dangers, benefits, "anything") is False
 
 
 def test_check_rights_have_paths_all_have_paths() -> None:
@@ -266,49 +188,6 @@ def test_check_actions_actionable_empty() -> None:
     assert ratio == 1.0
 
 
-def test_check_jargon_clean_text() -> None:
-    assert check_jargon("The policy is clear and uses plain language.") is True
-
-
-def test_check_jargon_over_limit_fails() -> None:
-    text = "notwithstanding herein therein hereto the data processor indemnification clause"
-    assert check_jargon(text) is False
-
-
-def test_check_jargon_at_limit_passes() -> None:
-    text = "notwithstanding herein therein the policy"
-    assert check_jargon(text, max_hits=3) is True
-
-
-def test_check_generic_headline_opener_specific_passes() -> None:
-    assert (
-        check_generic_headline_opener("Coinbase sells user identifiers to advertisers like Meta.")
-        is True
-    )
-
-
-def test_check_generic_headline_opener_generic_fails() -> None:
-    assert (
-        check_generic_headline_opener(
-            "This product collects extensive personal and behavioral data from users."
-        )
-        is False
-    )
-
-
-def test_check_generic_headline_opener_shares_pattern_fails() -> None:
-    assert (
-        check_generic_headline_opener(
-            "The service shares your data with many advertising partners."
-        )
-        is False
-    )
-
-
-def test_check_generic_headline_opener_empty_passes() -> None:
-    assert check_generic_headline_opener("") is True
-
-
 def test_validate_overview_clean_passes() -> None:
     overview = {
         "summary": "Coinbase offers strong self-service privacy controls.",
@@ -324,7 +203,7 @@ def test_validate_overview_clean_passes() -> None:
         "benefits": ["Self-service deletion", "Encryption in transit"],
         "recommended_actions": [
             "Delete your account at https://x.com/delete",
-            "Opt out in account settings",
+            "Opt out in settings",
         ],
         "privacy_signals": {"sells_data": "no", "ai_training_on_user_data": "no"},
         "topic_stances": [
@@ -379,48 +258,12 @@ def test_validate_overview_e_on_silence_re_rolls() -> None:
     assert result.checks_passed["no_e_grade_on_silence"] is False
 
 
-def test_validate_overview_unsupported_strong_claim_re_rolls() -> None:
-    overview = {
-        "summary": "Coinbase shares identifiers for advertising.",
-        "headline_claim": "Coinbase sells user identifiers to advertisers like Meta.",
-        "grade": "D",
-        "grade_justification": "Broad sharing with advertisers.",
-        "privacy_signals": {"sells_data": "unclear"},
-        "topic_stances": [
-            {
-                "status": "found",
-                "evidence_count": 1,
-                "supporting_citations": [
-                    {"quote": "we share identifiers for advertising", "verified": True}
-                ],
-            },
-        ],
-    }
-    result = validate_overview(overview, has_adequate_evidence=True)
-    assert result.should_re_roll is True
-    assert result.checks_passed["no_unsupported_strong_claims"] is False
-    assert any("Strong claims" in r for r in result.re_roll_reasons)
-
-
-def test_validate_overview_internal_state_language_re_rolls() -> None:
-    overview = {
-        "summary": "Based on the document the product is broadly risky.",
-        "headline_claim": "Service collects extensive data.",
-        "grade": "D",
-        "grade_justification": "The extraction shows broad collection.",
-        "topic_stances": [],
-    }
-    result = validate_overview(overview, has_adequate_evidence=True)
-    assert result.should_re_roll is True
-    assert result.checks_passed["no_internal_state_language"] is False
-
-
 def test_validate_overview_warnings_for_medium_issues() -> None:
     long_summary = " ".join(["word"] * 25)
     long_sentence = " ".join(["word"] * 40)
     overview = {
         "summary": long_summary,
-        "headline_claim": "Service collects a wide variety of personal data from users.",
+        "headline_claim": "Service collects data from users.",
         "grade": "D",
         "grade_justification": long_sentence,
         "your_rights": ["Request access", "Correct data", "Withdraw consent"],
@@ -439,44 +282,93 @@ def test_validate_overview_warnings_for_medium_issues() -> None:
     result = validate_overview(overview, has_adequate_evidence=True)
     assert result.should_re_roll is False
     assert result.checks_passed["summary_length"] is False
-    assert result.checks_passed["headline_opener_specific"] is False
     assert result.checks_passed["dangers_benefits_balance"] is False
     assert result.checks_passed["rights_have_paths"] is False
     assert result.checks_passed["actions_actionable"] is False
     assert result.checks_passed["no_long_sentences"] is False
     assert any("Summary exceeds" in w for w in result.warnings)
-    assert any("Headline opener is generic" in w for w in result.warnings)
 
 
-def test_validate_overview_jargon_warning() -> None:
-    overview = {
-        "summary": "notwithstanding herein therein hereto the policy is dense.",
-        "headline_claim": "Service uses a data processor under standard contractual clauses.",
-        "grade": "D",
-        "grade_justification": "notwithstanding inter alia the indemnification is broad.",
-        "topic_stances": [],
-    }
-    result = validate_overview(overview, has_adequate_evidence=True)
-    assert result.checks_passed["no_jargon"] is False
-    assert any("jargon" in w for w in result.warnings)
+def test_merge_llm_review_none_returns_deterministic_unchanged() -> None:
+    det = OverviewValidationResult(
+        should_re_roll=True,
+        re_roll_reasons=["headline empty"],
+        warnings=["summary too long"],
+        checks_passed={"headline_not_empty": False, "summary_length": False},
+    )
+    merged = merge_llm_review(det, None)
+    assert merged is det
 
 
-def test_validate_overview_gathers_citations_from_topic_stances() -> None:
-    overview = {
-        "summary": "Service sells your data to brokers.",
-        "headline_claim": "Service sells your data to brokers.",
-        "grade": "D",
-        "grade_justification": "Data sale is documented.",
-        "privacy_signals": {"sells_data": "unclear"},
-        "topic_stances": [
-            {
-                "status": "found",
-                "evidence_count": 1,
-                "supporting_citations": [
-                    {"quote": "we may sell your data to data brokers", "verified": True}
-                ],
-            },
-        ],
-    }
-    result = validate_overview(overview, has_adequate_evidence=True)
-    assert result.checks_passed["no_unsupported_strong_claims"] is True
+def test_merge_llm_review_high_severity_adds_to_re_roll() -> None:
+    det = OverviewValidationResult(
+        should_re_roll=False,
+        re_roll_reasons=[],
+        warnings=[],
+        checks_passed={},
+    )
+    llm = LLMReviewResult(
+        checks=[
+            LLMReviewCheck(
+                check="UNSUPPORTED_CLAIMS",
+                passed=False,
+                severity="high",
+                description="Claims sale but signal is no",
+            ),
+            LLMReviewCheck(check="LEGAL_JARGON", passed=True, severity="medium"),
+        ]
+    )
+    merged = merge_llm_review(det, llm)
+    assert merged.should_re_roll is True
+    assert any("UNSUPPORTED_CLAIMS" in r for r in merged.re_roll_reasons)
+    assert merged.checks_passed["llm_unsupported_claims"] is False
+    assert merged.checks_passed["llm_legal_jargon"] is True
+
+
+def test_merge_llm_review_medium_severity_adds_to_warnings() -> None:
+    det = OverviewValidationResult(
+        should_re_roll=False,
+        re_roll_reasons=[],
+        warnings=[],
+        checks_passed={},
+    )
+    llm = LLMReviewResult(
+        checks=[
+            LLMReviewCheck(
+                check="LEGAL_JARGON",
+                passed=False,
+                severity="medium",
+                description="Uses 'notwithstanding'",
+            ),
+            LLMReviewCheck(
+                check="GENERIC_HEADLINE",
+                passed=False,
+                severity="medium",
+                description="Generic opener",
+            ),
+        ]
+    )
+    merged = merge_llm_review(det, llm)
+    assert merged.should_re_roll is False
+    assert len(merged.warnings) == 2
+    assert all("[LLM]" in w for w in merged.warnings)
+
+
+def test_merge_llm_review_all_pass_no_changes() -> None:
+    det = OverviewValidationResult(
+        should_re_roll=False,
+        re_roll_reasons=[],
+        warnings=["summary too long"],
+        checks_passed={"summary_length": False},
+    )
+    llm = LLMReviewResult(
+        checks=[
+            LLMReviewCheck(check="UNSUPPORTED_CLAIMS", passed=True, severity="high"),
+            LLMReviewCheck(check="LEGAL_JARGON", passed=True, severity="medium"),
+        ]
+    )
+    merged = merge_llm_review(det, llm)
+    assert merged.should_re_roll is False
+    assert merged.re_roll_reasons == []
+    assert merged.warnings == ["summary too long"]
+    assert merged.checks_passed["llm_unsupported_claims"] is True

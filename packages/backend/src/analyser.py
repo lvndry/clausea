@@ -2246,7 +2246,8 @@ Per-document analyses and extractions:
 
         _reconcile_meta_summary_risk(meta_summary)
 
-        from src.analyzers.overview_guards import validate_overview
+        from src.analyzers.llm_review import llm_review_overview
+        from src.analyzers.overview_guards import merge_llm_review, validate_overview
         from src.services.thin_evidence_gate import check_thin_evidence
         from src.services.topic_evidence_fallback import attach_fallback_evidence
 
@@ -2266,7 +2267,14 @@ Per-document analyses and extractions:
                 logger.info("Attached %d fallback citations to %s", attached, product_slug)
 
         overview_dict = meta_summary.model_dump(mode="json")
-        validation = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
+        deterministic = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
+
+        from src.analyzers.overview_guards import _collect_citations
+
+        citations_for_review = _collect_citations(overview_dict.get("topic_stances") or [])
+        llm_result = await llm_review_overview(overview_dict, citations_for_review)
+        validation = merge_llm_review(deterministic, llm_result)
+
         if validation.should_re_roll:
             reasons = "; ".join(validation.re_roll_reasons)
             logger.warning("Overview validation failed for %s: %s", product_slug, reasons)

@@ -1,17 +1,21 @@
 """Post-generation validators for product overviews.
 
-Server-side quality guards run after the LLM produces a product overview and it
-is parsed into the ``MetaSummary`` shape. They surface two severity tiers:
+Two tiers of validation:
 
-- high severity -> the overview should be re-rolled (e.g. empty headline with
-  adequate evidence, an E grade assigned for silence, strong claims with no
-  supporting evidence, pipeline-internal language leaking into customer text).
-- medium severity -> warnings only (length overages, long sentences, jargon,
-  dangers/benefits imbalance, non-actionable rights/actions, generic openers).
+1. **Deterministic checks** (this file) — fast, reliable, no LLM needed.
+   Length caps, empty-headline detection, E-grade-on-silence, dangers/benefits
+   count balance, rights-paths regex, actions-actionability regex, citation
+   coverage, long-sentence detection.
 
-The top-level entry point is :func:`validate_overview`, which returns an
-:class:`OverviewValidationResult`. Individual validators are exposed so callers
-can run targeted checks during partial re-generation.
+2. **Semantic checks** (``llm_review.py``) — one cheap LLM call that replaces
+   hardcoded lexicons for: unsupported strong claims, signal/prose
+   contradictions, legal jargon, generic headline openers, internal-state
+   language, jargon in rights/actions. The LLM understands paraphrase and
+   context that regex lists always miss.
+
+The top-level entry point is :func:`validate_overview`, which runs deterministic
+checks synchronously and optionally merges LLM review results. Individual
+validators are exposed for targeted testing.
 """
 
 import re
@@ -19,77 +23,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.analyzers.signal_consistency import find_signal_prose_contradictions
-
 _SUMMARY_MAX_WORDS = 20
 _HEADLINE_MAX_WORDS = 25
 _SENTENCE_DEFAULT_MAX_WORDS = 35
 
-_INTERNAL_STATE_PHRASES: tuple[str, ...] = (
-    "analyzed document",
-    "the document",
-    "the extraction",
-    "the policy bundle",
-    "core documents",
-    "the provided documents",
-    "source documents",
-)
-
 _SILENCE_STATUSES: frozenset[str] = frozenset({"missing", "not_disclosed"})
-
-_BALANCE_ACK_PHRASES: tuple[str, ...] = (
-    "few protections",
-    "documents describe few",
-    "limited protections",
-    "no documented protections",
-)
-
-_GENERIC_OPENERS: tuple[str, ...] = (
-    "collects extensive",
-    "collects a wide",
-    "collects broad",
-    "shares your data with",
-    "collects personal and behavioral",
-)
-
-_JARGON_LEXICON: tuple[str, ...] = (
-    "notwithstanding",
-    "hereunder",
-    "herein",
-    "therein",
-    "hereto",
-    "thereunder",
-    "inter alia",
-    "ipso facto",
-    "force majeure",
-    "indemnifi",
-    "sub-processor",
-    "subprocessor",
-    "data controller",
-    "data processor",
-    "standard contractual clauses",
-    "adequacy decision",
-)
-
-_STRONG_CLAIM_LEXICON: tuple[tuple[str, str, str | None, str | None], ...] = (
-    (r"sells your", "sell", "sells_data", "yes"),
-    (r"sale of your", "sale", "sells_data", "yes"),
-    (r"data sale", "sale", "sells_data", "yes"),
-    (r"sells user", "sell", "sells_data", "yes"),
-    (r"sell your", "sell", "sells_data", "yes"),
-    (r"biometric", "biometric", None, None),
-    (r"keystroke", "keystroke", None, None),
-    (r"clipboard", "clipboard", None, None),
-    (r"psychological profile", "psychological", None, None),
-    (r"psychological profiling", "psychological", None, None),
-    (r"trains on", "train", "ai_training_on_user_data", "yes"),
-    (r"training on", "training", "ai_training_on_user_data", "yes"),
-    (r"train ai", "train", "ai_training_on_user_data", "yes"),
-    (r"ai training on", "training", "ai_training_on_user_data", "yes"),
-    (r"indefinitely after", "indefinitely", None, None),
-    (r"retains.*indefinitely", "indefinitely", None, None),
-    (r"perpetual.*license", "license", None, None),
-)
 
 _PATH_INDICATOR = re.compile(
     r"https?://|@|(?:settings?|account|profile|dashboard|in-app|preference)",
@@ -128,6 +66,9 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text))
 
 
+# ── Deterministic validators ──────────────────────────────────────────────────
+
+
 def validate_summary_length(summary: str) -> bool:
     if not summary:
         return True
@@ -144,13 +85,6 @@ def validate_headline_not_empty(headline: str | None, has_adequate_evidence: boo
     if not has_adequate_evidence:
         return True
     return bool(headline and headline.strip())
-
-
-def find_internal_state_language(text: str) -> list[str]:
-    if not text:
-        return []
-    lowered = text.lower()
-    return [phrase for phrase in _INTERNAL_STATE_PHRASES if phrase in lowered]
 
 
 def find_long_sentences(text: str, max_words: int = _SENTENCE_DEFAULT_MAX_WORDS) -> list[int]:
@@ -182,44 +116,12 @@ def check_e_grade_on_silence(grade: str | None, topic_stances: list[Any]) -> boo
     return silent / total > 0.7 and total_evidence == 0
 
 
-def find_unsupported_strong_claims(
-    headline: str,
-    summary: str,
-    citations: list[dict[str, Any]],
-    privacy_signals: dict[str, Any] | None,
-) -> list[str]:
-    combined = f"{headline} {summary}".lower()
-    verified_quotes: list[str] = []
-    for citation in citations:
-        quote = _get_field(citation, "quote")
-        if _get_field(citation, "verified") is True and quote:
-            verified_quotes.append(str(quote).lower())
-    signals = privacy_signals or {}
-
-    unsupported: list[str] = []
-    for pattern, head_noun, signal_field, signal_value in _STRONG_CLAIM_LEXICON:
-        if not re.search(pattern, combined, re.IGNORECASE):
-            continue
-        citation_supports = any(head_noun in quote for quote in verified_quotes)
-        signal_supports = (
-            signal_field is not None and _get_field(signals, signal_field) == signal_value
-        )
-        if not citation_supports and not signal_supports:
-            unsupported.append(pattern)
-    return unsupported
-
-
 def check_dangers_benefits_balance(
     dangers: list[str], benefits: list[str], grade_justification: str
 ) -> bool:
     if len(dangers) < 5:
         return True
-    if len(benefits) >= 2:
-        return True
-    if not grade_justification:
-        return False
-    lowered = grade_justification.lower()
-    return any(phrase in lowered for phrase in _BALANCE_ACK_PHRASES)
+    return len(benefits) >= 2
 
 
 def check_rights_have_paths(your_rights: list[str]) -> tuple[bool, float]:
@@ -254,22 +156,6 @@ def check_actions_actionable(recommended_actions: list[str]) -> tuple[bool, floa
     return ratio >= 0.7, ratio
 
 
-def check_jargon(text: str, max_hits: int = 3) -> bool:
-    if not text:
-        return True
-    lowered = text.lower()
-    hits = sum(1 for term in _JARGON_LEXICON if term in lowered)
-    return hits <= max_hits
-
-
-def check_generic_headline_opener(headline: str) -> bool:
-    if not headline or not headline.strip():
-        return True
-    words = re.findall(r"\b\w+\b", headline.lower())
-    opener = " ".join(words[:6])
-    return not any(pattern in opener for pattern in _GENERIC_OPENERS)
-
-
 def _collect_citations(topic_stances: list[Any]) -> list[dict[str, Any]]:
     citations: list[dict[str, Any]] = []
     for stance in topic_stances:
@@ -283,9 +169,13 @@ def _collect_citations(topic_stances: list[Any]) -> list[dict[str, Any]]:
     return citations
 
 
+# ── Top-level validator ───────────────────────────────────────────────────────
+
+
 def validate_overview(
     overview: dict[str, Any], has_adequate_evidence: bool
 ) -> OverviewValidationResult:
+    """Run all deterministic checks. LLM review is merged separately by the caller."""
     summary = str(overview.get("summary") or "")
     headline = overview.get("headline_claim")
     headline = str(headline) if headline is not None else None
@@ -298,13 +188,13 @@ def validate_overview(
     dangers = _as_str_list(overview.get("dangers"))
     benefits = _as_str_list(overview.get("benefits"))
     recommended_actions = _as_str_list(overview.get("recommended_actions"))
-    privacy_signals = overview.get("privacy_signals")
     topic_stances = overview.get("topic_stances") or []
-    citations = _collect_citations(topic_stances)
 
     checks: dict[str, bool] = {}
     re_roll_reasons: list[str] = []
     warnings: list[str] = []
+
+    # ── High-severity deterministic checks ────────────────────────────────────
 
     headline_ok = validate_headline_not_empty(headline, has_adequate_evidence)
     checks["headline_not_empty"] = headline_ok
@@ -316,33 +206,7 @@ def validate_overview(
     if e_on_silence:
         re_roll_reasons.append("Grade E assigned for silence rather than evidence.")
 
-    unsupported = find_unsupported_strong_claims(
-        headline or "", summary, citations, privacy_signals
-    )
-    checks["no_unsupported_strong_claims"] = not unsupported
-    if unsupported:
-        re_roll_reasons.append("Strong claims lack supporting evidence: " + ", ".join(unsupported))
-
-    signal_contradictions = find_signal_prose_contradictions(
-        headline or "", summary, privacy_signals, citations
-    )
-    checks["no_signal_prose_contradictions"] = not signal_contradictions
-    if signal_contradictions:
-        contradiction_descs = "; ".join(c.get("issue", "unknown") for c in signal_contradictions)
-        re_roll_reasons.append(f"Signal/prose contradictions: {contradiction_descs}")
-
-    internal_state_hits = {
-        "summary": find_internal_state_language(summary),
-        "headline": find_internal_state_language(headline or ""),
-        "grade_justification": find_internal_state_language(grade_justification or ""),
-    }
-    no_internal_state = all(not hits for hits in internal_state_hits.values())
-    checks["no_internal_state_language"] = no_internal_state
-    if not no_internal_state:
-        locations = ", ".join(
-            f"{loc}: {', '.join(hits)}" for loc, hits in internal_state_hits.items() if hits
-        )
-        re_roll_reasons.append(f"Customer-facing text exposes pipeline internals ({locations}).")
+    # ── Medium-severity deterministic checks (warnings) ───────────────────────
 
     summary_len_ok = validate_summary_length(summary)
     checks["summary_length"] = summary_len_ok
@@ -378,16 +242,42 @@ def validate_overview(
     if not actions_ok:
         warnings.append(f"Recommended actions not actionable (ratio {actions_ratio:.0%}).")
 
-    opener_ok = check_generic_headline_opener(headline or "")
-    checks["headline_opener_specific"] = opener_ok
-    if not opener_ok:
-        warnings.append("Headline opener is generic.")
+    return OverviewValidationResult(
+        should_re_roll=bool(re_roll_reasons),
+        re_roll_reasons=re_roll_reasons,
+        warnings=warnings,
+        checks_passed=checks,
+    )
 
-    jargon_text = f"{summary} {headline or ''} {grade_justification or ''}"
-    jargon_ok = check_jargon(jargon_text)
-    checks["no_jargon"] = jargon_ok
-    if not jargon_ok:
-        warnings.append("Customer-facing text contains legal jargon.")
+
+def merge_llm_review(
+    deterministic: OverviewValidationResult,
+    llm_result: Any,
+) -> OverviewValidationResult:
+    """Merge LLM semantic review results into the deterministic result.
+
+    ``llm_result`` is an ``LLMReviewResult`` (from ``llm_review.py``) or None.
+    High-severity LLM failures are added to ``re_roll_reasons``; medium-severity
+    failures are added to ``warnings``. The merged result's ``should_re_roll`` is
+    True if either the deterministic or LLM checks warrant a re-roll.
+    """
+    if llm_result is None:
+        return deterministic
+
+    re_roll_reasons = list(deterministic.re_roll_reasons)
+    warnings = list(deterministic.warnings)
+    checks = dict(deterministic.checks_passed)
+
+    for check in llm_result.checks:
+        check_key = f"llm_{check.check.lower()}"
+        checks[check_key] = check.passed
+        if check.passed:
+            continue
+        desc = check.description or check.check
+        if check.severity == "high":
+            re_roll_reasons.append(f"[LLM] {check.check}: {desc}")
+        else:
+            warnings.append(f"[LLM] {check.check}: {desc}")
 
     return OverviewValidationResult(
         should_re_roll=bool(re_roll_reasons),
