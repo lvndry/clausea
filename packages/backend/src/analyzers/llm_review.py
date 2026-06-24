@@ -55,7 +55,9 @@ Check for these specific problems:
    legal language instead of plain English a person can follow?
 
 For each problem found, return the check name, severity (high/medium), and a
-specific description of what's wrong. If a check passes, return it with pass=true.
+specific description of what's wrong. If a check passes, return it with pass=true
+and a brief confirmation (or empty description). Never set pass=false when your
+description concludes the check passed or that no issue was found.
 
 Return JSON only:
 {
@@ -69,6 +71,31 @@ Return JSON only:
   ]
 }
 """
+
+
+_PASS_DESCRIPTION_MARKERS = (
+    "no unsupported",
+    "not unsupported",
+    "claim is supported",
+    "is supported by",
+    "no issue found",
+    "no problem found",
+    "no strong claim found",
+)
+
+
+def _coerce_review_pass(*, declared_pass: bool, description: str) -> bool:
+    """Review models sometimes return pass=false while describing a passing check."""
+    if declared_pass:
+        return True
+    desc = description.lower()
+    if any(marker in desc for marker in _PASS_DESCRIPTION_MARKERS):
+        logger.warning(
+            "LLM review returned pass=false but description indicates pass: %s",
+            description[:240],
+        )
+        return True
+    return False
 
 
 class LLMReviewCheck(BaseModel):
@@ -156,7 +183,10 @@ async def llm_review_overview(
         checks = [
             LLMReviewCheck(
                 check=str(c.get("check", "unknown")),
-                passed=bool(c.get("pass", False)),
+                passed=_coerce_review_pass(
+                    declared_pass=bool(c.get("pass", False)),
+                    description=str(c.get("description", "")),
+                ),
                 severity=str(c.get("severity", "medium")),
                 description=str(c.get("description", "")),
             )
