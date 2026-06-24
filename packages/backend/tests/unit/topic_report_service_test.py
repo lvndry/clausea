@@ -217,7 +217,6 @@ def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
     assert report.topics[0].topic == "data_sale"
     assert report.topics[0].coverage_status == "missing"
     assert report.topics[0].status == "missing"
-    assert report.topics[0].topic_score is None
     assert report.topics[0].rationale_key == "topic.not_disclosed"
     assert report.topics[0].findings == []
 

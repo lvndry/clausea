@@ -110,7 +110,6 @@ def build_product_topic_report(
                 coverage_status="found",
                 status="found",
                 stance="concerning",
-                topic_score=5,
             )
 
         topic_item = topics_by_category[finding.category]
@@ -146,7 +145,6 @@ def build_product_topic_report(
                 coverage_status="ambiguous",
                 status="ambiguous",
                 stance="conflicting",
-                topic_score=6,
             )
         topic_item = topics_by_category[conflict.category]
         topic_item.coverage_status = "ambiguous"
@@ -176,7 +174,6 @@ def build_product_topic_report(
             continue
         item.status = row["status"]
         item.stance = row["stance"]
-        item.topic_score = row["topic_score"]
         item.rationale = row["rationale"]
         item.rationale_key = row.get("rationale_key")
         item.rationale_params = row.get("rationale_params")
@@ -185,7 +182,6 @@ def build_product_topic_report(
         if item.status == "found" and not item.findings and not item.conflicts:
             item.status = "not_disclosed"
             item.stance = "not_disclosed"
-            item.topic_score = None
             item.rationale = "Topic lacks verifiable citation evidence."
             item.rationale_key = "topic.missing_verifiable_citation"
             item.rationale_params = None

@@ -11,9 +11,35 @@ semantic, so an LLM judge decides it.
 
 This stage runs once at rollup-build time and persists merged ``RollupItem``s, so
 read-time hydration and topic reports inherit the result with no per-read cost.
-Findings that assert a materially distinct right, permission, scope, or purpose
-stay separate; merged items carry every member's normalized value so hydration can
-re-attach evidence from all source documents.
+
+Approach
+--------
+Cheap exact-key aggregation runs first and collapses byte-identical findings for
+free. Only the survivors, grouped per category, reach this stage — and only for
+free-text narrative categories where paraphrase duplication actually happens
+(``CONSOLIDATION_CATEGORIES``); structured categories (data types, named
+recipients, enumerated rights) are distinct by construction and skipped. The
+merge decision itself is delegated to an LLM judge because it is semantic, not
+lexical: the judge partitions a category's findings into clusters that each
+restate one underlying clause, and is instructed to keep any materially distinct
+right/permission/scope/purpose (AI training, sale, sublicensing, perpetuity) in
+its own cluster.
+
+Steps
+-----
+1. Group the aggregated findings by category; skip any category with fewer than
+   two findings or outside ``CONSOLIDATION_CATEGORIES``.
+2. Ask the LLM judge to partition the category's finding values into same-clause
+   clusters (``_llm_cluster`` → ``_parse_clusters``).
+3. Merge each cluster into one ``RollupItem`` (``merge_clusters``): pick the most
+   complete member as the canonical value, union document ids and attributes, and
+   record every member's normalised value in ``member_values``.
+4. ``member_values`` lets read-time hydration re-attach evidence from *all* source
+   documents, not just the canonical member — so a "stated in N documents" finding
+   keeps all N quotes.
+
+Any judge failure degrades to the original, unmerged findings: consolidation never
+drops a finding on error.
 """
 
 from __future__ import annotations
