@@ -69,6 +69,7 @@ class MigrationService:
         try:
             applied_count = 0
             for migration in self._registry.pending(await self._applied_ids(db)):
+                await self._refresh_lock(db)
                 await self._run_one(db, migration)
                 applied_count += 1
             logger.info("Migrations complete", applied=applied_count)
@@ -139,7 +140,7 @@ class MigrationService:
             )
         except Exception as exc:
             if "already exists" not in str(exc).lower():
-                logger.debug("Could not create migration_id index: %s", exc)
+                logger.warning("Could not create migration_id index: %s", exc)
 
         try:
             await db[LOCK_COLLECTION].create_index(
@@ -149,7 +150,7 @@ class MigrationService:
             )
         except Exception as exc:
             if "already exists" not in str(exc).lower():
-                logger.debug("Could not create migration lock index: %s", exc)
+                logger.warning("Could not create migration lock index: %s", exc)
 
     async def _acquire_lock(self, db: AgnosticDatabase) -> bool:
         now = datetime.now(UTC)
@@ -165,5 +166,14 @@ class MigrationService:
         except DuplicateKeyError:
             return False
 
+    async def _refresh_lock(self, db: AgnosticDatabase) -> None:
+        """Touch the lock's locked_at so the TTL doesn't expire mid-migration."""
+        await db[LOCK_COLLECTION].update_one(
+            {"_id": LOCK_ID, "host": _host_id()},
+            {"$set": {"locked_at": datetime.now(UTC)}},
+        )
+
     async def _release_lock(self, db: AgnosticDatabase) -> None:
-        await db[LOCK_COLLECTION].delete_one({"_id": LOCK_ID})
+        # Only delete the lock if we still own it — avoids deleting another
+        # replica's lock if ours expired mid-migration.
+        await db[LOCK_COLLECTION].delete_one({"_id": LOCK_ID, "host": _host_id()})

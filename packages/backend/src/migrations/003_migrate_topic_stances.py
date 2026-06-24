@@ -19,6 +19,7 @@ import asyncio
 from typing import Any
 
 from motor.core import AgnosticDatabase
+from pymongo import UpdateOne
 
 from src.core.database import db_session
 from src.core.logging import get_logger
@@ -34,6 +35,7 @@ _STANCE_MAP = {
 }
 
 COLLECTION = "product_intelligence"
+_BULK_BATCH_SIZE = 500
 
 
 async def migrate_topic_stances(db: AgnosticDatabase) -> dict[str, Any]:
@@ -44,6 +46,7 @@ async def migrate_topic_stances(db: AgnosticDatabase) -> dict[str, Any]:
     affected = await col.count_documents({"overview.topic_stances": {"$exists": True}})
 
     updated = 0
+    updates: list[UpdateOne] = []
     async for doc in col.find(
         {"overview.topic_stances": {"$exists": True}},
         {"_id": 1, "product_slug": 1, "overview.topic_stances": 1},
@@ -63,11 +66,20 @@ async def migrate_topic_stances(db: AgnosticDatabase) -> dict[str, Any]:
             new_stances.append(entry)
 
         if changed:
-            await col.update_one(
-                {"_id": doc["_id"]},
-                {"$set": {"overview.topic_stances": new_stances}},
+            updates.append(
+                UpdateOne(
+                    {"_id": doc["_id"]},
+                    {"$set": {"overview.topic_stances": new_stances}},
+                )
             )
-            updated += 1
+            if len(updates) >= _BULK_BATCH_SIZE:
+                result = await col.bulk_write(updates)
+                updated += result.modified_count
+                updates = []
+
+    if updates:
+        result = await col.bulk_write(updates)
+        updated += result.modified_count
 
     logger.info(
         "topic_stances migration complete",

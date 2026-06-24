@@ -61,6 +61,7 @@ def _build_mock_db(applied_docs: list[dict] | None = None) -> MagicMock:
     # _migrations collection
     migrations_col = MagicMock()
     migrations_col.find_one_and_update = AsyncMock(return_value={"_id": "x"})
+    migrations_col.create_index = AsyncMock()
     # `find` must return a fresh async iterator each call — the service iterates
     # the applied-ids cursor more than once.
     migrations_col.find.side_effect = lambda *_a, **_kw: _AsyncIter(applied_docs or [])
@@ -70,6 +71,8 @@ def _build_mock_db(applied_docs: list[dict] | None = None) -> MagicMock:
     lock_col.insert_one = AsyncMock(return_value={"insertedId": "lock"})
     lock_col.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
     lock_col.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
+    lock_col.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    lock_col.create_index = AsyncMock()
 
     def _getitem(name: str) -> MagicMock:
         if name == MIGRATIONS_COLLECTION:
@@ -194,6 +197,39 @@ async def test_lock_released_after_success():
     await service.run_pending(db)
 
     db[LOCK_COLLECTION].delete_one.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_lock_release_only_deletes_own_lock():
+    """_release_lock filters by host so it never deletes another replica's lock."""
+    a = _StubMigration("000_a")
+    service = MigrationService(_registry(a))
+    db = _build_mock_db(applied_docs=[])
+
+    await service.run_pending(db)
+
+    delete_filter = db[LOCK_COLLECTION].delete_one.await_args.args[0]
+    assert delete_filter["_id"] == "migration-runner"
+    assert "host" in delete_filter  # scoped to this process, not unscoped
+
+
+@pytest.mark.asyncio
+async def test_lock_refreshed_before_each_migration():
+    """Each migration is preceded by a lock refresh so the TTL doesn't expire."""
+    a = _StubMigration("000_a")
+    b = _StubMigration("001_b")
+    c = _StubMigration("002_c")
+    service = MigrationService(_registry(a, b, c))
+    db = _build_mock_db(applied_docs=[])
+
+    await service.run_pending(db)
+
+    assert db[LOCK_COLLECTION].update_one.await_count == 3
+    for call in db[LOCK_COLLECTION].update_one.await_args_list:
+        update_filter = call.args[0]
+        assert update_filter["_id"] == "migration-runner"
+        assert "host" in update_filter
+        assert "locked_at" in call.args[1]["$set"]
 
 
 @pytest.mark.asyncio
