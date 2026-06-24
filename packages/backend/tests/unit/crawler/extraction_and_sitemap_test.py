@@ -284,12 +284,7 @@ def test_extract_main_content_preserves_cookie_policy_wrapper():
 
 
 def test_extract_main_content_combines_split_blocks_over_small_sidebar():
-    """Airbnb help/legal pages split the body across many sibling
-    ``data-testid="CEPHtmlSection"`` blocks while a small "Related articles"
-    widget (``data-testid="...article..."``) appears earlier in the DOM.
-
-    The extractor must pick the rich combined body, not the tiny sidebar.
-    """
+    """Fallback selector path still combines sibling content blocks when trafilatura is skipped."""
     body_para = (
         "This Terms of Service section explains the legal agreement between you and "
         "the company. It describes your rights, obligations, liability, dispute "
@@ -328,8 +323,7 @@ def test_extract_main_content_combines_split_blocks_over_small_sidebar():
 
 
 def test_extract_main_content_ignores_html_vector_content_class_false_positive():
-    """MediaWiki Vector skin puts 'content' in <html> class names; do not treat
-    the root element as the article body."""
+    """Fallback selectors must not treat the root ``html`` element as article body."""
     html = """
     <html class="client-nojs vector-feature-limited-width-content-enabled">
       <body>

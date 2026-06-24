@@ -92,6 +92,7 @@ from src.crawler.constants import (
     locale_canonical_key,
 )
 from src.crawler.content_analyzer import ContentAnalyzer
+from src.crawler.html_extraction import extract_with_trafilatura
 from src.crawler.http_cache import AsyncFileLogHandler, HTTPCache
 from src.crawler.models import CrawlResult, CrawlStats, PageContent, StaticFetchResult
 from src.crawler.rate_limiter import DomainRateLimiter
@@ -691,9 +692,17 @@ class ClauseaCrawler:
         soup = BeautifulSoup(html, "html.parser")
         title_tag = soup.find("title")
         title = title_tag.get_text().strip() if title_tag else ""
-        content_soup = self._extract_main_content_soup(soup)
-        text = self._extract_text_from_soup(content_soup)
-        markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
+
+        prepared = BeautifulSoup(str(soup.body or soup), "html.parser")
+        self._strip_document_chrome(prepared)
+        traf = extract_with_trafilatura(str(prepared), url=url)
+        if traf is not None:
+            text, markdown = traf
+        else:
+            content_soup = self._extract_main_content_soup(soup)
+            text = self._extract_text_from_soup(content_soup)
+            markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
+
         metadata = self.extract_metadata(soup)
         links = self.extract_links(soup, url)
         return title, text, markdown, metadata, links
@@ -1042,58 +1051,7 @@ class ClauseaCrawler:
         match_set = set(elements)
         return [el for el in elements if not any(parent in match_set for parent in el.parents)]
 
-    def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
-        selectors = (
-            "main",
-            "article",
-            '[role="main"]',
-            "#mw-content-text",
-            ".mw-parser-output",
-            "#bodyContent",
-            '[id*="content" i]',
-            '[class*="content" i]',
-            '[data-testid*="content" i]',
-            '[data-testid*="article" i]',
-            '[data-testid="CEPHtmlSection"]',
-            '[data-qa*="content" i]',
-            '[id*="legal" i]',
-            '[class*="legal" i]',
-            '[id*="privacy" i]',
-            '[class*="privacy" i]',
-            '[id*="terms" i]',
-            '[class*="terms" i]',
-            '[id*="policy" i]',
-            '[class*="policy" i]',
-        )
-
-        best_html: str | None = None
-        best_text_len = 0
-        for selector in selectors:
-            matches = self._top_level_elements(soup.select(selector))
-            matches = [
-                el
-                for el in matches
-                if el.name not in ("html", "body") and not self._is_consent_container(el)
-            ]
-            if not matches:
-                continue
-            combined_text_len = sum(len(el.get_text(" ", strip=True)) for el in matches)
-            min_len = 50 if "data-testid" in selector else 300
-            if combined_text_len < min_len or combined_text_len <= best_text_len:
-                continue
-            best_text_len = combined_text_len
-            best_html = (
-                str(matches[0])
-                if len(matches) == 1
-                else "<div>" + "".join(str(el) for el in matches) + "</div>"
-            )
-
-        if best_html is not None:
-            content_root: Any = BeautifulSoup(best_html, "html.parser")
-        else:
-            content_root = soup.body or soup
-        cleaned = BeautifulSoup(str(content_root), "html.parser")
-
+    def _strip_document_chrome(self, cleaned: BeautifulSoup) -> None:
         for tag in cleaned(["script", "style", "noscript", "template", "svg", "canvas", "iframe"]):
             tag.decompose()
 
@@ -1134,6 +1092,55 @@ class ClauseaCrawler:
                     continue
                 tag.decompose()
 
+    def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
+        """Heuristic fallback when trafilatura cannot isolate substantive body content."""
+        selectors = (
+            "main",
+            "article",
+            '[role="main"]',
+            '[id*="content" i]',
+            '[class*="content" i]',
+            '[data-testid*="content" i]',
+            '[data-testid*="article" i]',
+            '[data-qa*="content" i]',
+            '[id*="legal" i]',
+            '[class*="legal" i]',
+            '[id*="privacy" i]',
+            '[class*="privacy" i]',
+            '[id*="terms" i]',
+            '[class*="terms" i]',
+            '[id*="policy" i]',
+            '[class*="policy" i]',
+        )
+
+        best_html: str | None = None
+        best_text_len = 0
+        for selector in selectors:
+            matches = self._top_level_elements(soup.select(selector))
+            matches = [
+                el
+                for el in matches
+                if el.name not in ("html", "body") and not self._is_consent_container(el)
+            ]
+            if not matches:
+                continue
+            combined_text_len = sum(len(el.get_text(" ", strip=True)) for el in matches)
+            min_len = 50 if "data-testid" in selector else 300
+            if combined_text_len < min_len or combined_text_len <= best_text_len:
+                continue
+            best_text_len = combined_text_len
+            best_html = (
+                str(matches[0])
+                if len(matches) == 1
+                else "<div>" + "".join(str(el) for el in matches) + "</div>"
+            )
+
+        if best_html is not None:
+            content_root: Any = BeautifulSoup(best_html, "html.parser")
+        else:
+            content_root = soup.body or soup
+        cleaned = BeautifulSoup(str(content_root), "html.parser")
+        self._strip_document_chrome(cleaned)
         return cleaned
 
     @classmethod
