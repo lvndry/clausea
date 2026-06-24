@@ -112,6 +112,26 @@ DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evid
 ## OVERALL GRADE
 Assign an overall **grade** (A–E) for this document's privacy posture and **grade_justification** (2–4 sentences) explaining why.
 
+**How to determine the overall grade — follow this procedure exactly:**
+
+Step 1 — Take the dimension grades you assigned (only the ones you filled in; skip silent dimensions).
+
+Step 2 — Convert each letter to a number: A=9, B=7, C=5, D=3, E=1.
+
+Step 3 — Apply these weights (only for dimensions you graded):
+- transparency: ×2
+- data_collection_scope: ×4
+- user_control: ×3
+- third_party_sharing: ×4
+- data_retention_score: ×2
+- security_score: ×1
+
+Step 4 — Sum the weighted values. Divide by the total weight you used. Round to the nearest integer.
+
+Step 5 — Convert back to a letter: 9=A, 7-8=B, 5-6=C, 3-4=D, 1-2=E. This is your **base grade**.
+
+Step 6 — You may adjust the base grade by at most one letter in either direction, but ONLY if you name a specific, evidence-backed reason in grade_justification. If you cannot name a specific reason, the overall grade MUST equal the base grade.
+
 ## SUMMARY
 3-5 concrete sentences. Name exact data types ("precise GPS", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics"), exact rights paths ("Settings > Privacy > Delete"). Start with the service/product name, never with "This document" or "This policy".
 
@@ -255,7 +275,29 @@ Rules: be concrete (exact data types, third parties, exercise paths); use "This 
 ## OVERALL GRADE
 Assign an overall **grade** (A–E) for this product's privacy posture and **grade_justification** (2–4 sentences) explaining why. Be specific about the single biggest factor driving your judgment.
 
-**Grade must be consistent with your dimensions.** Your overall grade cannot be more than one letter more negative than your dimension grades warrant. If your dimensions average to B (e.g. B/C/B/B), the overall grade must be A, B, or C — never D or E. If they average to C, the overall must be B, C, or D.
+**How to determine the overall grade — follow this procedure exactly:**
+
+Step 1 — Count the dimension grades you assigned. There are 4 dimensions: transparency, data_collection_scope, user_control, third_party_sharing. Each is A, B, C, D, or E.
+
+Step 2 — Convert each letter to a number: A=9, B=7, C=5, D=3, E=1.
+
+Step 3 — Apply these weights:
+- transparency: ×2
+- data_collection_scope: ×4
+- user_control: ×3
+- third_party_sharing: ×4
+
+Step 4 — Sum the weighted values. Divide by 13 (the total weight). Round to the nearest integer.
+
+Step 5 — Convert back to a letter: 9=A, 7-8=B, 5-6=C, 3-4=D, 1-2=E. This is your **base grade**.
+
+Step 6 — You may adjust the base grade by at most one letter in either direction, but ONLY if you can name a specific, evidence-backed reason in grade_justification:
+- One letter WORSE (e.g. C→D): only if a dimension grade underweights a critical issue the dimensions don't capture (e.g. forced arbitration, perpetual irrevocable content license, data sale to brokers) that materially worsens the overall posture.
+- One letter BETTER (e.g. C→B): only if the product has a documented protection that spans multiple dimensions and the dimension grades individually don't credit it (e.g. end-to-end encryption that simultaneously improves security, user_control, and third_party_sharing).
+
+If you cannot name a specific reason, the overall grade MUST equal the base grade. Do not adjust "for tone" or "to be cautious."
+
+**Example:** Dimensions are transparency=B(7), data_collection_scope=D(3), user_control=C(5), third_party_sharing=C(5). Weighted: (7×2)+(3×4)+(5×3)+(5×4) = 14+12+15+20 = 61. Divide by 13 = 4.69. Round to 5. Base grade = C. You may output B or D only with a specific reason; otherwise output C.
 
 **Do not default to D.** Mainstream services with ordinary data practices and some documented protections should grade C, not D. Reserve D for products with genuinely invasive practices (data sale, AI training without opt-out, biometric collection) that lack meaningful mitigation. Reserve E for the worst case on a dimension — never for silence or missing documents.
 
