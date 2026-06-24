@@ -1,20 +1,26 @@
-from src.analyzers.llm_review import _coerce_review_pass
+from src.analyzers.llm_review import _parse_check_passed
 
 
-def test_coerce_review_pass_honors_declared_true() -> None:
-    assert _coerce_review_pass(declared_pass=True, description="anything") is True
+def test_parse_check_passed_when_failure_is_null() -> None:
+    assert _parse_check_passed({"check": "UNSUPPORTED_CLAIMS", "failure": None}) is True
 
 
-def test_coerce_review_pass_keeps_real_failure() -> None:
+def test_parse_check_passed_when_failure_is_empty_string() -> None:
+    assert _parse_check_passed({"check": "UNSUPPORTED_CLAIMS", "failure": "   "}) is True
+
+
+def test_parse_check_passed_when_failure_is_present() -> None:
     assert (
-        _coerce_review_pass(
-            declared_pass=False,
-            description="Headline overclaims indefinite retention without evidence.",
+        _parse_check_passed(
+            {
+                "check": "UNSUPPORTED_CLAIMS",
+                "failure": "Headline overclaims indefinite retention without evidence.",
+            }
         )
         is False
     )
 
 
-def test_coerce_review_pass_fixes_false_negative_no_unsupported() -> None:
-    desc = "The headline claim is supported by privacy_signals. No unsupported strong claim found."
-    assert _coerce_review_pass(declared_pass=False, description=desc) is True
+def test_parse_check_passed_legacy_pass_boolean() -> None:
+    assert _parse_check_passed({"check": "UNSUPPORTED_CLAIMS", "pass": True}) is True
+    assert _parse_check_passed({"check": "UNSUPPORTED_CLAIMS", "pass": False}) is False
