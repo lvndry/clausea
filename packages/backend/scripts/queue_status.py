@@ -30,7 +30,7 @@ async def main() -> None:
     order = [
         "pending",
         "crawling",
-        "summarizing",
+        "synthesising",
         "generating_overview",
         "completed",
         "no_documents",
@@ -41,7 +41,7 @@ async def main() -> None:
     print(f"jobs={total} " + " ".join(parts + extra) + f" overviews={overviews}")
 
     crawling = await db.pipeline_jobs.find(
-        {"status": {"$in": ["crawling", "summarizing", "generating_overview"]}}
+        {"status": {"$in": ["crawling", "synthesising", "generating_overview"]}}
     ).to_list(length=20)
     if crawling:
         active = [

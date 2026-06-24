@@ -12,8 +12,8 @@ There are at least two independent call sites that build a location object
 from pageError (one in the tracing path, one in the dispatcher path), so all
 three properties are replaced at every occurrence.
 
-Fixed upstream in camoufox >0.4.11. This script patches the bundled file
-until the project upgrades to a fixed release.
+Fixed upstream in camoufox >0.4.11 (not yet published on PyPI as of 2026-06).
+This script patches the bundled file until the project upgrades to a fixed release.
 
 Run during Docker image build (after the venv is copied into the image).
 Exits non-zero on any of:

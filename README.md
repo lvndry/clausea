@@ -1,117 +1,182 @@
 <div align="center">
-  <img src="packages/frontend/public/static/favicons/logo.png" alt="Clausea Logo" width="200"/>
+  <img src="packages/frontend/public/static/favicons/logo.png" alt="Clausea" width="160" />
+
+  <h1>Clausea</h1>
+
+  <p><strong>Policy document intelligence for SaaS products.</strong><br />
+  Turn privacy policies, terms of service, and related legal pages into plain-English risk assessments.</p>
+
+  <p>
+    <a href="https://clausea.co">clausea.co</a>
+    ·
+    <a href="https://clausea.co/products/slack">Example report</a>
+    ·
+    <a href="https://github.com/lvndry/clausea/blob/main/LICENSE">AGPL-3.0</a>
+  </p>
+
+  <p>
+    <a href="https://deepwiki.com/lvndry/clausea"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
+  </p>
 </div>
 
-# Clausea
+---
 
-**The definitive policy document intelligence platform** - Transform complex policy documents into clear, actionable insights with AI-powered analysis.
+## About
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lvndry/clausea)
+Clausea crawls and analyzes policy documents — privacy policies, terms of service, cookie policies, GDPR notices, DPAs, and more — for SaaS products. It extracts structured signals (data collected, third-party sharing, user rights, retention, consent model) and synthesizes them into a **0–10 risk score**, a qualitative verdict, and decision-ready summaries.
 
-<a href="https://clausea.co" style="display: inline-block; padding: 6px 14px; background: #0070f3; color: white; text-decoration: none; border-radius: 4px; font-weight: 500;">Try now</a>
-
-## 🎯 Mission
-
-Clausea democratizes legal understanding by making complex privacy policies, terms of service, and contracts accessible to everyone. We help:
-
-- **Individuals** understand what they're agreeing to before signing up
-- **Small businesses** assess vendor risks without expensive legal review
-- **Enterprise teams** automate compliance monitoring and contract review
-- **Developers** integrate legal intelligence into their applications
+Live product pages: `https://clausea.co/products/{slug}`
+Machine-readable summaries: `https://clausea.co/api/products/{slug}/summary.txt`
 
 ## Features
 
-### Core Capabilities
+| Area | What you get |
+| --- | --- |
+| **Whole-site coverage** | Crawls a vendor's full policy surface, not just a single pasted URL |
+| **Risk scoring** | 0–10 score with grade, verdict, and score breakdown |
+| **Plain-English summaries** | Consumer-friendly explainers plus detailed policy overviews |
+| **Topic intelligence** | Stance and evidence across key privacy topics |
+| **Compliance signals** | GDPR and CCPA-relevant clause detection |
+| **Source documents** | Linked, cited policy pages behind every finding |
+| **Browser extension** | Analyze policies from the toolbar ([`packages/extension`](packages/extension)) |
+| **Developer API** | FastAPI backend with OpenAPI docs at `/docs` |
 
-- **Plain Language Summaries**: Complex legal jargon made accessible
-- **Risk Scoring**: Get quantified risk assessments (0-10 scale)
-- **Compliance Checking**: Verify GDPR, CCPA, and other regulatory compliance
-- **Document Analysis**: Upload any policy document for instant AI analysis
-- **Change Monitoring**: Track policy changes across websites
-- **Comparison Tools**: Side-by-side policy comparisons
+### Risk score scale
 
-### Technical Features
+| Score | Verdict |
+| --- | --- |
+| 0–2 | Very user-friendly |
+| 3–4 | User-friendly |
+| 5–6 | Moderate concerns |
+| 7–8 | Pervasive data collection |
+| 9–10 | Very pervasive |
 
-- **Multi-Model AI**: Combines GPT-4, Claude, and specialized models
-- **Real-time Processing**: <10 second analysis for standard documents
-- **95%+ Accuracy**: Validated against legal expert annotations
-- **API-First**: RESTful API with webhook support
-- **Enterprise Ready**: SOC2 compliance, data encryption, team collaboration
+## Who it's for
 
-## Quick Start
+- **Individuals** checking what an app does with their data before signing up
+- **Privacy-conscious users** comparing vendor policies
+- **Compliance and legal teams** auditing third-party SaaS vendors
+- **Developers** building on the Clausea API or self-hosting the stack
+
+## Repository structure
+
+Monorepo with three packages:
+
+```
+clausea/
+├── packages/
+│   ├── backend/     # FastAPI API, crawler, analysis pipeline, Streamlit ops dashboard
+│   ├── frontend/    # Next.js web app (marketing site + product dashboard)
+│   └── extension/   # Browser extension (Chrome / Firefox via WXT)
+├── Makefile         # Dev workflow shortcuts
+├── dev.sh           # Starts frontend + backend together
+└── AGENTS.md        # Agent / contributor guidelines
+```
+
+| Package | Stack | Docs |
+| --- | --- | --- |
+| [`packages/backend`](packages/backend) | Python 3.11+, FastAPI, MongoDB, LiteLLM | [Backend README](packages/backend/README.md) |
+| [`packages/frontend`](packages/frontend) | Next.js, React, TypeScript, Tailwind | [Frontend README](packages/frontend/README.md) |
+| [`packages/extension`](packages/extension) | WXT, TypeScript | [Extension README](packages/extension/README.md) |
+
+## Getting started
 
 ### Prerequisites
 
 - **Python 3.11+** with [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - **Node.js 18+** with [bun](https://bun.sh/)
-- **MongoDB** (local or cloud)
-- **OpenAI API key** and **Anthropic API key**
+- **MongoDB** (local or Atlas)
+- API keys as needed: OpenAI, Anthropic, Clerk, Pinecone (see env examples)
 
-### 1 Development Setup
-
-We provide a comprehensive Makefile for easy development setup and workflow:
+### Setup
 
 ```bash
 git clone https://github.com/lvndry/clausea.git
-
-# Complete project setup (recommended for new developers)
+cd clausea
 make setup
 ```
 
-For a complete list of commands, run `make help`.
+`make setup` installs dependencies, creates env files from examples, and configures pre-commit hooks. Run `make help` for all commands.
 
-### 2. Environment Configuration
+### Environment
 
 ```bash
-# Backend environment
+# Backend — edit with MongoDB URI, LLM keys, Clerk JWKS, etc.
 cp packages/backend/.env.example packages/backend/.env
-# Edit with your API keys and database URLs
 
-# Frontend environment
-cp packages/frontend/.env.example packages/frontend/.env
-# Edit with your Clerk and API configuration
+# Frontend — Makefile/setup uses .env.local
+cp packages/frontend/.env.example packages/frontend/.env.local
 ```
 
-### 3. Start Development
+See [`packages/backend/.env.example`](packages/backend/.env.example) and [`packages/frontend/.env.example`](packages/frontend/.env.example) for the full variable list.
+
+### Run locally
 
 ```bash
-# Start both frontend and backend
+# Frontend + backend
 make dev
 
-# Or run individual components
-make run-backend    # Backend only
-make run-frontend   # Frontend only
+# Or individually
+make run-backend    # http://localhost:8000
+make run-frontend   # http://localhost:3000
+make dashboard      # Streamlit ops dashboard (http://localhost:8501)
 ```
 
-### 4. Access the Application
+| Service | URL |
+| --- | --- |
+| Web app | http://localhost:3000 |
+| API | http://localhost:8000 |
+| OpenAPI | http://localhost:8000/docs |
+| Ops dashboard | http://localhost:8501 |
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-
-### 5. Streamlit Dashboard
+### Extension development
 
 ```bash
-# Start Streamlit dashboard
-make run-streamlit
+make setup-extension   # once
+make extension-dev     # builds to packages/extension/.output/chrome-mv3
 ```
 
-- **Streamlit Dashboard**: http://localhost:8501 (see [Streamlit Setup Guide](packages/backend/docs/STREAMLIT_SETUP.md))
+Load the unpacked extension from `packages/extension/.output/chrome-mv3` in `chrome://extensions`. See the [extension README](packages/extension/README.md).
 
-## 📄 License
+## Development
 
-This project is licensed under the AGPL-3.0 License. See the [LICENSE](LICENSE) file for details.
+```bash
+make test      # backend (pytest) + frontend (vitest)
+make lint      # ruff + eslint
+make format    # ruff format + prettier
+```
 
-## 🆘 Support
+Backend-only checks (from `packages/backend`):
 
-<!-- - **Documentation**: [docs.clausea.co](https://docs.clausea.co) -->
-<!-- - **API Reference**: [api.clausea.co](https://api.clausea.co) -->
-<!-- - **Community**: [Discord](https://discord.gg/clausea) -->
+```bash
+uv run ty check
+uv run ruff check
+uv run pytest
+```
 
-- **Email**: lvndry@proton.me
+Contributing: fork, branch, open a PR. See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
 
----
+## How it works
 
-**Built with ❤️ by the Clausea team**
+At a high level, indexing a product runs a three-step pipeline:
 
-_Making legal intelligence accessible to everyone._
+1. **Crawl** — two-pass discovery (precision-first, recall fallback) to find and persist policy pages
+2. **Analyze** — evidence-first LLM extraction per document, with LiteLLM routing and fallbacks
+3. **Synthesize** — product overview, topic stances, risk score, and rollup across core documents
+
+Deep dives:
+
+- [Crawl → pipeline workflow](packages/backend/docs/CRAWL_TO_PIPELINE_WORKFLOW.md)
+- [Crawler design](packages/backend/docs/CRAWLER.md)
+- [Data model](packages/backend/docs/DATA_MODEL.md)
+- [Railway deployment](packages/backend/docs/RAILWAY.md)
+- [Streamlit ops dashboard](packages/backend/docs/STREAMLIT_SETUP.md)
+
+## License
+
+[AGPL-3.0](LICENSE)
+
+## Contact
+
+- **Website:** [clausea.co](https://clausea.co)
+- **Email:** [contact@clausea.co](mailto:contact@clausea.co)
