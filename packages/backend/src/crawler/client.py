@@ -197,7 +197,7 @@ _RESPONSE_READ_CHUNK_SIZE = 65536
 async def _read_bounded_response_body(
     content: aiohttp.StreamReader, max_bytes: int
 ) -> tuple[bytes, bool]:
-    """Read response body in chunks up to *max_bytes* + 1 to detect oversize without OOM."""
+    """Read response body in chunks; may read up to max_bytes + 64KB before stopping."""
     chunks: list[bytes] = []
     total = 0
     while total <= max_bytes:
@@ -643,6 +643,7 @@ class ClauseaCrawler:
                     status_code=response.status,
                     content_type=content_type,
                     body=body,
+                    raw_bytes=raw,
                     headers=dict(response.headers.items()),
                     resolved_url=str(response.url),
                 )
@@ -699,7 +700,7 @@ class ClauseaCrawler:
         if traf is not None:
             text, markdown = traf
         else:
-            content_soup = self._extract_main_content_soup(soup)
+            content_soup = self._extract_main_content_soup(prepared)
             text = self._extract_text_from_soup(content_soup)
             markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
 

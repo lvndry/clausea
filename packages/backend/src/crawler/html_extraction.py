@@ -2,29 +2,48 @@
 
 from __future__ import annotations
 
-import trafilatura
+from trafilatura.core import bare_extraction, determine_returnstring
+from trafilatura.metadata import Document
+from trafilatura.settings import Extractor, use_config
 
 MIN_TRAFILATURA_CHARS = 200
 
 
 def extract_with_trafilatura(html: str, *, url: str | None = None) -> tuple[str, str] | None:
     """Return (plain text, markdown) when trafilatura finds substantive body content."""
-    text = trafilatura.extract(
+    doc = bare_extraction(
         html,
         url=url,
         include_links=True,
         include_tables=True,
         favor_recall=True,
+        output_format="python",
     )
-    if not text or len(text.strip()) < MIN_TRAFILATURA_CHARS:
+    if not isinstance(doc, Document):
         return None
 
-    markdown = trafilatura.extract(
-        html,
-        url=url,
-        output_format="markdown",
-        include_links=True,
-        include_tables=True,
-        favor_recall=True,
-    )
-    return text.strip(), (markdown or text).strip()
+    config = use_config()
+    text = determine_returnstring(
+        doc,
+        Extractor(
+            config=config,
+            output_format="txt",
+            recall=True,
+            links=True,
+            tables=True,
+        ),
+    ).strip()
+    if len(text) < MIN_TRAFILATURA_CHARS:
+        return None
+
+    markdown = determine_returnstring(
+        doc,
+        Extractor(
+            config=config,
+            output_format="markdown",
+            recall=True,
+            links=True,
+            tables=True,
+        ),
+    ).strip()
+    return text, markdown or text
