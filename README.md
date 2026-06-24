@@ -6,6 +6,8 @@
 
 **The definitive policy document intelligence platform** - Transform complex policy documents into clear, actionable insights with AI-powered analysis.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lvndry/clausea)
+
 <a href="https://clausea.co" style="display: inline-block; padding: 6px 14px; background: #0070f3; color: white; text-decoration: none; border-radius: 4px; font-weight: 500;">Try now</a>
 
 ## 🎯 Mission
