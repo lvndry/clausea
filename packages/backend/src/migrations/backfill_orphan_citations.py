@@ -14,16 +14,11 @@ from __future__ import annotations
 
 import asyncio
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
-from src.core.config import config
+from src.core.database import db_session
 from src.core.logging import get_logger
 from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
 
 logger = get_logger(__name__)
-
-MONGO_URI = config.database.mongodb_uri
-DATABASE_NAME = "clausea"
 
 
 async def backfill_orphan_citations() -> int:
@@ -32,11 +27,9 @@ async def backfill_orphan_citations() -> int:
     Returns the total number of citations flagged stale.
     """
     repo = ProductIntelligenceRepository()
-    client = AsyncIOMotorClient(MONGO_URI)
-    db = client[DATABASE_NAME]
     total_marked = 0
 
-    try:
+    async with db_session() as db:
         cursor = db[repo.COLLECTION].find(
             {"overview": {"$exists": True, "$ne": None}},
             {"_id": 0, "overview.topic_stances.supporting_citations.document_id": 1},
@@ -81,8 +74,6 @@ async def backfill_orphan_citations() -> int:
 
         logger.info("Backfill complete. Total citations marked stale: %d", total_marked)
         return total_marked
-    finally:
-        client.close()
 
 
 if __name__ == "__main__":

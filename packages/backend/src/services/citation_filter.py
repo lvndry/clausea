@@ -21,10 +21,10 @@ from typing import Any
 
 def _is_displayable(citation: Any) -> bool:
     if isinstance(citation, dict):
-        verified = citation.get("verified")
+        verified = citation.get("verified", True)
         stale = citation.get("stale", False)
     else:
-        verified = getattr(citation, "verified", None)
+        verified = getattr(citation, "verified", True)
         stale = getattr(citation, "stale", False)
     return bool(verified) and not bool(stale)
 

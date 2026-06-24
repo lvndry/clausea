@@ -21,15 +21,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
-from src.core.config import config
+from src.core.database import db_session
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-MONGO_URI = config.database.mongodb_uri
-DATABASE_NAME = "clausea"
 
 ROBLOX_PRIVACY_URL = "https://www.roblox.com/info/privacy"
 
@@ -57,10 +52,7 @@ async def _apply(
 
 async def fix_thin_evidence_products() -> None:
     """Apply the per-product crawl-config fixes and log a summary of changes."""
-    client = AsyncIOMotorClient(MONGO_URI)
-    db = client[DATABASE_NAME]
-
-    try:
+    async with db_session() as db:
         results: list[dict[str, Any]] = []
 
         results.append(await _apply(db, "booking", {"crawl_ignore_robots": False}))
@@ -99,8 +91,6 @@ async def fix_thin_evidence_products() -> None:
                 logger.info("  %s: %s", slug, "; ".join(changed))
             else:
                 logger.info("  %s: no change (already correct)", slug)
-    finally:
-        client.close()
 
 
 if __name__ == "__main__":

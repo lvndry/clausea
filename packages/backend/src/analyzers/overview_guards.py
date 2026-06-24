@@ -280,6 +280,8 @@ def _collect_citations(topic_stances: list[Any]) -> list[dict[str, Any]]:
             for citation in supporting:
                 if isinstance(citation, dict):
                     citations.append(citation)
+                elif hasattr(citation, "model_dump"):
+                    citations.append(citation.model_dump())
     return citations
 
 
