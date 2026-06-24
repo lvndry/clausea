@@ -1,4 +1,5 @@
-from src.services.thin_evidence_gate import check_thin_evidence
+from src.models.document import MetaSummary
+from src.services.thin_evidence_gate import check_thin_evidence, strip_overview_grading
 
 
 def test_zero_docs_is_thin() -> None:
@@ -53,3 +54,29 @@ def test_mixed_core_and_non_core_docs() -> None:
     )
     assert is_thin is False
     assert reason is None
+
+
+def test_strip_overview_grading_clears_consumer_scores() -> None:
+    meta = MetaSummary.model_validate(
+        {
+            "summary": "partial",
+            "scores": {
+                "transparency": {"score": 5, "justification": "ok"},
+                "data_collection_scope": {"score": 5, "justification": "ok"},
+                "user_control": {"score": 5, "justification": "ok"},
+                "third_party_sharing": {"score": 5, "justification": "ok"},
+            },
+            "grade": "D",
+            "verdict": "pervasive",
+            "risk_score": 7,
+            "grade_justification": "Too harsh for one doc",
+        }
+    )
+
+    strip_overview_grading(meta)
+
+    assert meta.grade is None
+    assert meta.verdict is None
+    assert meta.risk_score is None
+    assert meta.grade_justification is None
+    assert meta.summary == "partial"

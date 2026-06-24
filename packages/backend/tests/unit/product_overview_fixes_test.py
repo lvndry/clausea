@@ -40,6 +40,33 @@ def _make_meta_summary(**extra: object) -> MetaSummary:
     return MetaSummary.model_validate(base)
 
 
+def _community_guidelines_doc() -> Document:
+    analysis = DocumentAnalysis(
+        summary="Transparency report summary",
+        scores={
+            "transparency": DocumentAnalysisScores(score=5, justification=""),
+            "data_collection_scope": DocumentAnalysisScores(score=5, justification=""),
+            "user_control": DocumentAnalysisScores(score=5, justification=""),
+            "third_party_sharing": DocumentAnalysisScores(score=5, justification=""),
+            "data_retention_score": DocumentAnalysisScores(score=5, justification=""),
+            "security_score": DocumentAnalysisScores(score=5, justification=""),
+        },
+        risk_score=4,
+        verdict="moderate",
+        keypoints=[],
+        critical_clauses=[],
+    )
+    return Document(
+        id="doc_cg",
+        title="Transparency report",
+        url="https://example.com/transparency",
+        product_id="p1",
+        doc_type="community_guidelines",  # type: ignore[arg-type]
+        markdown="",
+        analysis=analysis,
+    )
+
+
 def _core_doc() -> Document:
     analysis = DocumentAnalysis(
         summary="x",
@@ -428,3 +455,55 @@ async def test_generate_product_overview_raises_after_max_validation_retries() -
 
     assert llm_mock.await_count == 3
     product_svc.save_product_overview.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_generate_product_overview_withholds_grade_when_thin_evidence() -> None:
+    """Non-core-only evidence must not produce a consumer-facing grade."""
+    product_svc, document_svc = _services()
+    document_svc.get_product_documents_by_slug = AsyncMock(
+        return_value=[_community_guidelines_doc()]
+    )
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
+        return_value=MagicMock(
+            findings=[],
+            coverage=[],
+            conflicts=[],
+            product_id="p1",
+            product_slug="example",
+        )
+    )
+    llm_payload = _base_llm_payload(
+        grade="D",
+        grade_justification="Overclaims from transparency report",
+        verdict="pervasive",
+        risk_score=7,
+    )
+
+    with (
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
+        patch(
+            "src.analyser.acompletion_with_fallback",
+            AsyncMock(return_value=_llm_response(llm_payload)),
+        ),
+    ):
+        result = await generate_product_overview(
+            MagicMock(),
+            "example",
+            force_regenerate=True,
+            product_svc=product_svc,
+            document_svc=document_svc,
+        )
+
+    assert result.grade is None
+    assert result.verdict is None
+    assert result.risk_score is None
+    product_svc.save_product_overview.assert_awaited_once()
+    save_kwargs = product_svc.save_product_overview.call_args.kwargs
+    assert save_kwargs["thin_evidence"] is True
+    assert save_kwargs["thin_evidence_reason"] is not None
+    assert "No core" in save_kwargs["thin_evidence_reason"]
+    saved_meta = save_kwargs["meta_summary"]
+    assert saved_meta.grade is None
+    assert saved_meta.verdict is None

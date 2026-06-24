@@ -242,7 +242,7 @@ Sitemap URLs are seeded only if they pass `should_crawl_url` *and* score ≥ `mi
 `_fetch_page_internal` (`src/crawler.py:3427`) is a three-stage pipeline per URL:
 
 1. **Static HTTP fetch** (`_static_fetch`): rate-limited, robots-checked, conditional-cached `aiohttp` GET. Follows redirects (the *resolved* URL is used downstream). Bodies capped at 5 MB. 404s and not-found landing pages short-circuit (no render).
-2. **Content extraction** (`_extract_page_content`): routed by content-type → HTML / Markdown / plain-text / XML / binary (PDF). HTML extraction isolates the main policy body and strips consent widgets (`_extract_main_content_soup`, `_is_consent_container`) so we capture the real policy text, not the cookie banner.
+2. **Content extraction** (`_extract_page_content`): routed by content-type → HTML / Markdown / plain-text / XML / binary (PDF). HTML extraction uses trafilatura for main-body isolation with a selector-based fallback (`_extract_main_content_soup`, `_strip_document_chrome`, `_is_consent_container`) so we capture policy text, not cookie banners.
 3. **Quality gate** (`_content_is_sufficient`, `src/crawler.py:1942`): the static result is "unusable" if it's garbled, has JS-required markers, is shorter than the length floor (`1000` chars for high-score URLs, else `500`), or its extracted markdown body is `< 400` chars (an SPA shell whose visible text is nav/JSON).
 
 If the static result is unusable **and** `use_browser` is on **and** the URL isn't a speculative guess **and** its relevance score ≥ `min_legal_score`:

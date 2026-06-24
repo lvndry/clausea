@@ -10,9 +10,17 @@ from src.crawler import ClauseaCrawler, PageContent
 class _FakeContent:
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._offset = 0
 
     async def read(self, n: int = -1) -> bytes:
-        return self._data if n < 0 else self._data[:n]
+        if n < 0:
+            n = len(self._data) - self._offset
+        if n == 0:
+            return b""
+        end = min(self._offset + n, len(self._data))
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
 
 
 def test_extract_links_various_sources():
@@ -276,12 +284,7 @@ def test_extract_main_content_preserves_cookie_policy_wrapper():
 
 
 def test_extract_main_content_combines_split_blocks_over_small_sidebar():
-    """Airbnb help/legal pages split the body across many sibling
-    ``data-testid="CEPHtmlSection"`` blocks while a small "Related articles"
-    widget (``data-testid="...article..."``) appears earlier in the DOM.
-
-    The extractor must pick the rich combined body, not the tiny sidebar.
-    """
+    """Fallback selector path still combines sibling content blocks when trafilatura is skipped."""
     body_para = (
         "This Terms of Service section explains the legal agreement between you and "
         "the company. It describes your rights, obligations, liability, dispute "
@@ -317,6 +320,27 @@ def test_extract_main_content_combines_split_blocks_over_small_sidebar():
     assert "Section 7" in text
     # The richer body must dominate over the tiny related-articles sidebar.
     assert len(text) > 1000
+
+
+def test_extract_main_content_ignores_html_content_class_false_positive():
+    """Fallback selectors must not treat the root ``html`` element as article body."""
+    html = """
+    <html class="site-feature-limited-width-content-enabled">
+      <body>
+        <main id="content">
+          <h1>Terms of Use</h1>
+          <p>These terms govern your use of our products and services.</p>
+        </main>
+      </body>
+    </html>
+    """
+    crawler = ClauseaCrawler()
+    soup = BeautifulSoup(html, "html.parser")
+    cleaned = crawler._extract_main_content_soup(soup)
+    text = cleaned.get_text(" ", strip=True)
+
+    assert "Terms of Use" in text
+    assert "products and services" in text
 
 
 def test_decode_sitemap_bytes_inflates_gzip():
@@ -385,6 +409,9 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
             self.charset = "utf-8"
             self.content = _FakeContent(body.encode())
 
+        async def read(self) -> bytes:
+            return self._body.encode()
+
         async def text(self) -> str:
             return self._body
 
@@ -439,6 +466,10 @@ class _MappedResponse:
         self.url = url
         self.status = 200 if self._body is not None else 404
         self.headers: dict[str, str] = {}
+        self.content = _FakeContent((self._body or "").encode())
+
+    async def read(self) -> bytes:
+        return await self.content.read()
 
     async def text(self) -> str:
         return self._body or ""
@@ -448,10 +479,6 @@ class _MappedResponse:
 
     async def __aexit__(self, *args):
         return None
-
-    @property
-    def content(self) -> _FakeContent:
-        return _FakeContent((self._body or "").encode())
 
 
 class _MappedSession:

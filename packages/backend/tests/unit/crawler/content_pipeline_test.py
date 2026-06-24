@@ -14,9 +14,17 @@ class _FakeContent:
 
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._offset = 0
 
     async def read(self, n: int = -1) -> bytes:
-        return self._data if n < 0 else self._data[:n]
+        if n < 0:
+            n = len(self._data) - self._offset
+        if n == 0:
+            return b""
+        end = min(self._offset + n, len(self._data))
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +202,9 @@ class TestFetchPageInternalOrchestration:
                 self.charset = "utf-8"
                 self.content = _FakeContent(html.encode())
 
+            async def read(self) -> bytes:
+                return await self.content.read()
+
             async def text(self):
                 return html
 
@@ -238,6 +249,9 @@ class TestFetchPageInternalOrchestration:
                 self.url = url
                 self.charset = "utf-8"
                 self.content = _FakeContent(thin_html.encode())
+
+            async def read(self) -> bytes:
+                return await self.content.read()
 
             async def text(self):
                 return thin_html
@@ -290,6 +304,9 @@ class TestFetchPageInternalOrchestration:
                 self.charset = "utf-8"
                 self.content = _FakeContent(thin_html.encode())
 
+            async def read(self) -> bytes:
+                return await self.content.read()
+
             async def text(self):
                 return thin_html
 
@@ -336,6 +353,9 @@ class TestFetchPageInternalOrchestration:
                 self.url = url
                 self.charset = "utf-8"
                 self.content = _FakeContent(thin_html.encode())
+
+            async def read(self) -> bytes:
+                return await self.content.read()
 
             async def text(self):
                 return thin_html
@@ -384,6 +404,9 @@ class TestFetchPageInternalOrchestration:
                 self.url = url
                 self.charset = "utf-8"
                 self.content = _FakeContent(b"")
+
+            async def read(self) -> bytes:
+                return await self.content.read()
 
             async def text(self):
                 return ""
@@ -437,6 +460,9 @@ class TestFetchPageInternalOrchestration:
                 self.charset = None
                 self.content = _FakeContent(b"")
 
+            async def read(self) -> bytes:
+                return await self.content.read()
+
             async def text(self):
                 return ""
 
@@ -477,6 +503,9 @@ class TestFetchPageInternalOrchestration:
                 self.charset = "utf-8"
                 self.content = _FakeContent(thin_html.encode())
 
+            async def read(self) -> bytes:
+                return await self.content.read()
+
             async def text(self):
                 return thin_html
 
@@ -509,6 +538,9 @@ class TestFetchPageInternalOrchestration:
                 self.url = YarlURL("https://example.com/missing")
                 self.charset = "utf-8"
                 self.content = _FakeContent(b"<html><body>Not found</body></html>")
+
+            async def read(self) -> bytes:
+                return await self.content.read()
 
             async def text(self):
                 return "<html><body>Not found</body></html>"
@@ -557,6 +589,9 @@ class TestFetchPageInternalOrchestration:
                 self.url = YarlURL(final_url)
                 self.charset = "utf-8"
                 self.content = _FakeContent(thin_html.encode())
+
+            async def read(self) -> bytes:
+                return await self.content.read()
 
             async def text(self):
                 return thin_html

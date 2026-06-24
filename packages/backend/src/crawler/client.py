@@ -92,6 +92,7 @@ from src.crawler.constants import (
     locale_canonical_key,
 )
 from src.crawler.content_analyzer import ContentAnalyzer
+from src.crawler.html_extraction import extract_with_trafilatura
 from src.crawler.http_cache import AsyncFileLogHandler, HTTPCache
 from src.crawler.models import CrawlResult, CrawlStats, PageContent, StaticFetchResult
 from src.crawler.rate_limiter import DomainRateLimiter
@@ -188,6 +189,32 @@ def _is_pdf_response(content_type: str, url: str) -> bool:
 
 
 # ---- ClauseaCrawler ----------------------------------------------------------------
+
+
+_RESPONSE_READ_CHUNK_SIZE = 65536
+
+_BOILERPLATE_PATTERN = re.compile(
+    r"(cookie|consent|banner|popup|modal|newsletter|subscribe|breadcrumb|"
+    r"social|share|tracking|advert|promo|sidebar|drawer|menu|navigation|"
+    r"footer|header|masthead|toolbar)",
+    re.IGNORECASE,
+)
+
+
+async def _read_bounded_response_body(
+    content: aiohttp.StreamReader, max_bytes: int
+) -> tuple[bytes, bool]:
+    """Read response body in chunks; may read up to max_bytes + 64KB before stopping."""
+    chunks: list[bytes] = []
+    total = 0
+    while total <= max_bytes:
+        chunk = await content.read(_RESPONSE_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    body = b"".join(chunks)
+    return body, len(body) > max_bytes
 
 
 class ClauseaCrawler:
@@ -532,9 +559,21 @@ class ClauseaCrawler:
                 )
 
             if is_text:
-                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
-                    raw = raw[:MAX_RESPONSE_BYTES]
+                raw, oversized = await _read_bounded_response_body(
+                    response.content, MAX_RESPONSE_BYTES
+                )
+                if oversized:
+                    truncated = raw[:MAX_RESPONSE_BYTES]
+                    return StaticFetchResult(
+                        url=url,
+                        status_code=response.status,
+                        content_type=content_type,
+                        body="",
+                        raw_bytes=truncated,
+                        headers=resp_headers,
+                        resolved_url=final_url,
+                        error_message=f"Response too large (exceeds {MAX_RESPONSE_BYTES} bytes)",
+                    )
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,
@@ -546,8 +585,10 @@ class ClauseaCrawler:
                     resolved_url=final_url,
                 )
             else:
-                raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw_bytes) > MAX_RESPONSE_BYTES:
+                raw_bytes, oversized = await _read_bounded_response_body(
+                    response.content, MAX_RESPONSE_BYTES
+                )
+                if oversized:
                     raw_bytes = raw_bytes[:MAX_RESPONSE_BYTES]
                 return StaticFetchResult(
                     url=url,
@@ -590,15 +631,27 @@ class ClauseaCrawler:
                 ):
                     return None
 
-                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
-                    raw = raw[:MAX_RESPONSE_BYTES]
+                raw, oversized = await _read_bounded_response_body(
+                    response.content, MAX_RESPONSE_BYTES
+                )
+                if oversized:
+                    return StaticFetchResult(
+                        url=url,
+                        status_code=response.status,
+                        content_type=content_type,
+                        body="",
+                        raw_bytes=raw[:MAX_RESPONSE_BYTES],
+                        headers=dict(response.headers.items()),
+                        resolved_url=str(response.url),
+                        error_message=f"Response too large (exceeds {MAX_RESPONSE_BYTES} bytes)",
+                    )
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,
                     status_code=response.status,
                     content_type=content_type,
                     body=body,
+                    raw_bytes=raw,
                     headers=dict(response.headers.items()),
                     resolved_url=str(response.url),
                 )
@@ -648,9 +701,17 @@ class ClauseaCrawler:
         soup = BeautifulSoup(html, "html.parser")
         title_tag = soup.find("title")
         title = title_tag.get_text().strip() if title_tag else ""
-        content_soup = self._extract_main_content_soup(soup)
-        text = self._extract_text_from_soup(content_soup)
-        markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
+
+        prepared = BeautifulSoup(str(soup.body or soup), "html.parser")
+        self._strip_document_chrome(prepared)
+        traf = extract_with_trafilatura(str(prepared), url=url)
+        if traf is not None:
+            text, markdown = traf
+        else:
+            content_soup = self._extract_main_content_soup(prepared)
+            text = self._extract_text_from_soup(content_soup)
+            markdown = markdownify.markdownify(str(content_soup), heading_style="ATX")
+
         metadata = self.extract_metadata(soup)
         links = self.extract_links(soup, url)
         return title, text, markdown, metadata, links
@@ -999,7 +1060,42 @@ class ClauseaCrawler:
         match_set = set(elements)
         return [el for el in elements if not any(parent in match_set for parent in el.parents)]
 
+    def _strip_document_chrome(self, cleaned: BeautifulSoup) -> None:
+        for tag in cleaned(["script", "style", "noscript", "template", "svg", "canvas", "iframe"]):
+            tag.decompose()
+
+        for tag in cleaned.find_all(
+            ["nav", "header", "footer", "aside", "form", "button", "input", "select", "textarea"]
+        ):
+            tag.decompose()
+
+        for tag in list(cleaned.find_all(True)):
+            if tag.parent is None:
+                continue
+            if tag.attrs is not None and self._is_consent_container(tag):
+                tag.decompose()
+
+        for tag in cleaned.find_all(True):
+            if tag.attrs is None:
+                continue
+            classes_value = tag.get("class")
+            if isinstance(classes_value, list):
+                classes = " ".join(str(cls) for cls in classes_value)
+            elif classes_value:
+                classes = str(classes_value)
+            else:
+                classes = ""
+            attrs = " ".join(
+                str(value) for value in [tag.get("id", ""), classes, tag.get("aria-label", "")]
+            )
+            if attrs and _BOILERPLATE_PATTERN.search(attrs):
+                tag_text = tag.get_text(" ", strip=True)
+                if self._is_substantive_legal_policy_container(attrs, tag_text):
+                    continue
+                tag.decompose()
+
     def _extract_main_content_soup(self, soup: BeautifulSoup) -> BeautifulSoup:
+        """Heuristic fallback when trafilatura cannot isolate substantive body content."""
         selectors = (
             "main",
             "article",
@@ -1008,7 +1104,6 @@ class ClauseaCrawler:
             '[class*="content" i]',
             '[data-testid*="content" i]',
             '[data-testid*="article" i]',
-            '[data-testid="CEPHtmlSection"]',
             '[data-qa*="content" i]',
             '[id*="legal" i]',
             '[class*="legal" i]',
@@ -1024,7 +1119,11 @@ class ClauseaCrawler:
         best_text_len = 0
         for selector in selectors:
             matches = self._top_level_elements(soup.select(selector))
-            matches = [el for el in matches if not self._is_consent_container(el)]
+            matches = [
+                el
+                for el in matches
+                if el.name not in ("html", "body") and not self._is_consent_container(el)
+            ]
             if not matches:
                 continue
             combined_text_len = sum(len(el.get_text(" ", strip=True)) for el in matches)
@@ -1043,47 +1142,7 @@ class ClauseaCrawler:
         else:
             content_root = soup.body or soup
         cleaned = BeautifulSoup(str(content_root), "html.parser")
-
-        for tag in cleaned(["script", "style", "noscript", "template", "svg", "canvas", "iframe"]):
-            tag.decompose()
-
-        for tag in cleaned.find_all(
-            ["nav", "header", "footer", "aside", "form", "button", "input", "select", "textarea"]
-        ):
-            tag.decompose()
-
-        for tag in list(cleaned.find_all(True)):
-            if tag.parent is None:
-                continue
-            if tag.attrs is not None and self._is_consent_container(tag):
-                tag.decompose()
-
-        boilerplate_pattern = re.compile(
-            r"(cookie|consent|banner|popup|modal|newsletter|subscribe|breadcrumb|"
-            r"social|share|tracking|advert|promo|sidebar|drawer|menu|navigation|"
-            r"footer|header|masthead|toolbar)",
-            re.IGNORECASE,
-        )
-
-        for tag in cleaned.find_all(True):
-            if tag.attrs is None:
-                continue
-            classes_value = tag.get("class")
-            if isinstance(classes_value, list):
-                classes = " ".join(str(cls) for cls in classes_value)
-            elif classes_value:
-                classes = str(classes_value)
-            else:
-                classes = ""
-            attrs = " ".join(
-                str(value) for value in [tag.get("id", ""), classes, tag.get("aria-label", "")]
-            )
-            if attrs and boilerplate_pattern.search(attrs):
-                tag_text = tag.get_text(" ", strip=True)
-                if self._is_substantive_legal_policy_container(attrs, tag_text):
-                    continue
-                tag.decompose()
-
+        self._strip_document_chrome(cleaned)
         return cleaned
 
     @classmethod

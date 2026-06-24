@@ -105,6 +105,8 @@ class ProductIntelligenceService:
         product_slug: str,
         meta_summary: MetaSummary,
         job_id: str | None = None,
+        thin_evidence: bool = False,
+        thin_evidence_reason: str | None = None,
     ) -> None:
         intelligence = await self.ensure_shell(db, product_id=product_id, product_slug=product_slug)
         overview_data = meta_summary.model_dump(mode="json")
@@ -151,6 +153,8 @@ class ProductIntelligenceService:
                 "overview": meta_summary.model_dump(mode="json"),
                 "overview_history": [snapshot.model_dump(mode="json") for snapshot in history],
                 "overview_generated_at": now,
+                "thin_evidence": thin_evidence,
+                "thin_evidence_reason": (thin_evidence_reason or None) if thin_evidence else None,
             },
         )
         await self.update_product_stats(db, product_id=product_id, product_slug=product_slug)
@@ -204,13 +208,17 @@ class ProductIntelligenceService:
         membership = {"$or": [{"product_id": product_id}, {"product_ids": product_id}]}
         document_count = await db.documents.count_documents(membership)
         intelligence = await self.get(db, product_id=product_id)
+        has_graded_overview = (
+            intelligence is not None
+            and intelligence.overview is not None
+            and not intelligence.thin_evidence
+            and intelligence.overview.grade is not None
+        )
         stats: dict[str, Any] = {
             "stats.document_count": document_count,
-            "stats.has_overview": intelligence is not None and intelligence.overview is not None,
+            "stats.has_overview": has_graded_overview,
             "stats.last_indexed_at": datetime.now(),
-            "stats.grade": (
-                intelligence.overview.grade if intelligence and intelligence.overview else None
-            ),
+            "stats.grade": intelligence.overview.grade if has_graded_overview else None,
         }
         await db.products.update_one({"id": product_id}, {"$set": stats})
 

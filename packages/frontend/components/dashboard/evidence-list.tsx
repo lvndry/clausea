@@ -222,16 +222,6 @@ export function EvidenceList({
 
   return (
     <div className="space-y-6">
-      {hasTopics && (
-        <TopicEvidencePanel
-          topicStances={topicStances}
-          topicReport={topicReport}
-          title="Evidence by Policy Topic"
-          showCitations={true}
-          collapsibleTopics={true}
-        />
-      )}
-
       {documents.length > 0 ? (
         <Card
           variant="default"
@@ -244,9 +234,7 @@ export function EvidenceList({
                   <FileText className="h-5 w-5 text-foreground" />
                 </div>
                 <div>
-                  <CardTitle className="text-lg">
-                    Policy Document Library
-                  </CardTitle>
+                  <CardTitle className="text-lg">Sources</CardTitle>
                   <p className="text-sm text-muted-foreground mt-0.5">
                     Original policies we analyzed, with document-level findings
                     and supporting quotes.
@@ -808,9 +796,19 @@ export function EvidenceList({
           className="border-border bg-background shadow-none overflow-hidden"
         >
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No policy document library is available yet.
+            No sources are available yet.
           </CardContent>
         </Card>
+      )}
+
+      {hasTopics && (
+        <TopicEvidencePanel
+          topicStances={topicStances}
+          topicReport={topicReport}
+          title="Evidence by Policy Topic"
+          showCitations={true}
+          collapsibleTopics={true}
+        />
       )}
     </div>
   );
