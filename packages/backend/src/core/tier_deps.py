@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 from motor.core import AgnosticDatabase
+from starlette import status
 
 from src.core.database import get_db
 from src.core.jwt import clerk_auth_service
@@ -30,9 +31,6 @@ _METERED_PRODUCT_GET_RE = re.compile(
 )
 _preview_usage_svc = ProductPreviewUsageService()
 logger = get_logger(__name__)
-
-# 429 Too Many Requests — preview/monthly quota exhausted.
-USAGE_LIMIT_STATUS = 429
 
 
 def _user_id_from_state(request: Request) -> str | None:
@@ -151,12 +149,12 @@ async def check_usage_limit(
         except Exception:
             logger.exception("Anonymous preview usage check failed")
             raise HTTPException(
-                status_code=503,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Usage metering temporarily unavailable. Please try again.",
             ) from None
         if not allowed:
             raise HTTPException(
-                status_code=USAGE_LIMIT_STATUS,
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Free preview limit reached. Sign in for unlimited access.",
             )
         return
@@ -170,7 +168,7 @@ async def check_usage_limit(
     allowed, _ = await UsageService.check_usage_limit(db, user_id)
     if not allowed:
         raise HTTPException(
-            status_code=USAGE_LIMIT_STATUS,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Monthly usage limit reached. Upgrade to Pro for unlimited access.",
         )
 
