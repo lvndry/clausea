@@ -319,6 +319,30 @@ def test_extract_main_content_combines_split_blocks_over_small_sidebar():
     assert len(text) > 1000
 
 
+def test_extract_main_content_ignores_html_vector_content_class_false_positive():
+    """MediaWiki Vector skin puts 'content' in <html> class names; do not treat
+    the root element as the article body."""
+    html = """
+    <html class="client-nojs vector-feature-limited-width-content-enabled">
+      <body>
+        <main id="content">
+          <div id="mw-content-text" class="mw-parser-output">
+            <h1>Terms of Use</h1>
+            <p>These terms govern your use of Wikimedia projects and services.</p>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+    crawler = ClauseaCrawler()
+    soup = BeautifulSoup(html, "html.parser")
+    cleaned = crawler._extract_main_content_soup(soup)
+    text = cleaned.get_text(" ", strip=True)
+
+    assert "Terms of Use" in text
+    assert "Wikimedia projects" in text
+
+
 def test_decode_sitemap_bytes_inflates_gzip():
     """``.xml.gz`` sitemap indexes arrive as gzip file bodies; aiohttp does not
     transparently inflate them, so a naive .text() decode raised
@@ -385,6 +409,9 @@ async def test_static_html_fallback_uses_main_content_and_keeps_jsonld_links():
             self.charset = "utf-8"
             self.content = _FakeContent(body.encode())
 
+        async def read(self) -> bytes:
+            return self._body.encode()
+
         async def text(self) -> str:
             return self._body
 
@@ -439,6 +466,9 @@ class _MappedResponse:
         self.url = url
         self.status = 200 if self._body is not None else 404
         self.headers: dict[str, str] = {}
+
+    async def read(self) -> bytes:
+        return (self._body or "").encode()
 
     async def text(self) -> str:
         return self._body or ""

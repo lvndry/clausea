@@ -106,6 +106,9 @@ async def test_static_fetch_sends_accept_language() -> None:
             self.url = YarlURL("https://example.com/legal/terms")
             self.content = FakeContent()
 
+        async def read(self) -> bytes:
+            return await self.content.read(0)
+
         async def __aenter__(self):
             return self
 

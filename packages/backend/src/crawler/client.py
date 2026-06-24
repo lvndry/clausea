@@ -532,9 +532,18 @@ class ClauseaCrawler:
                 )
 
             if is_text:
-                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                raw = await response.read()
                 if len(raw) > MAX_RESPONSE_BYTES:
-                    raw = raw[:MAX_RESPONSE_BYTES]
+                    return StaticFetchResult(
+                        url=url,
+                        status_code=response.status,
+                        content_type=content_type,
+                        body="",
+                        raw_bytes=raw[:MAX_RESPONSE_BYTES],
+                        headers=resp_headers,
+                        resolved_url=final_url,
+                        error_message=f"Response too large ({len(raw)} bytes)",
+                    )
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,
@@ -546,7 +555,7 @@ class ClauseaCrawler:
                     resolved_url=final_url,
                 )
             else:
-                raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                raw_bytes = await response.read()
                 if len(raw_bytes) > MAX_RESPONSE_BYTES:
                     raw_bytes = raw_bytes[:MAX_RESPONSE_BYTES]
                 return StaticFetchResult(
@@ -590,9 +599,9 @@ class ClauseaCrawler:
                 ):
                     return None
 
-                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                raw = await response.read()
                 if len(raw) > MAX_RESPONSE_BYTES:
-                    raw = raw[:MAX_RESPONSE_BYTES]
+                    return None
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,
@@ -1004,6 +1013,9 @@ class ClauseaCrawler:
             "main",
             "article",
             '[role="main"]',
+            "#mw-content-text",
+            ".mw-parser-output",
+            "#bodyContent",
             '[id*="content" i]',
             '[class*="content" i]',
             '[data-testid*="content" i]',
@@ -1024,7 +1036,11 @@ class ClauseaCrawler:
         best_text_len = 0
         for selector in selectors:
             matches = self._top_level_elements(soup.select(selector))
-            matches = [el for el in matches if not self._is_consent_container(el)]
+            matches = [
+                el
+                for el in matches
+                if el.name not in ("html", "body") and not self._is_consent_container(el)
+            ]
             if not matches:
                 continue
             combined_text_len = sum(len(el.get_text(" ", strip=True)) for el in matches)

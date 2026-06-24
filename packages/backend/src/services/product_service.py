@@ -305,6 +305,8 @@ class ProductService:
         meta_summary: MetaSummary,
         job_id: str | None = None,
         product_id: str | None = None,
+        thin_evidence: bool = False,
+        thin_evidence_reason: str | None = None,
     ) -> None:
         """Save the product overview payload to the database.
 
@@ -314,9 +316,17 @@ class ProductService:
             meta_summary: Overview payload (MetaSummary shape)
             job_id: Optional pipeline job that produced this overview
             product_id: Product identifier for the owning product record
+            thin_evidence: When True, overview is stored without a consumer grade
+            thin_evidence_reason: Human-readable reason grading was withheld
         """
         await self._product_repo.save_product_overview(
-            db, product_slug, meta_summary, job_id=job_id, product_id=product_id
+            db,
+            product_slug,
+            meta_summary,
+            job_id=job_id,
+            product_id=product_id,
+            thin_evidence=thin_evidence,
+            thin_evidence_reason=thin_evidence_reason,
         )
 
     # ============================================================================

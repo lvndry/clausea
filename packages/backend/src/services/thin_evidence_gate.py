@@ -1,7 +1,8 @@
-"""Thin-evidence gate: blocks overview generation when evidence is insufficient."""
+"""Thin-evidence gate: suppresses grading when evidence is insufficient."""
 
 from __future__ import annotations
 
+from src.models.document import MetaSummary
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 
 MIN_DISTINCT_CORE_TYPES = 2
@@ -28,3 +29,11 @@ def check_thin_evidence(analyzed_core_docs: list[str]) -> tuple[bool, str | None
         )
 
     return False, None
+
+
+def strip_overview_grading(meta_summary: MetaSummary) -> None:
+    """Remove consumer-facing grades from an overview saved under thin evidence."""
+    meta_summary.grade = None
+    meta_summary.verdict = None
+    meta_summary.risk_score = None
+    meta_summary.grade_justification = None

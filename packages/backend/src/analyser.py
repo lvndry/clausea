@@ -2092,7 +2092,7 @@ Per-document analyses and extractions:
         merge_llm_review,
         validate_overview,
     )
-    from src.services.thin_evidence_gate import check_thin_evidence
+    from src.services.thin_evidence_gate import check_thin_evidence, strip_overview_grading
     from src.services.topic_evidence_fallback import attach_fallback_evidence
 
     is_thin, thin_reason = check_thin_evidence(
@@ -2348,6 +2348,14 @@ Per-document analyses and extractions:
             for warning in validation.warnings:
                 logger.info("Overview warning for %s: %s", product_slug, warning)
 
+        if is_thin:
+            strip_overview_grading(meta_summary)
+            logger.info(
+                "Withholding overview grade for %s due to thin evidence: %s",
+                product_slug,
+                thin_reason,
+            )
+
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(
             db,
@@ -2355,6 +2363,8 @@ Per-document analyses and extractions:
             meta_summary=meta_summary,
             job_id=job_id,
             product_id=product.id,
+            thin_evidence=is_thin,
+            thin_evidence_reason=thin_reason,
         )
         logger.info(f"✓ Saved product overview for {product_slug}")
 

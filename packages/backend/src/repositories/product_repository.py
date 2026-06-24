@@ -285,6 +285,8 @@ class ProductRepository(BaseRepository):
         meta_summary: MetaSummary,
         job_id: str | None = None,
         product_id: str | None = None,
+        thin_evidence: bool = False,
+        thin_evidence_reason: str | None = None,
     ) -> None:
         if product_id is None:
             product = await self.find_by_slug(db, product_slug)
@@ -297,6 +299,8 @@ class ProductRepository(BaseRepository):
             product_slug=product_slug,
             meta_summary=meta_summary,
             job_id=job_id,
+            thin_evidence=thin_evidence,
+            thin_evidence_reason=thin_evidence_reason,
         )
         logger.info("Saved product overview for %s", product_slug)
 
