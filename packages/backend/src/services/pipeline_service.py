@@ -415,117 +415,7 @@ class PipelineService:
                             job.product_slug,
                         )
 
-                    # === Step 1: Crawl ===
-                    job.status = "crawling"
-                    await self._update_step(
-                        db, job, "crawling", "running", "Discovering policy documents..."
-                    )
-
-                    # Track progress tasks to ensure they are all processed before switching phases.
-                    # This prevents a race condition where a late 'Discovery' update overwrites
-                    # the subsequent 'synthesising' job status in MongoDB.
-                    crawl_tasks: list[asyncio.Task] = []
-
-                    # Create progress callback for crawl phase.
-                    #
-                    # `current` is pages successfully fetched; `total` is the discovered
-                    # frontier. We deliberately do NOT emit a percentage or "X remaining"
-                    # for crawling: the frontier is a moving target (it grows as links are
-                    # found) and is inflated by speculative policy-URL probes that mostly
-                    # 404, so any ratio is fiction. Report an honest count and let the UI
-                    # render this step as indeterminate. (The synthesising step, which has a
-                    # real fixed total, keeps its genuine percentage.)
-                    async def _on_crawl_progress(_phase: str, current: int, _total: int) -> None:
-                        pages = "page" if current == 1 else "pages"
-                        # We wrap this in a task so the crawler doesn't block on DB I/O,
-                        # but we keep track of it to await it before phase transitions.
-                        task = asyncio.create_task(
-                            self._update_step_progress(
-                                db,
-                                job,
-                                "crawling",
-                                message=f"Discovering documents — {current} {pages} read so far",
-                            )
-                        )
-                        crawl_tasks.append(task)
-
-                    pipeline = PolicyDocumentPipeline(
-                        progress_callback=_on_crawl_progress, job_id=job.id
-                    )
-                    stats = await pipeline.run([product])
-
-                    # Drain pending progress tasks before finalizing the crawl step
-                    if crawl_tasks:
-                        await asyncio.gather(*crawl_tasks, return_exceptions=True)
-
-                    # Update the product display name when the crawler found a better one in
-                    # page metadata (e.g. og:site_name "OpenAI" vs domain-derived "Openai").
-                    # Only auto-derived placeholder names are eligible for improvement;
-                    # manually curated ("manual") or already-extracted names are frozen so a
-                    # later crawl can never degrade a good name into a section title like
-                    # "Help Center".
-                    brand_name: str | None = getattr(stats, "brand_name", None)
-                    if _should_override_product_name(product.name, product.name_source, brand_name):
-                        assert brand_name is not None  # guaranteed by _should_override_product_name
-                        try:
-                            product_svc_upd = create_product_service()
-                            await product_svc_upd.update_product_name(
-                                db,
-                                product.id,
-                                brand_name,
-                                name_source=NAME_SOURCE_AUTO_EXTRACTED,
-                            )
-                            logger.info(
-                                "Product name updated: '%s' → '%s' (%s)",
-                                product.name,
-                                brand_name,
-                                job.product_slug,
-                            )
-                            product.name = brand_name
-                            product.name_source = NAME_SOURCE_AUTO_EXTRACTED
-                            job.product_name = brand_name
-                            await self._pipeline_repo.update_fields(
-                                db, job.id, {"product_name": brand_name}
-                            )
-                        except Exception as name_exc:
-                            logger.warning(
-                                "Brand name update failed for %s: %s",
-                                job.product_slug,
-                                name_exc,
-                            )
-
-                    job.documents_found = stats.total_documents_found
-                    job.documents_stored = stats.policy_documents_stored
-
-                    # Reset attempt-local crawl diagnostics so a retry cannot inherit
-                    # stale errors/skips from a previous failed attempt.
-                    job.crawl_errors = []
-                    job.crawl_skip_reasons = []
-
-                    # Persist per-URL crawl failures on the job
-                    if stats.crawl_errors:
-                        job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]
-
-                    # Persist silent skips (fetched OK but rejected by a filter)
-                    if stats.crawl_skip_reasons:
-                        job.crawl_skip_reasons = [
-                            CrawlSkip(**skip) for skip in stats.crawl_skip_reasons
-                        ]
-
-                    await self._update_step(
-                        db,
-                        job,
-                        "crawling",
-                        "completed",
-                        f"Found {stats.policy_documents_stored} policy documents",
-                    )
-
-                    if stats.policy_documents_stored == 0:
-                        # Crawl stored nothing new. Before giving up, check if the
-                        # product already has documents from a previous run. If yes,
-                        # those docs are valid input for synthesis — deduplicated
-                        # re-crawls (same content hash) legitimately store 0 new docs
-                        # but must not skip the overview step.
+                    if job.skip_crawl:
                         doc_svc_check = create_document_service()
                         existing_docs = await doc_svc_check.get_product_documents_by_slug(
                             db, job.product_slug
@@ -533,98 +423,296 @@ class PipelineService:
                         existing_policy_docs = [
                             doc for doc in existing_docs if doc.doc_type != "other"
                         ]
-                        if existing_policy_docs:
-                            logger.info(
-                                "Crawl stored 0 new docs but %d existing docs found for %s "
-                                "— proceeding to synthesis",
-                                len(existing_policy_docs),
-                                job.product_slug,
-                            )
-                            job.documents_stored = len(existing_policy_docs)
-                        else:
-                            job.status = "no_documents"
-
-                        # Classify the terminal outcome from the crawl's error signals.
-                        # Priority order: robots_blocked > site_unavailable > access_denied
-                        # > no_policy_found (pages fetched, none matched) > fallback errors.
-                        _robots_errs = [
-                            e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
-                        ]
-                        _non_robots_errs = [
-                            e for e in job.crawl_errors if e.error_type != "robots_txt_blocked"
-                        ]
-                        _conn_errs = [
-                            e
-                            for e in _non_robots_errs
-                            if e.error_type in ("network_error", "timeout")
-                        ]
-                        _hard_errs = [
-                            e
-                            for e in _non_robots_errs
-                            if is_hard_crawl_error(e.error_type, e.status_code, e.error_message)
-                        ]
-
-                        if _robots_errs and not _non_robots_errs:
-                            # All attempted URLs were blocked by robots.txt — deterministic,
-                            # targeted outcome surfaced to the user with dedicated copy.
-                            job.status = "robots_blocked"
-                            job.error = PipelineErrorCode.crawl_robots_blocked
+                        if not existing_policy_docs:
+                            job.status = "failed"
+                            job.error = PipelineErrorCode.no_documents_found
                             job.error_detail = (
-                                "This site blocks automated access via robots.txt. "
-                                "We were unable to crawl any policy documents."
+                                "Analysis-only requeue skipped crawl but no stored "
+                                "policy documents were found."
                             )
-                        elif job.status == "no_documents":
-                            # Only apply specific new statuses when there are no existing
-                            # docs (job.status was set to "no_documents" in the else branch
-                            # above). For jobs with existing docs we leave the status
-                            # unchanged so the partial-block signal is informational only.
-                            if (
-                                _non_robots_errs
-                                and _conn_errs
-                                and len(_conn_errs) == len(_non_robots_errs)
-                            ):
-                                # All failures are connection-level (DNS, SSL, timeout, refused)
-                                # and there are no robots-txt blocks — site is unreachable.
-                                job.status = "site_unavailable"
-                                job.error = PipelineErrorCode.site_unavailable
+                            job.completed_at = datetime.now()
+                            await self._update_step(
+                                db,
+                                job,
+                                "crawling",
+                                "failed",
+                                "Skipped crawl — no existing documents",
+                            )
+                            await self._update_step(
+                                db,
+                                job,
+                                "synthesising",
+                                "failed",
+                                "Skipped — no documents to analyze",
+                            )
+                            await self._update_step(
+                                db,
+                                job,
+                                "generating_overview",
+                                "failed",
+                                "Skipped — no documents to analyze",
+                            )
+                            await self._pipeline_repo.update(db, job)
+                            return
+
+                        job.documents_stored = len(existing_policy_docs)
+                        job.documents_found = len(existing_policy_docs)
+                        job.crawl_errors = []
+                        job.crawl_skip_reasons = []
+                        await self._update_step(
+                            db,
+                            job,
+                            "crawling",
+                            "completed",
+                            f"Skipped crawl — reusing {len(existing_policy_docs)} existing document(s)",
+                        )
+                        await self._pipeline_repo.update_fields(
+                            db,
+                            job.id,
+                            {
+                                "documents_stored": job.documents_stored,
+                                "documents_found": job.documents_found,
+                                "crawl_errors": [],
+                                "crawl_skip_reasons": [],
+                            },
+                        )
+                    else:
+                        # === Step 1: Crawl ===
+                        job.status = "crawling"
+                        await self._update_step(
+                            db, job, "crawling", "running", "Discovering policy documents..."
+                        )
+
+                        # Track progress tasks to ensure they are all processed before switching phases.
+                        # This prevents a race condition where a late 'Discovery' update overwrites
+                        # the subsequent 'synthesising' job status in MongoDB.
+                        crawl_tasks: list[asyncio.Task] = []
+
+                        # Create progress callback for crawl phase.
+                        #
+                        # `current` is pages successfully fetched; `total` is the discovered
+                        # frontier. We deliberately do NOT emit a percentage or "X remaining"
+                        # for crawling: the frontier is a moving target (it grows as links are
+                        # found) and is inflated by speculative policy-URL probes that mostly
+                        # 404, so any ratio is fiction. Report an honest count and let the UI
+                        # render this step as indeterminate. (The synthesising step, which has a
+                        # real fixed total, keeps its genuine percentage.)
+                        async def _on_crawl_progress(
+                            _phase: str, current: int, _total: int
+                        ) -> None:
+                            pages = "page" if current == 1 else "pages"
+                            # We wrap this in a task so the crawler doesn't block on DB I/O,
+                            # but we keep track of it to await it before phase transitions.
+                            task = asyncio.create_task(
+                                self._update_step_progress(
+                                    db,
+                                    job,
+                                    "crawling",
+                                    message=f"Discovering documents — {current} {pages} read so far",
+                                )
+                            )
+                            crawl_tasks.append(task)
+
+                        pipeline = PolicyDocumentPipeline(
+                            progress_callback=_on_crawl_progress, job_id=job.id
+                        )
+                        stats = await pipeline.run([product])
+
+                        # Drain pending progress tasks before finalizing the crawl step
+                        if crawl_tasks:
+                            await asyncio.gather(*crawl_tasks, return_exceptions=True)
+
+                        # Update the product display name when the crawler found a better one in
+                        # page metadata (e.g. og:site_name "OpenAI" vs domain-derived "Openai").
+                        # Only auto-derived placeholder names are eligible for improvement;
+                        # manually curated ("manual") or already-extracted names are frozen so a
+                        # later crawl can never degrade a good name into a section title like
+                        # "Help Center".
+                        brand_name: str | None = getattr(stats, "brand_name", None)
+                        if _should_override_product_name(
+                            product.name, product.name_source, brand_name
+                        ):
+                            assert (
+                                brand_name is not None
+                            )  # guaranteed by _should_override_product_name
+                            try:
+                                product_svc_upd = create_product_service()
+                                await product_svc_upd.update_product_name(
+                                    db,
+                                    product.id,
+                                    brand_name,
+                                    name_source=NAME_SOURCE_AUTO_EXTRACTED,
+                                )
+                                logger.info(
+                                    "Product name updated: '%s' → '%s' (%s)",
+                                    product.name,
+                                    brand_name,
+                                    job.product_slug,
+                                )
+                                product.name = brand_name
+                                product.name_source = NAME_SOURCE_AUTO_EXTRACTED
+                                job.product_name = brand_name
+                                await self._pipeline_repo.update_fields(
+                                    db, job.id, {"product_name": brand_name}
+                                )
+                            except Exception as name_exc:
+                                logger.warning(
+                                    "Brand name update failed for %s: %s",
+                                    job.product_slug,
+                                    name_exc,
+                                )
+
+                        job.documents_found = stats.total_documents_found
+                        job.documents_stored = stats.policy_documents_stored
+
+                        # Reset attempt-local crawl diagnostics so a retry cannot inherit
+                        # stale errors/skips from a previous failed attempt.
+                        job.crawl_errors = []
+                        job.crawl_skip_reasons = []
+
+                        # Persist per-URL crawl failures on the job
+                        if stats.crawl_errors:
+                            job.crawl_errors = [CrawlError(**err) for err in stats.crawl_errors]
+
+                        # Persist silent skips (fetched OK but rejected by a filter)
+                        if stats.crawl_skip_reasons:
+                            job.crawl_skip_reasons = [
+                                CrawlSkip(**skip) for skip in stats.crawl_skip_reasons
+                            ]
+
+                        await self._update_step(
+                            db,
+                            job,
+                            "crawling",
+                            "completed",
+                            f"Found {stats.policy_documents_stored} policy documents",
+                        )
+
+                        if stats.policy_documents_stored == 0:
+                            # Crawl stored nothing new. Before giving up, check if the
+                            # product already has documents from a previous run. If yes,
+                            # those docs are valid input for synthesis — deduplicated
+                            # re-crawls (same content hash) legitimately store 0 new docs
+                            # but must not skip the overview step.
+                            doc_svc_check = create_document_service()
+                            existing_docs = await doc_svc_check.get_product_documents_by_slug(
+                                db, job.product_slug
+                            )
+                            existing_policy_docs = [
+                                doc for doc in existing_docs if doc.doc_type != "other"
+                            ]
+                            if existing_policy_docs:
+                                logger.info(
+                                    "Crawl stored 0 new docs but %d existing docs found for %s "
+                                    "— proceeding to synthesis",
+                                    len(existing_policy_docs),
+                                    job.product_slug,
+                                )
+                                job.documents_stored = len(existing_policy_docs)
+                            else:
+                                job.status = "no_documents"
+
+                            # Classify the terminal outcome from the crawl's error signals.
+                            # Priority order: robots_blocked > site_unavailable > access_denied
+                            # > no_policy_found (pages fetched, none matched) > fallback errors.
+                            _robots_errs = [
+                                e for e in job.crawl_errors if e.error_type == "robots_txt_blocked"
+                            ]
+                            _non_robots_errs = [
+                                e for e in job.crawl_errors if e.error_type != "robots_txt_blocked"
+                            ]
+                            _conn_errs = [
+                                e
+                                for e in _non_robots_errs
+                                if e.error_type in ("network_error", "timeout")
+                            ]
+                            _hard_errs = [
+                                e
+                                for e in _non_robots_errs
+                                if is_hard_crawl_error(e.error_type, e.status_code, e.error_message)
+                            ]
+
+                            if _robots_errs and not _non_robots_errs:
+                                # All attempted URLs were blocked by robots.txt — deterministic,
+                                # targeted outcome surfaced to the user with dedicated copy.
+                                job.status = "robots_blocked"
+                                job.error = PipelineErrorCode.crawl_robots_blocked
                                 job.error_detail = (
-                                    f"Could not connect to {len(_non_robots_errs)} seed URL(s). "
-                                    "The site may be temporarily down, the domain may have changed, "
-                                    "or a network-level block is in place."
+                                    "This site blocks automated access via robots.txt. "
+                                    "We were unable to crawl any policy documents."
                                 )
-                            elif (
-                                _non_robots_errs
-                                and _hard_errs
-                                and len(_hard_errs) == len(_non_robots_errs)
-                            ):
-                                # All failures are hard HTTP/anti-bot blocks (403/401/429/451 or
-                                # Cloudflare/CAPTCHA) — the site is actively denying access.
-                                job.status = "access_denied"
-                                job.error = PipelineErrorCode.access_denied
-                                job.error_detail = (
-                                    f"Access was denied for {len(_non_robots_errs)} URL(s). "
-                                    "The site is blocking automated access with anti-bot protection, "
-                                    "Cloudflare, or consistent 4xx responses."
-                                )
-                            elif job.crawl_skip_reasons:
-                                # Pages were fetched OK but none passed the policy classifier —
-                                # the site is accessible but has no detectable policy documents.
-                                counts: dict[str, int] = {}
-                                for skip in job.crawl_skip_reasons:
-                                    counts[skip.reason] = counts.get(skip.reason, 0) + 1
-                                breakdown = ", ".join(
-                                    f"{n}× {reason}"
-                                    for reason, n in sorted(counts.items(), key=lambda kv: -kv[1])
-                                )
-                                job.status = "no_policy_found"
-                                job.error = PipelineErrorCode.no_policy_found
-                                job.error_detail = (
-                                    f"{len(job.crawl_skip_reasons)} page(s) fetched but all "
-                                    f"rejected by content filters ({breakdown}). "
-                                    "See crawl_skip_reasons for the per-URL detail."
-                                )
+                            elif job.status == "no_documents":
+                                # Only apply specific new statuses when there are no existing
+                                # docs (job.status was set to "no_documents" in the else branch
+                                # above). For jobs with existing docs we leave the status
+                                # unchanged so the partial-block signal is informational only.
+                                if (
+                                    _non_robots_errs
+                                    and _conn_errs
+                                    and len(_conn_errs) == len(_non_robots_errs)
+                                ):
+                                    # All failures are connection-level (DNS, SSL, timeout, refused)
+                                    # and there are no robots-txt blocks — site is unreachable.
+                                    job.status = "site_unavailable"
+                                    job.error = PipelineErrorCode.site_unavailable
+                                    job.error_detail = (
+                                        f"Could not connect to {len(_non_robots_errs)} seed URL(s). "
+                                        "The site may be temporarily down, the domain may have changed, "
+                                        "or a network-level block is in place."
+                                    )
+                                elif (
+                                    _non_robots_errs
+                                    and _hard_errs
+                                    and len(_hard_errs) == len(_non_robots_errs)
+                                ):
+                                    # All failures are hard HTTP/anti-bot blocks (403/401/429/451 or
+                                    # Cloudflare/CAPTCHA) — the site is actively denying access.
+                                    job.status = "access_denied"
+                                    job.error = PipelineErrorCode.access_denied
+                                    job.error_detail = (
+                                        f"Access was denied for {len(_non_robots_errs)} URL(s). "
+                                        "The site is blocking automated access with anti-bot protection, "
+                                        "Cloudflare, or consistent 4xx responses."
+                                    )
+                                elif job.crawl_skip_reasons:
+                                    # Pages were fetched OK but none passed the policy classifier —
+                                    # the site is accessible but has no detectable policy documents.
+                                    counts: dict[str, int] = {}
+                                    for skip in job.crawl_skip_reasons:
+                                        counts[skip.reason] = counts.get(skip.reason, 0) + 1
+                                    breakdown = ", ".join(
+                                        f"{n}× {reason}"
+                                        for reason, n in sorted(
+                                            counts.items(), key=lambda kv: -kv[1]
+                                        )
+                                    )
+                                    job.status = "no_policy_found"
+                                    job.error = PipelineErrorCode.no_policy_found
+                                    job.error_detail = (
+                                        f"{len(job.crawl_skip_reasons)} page(s) fetched but all "
+                                        f"rejected by content filters ({breakdown}). "
+                                        "See crawl_skip_reasons for the per-URL detail."
+                                    )
+                                elif _robots_errs:
+                                    # Partial robots block mixed with other errors.
+                                    job.error = PipelineErrorCode.crawl_robots_blocked
+                                    job.error_detail = (
+                                        f"Some pages were blocked by robots.txt ({len(_robots_errs)} "
+                                        f"of {len(job.crawl_errors)} failed URLs). "
+                                        "No policy documents could be found."
+                                    )
+                                elif job.crawl_errors:
+                                    job.error = PipelineErrorCode.crawl_failed
+                                    job.error_detail = (
+                                        f"Crawling failed for {len(job.crawl_errors)} URL(s). "
+                                        "No policy documents could be found."
+                                    )
+                                else:
+                                    job.error = PipelineErrorCode.no_documents_found
+                                    job.error_detail = "No policy documents found on this site"
                             elif _robots_errs:
-                                # Partial robots block mixed with other errors.
+                                # Partial robots block on a job that had existing docs —
+                                # informational only, status remains unchanged.
                                 job.error = PipelineErrorCode.crawl_robots_blocked
                                 job.error_detail = (
                                     f"Some pages were blocked by robots.txt ({len(_robots_errs)} "
@@ -640,98 +728,81 @@ class PipelineService:
                             else:
                                 job.error = PipelineErrorCode.no_documents_found
                                 job.error_detail = "No policy documents found on this site"
-                        elif _robots_errs:
-                            # Partial robots block on a job that had existing docs —
-                            # informational only, status remains unchanged.
-                            job.error = PipelineErrorCode.crawl_robots_blocked
-                            job.error_detail = (
-                                f"Some pages were blocked by robots.txt ({len(_robots_errs)} "
-                                f"of {len(job.crawl_errors)} failed URLs). "
-                                "No policy documents could be found."
-                            )
-                        elif job.crawl_errors:
-                            job.error = PipelineErrorCode.crawl_failed
-                            job.error_detail = (
-                                f"Crawling failed for {len(job.crawl_errors)} URL(s). "
-                                "No policy documents could be found."
-                            )
-                        else:
-                            job.error = PipelineErrorCode.no_documents_found
-                            job.error_detail = "No policy documents found on this site"
 
-                        job.completed_at = datetime.now()
-                        await self._update_step(
-                            db,
-                            job,
-                            "synthesising",
-                            "failed",
-                            "Skipped - no documents to analyze",
-                        )
-                        await self._update_step(
-                            db,
-                            job,
-                            "generating_overview",
-                            "failed",
-                            "Skipped - no documents to analyze",
-                        )
-                        await self._pipeline_repo.update(db, job)
+                            job.completed_at = datetime.now()
+                            await self._update_step(
+                                db,
+                                job,
+                                "synthesising",
+                                "failed",
+                                "Skipped - no documents to analyze",
+                            )
+                            await self._update_step(
+                                db,
+                                job,
+                                "generating_overview",
+                                "failed",
+                                "Skipped - no documents to analyze",
+                            )
+                            await self._pipeline_repo.update(db, job)
 
-                        # Remove the product record when the crawl found nothing at all.
-                        # A product with no documents is invisible to users (no analysis,
-                        # no overview) and reappearing in the product list is confusing.
-                        # The pipeline job is kept as a failure record; the product is
-                        # re-created automatically if the user retries the URL later.
-                        if job.status in (
-                            "no_documents",
-                            "robots_blocked",
-                            "access_denied",
-                            "no_policy_found",
-                            "site_unavailable",
-                        ):
+                            # Remove the product record when the crawl found nothing at all.
+                            # A product with no documents is invisible to users (no analysis,
+                            # no overview) and reappearing in the product list is confusing.
+                            # The pipeline job is kept as a failure record; the product is
+                            # re-created automatically if the user retries the URL later.
+                            if job.status in (
+                                "no_documents",
+                                "robots_blocked",
+                                "access_denied",
+                                "no_policy_found",
+                                "site_unavailable",
+                            ):
+                                try:
+                                    doc_count = await db.documents.count_documents(
+                                        {"product_id": product.id}
+                                    )
+                                    if doc_count == 0:
+                                        await db.products.delete_one({"id": product.id})
+                                        logger.info(
+                                            "Removed empty product %s (no policy documents found)",
+                                            job.product_slug,
+                                        )
+                                    else:
+                                        logger.info(
+                                            "Kept product %s despite no_documents — %d existing document(s) present",
+                                            job.product_slug,
+                                            doc_count,
+                                        )
+                                except Exception as del_exc:  # noqa: BLE001
+                                    logger.warning(
+                                        "Failed to remove empty product %s: %s",
+                                        job.product_slug,
+                                        del_exc,
+                                    )
+
+                            # Alert the admin so a human can check whether this is a
+                            # crawler coverage gap or the site genuinely has no policy
+                            # documents. Best-effort — never fail the job on email error.
                             try:
-                                doc_count = await db.documents.count_documents(
-                                    {"product_id": product.id}
+                                from src.services.email_service import get_email_service
+
+                                await get_email_service().send_no_documents_alert(
+                                    product_name=product.name,
+                                    product_slug=job.product_slug,
+                                    url=job.url,
+                                    reason=job.error_detail
+                                    or "No policy documents found on this site",
+                                    crawl_error_count=len(job.crawl_errors),
+                                    skip_count=len(job.crawl_skip_reasons),
                                 )
-                                if doc_count == 0:
-                                    await db.products.delete_one({"id": product.id})
-                                    logger.info(
-                                        "Removed empty product %s (no policy documents found)",
-                                        job.product_slug,
-                                    )
-                                else:
-                                    logger.info(
-                                        "Kept product %s despite no_documents — %d existing document(s) present",
-                                        job.product_slug,
-                                        doc_count,
-                                    )
-                            except Exception as del_exc:  # noqa: BLE001
+                            except Exception as alert_exc:  # noqa: BLE001
                                 logger.warning(
-                                    "Failed to remove empty product %s: %s",
-                                    job.product_slug,
-                                    del_exc,
+                                    "no-documents admin alert failed",
+                                    product_slug=job.product_slug,
+                                    error=str(alert_exc),
                                 )
-
-                        # Alert the admin so a human can check whether this is a
-                        # crawler coverage gap or the site genuinely has no policy
-                        # documents. Best-effort — never fail the job on email error.
-                        try:
-                            from src.services.email_service import get_email_service
-
-                            await get_email_service().send_no_documents_alert(
-                                product_name=product.name,
-                                product_slug=job.product_slug,
-                                url=job.url,
-                                reason=job.error_detail or "No policy documents found on this site",
-                                crawl_error_count=len(job.crawl_errors),
-                                skip_count=len(job.crawl_skip_reasons),
-                            )
-                        except Exception as alert_exc:  # noqa: BLE001
-                            logger.warning(
-                                "no-documents admin alert failed",
-                                product_slug=job.product_slug,
-                                error=str(alert_exc),
-                            )
-                        return
+                            return
 
                     # === Step 2: Summarize ===
                     job.status = "synthesising"

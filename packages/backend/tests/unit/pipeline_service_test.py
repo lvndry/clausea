@@ -194,6 +194,77 @@ async def test_run_pipeline_zero_documents_marks_no_documents_not_failed(mock_db
 
 
 @pytest.mark.asyncio
+async def test_run_pipeline_skip_crawl_never_runs_crawler(mock_db):
+    """Analysis-only jobs reuse stored documents and must not invoke the crawler."""
+    job = PipelineJob(
+        id="job-skip-crawl",
+        product_slug="test-product",
+        product_name="Test Product",
+        url="https://test.com",
+        status="pending",
+        skip_crawl=True,
+        force_reanalyze=True,
+    )
+
+    repo = MagicMock(spec=PipelineRepository)
+    repo.find_by_id = AsyncMock(return_value=job)
+    repo.update = AsyncMock()
+    repo.update_fields = AsyncMock()
+    service = PipelineService(pipeline_repo=repo)
+
+    product = SimpleNamespace(
+        id="test-product-id", slug="test-product", name="Test Product", name_source=None
+    )
+    product_svc = MagicMock()
+    product_svc.get_product_by_slug = AsyncMock(return_value=product)
+    product_svc.get_product_overview_data = AsyncMock(return_value={"overview": {"summary": "ok"}})
+    product_svc.save_product_explainer = AsyncMock(return_value=True)
+    product_svc.save_product_compliance = AsyncMock(return_value=True)
+
+    existing_doc = SimpleNamespace(id="doc-1", doc_type="privacy_policy", analysis=object())
+    doc_svc = MagicMock()
+    doc_svc.get_product_documents_by_slug = AsyncMock(return_value=[existing_doc])
+
+    fake_pipeline = MagicMock()
+    fake_pipeline.run = AsyncMock()
+
+    analyse_mock = AsyncMock(
+        return_value=AnalysisResult(documents=[existing_doc], analyses_skipped=0)  # ty: ignore[invalid-argument-type]
+    )
+    overview_mock = AsyncMock(return_value=SimpleNamespace(grade="C"))
+
+    @asynccontextmanager
+    async def fake_db_session():
+        yield mock_db
+
+    with (
+        patch("src.services.pipeline_service.db_session", fake_db_session),
+        patch("src.services.pipeline_service.create_product_service", return_value=product_svc),
+        patch("src.services.pipeline_service.create_document_service", return_value=doc_svc),
+        patch("src.services.pipeline_service.PolicyDocumentPipeline", return_value=fake_pipeline),
+        patch("src.services.pipeline_service.analyse_product_documents", analyse_mock),
+        patch("src.services.pipeline_service.generate_product_overview", overview_mock),
+        patch(
+            "src.services.pipeline_service.generate_product_consumer_explainer",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.services.pipeline_service.generate_product_compliance",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        await service.run_pipeline("job-skip-crawl")
+
+    fake_pipeline.run.assert_not_called()
+    assert job.documents_stored == 1
+    assert job.steps[0].status == "completed"
+    assert "Skipped crawl" in (job.steps[0].message or "")
+    analyse_mock.assert_awaited_once()
+    assert analyse_mock.await_args.kwargs.get("force_reanalyze") is True
+    assert job.status == "completed"
+
+
+@pytest.mark.asyncio
 async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
     """Crawl succeeds but every document fails analysis.
 

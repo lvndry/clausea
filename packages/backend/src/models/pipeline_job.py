@@ -256,5 +256,9 @@ class PipelineJob(BaseModel):
     # LLM analysis on every document even if findings already exist in the DB.
     force_reanalyze: bool = False
 
+    # When True, skip the crawl phase and re-run synthesis + overview on existing
+    # stored documents (analysis-only requeue).
+    skip_crawl: bool = False
+
     # Number of documents whose analysis was reused from a prior run (skipped LLM).
     analyses_skipped: int = 0
