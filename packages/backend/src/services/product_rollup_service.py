@@ -46,10 +46,10 @@ class ProductRollupService:
         Both "children_data_collection:no" and "minimum age: 18" mean children
         are not allowed — they should not be treated as conflicting with each other.
         """
-        nv = (normalized_value or "").lower()
-        if "children_data_collection:no" in nv:
+        nv = (normalized_value or "").strip().lower()
+        if nv == "children_data_collection:no":
             return "restricted"
-        if "children_data_collection:yes" in nv:
+        if nv == "children_data_collection:yes":
             return "allowed"
         match = re.search(r"minimum age:\s*(\d+)", nv)
         if match:

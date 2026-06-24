@@ -58,6 +58,19 @@ logger = get_logger(__name__)
 
 ClusterJudge = Callable[[InsightCategory, list[str]], Awaitable[list[list[int]]]]
 
+# Deadline for one judge call so a hung model can't stall the whole rollup build.
+_JUDGE_TIMEOUT_SECONDS = 30
+
+# Cap on merged attributes; must not exceed RollupItem.attributes max_length (50).
+_MAX_MERGED_ATTRIBUTES = 50
+
+# Higher rank wins when materiality attributes are ordered before capping.
+_MATERIALITY_RANK: dict[str, int] = {
+    "material_risk": 3,
+    "notable": 2,
+    "standard_industry": 1,
+}
+
 # Free-text narrative categories where the same clause recurs across documents as
 # paraphrases. Structured categories (data_collection types, named recipients,
 # enumerated rights) are excluded — their findings are distinct by construction.
@@ -98,6 +111,7 @@ async def _llm_cluster(category: InsightCategory, values: list[str]) -> list[lis
         ],
         response_format={"type": "json_object"},
         temperature=0,
+        timeout=_JUDGE_TIMEOUT_SECONDS,
     )
     choice = response.choices[0]
     message = getattr(choice, "message", None)
@@ -119,11 +133,13 @@ def _parse_clusters(parsed: object, *, expected_count: int) -> list[list[int]]:
             continue
         indices = []
         for raw_index in group:
-            if not isinstance(raw_index, int):
+            if not isinstance(raw_index, int) or not (0 <= raw_index < expected_count):
                 continue
-            if 0 <= raw_index < expected_count and raw_index not in seen:
-                seen.add(raw_index)
-                indices.append(raw_index)
+            if raw_index in seen:
+                logger.warning("Consolidation judge returned a duplicate index", index=raw_index)
+                continue
+            seen.add(raw_index)
+            indices.append(raw_index)
         if indices:
             clusters.append(indices)
 
@@ -133,12 +149,30 @@ def _parse_clusters(parsed: object, *, expected_count: int) -> list[list[int]]:
     return clusters
 
 
+def _merge_attributes(members: list[RollupItem]) -> list[dict]:
+    """Combine members' attributes, deduplicated and ordered so capping never drops
+    the strongest materiality signal that downstream danger-filtering reads."""
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for member in members:
+        for attribute in member.attributes:
+            key = json.dumps(attribute, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(attribute)
+    deduped.sort(
+        key=lambda attribute: _MATERIALITY_RANK.get(str(attribute.get("materiality")), 0),
+        reverse=True,
+    )
+    return deduped[:_MAX_MERGED_ATTRIBUTES]
+
+
 def _merge_cluster(members: list[RollupItem]) -> RollupItem:
     pivot = max(members, key=lambda item: len(item.value))
     document_ids = list(
         dict.fromkeys(doc_id for member in members for doc_id in member.document_ids)
     )
-    attributes = [attribute for member in members for attribute in member.attributes]
     member_values = list(
         dict.fromkeys(ProductRollupService._normalize_value(member.value) for member in members)
     )
@@ -146,7 +180,7 @@ def _merge_cluster(members: list[RollupItem]) -> RollupItem:
         category=pivot.category,
         value=pivot.value,
         document_ids=document_ids,
-        attributes=attributes[:50],
+        attributes=_merge_attributes(members),
         confidence=pivot.confidence,
         member_values=member_values,
     )

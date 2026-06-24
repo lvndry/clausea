@@ -11,6 +11,29 @@ def _item(category: str, value: str, doc_id: str) -> RollupItem:
     return RollupItem(category=category, value=value, document_ids=[doc_id])
 
 
+def test_merge_clusters_preserves_material_risk_attribute_when_many_members() -> None:
+    members = [
+        RollupItem(
+            category="dangers",
+            value=f"standard term {index}",
+            document_ids=[f"d{index}"],
+            attributes=[{"materiality": "standard_industry"}],
+        )
+        for index in range(60)
+    ]
+    members.append(
+        RollupItem(
+            category="dangers",
+            value="they sell your data to brokers",
+            document_ids=["d_risk"],
+            attributes=[{"materiality": "material_risk"}],
+        )
+    )
+    merged = merge_clusters(members, [list(range(len(members)))])[0]
+    assert len(merged.attributes) <= 50
+    assert any(attribute.get("materiality") == "material_risk" for attribute in merged.attributes)
+
+
 def _bumble_content_ownership() -> list[RollupItem]:
     return [
         _item(
