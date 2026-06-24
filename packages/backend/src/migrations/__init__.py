@@ -1,29 +1,32 @@
 """Migration framework.
 
-Importing this package registers every auto-runnable migration with the
-:data:`src.migrations.registry.registry`. The :class:`src.services.migration_service.MigrationService`
-applies pending entries on FastAPI startup.
+Importing this package auto-discovers every ``NNN_*.py`` module in this
+package, instantiates its :class:`~src.migrations.base.Migration` subclass, and
+registers it with :data:`src.migrations.registry.registry`. The
+:class:`src.services.migration_service.MigrationService` applies pending
+entries on FastAPI startup.
+
+To add a new migration: create ``NNN_description.py`` with a ``Migration``
+subclass whose ``migration_id`` matches the filename stem. No other
+registration needed.
 
 Manual/interactive ops scripts (e.g. ``fix_product_names``, which prompts for
-confirmation and targets a separate production URI) are intentionally NOT
-registered here — they must be run by hand.
+confirmation and targets a separate production URI) do NOT use the ``NNN_``
+prefix and are therefore not auto-discovered — they must be run by hand.
 """
 
 from __future__ import annotations
 
-from src.migrations.backfill_orphan_citations import BackfillOrphanCitations
 from src.migrations.base import Migration, MigrationResult
-from src.migrations.fix_thin_evidence_products import FixThinEvidenceProducts
-from src.migrations.migrate_companies_to_products import MigrateCompaniesToProducts
-from src.migrations.registry import MigrationRegistry, registry
+from src.migrations.registry import MigrationRegistry, autodiscover, registry
 
-registry.register(MigrateCompaniesToProducts())
-registry.register(FixThinEvidenceProducts())
-registry.register(BackfillOrphanCitations())
+for _migration in autodiscover():
+    registry.register(_migration)
 
 __all__ = [
     "Migration",
     "MigrationResult",
     "MigrationRegistry",
+    "autodiscover",
     "registry",
 ]

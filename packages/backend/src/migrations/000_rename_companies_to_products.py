@@ -62,7 +62,7 @@ async def migrate_companies_to_products(db: AgnosticDatabase) -> dict[str, Any]:
 
 
 class MigrateCompaniesToProducts(Migration):
-    migration_id = "20260214_000001_rename_companies_to_products"
+    migration_id = "000_rename_companies_to_products"
     description = "Rename companies collection to products and remap company_* fields"
 
     async def upgrade(self, db: AgnosticDatabase) -> dict[str, Any]:

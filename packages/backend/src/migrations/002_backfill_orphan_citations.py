@@ -85,7 +85,7 @@ async def backfill_orphan_citations(db: AgnosticDatabase) -> dict[str, Any]:
 
 
 class BackfillOrphanCitations(Migration):
-    migration_id = "20260624_000002_backfill_orphan_citations"
+    migration_id = "002_backfill_orphan_citations"
     description = "Flag overview citations pointing at deleted documents as stale"
 
     async def upgrade(self, db: AgnosticDatabase) -> dict[str, Any]:

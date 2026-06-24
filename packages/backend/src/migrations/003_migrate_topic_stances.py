@@ -7,22 +7,24 @@ Old → New:
   mixed          → conflicting
   not_disclosed  → not_disclosed (unchanged)
 
-Also removes topic_score from overview.topic_stances entries.
+Also removes ``topic_score`` from ``overview.topic_stances`` entries.
+
+Idempotent: re-running finds no entries matching the old stance labels and
+no entries still carrying ``topic_score``, so zero documents are modified.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
-from pathlib import Path
+from typing import Any
 
-from dotenv import load_dotenv
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.core import AgnosticDatabase
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+from src.core.database import db_session
+from src.core.logging import get_logger
+from src.migrations.base import Migration
 
-MONGO_URI = os.environ["PRODUCTION_MONGO_URI"]
+logger = get_logger(__name__)
 
 _STANCE_MAP = {
     "low_risk": "fair",
@@ -34,26 +36,12 @@ _STANCE_MAP = {
 COLLECTION = "product_intelligence"
 
 
-async def run(*, dry_run: bool = False) -> None:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(MONGO_URI)
-    try:
-        default_db = client.get_default_database()
-        db_name = default_db.name if default_db is not None else "clausea"
-    except Exception:
-        db_name = "clausea"
-    db = client[db_name]
+async def migrate_topic_stances(db: AgnosticDatabase) -> dict[str, Any]:
+    """Rename stance labels and strip topic_score from product_intelligence overviews."""
     col = db[COLLECTION]
 
     total = await col.count_documents({})
-    print(f"Collection '{COLLECTION}': {total} documents")
-
     affected = await col.count_documents({"overview.topic_stances": {"$exists": True}})
-    print(f"Documents with overview.topic_stances: {affected}")
-
-    if dry_run:
-        print("Dry run — no changes written.")
-        client.close()
-        return
 
     updated = 0
     async for doc in col.find(
@@ -63,8 +51,8 @@ async def run(*, dry_run: bool = False) -> None:
         stances = doc.get("overview", {}).get("topic_stances") or []
         new_stances = []
         changed = False
-        for s in stances:
-            entry = dict(s)
+        for stance in stances:
+            entry = dict(stance)
             old = entry.get("stance")
             if old in _STANCE_MAP:
                 entry["stance"] = _STANCE_MAP[old]
@@ -81,10 +69,27 @@ async def run(*, dry_run: bool = False) -> None:
             )
             updated += 1
 
-    print(f"Updated {updated} documents.")
-    client.close()
+    logger.info(
+        "topic_stances migration complete",
+        total=total,
+        with_stances=affected,
+        updated=updated,
+    )
+    return {"total": total, "with_stances": affected, "updated": updated}
+
+
+class MigrateTopicStances(Migration):
+    migration_id = "003_migrate_topic_stances"
+    description = "Rename stance labels (low_risk→fair etc.) and strip topic_score"
+
+    async def upgrade(self, db: AgnosticDatabase) -> dict[str, Any]:
+        return await migrate_topic_stances(db)
 
 
 if __name__ == "__main__":
-    dry_run = "--dry-run" in sys.argv
-    asyncio.run(run(dry_run=dry_run))
+
+    async def _run() -> None:
+        async with db_session() as db:
+            await migrate_topic_stances(db)
+
+    asyncio.run(_run())

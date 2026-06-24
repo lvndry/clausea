@@ -14,7 +14,7 @@ import pytest
 from pymongo.errors import DuplicateKeyError
 
 from src.migrations.base import Migration
-from src.migrations.registry import MigrationRegistry
+from src.migrations.registry import MigrationRegistry, autodiscover
 from src.services.migration_service import (
     LOCK_COLLECTION,
     MIGRATIONS_COLLECTION,
@@ -91,9 +91,9 @@ def _registry(*migrations: Migration) -> MigrationRegistry:
 
 @pytest.mark.asyncio
 async def test_applies_all_pending_migrations_in_order():
-    a = _StubMigration("20260101_000001_a")
-    b = _StubMigration("20260101_000002_b")
-    c = _StubMigration("20260101_000003_c")
+    a = _StubMigration("000_a")
+    b = _StubMigration("001_b")
+    c = _StubMigration("002_c")
     service = MigrationService(_registry(a, b, c))
     db = _build_mock_db(applied_docs=[])
 
@@ -110,12 +110,10 @@ async def test_applies_all_pending_migrations_in_order():
 
 @pytest.mark.asyncio
 async def test_skips_already_applied_migrations():
-    a = _StubMigration("20260101_000001_a")
-    b = _StubMigration("20260101_000002_b")
+    a = _StubMigration("000_a")
+    b = _StubMigration("001_b")
     service = MigrationService(_registry(a, b))
-    db = _build_mock_db(
-        applied_docs=[{"_id": "20260101_000001_a", "migration_id": "20260101_000001_a"}]
-    )
+    db = _build_mock_db(applied_docs=[{"_id": "000_a", "migration_id": "000_a"}])
 
     summary = await service.run_pending(db)
 
@@ -126,7 +124,7 @@ async def test_skips_already_applied_migrations():
 
 @pytest.mark.asyncio
 async def test_records_failure_and_reraises():
-    bad = _StubMigration("20260101_000001_bad", fail=True)
+    bad = _StubMigration("000_bad", fail=True)
     service = MigrationService(_registry(bad))
     db = _build_mock_db(applied_docs=[])
 
@@ -145,7 +143,7 @@ async def test_records_failure_and_reraises():
 
 @pytest.mark.asyncio
 async def test_failed_migration_is_retried_on_next_boot():
-    flaky = _StubMigration("20260101_000001_flaky", fail=True)
+    flaky = _StubMigration("000_flaky", fail=True)
     service = MigrationService(_registry(flaky))
 
     # First boot: fails, recorded as "failed"
@@ -163,9 +161,9 @@ async def test_failed_migration_is_retried_on_next_boot():
 
 @pytest.mark.asyncio
 async def test_no_pending_migrations_returns_zero():
-    a = _StubMigration("20260101_000001_a")
+    a = _StubMigration("000_a")
     service = MigrationService(_registry(a))
-    db = _build_mock_db(applied_docs=[{"_id": "a", "migration_id": "20260101_000001_a"}])
+    db = _build_mock_db(applied_docs=[{"_id": "a", "migration_id": "000_a"}])
 
     summary = await service.run_pending(db)
 
@@ -175,7 +173,7 @@ async def test_no_pending_migrations_returns_zero():
 
 @pytest.mark.asyncio
 async def test_lock_held_skips_without_running():
-    a = _StubMigration("20260101_000001_a")
+    a = _StubMigration("000_a")
     service = MigrationService(_registry(a))
     db = _build_mock_db(applied_docs=[])
     # Pre-occupy the lock: insert_one raises DuplicateKeyError
@@ -189,7 +187,7 @@ async def test_lock_held_skips_without_running():
 
 @pytest.mark.asyncio
 async def test_lock_released_after_success():
-    a = _StubMigration("20260101_000001_a")
+    a = _StubMigration("000_a")
     service = MigrationService(_registry(a))
     db = _build_mock_db(applied_docs=[])
 
@@ -200,7 +198,7 @@ async def test_lock_released_after_success():
 
 @pytest.mark.asyncio
 async def test_lock_released_after_failure():
-    bad = _StubMigration("20260101_000001_bad", fail=True)
+    bad = _StubMigration("000_bad", fail=True)
     service = MigrationService(_registry(bad))
     db = _build_mock_db(applied_docs=[])
 
@@ -212,7 +210,7 @@ async def test_lock_released_after_failure():
 
 @pytest.mark.asyncio
 async def test_records_applied_with_detail_and_timing():
-    a = _StubMigration("20260101_000001_a")
+    a = _StubMigration("000_a")
     service = MigrationService(_registry(a))
     db = _build_mock_db(applied_docs=[])
 
@@ -221,7 +219,7 @@ async def test_records_applied_with_detail_and_timing():
     call = db[MIGRATIONS_COLLECTION].find_one_and_update.await_args
     fields = call.args[1]["$set"]
     assert fields["status"] == "applied"
-    assert fields["migration_id"] == "20260101_000001_a"
+    assert fields["migration_id"] == "000_a"
     assert fields["detail"] == {"ok": True}
     assert isinstance(fields["applied_at"], datetime)
     assert fields["applied_at"].tzinfo is UTC
@@ -231,13 +229,27 @@ async def test_records_applied_with_detail_and_timing():
 @pytest.mark.asyncio
 async def test_registry_orders_by_migration_id_lexicographically():
     reg = _registry(
-        _StubMigration("20260624_000002_late"),
-        _StubMigration("20260214_000001_early"),
-        _StubMigration("20260624_000001_mid"),
+        _StubMigration("002_late"),
+        _StubMigration("000_early"),
+        _StubMigration("001_mid"),
     )
     ids = [m.migration_id for m in reg.all()]
-    assert ids == [
-        "20260214_000001_early",
-        "20260624_000001_mid",
-        "20260624_000002_late",
-    ]
+    assert ids == ["000_early", "001_mid", "002_late"]
+
+
+def test_autodiscover_finds_numbered_migration_files():
+    """autodiscover scans the src.migrations package for NNN_*.py files."""
+    discovered = autodiscover()
+    ids = [m.migration_id for m in discovered]
+    assert "000_rename_companies_to_products" in ids
+    assert "001_fix_thin_evidence_products" in ids
+    assert "002_backfill_orphan_citations" in ids
+    assert "003_migrate_topic_stances" in ids
+    # Files without the NNN_ prefix (e.g. fix_product_names, base, registry) are excluded.
+    assert all(not mid.startswith("fix_") for mid in ids)
+
+
+def test_autodiscover_returns_migrations_in_filename_order():
+    discovered = autodiscover()
+    ids = [m.migration_id for m in discovered]
+    assert ids == sorted(ids)

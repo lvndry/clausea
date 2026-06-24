@@ -99,7 +99,7 @@ async def fix_thin_evidence_products(db: AgnosticDatabase) -> dict[str, Any]:
 
 
 class FixThinEvidenceProducts(Migration):
-    migration_id = "20260624_000001_fix_thin_evidence_products"
+    migration_id = "001_fix_thin_evidence_products"
     description = "Patch crawl configs (robots/denied domains) for thin-evidence audit products"
 
     async def upgrade(self, db: AgnosticDatabase) -> dict[str, Any]:
