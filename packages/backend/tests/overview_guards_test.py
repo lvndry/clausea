@@ -385,4 +385,14 @@ def test_format_overview_retry_feedback_includes_reasons() -> None:
     )
     assert "Your previous JSON response was rejected" in text
     assert "UNSUPPORTED_CLAIMS: headline overclaims voice recordings" in text
+    assert "Only change what is necessary" in text
     assert text.startswith("\n\n")
+
+
+def test_format_overview_retry_feedback_final_attempt_note() -> None:
+    text = format_overview_retry_feedback(
+        ["Headline is empty despite adequate evidence."],
+        attempt=2,
+        max_attempts=3,
+    )
+    assert "FINAL attempt" in text

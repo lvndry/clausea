@@ -2182,14 +2182,32 @@ Per-document analyses and extractions:
 
                 logger.debug(content)
 
-                # Parse the product overview
-                overview_dict = json.loads(content)
-                _merge_legacy_dimension_justifications(overview_dict)
+                try:
+                    overview_dict = json.loads(content)
+                    _merge_legacy_dimension_justifications(overview_dict)
+                    raw_contradictions = overview_dict.pop("contradictions", None)
+                    meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
+                except (json.JSONDecodeError, ValueError) as parse_error:
+                    logger.warning(
+                        "Overview parsing failed for %s (attempt %d/%d): %s",
+                        product_slug,
+                        attempt,
+                        MAX_OVERVIEW_RE_ROLLS,
+                        parse_error,
+                    )
+                    if attempt >= MAX_OVERVIEW_RE_ROLLS:
+                        raise ValueError(
+                            f"Overview parsing failed for {product_slug}: {parse_error}"
+                        ) from parse_error
+                    feedback_suffix += format_overview_retry_feedback(
+                        [
+                            f"Invalid JSON or schema: {parse_error}. "
+                            "Output a valid JSON object matching the requested schema."
+                        ],
+                        attempt=attempt,
+                    )
+                    continue
 
-                # Parse contradictions before model validation
-                raw_contradictions = overview_dict.pop("contradictions", None)
-
-                meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
                 meta_summary.coverage = hydrated_rollup.coverage
                 if meta_summary.dangers:
                     meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
@@ -2294,9 +2312,14 @@ Per-document analyses and extractions:
                 overview_dict = meta_summary.model_dump(mode="json")
                 deterministic = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
 
-                citations_for_review = _collect_citations(overview_dict.get("topic_stances") or [])
-                llm_result = await llm_review_overview(overview_dict, citations_for_review)
-                validation = merge_llm_review(deterministic, llm_result)
+                if deterministic.should_re_roll:
+                    validation = deterministic
+                else:
+                    citations_for_review = _collect_citations(
+                        overview_dict.get("topic_stances") or []
+                    )
+                    llm_result = await llm_review_overview(overview_dict, citations_for_review)
+                    validation = merge_llm_review(deterministic, llm_result)
 
                 if validation.should_re_roll:
                     reasons = "; ".join(validation.re_roll_reasons)
@@ -2311,7 +2334,10 @@ Per-document analyses and extractions:
                         raise ValueError(
                             f"Overview validation failed for {product_slug}: {reasons}"
                         )
-                    feedback_suffix = format_overview_retry_feedback(validation.re_roll_reasons)
+                    feedback_suffix += format_overview_retry_feedback(
+                        validation.re_roll_reasons,
+                        attempt=attempt,
+                    )
                     continue
 
                 break

@@ -53,16 +53,30 @@ class OverviewValidationResult(BaseModel):
 MAX_OVERVIEW_RE_ROLLS = 3
 
 
-def format_overview_retry_feedback(reasons: list[str]) -> str:
+def format_overview_retry_feedback(
+    reasons: list[str],
+    *,
+    attempt: int = 1,
+    max_attempts: int = MAX_OVERVIEW_RE_ROLLS,
+) -> str:
     """User-prompt appendix telling the overview LLM how to fix a rejected draft."""
     if not reasons:
         return ""
     bullets = "\n".join(f"- {reason}" for reason in reasons)
+    final_note = ""
+    if attempt + 1 >= max_attempts:
+        final_note = (
+            "Your next response is your FINAL attempt — fix every issue below or "
+            "the overview will be rejected.\n"
+        )
     return (
         "\n\nYour previous JSON response was rejected by quality review. "
-        "Revise the overview to fix every issue below. Keep headline and summary "
-        "strictly evidence-backed — do not overgeneralize optional features or "
-        "use stronger wording than the policy supports:\n"
+        "Revise the overview to fix every issue below. Only change what is "
+        "necessary to address these issues; preserve all other correct parts. "
+        "Keep headline and summary strictly evidence-backed — do not "
+        "overgeneralize optional features or use stronger wording than the "
+        "policy supports:\n"
+        f"{final_note}"
         f"{bullets}\n"
     )
 
