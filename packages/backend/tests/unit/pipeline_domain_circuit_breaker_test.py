@@ -232,6 +232,35 @@ async def test_claim_returns_none_when_no_pending_jobs(monkeypatch: pytest.Monke
     collection.update_one.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_claim_prefers_skip_crawl_pending_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pr, "DOMAIN_CIRCUIT_BREAKER_THRESHOLD", 5)
+
+    pending = {
+        "id": "job-analysis",
+        "product_slug": "tiktok",
+        "product_name": "TikTok",
+        "url": "https://tiktok.com",
+        "skip_crawl": True,
+        "accumulated_hard_failure_count": 0,
+        "status": "pending",
+        "created_at": "2024-01-02T00:00:00",
+    }
+    claimed = {**pending, "status": "crawling", "attempts": 1}
+
+    db = _make_db_for_claim(pending_doc=pending, find_and_update_result=claimed)
+    collection = db[PipelineRepository.COLLECTION]
+
+    job = await PipelineRepository().claim_next_pending_job(db)
+
+    assert job is not None
+    assert job.skip_crawl is True
+    collection.find_one.assert_awaited_once_with(
+        {"status": "pending"},
+        sort=[("skip_crawl", -1), ("created_at", 1)],
+    )
+
+
 # ---------------------------------------------------------------------------
 # requeue_failed_jobs: hard failure accumulation
 # ---------------------------------------------------------------------------
