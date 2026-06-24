@@ -108,4 +108,40 @@ describe("CompanyPage limit reached state", () => {
     );
     expect(pipelineFetchCalled).toBe(false);
   });
+
+  it("renders server error UI on 500, not product not found", async () => {
+    const errorFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = getRequestUrl(input);
+      if (url.endsWith("/api/products/acme-inc")) {
+        return createJsonResponse(500, { error: "Internal Server Error" });
+      }
+      if (url.endsWith("/api/products/acme-inc/documents")) {
+        return createJsonResponse(200, []);
+      }
+      if (url.endsWith("/api/products/acme-inc/overview")) {
+        return createJsonResponse(500, { error: "Internal Server Error" });
+      }
+      if (url.endsWith("/api/products/acme-inc/explainer")) {
+        return createJsonResponse(500, { error: "Internal Server Error" });
+      }
+      if (url.endsWith("/api/products/acme-inc/topics")) {
+        return createJsonResponse(500, { error: "Internal Server Error" });
+      }
+      return createJsonResponse(500, { error: `Unexpected URL: ${url}` });
+    });
+
+    vi.stubGlobal("fetch", errorFetch);
+
+    render(<CompanyPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Couldn't load this report" }),
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      screen.queryByRole("heading", { name: "Product Not Found" }),
+    ).not.toBeInTheDocument();
+  });
 });
