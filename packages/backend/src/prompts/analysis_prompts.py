@@ -43,17 +43,44 @@ DIMENSION_GRADE_RUBRIC = """### Dimension grades (A–E — higher letter = bett
 Assign each dimension an **A to E letter grade** with a **mandatory justification** (1–3 sentences). Do NOT output numeric scores or ranks.
 
 - **A**: Strong — multiple real protections or clearly minimal practice; minor caveats only.
-- **B**: Good — meaningful controls or moderate practice with some gaps.
-- **C**: Mixed/typical — some controls but material gaps, OR invasive practice with partial mitigation.
-- **D**: Weak — one important gap or mostly user-hostile on this dimension.
-- **E**: Very weak — explicitly worst-case on this dimension.
+  - transparency A: Lists every data type, every purpose, every recipient by name. No vague categories.
+  - data_collection_scope A: Collects only what's needed to deliver the service. No optional collection, no sensitive categories, no inference.
+  - user_control A: Self-service deletion, self-service opt-out for every non-essential purpose, data export, consent toggle. All available in under 3 clicks.
+  - third_party_sharing A: No sharing beyond strictly necessary service providers under contract. No advertising partners, no data brokers, no cross-app tracking.
+  - data_retention_score A: Specific time limits per data type (e.g. "IP deleted after 30 days, account data deleted within 72h of request"). No indefinite retention.
+  - security_score A: Named encryption (at rest + in transit), named certifications (SOC 2, ISO 27001), named audit cadence, breach notification commitment.
 
-**transparency** — clarity of what is collected, why, and by whom.
-**data_collection_scope** — breadth of collection (A = minimal/necessary only).
-**user_control** — self-service opt-outs, deletion, portability, consent tools.
-**third_party_sharing** — breadth of sharing (A = no sharing / not sold).
-**data_retention_score** — retention specificity (document analysis only).
-**security_score** — stated security measures (document analysis only).
+- **B**: Good — meaningful controls or moderate practice with some gaps.
+  - transparency B: Lists most data types and purposes, but some are vague ("usage data") or a recipient is unnamed ("analytics partners").
+  - data_collection_scope B: Collects more than strictly needed but nothing sensitive. Optional collection exists but is clearly opt-in.
+  - user_control B: Self-service deletion and at least one opt-out, but some controls require contact or are missing (no export, no cookie opt-out).
+  - third_party_sharing B: Shares with named advertising/analytics partners but no data brokers, no sale. Sharing is opt-out.
+  - data_retention_score B: General time limit stated ("kept for no longer than necessary") but no per-type specifics.
+  - security_score B: Encryption mentioned but not specified (no algorithm, no key management). Certification claimed but not named.
+
+- **C**: Mixed/typical — some controls but material gaps, OR invasive practice with partial mitigation.
+  - transparency C: Lists data categories but not specific types ("device information" not "device fingerprint"). Purposes stated but generic ("to improve our services").
+  - data_collection_scope C: Broad collection including behavioral/usage inference, but no sensitive categories. Collection is opt-out not opt-in.
+  - user_control C: Account deletion available but requires contact (no self-service). Opt-outs exist for some purposes but not all.
+  - third_party_sharing C: Shares with multiple advertising partners and analytics providers. Some named, some not. No sale, no brokers.
+  - data_retention_score C: "Retained as long as necessary for business purposes" — indefinite permitted, no specific limits.
+  - security_score C: "We use industry-standard security measures" — no specifics named.
+
+- **D**: Weak — one important gap or mostly user-hostile on this dimension.
+  - transparency D: Data types or recipients are hidden behind vague language ("trusted partners", "certain third parties"). Purposes include catch-all ("and other legitimate business purposes").
+  - data_collection_scope D: Collects sensitive categories (biometric, health, precise location, children's data) OR broad inference without clear disclosure. No opt-in for non-essential.
+  - user_control D: No self-service deletion. Controls require email request with unclear timelines. No opt-out for at least one non-essential purpose.
+  - third_party_sharing D: Shares with data brokers, sells data, OR cross-app tracking without opt-out. Broad sharing with unnamed "partners".
+  - data_retention_score D: Indefinite retention explicitly permitted. No deletion on account closure, or data persists after deletion.
+  - security_score D: No security measures described. No encryption mentioned. No breach notification commitment.
+
+- **E**: Very weak — explicitly worst-case on this dimension.
+  - transparency E: Actively deceptive or completely silent on what is collected. Policy says one thing, practice is another.
+  - data_collection_scope E: Collects sensitive data (biometric, health, children's) without disclosure, consent, or limits.
+  - user_control E: No deletion, no access, no opt-out. Any rights mentioned are illusory ("we may consider your request").
+  - third_party_sharing E: Sells data to brokers. Shares with law enforcement without warrant requirement. Cross-site tracking with no opt-out.
+  - data_retention_score E: Data retained permanently even after account deletion and explicit erasure request.
+  - security_score E: No security measures. Known breaches without notification.
 
 Be fair: reward documented protections; note caveats in justification without downgrading more than one letter grade. If the justification lists multiple genuine controls, grade MUST be at least B."""
 
@@ -103,16 +130,14 @@ DOCUMENT_ANALYSIS_JSON_SCHEMA = """{
 
 DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evidence-backed analysis of ONE policy document for a privacy-conscious non-lawyer.
 
-## Rules (non-negotiable)
-- Use ONLY facts from the extraction below. If absent, state "Not specified in document".
-- Every critical clause quote must be an exact substring from the extraction evidence.
-- Never output numeric dimension scores, `risk_score`, or `verdict` — assign letter grades A–E with justifications only.
-- If the extraction is partial, set analysis_completeness to "partial".
+## HARD RULES (breaking any makes the output unusable)
+1. EVIDENCE ONLY. Use ONLY facts from the extraction below. If a fact is absent from the extraction, write "Not specified in document" — do not infer, assume, or use outside knowledge.
+2. EXACT QUOTES. Every `quote` field in critical_clauses MUST be copied character-for-character from the extraction evidence. Do not paraphrase, shorten, or fix typos.
+3. NO NUMERIC SCORES. Output letter grades A–E with justifications only. Never output `risk_score`, numeric dimension scores, or `verdict`.
+4. SILENCE ≠ E. If the document does not address a dimension, omit that key from `scores`. Silence is not a worst-case finding — never assign E for silence.
+5. THIN EXTRACTION. If the extraction has few items or is flagged partial, set analysis_completeness to "partial" and reduce keypoint/clause counts accordingly. Do not pad with invented findings.
 
-## OVERALL GRADE
-Assign an overall **grade** (A–E) for this document's privacy posture and **grade_justification** (2–4 sentences) explaining why.
-
-**How to determine the overall grade — follow this procedure exactly:**
+## OVERALL GRADE — follow this procedure exactly
 
 Step 1 — Take the dimension grades you assigned (only the ones you filled in; skip silent dimensions).
 
@@ -132,39 +157,71 @@ Step 5 — Convert back to a letter: 9=A, 7-8=B, 5-6=C, 3-4=D, 1-2=E. This is yo
 
 Step 6 — You may adjust the base grade by at most one letter in either direction, but ONLY if you name a specific, evidence-backed reason in grade_justification. If you cannot name a specific reason, the overall grade MUST equal the base grade.
 
+Write `grade_justification` (2-4 sentences) naming the single biggest factor that drove your grade, including any adjustment reason.
+
 ## SUMMARY
-3-5 concrete sentences. Name exact data types ("precise GPS", "biometric identifiers"), exact recipients ("Meta Pixel", "Google Analytics"), exact rights paths ("Settings > Privacy > Delete"). Start with the service/product name, never with "This document" or "This policy".
+3-5 concrete sentences. Requirements:
+- First word is the service/product name (never "This document" or "This policy").
+- Name exact data types ("precise GPS", "biometric identifiers", not "device information").
+- Name exact recipients ("Meta Pixel", "Google Analytics", not "third parties").
+- Name exact rights paths ("Settings > Privacy > Delete account", not "you can delete your data").
+- State the single most significant privacy risk or strength in the first sentence.
+
+Bad: "This policy describes how the service collects data and shares it with partners."
+Good: "Spotify collects precise GPS, listening history, and device fingerprints, shares them with Meta and Google for targeted advertising, and retains data indefinitely after account deletion."
 
 ## DIMENSION GRADES
-Provide `scores` with a letter grade and justification for each dimension the document substantively addresses.
-If silent on a dimension, omit that key. Silence is not a worst-case finding — never assign E for silence.
+Provide `scores` with a letter grade and justification for each dimension the document substantively addresses. If silent on a dimension, omit that key.
 
 {DIMENSION_GRADE_RUBRIC}
 
 ## KEYPOINTS
-5-10 specific, concrete bullets (fewer acceptable when extraction is thin). Prioritize: AI training on user data, biometrics/health, arbitration waivers, content licenses, government access, cross-entity binding, liability caps.
+5-10 specific, concrete bullets. Each bullet must contain at least one of: a proper noun (company name, product name), a specific data type, a number, or a URL/path. Fewer bullets are acceptable when extraction is thin.
+
+Prioritize these topics when present (in order):
+1. AI training on user data (with or without opt-out)
+2. Biometric/health/genetic data collection
+3. Data sale or monetization (to data brokers, advertisers)
+4. Perpetual or irrevocable content licenses
+5. Forced arbitration or class-action waivers
+6. Government/law enforcement access without warrant requirement
+7. Cross-entity scope expansion (data shared with parent/affiliates)
+8. Liability caps or user indemnification
 
 ## CRITICAL CLAUSES
-Flag every materially significant clause. For each: clause_type (short label), quote (exact from extraction), risk_level, plain_english (what this means to a non-lawyer), why_notable.
+Flag every materially significant clause. For each:
+- `clause_type`: short label (e.g. "arbitration_clause", "ai_training_license", "liability_cap")
+- `quote`: exact substring from the extraction evidence (max 300 chars)
+- `risk_level`: "critical" (hard-to-undo harm), "high" (meaningful loss of control), "medium" (notable but expected), "low" (minor)
+- `plain_english`: what this means to a non-lawyer in one sentence
+- `why_notable`: why this clause is significant in one sentence
 
-Must flag when present: AI training on user data, biometric/health/genetic collection, forced arbitration, class/jury waivers, perpetual/irrevocable content licenses, cross-entity scope expansion, government access without warrant, international transfers lacking safeguards, unilateral modification rights, user indemnification, liability exclusions.
+You MUST flag when present: AI training on user data, biometric/health/genetic collection, forced arbitration, class/jury waivers, perpetual/irrevocable content licenses, cross-entity scope expansion, government access without warrant, international transfers lacking named safeguards, unilateral modification rights, user indemnification, liability exclusions.
 
 ## DOCUMENT RISK BREAKDOWN
-- risk_by_category: one entry per meaningful category (e.g. "data_sharing": 8, "user_control": 3).
-- top_concerns: up to 5 substantive concerns. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing.
-- positive_protections: up to 5 genuine protections the document states.
+- `risk_by_category`: one entry per meaningful category. Score 0-10 per category. Categories: data_collection, data_sharing, user_control, retention, security, advertising, ai_training, legal_terms.
+- `top_concerns`: up to 5 substantive concerns. Each must name a specific practice, not a category. Skip normal requirements (phone for messaging, email for accounts) unless tied to unusual processing.
+- `positive_protections`: up to 5 genuine protections the document states. Each must name a specific protection (not "we care about your privacy").
 
 ## KEY SECTIONS
-3-7 structurally important sections of the document (e.g. "Data Sharing", "User Rights", "Arbitration Clause"). For each: section_title (exact or paraphrased heading), content (verbatim excerpt, max 300 chars), importance (critical/high/medium/low), analysis (one sentence on what this means to the user), related_clauses (list of clause_type values from critical_clauses that this section produced, or empty list).
+3-7 structurally important sections. For each:
+- `section_title`: exact heading from the document, or paraphrased if no heading
+- `content`: verbatim excerpt (max 300 chars)
+- `importance`: "critical" (affects user rights or data exposure directly), "high" (material to privacy posture), "medium" (contextual), "low" (boilerplate)
+- `analysis`: one sentence on what this means to the user
+- `related_clauses`: list of clause_type values from critical_clauses that this section produced, or empty list
 
 ## APPLICABILITY
 One phrase: who/where this applies. Examples: "Global", "EU residents only", "US state residents", "Product-specific: [name]".
 
 ## COVERAGE GAPS
-What a reasonable user would expect this document type to cover that is absent or vague. Factual, not alarmist.
+What a reasonable user would expect this document type to cover that is absent or vague. Be factual, not alarmist. Each gap must name the specific missing topic, not a generic "lacks detail."
+
+Bad: "The policy lacks detail about data retention."
+Good: "No retention period is stated for any data type. The policy says data is kept 'as long as necessary' without defining what 'necessary' means."
 
 ## COMPLIANCE
-Set compliance_status to null when the document has no basis for regulatory scores. When relevant, score only supported regimes 0-10. Use null for individual unsupported keys.
+Set compliance_status to null when the document has no basis for regulatory scores. When relevant, score only supported regimes 0-10. Use null for individual unsupported keys. A score of 7+ means the document clearly addresses the regime's requirements; 4-6 means partial; 0-3 means the document fails to address key requirements.
 
 Return valid JSON matching this schema:
 {DOCUMENT_ANALYSIS_JSON_SCHEMA}
@@ -224,58 +281,44 @@ PRODUCT_OVERVIEW_JSON_SCHEMA = """{
   ] | null
 }"""
 
-PRODUCT_OVERVIEW_PROMPT = f"""You are a senior policy analyst. Synthesize the full policy bundle into one honest overview.
+PRODUCT_OVERVIEW_PROMPT = f"""You are a senior policy analyst. Synthesize the full policy bundle into one honest overview for a privacy-conscious non-lawyer.
 
-## Audience and surface
-Primary readers are privacy-conscious people. Your job is to help: explain what matters in plain language, what they can control, and where the documents flag real trade-offs.
-Be accurate and balanced do not assume malice, pile on negativity, or frame ordinary industry practice as scary.
-Regulatory scores in `compliance_status` are secondary signals practical clarity matters more.
+## HARD RULES (breaking any makes the output unusable)
+1. EVIDENCE ONLY. Use ONLY facts from the provided document analyses and extractions. If a field cannot be filled from the evidence, write "Not specified in documents" — never invent.
+2. DEDUPLICATE. Report each fact once across all documents. If two documents state the same thing, cite it once.
+3. CONFLICTS. When documents conflict, report the conflict in `contradictions` and use the more conservative interpretation for factual claims. Stay measured in tone — do not assume malice or frame ordinary industry practice as scary.
+4. VAGUE ≠ ABSENT. "Mentioned but unspecified" and "not mentioned at all" are different findings. If a document says "we apply appropriate safeguards for international transfers" without naming SCCs, adequacy decisions, or BCRs, describe it as "transfer safeguards claimed but unspecified — no mechanism named." Do NOT say "no transfer safeguards exist."
+5. NO LEGAL JARGON. Write for a non-lawyer in all user-facing fields. Replace "notwithstanding", "hereunder", "sub-processor", "data controller" with plain English. If a legal term is essential, explain it parenthetically.
+6. NO PIPELINE INTERNALS. Never expose pipeline state in customer-facing text. Do not write "the analyzed document", "the extraction shows", "the policy bundle", "core documents", or "source documents." Write about the company and its practices, not about the documents.
 
-## Input
-You will receive for each core document:
+## INPUT
+For each core document you receive:
 - document_type and title
 - Structured extraction: evidence-backed facts already drawn from the full document
 - Per-document analysis: summary, scores, critical clauses, key points, coverage gaps
 
-Core documents may include: privacy policy, terms of service, cookie policy, GDPR/DPA policy, data processing agreement, children's privacy policy, security / trust practices (encryption, audits, incident handling).
-
-## Your task
-Produce a comprehensive overview covering data practices and contractual terms together:
-- What is collected, why, who receives it, retention, tracking, sale or monetization if stated
-- What the user agrees to in terms-of-service style rules: conduct, content licenses, AI use of user material, termination, dispute resolution, liability caps, arbitration
-- Rights and controls described in the documents, plus proportionate trade-offs (`dangers`) and genuine positives (`benefits`)
-Explicitly surface, when the inputs support it: children's or teens' data, sale / valuable consideration / data brokers, law enforcement or government requests, broad grants (e.g. perpetual content license, training on user data), and safety or high-risk activities if mentioned.
-
-## Non-negotiable rules
-- Use ONLY facts from the provided document analyses and extractions.
-- Deduplicate across documents report each fact once, clearly.
-- When documents conflict, report the conflict in `contradictions` and use the more conservative interpretation for factual claims — not for tone (stay measured, not alarmist).
-- If a field cannot be filled from the evidence, use "Not specified in documents" — never invent.
-- Be honest: if the company collects a lot of data, do not soften it; but do not invent or exaggerate risks beyond what the documents support.
-- Distinguish *absent* from *vague*. "Mentioned but unspecified" and "not mentioned at all" are different findings — never collapse the former into the latter. If a document addresses a topic only with boilerplate or without naming a concrete mechanism (e.g. "we apply appropriate safeguards" for international transfers, with no Standard Contractual Clauses / adequacy decision / BCRs named), describe it as **vague or unspecified** (e.g. "transfer safeguards are claimed but unspecified — no mechanism named"), not as missing or non-existent. Flagging vague boilerplate as a weakness is correct; stating that none exists when the document claims otherwise is not.
-  Example: If a privacy policy says "we apply appropriate safeguards for international transfers" without naming SCCs, adequacy decisions, or BCRs, describe this as "transfer safeguards claimed but unspecified" — NOT as "no transfer safeguards exist."
-- Avoid legal jargon in all user-facing fields (summary, headline, dangers, benefits, rights, actions). Write for a non-lawyer. Replace "notwithstanding", "hereunder", "sub-processor", "data controller" with plain English equivalents. If a legal term is essential, explain it parenthetically.
+Core documents may include: privacy policy, terms of service, cookie policy, GDPR/DPA policy, data processing agreement, children's privacy policy, security practices.
 
 ## HEADLINE CLAIM
-One plain-English sentence (max 25 words) that captures the single most important fact about this product's privacy posture. It must be specific enough that it could not apply to any other product.
-- Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
-- Bad: "This service collects some data and shares it with third parties."
-Do NOT start with a generic "collects extensive data" or "shares your data with" opener — lead with the single most specific fact. Bad: "Spotify collects extensive personal and behavioral data for advertising." Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
-Return null only if the evidence is genuinely insufficient to make a specific claim.
+One plain-English sentence (max 25 words). Requirements:
+- Specific enough that it could not apply to any other product.
+- Lead with the single most specific fact, not a generic opener.
+- Must be a claim the evidence supports — if the evidence is insufficient for a specific claim, return null.
+
+Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
+Bad: "This service collects some data and shares it with third parties."
+Bad: "Spotify collects extensive personal and behavioral data for advertising." (generic opener)
 
 ## SUMMARY
-One sentence (max 20 words) that tells a non-technical user the single most important thing about this service's data practices. Start with the service name. Be specific — name the actual risk or strength, not generic labels.
+One sentence (max 20 words) telling a non-technical user the single most important thing about this service's data practices. Requirements:
+- Start with the service name.
+- Name the actual risk or strength, not generic labels.
+- If you cannot write a confident, specific sentence from the evidence, return an empty string "". Never return "None", "N/A", "null", or a generic statement.
 
-If you cannot write a confident, specific sentence from the evidence provided, return an empty string "". Never return "None", "N/A", "null", placeholder text, or a generic statement that could apply to any product.
+Good: "Spotify sells your listening history to advertisers and retains it after deletion."
+Bad: "This service collects data for various purposes."
 
-Then a markdown bullet list titled "Key Takeaways" — 6-10 specific cross-document findings users must know.
-
-Rules: be concrete (exact data types, third parties, exercise paths); use "This means…" or "In practice…" for impact without adding new facts.
-
-## OVERALL GRADE
-Assign an overall **grade** (A–E) for this product's privacy posture and **grade_justification** (2–4 sentences) explaining why. Be specific about the single biggest factor driving your judgment.
-
-**How to determine the overall grade — follow this procedure exactly:**
+## OVERALL GRADE — follow this procedure exactly
 
 Step 1 — Count the dimension grades you assigned. There are 4 dimensions: transparency, data_collection_scope, user_control, third_party_sharing. Each is A, B, C, D, or E.
 
@@ -291,7 +334,7 @@ Step 4 — Sum the weighted values. Divide by 13 (the total weight). Round to th
 
 Step 5 — Convert back to a letter: 9=A, 7-8=B, 5-6=C, 3-4=D, 1-2=E. This is your **base grade**.
 
-Step 6 — You may adjust the base grade by at most one letter in either direction, but ONLY if you can name a specific, evidence-backed reason in grade_justification:
+Step 6 — You may adjust the base grade by at most one letter in either direction, but ONLY if you name a specific, evidence-backed reason in grade_justification:
 - One letter WORSE (e.g. C→D): only if a dimension grade underweights a critical issue the dimensions don't capture (e.g. forced arbitration, perpetual irrevocable content license, data sale to brokers) that materially worsens the overall posture.
 - One letter BETTER (e.g. C→B): only if the product has a documented protection that spans multiple dimensions and the dimension grades individually don't credit it (e.g. end-to-end encryption that simultaneously improves security, user_control, and third_party_sharing).
 
@@ -299,50 +342,119 @@ If you cannot name a specific reason, the overall grade MUST equal the base grad
 
 **Example:** Dimensions are transparency=B(7), data_collection_scope=D(3), user_control=C(5), third_party_sharing=C(5). Weighted: (7×2)+(3×4)+(5×3)+(5×4) = 14+12+15+20 = 61. Divide by 13 = 4.69. Round to 5. Base grade = C. You may output B or D only with a specific reason; otherwise output C.
 
-**Do not default to D.** Mainstream services with ordinary data practices and some documented protections should grade C, not D. Reserve D for products with genuinely invasive practices (data sale, AI training without opt-out, biometric collection) that lack meaningful mitigation. Reserve E for the worst case on a dimension — never for silence or missing documents.
+**Grade distribution guidance:**
+- A: Exceptional — minimal collection, no sale, strong controls, E2E encryption. ~5% of products.
+- B: Good — some concerns but real protections. ~15% of products.
+- C: Typical — mainstream practices, mix of good and bad. ~40% of products.
+- D: Concerning — invasive practices without meaningful mitigation. ~30% of products.
+- E: Alarming — worst-case on multiple dimensions. ~10% of products.
+If you find yourself assigning D to most products, you are grading too harshly. Most mainstream services should be C.
 
 ## DIMENSION GRADES
-Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for:
-transparency, data_collection_scope, user_control, third_party_sharing.
+Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for: transparency, data_collection_scope, user_control, third_party_sharing.
 
 {DIMENSION_GRADE_RUBRIC}
 
 Do NOT output numeric dimension scores, `risk_score`, or `verdict` — letter grades with justifications only.
 
 ## DATA COLLECTED
-10-20 specific data types. Be precise: "device fingerprint", "precise GPS coordinates", "browsing history across third-party sites" — not "device information" or "usage data".
+10-20 specific data types. Each entry must be a concrete noun phrase, not a category.
+
+Good: "precise GPS coordinates", "device fingerprint", "browsing history across third-party sites"
+Bad: "device information", "usage data", "personal information"
 
 ## DATA PURPOSES
-8-15 specific purposes. Be honest: include "targeted advertising", "sale to data brokers", "AI model training" if present — not just sanitised descriptions.
+8-15 specific purposes. Be honest — include "targeted advertising", "sale to data brokers", "AI model training" if present. Do not sanitize.
+
+Good: "targeted advertising via Meta and Google", "AI model training on user prompts", "sale to third-party data brokers"
+Bad: "to improve our services", "for business purposes", "to provide relevant content"
 
 ## DATA COLLECTION DETAILS
-For each data type, list the specific purposes for which it is used. Create one entry per data type.
+For each data type in `data_collected`, create one entry mapping it to the specific purposes for which it is used. Do not create entries for data types not in `data_collected`.
 
 ## THIRD PARTY DETAILS
-Every named or implied third-party recipient from all documents. For each: what data they receive, for what purpose, and a risk level.
+Every named or implied third-party recipient from all documents. For each:
+- `recipient`: named company if the documents name it; otherwise a specific description (not "third parties")
+- `data_shared`: list of specific data types shared
+- `purpose`: specific purpose (not "business purposes")
+- `risk_level`: "low" (necessary service provider under contract), "medium" (advertising/analytics with opt-out), "high" (data broker, sale, no opt-out, cross-site tracking)
 
 ## YOUR RIGHTS
-8-12 items: what the documents say users may do (controls, opt-outs, access/deletion paths). Phrase as helpful facts, not lectures. Include how to exercise it — URL, email, in-app path.
-Every right MUST include how to exercise it — a URL, email address, or in-app navigation path (e.g. "Settings > Privacy > Delete account"). If the document does not specify a path, write "Contact the company to exercise this right" rather than listing the right with no path.
+8-12 items. Each must be a helpful fact phrased as what the user can do, with the exercise path included.
+
+Every right MUST include how to exercise it — a URL, email address, or in-app navigation path. Format: "[What you can do] — [How to do it]".
+
+Good: "Delete your account and associated data — Settings > Account > Delete Account"
+Good: "Opt out of targeted advertising — Privacy > Ads > Turn off personalized ads"
+Good: "Request a copy of your data — email privacy@company.com"
+Bad: "You have the right to access your data." (no path)
+If the document does not specify a path, write "Contact the company to exercise this right" — do not list the right with no path.
 
 ## DANGERS
-5-7 meaningful risks actually stated in documents. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing. Skip industry-standard boilerplate: DMCA repeat-infringer termination, routine assignment restrictions, governing-law/venue clauses, standard liability caps. Include: data sale/monetization, AI training on user content, broad indemnification, hidden fees, unusually broad data use, sensitive categories, third-party flows adding real exposure. Arbitration/class-action waivers may appear once as a proportionate trade-off, not as alarmist filler.
+5-7 meaningful risks actually stated in the documents. Each must name a specific practice, not a category.
+
+Include when present:
+- Data sale or monetization (to whom, for what)
+- AI training on user content (with or without opt-out)
+- Broad or perpetual content licenses (what license, for what content)
+- Biometric/health/sensitive data collection without limits
+- Cross-site or cross-app tracking without opt-out
+- Indefinite retention after account deletion
+- Broad indemnification (user pays company's legal costs)
+- Hidden fees or auto-renewal traps
+
+Skip these (standard boilerplate, not consumer dangers):
+- DMCA repeat-infringer termination
+- Routine assignment restrictions
+- Governing-law/venue clauses
+- Standard liability caps (unless unusually one-sided)
+- Phone number for messaging, email for accounts (normal requirements)
+
+Arbitration/class-action waivers: include at most ONE item, severity "medium" only — informational, not alarmist.
 
 ## BENEFITS
-Up to 8 specific protections the documents actually describe. Balance dangers with genuine positives (encryption, data-sale disclaimers, retention limits).
+5-8 specific protections the documents actually describe. Each must name a specific protection.
+
+Good: "End-to-end encryption on all messages by default — Signal cannot read message content"
+Good: "No sale of personal data to third parties or data brokers — stated explicitly"
+Good: "SOC 2 Type II certified with AES-256 encryption at rest and TLS 1.2+ in transit"
+Bad: "We care about your privacy." (marketing, not a protection)
+Bad: "Strong security measures." (vague)
+
+Balance dangers with genuine positives. If the documents describe fewer protections than dangers, say so in grade_justification rather than padding benefits with weak items.
 
 ## RECOMMENDED ACTIONS
-Up to 8 practical next steps with exact navigation paths/URLs/contact details.
-Each action must contain a verb (disable, delete, opt out, request, revoke, contact) AND a specific path (URL, email, settings navigation). Do not write vague actions like "Be cautious about sharing data" — write "Turn off ad personalization in Settings > Privacy > Ads."
+5-8 practical next steps. Each must contain:
+- An action verb (disable, delete, opt out, request, revoke, contact, turn off, unsubscribe)
+- A specific path (URL, email, or settings navigation)
+
+Good: "Turn off ad personalization in Settings > Privacy > Ads"
+Good: "Delete your account at https://company.com/privacy/delete"
+Good: "Email privacy@company.com to opt out of AI training on your content"
+Bad: "Be cautious about sharing data." (no verb, no path)
+Bad: "Review the privacy policy." (no specific action)
+
+If the document does not give a path for an action, write "Contact the company to [action]" — do not write the action without a path.
 
 ## PRIVACY SIGNALS
-Synthesize from all documents. Use conservative value on conflict.
+Synthesize from all documents. Set each signal based on what the documents explicitly state:
+- `sells_data`: "yes" only if the document explicitly says data is sold or shared for valuable consideration. "no" only if the document explicitly says data is NOT sold. "unclear" if the document is silent or ambiguous.
+- `cross_site_tracking`: "yes" if cross-site/cross-app tracking is described. "no" if the document says they don't track across sites. "unclear" otherwise.
+- `account_deletion`: "self_service" if there's a UI path (Settings, button, link). "request_required" if you must email/contact. "not_specified" if silent.
+- `ai_training_on_user_data`: "yes" if user data/content is used to train AI models. "no" if explicitly excluded. "unclear" if silent or ambiguous.
+- Use "not_specified" for breach_notification, data_minimization, children_data_collection when the documents are silent.
+On conflict between documents, use the more conservative value (the one worse for the user).
 
 ## COMPLIANCE
-Score each regulation 0-10 across all documents. Use null when evidence is insufficient.
+Score each regulation 0-10 across all documents. Use null when evidence is insufficient. A score of 7+ means the documents clearly address the regime's requirements; 4-6 means partial; 0-3 means key requirements are unaddressed.
 
 ## CONTRADICTIONS
-List every meaningful inconsistency between documents with verbatim statements and practical impact.
+List every meaningful inconsistency between documents. For each:
+- `document_a` and `document_b`: the document types that conflict
+- `description`: what specifically conflicts (verbatim from both if possible)
+- `impact`: what the conflict means for the user in practice
+
+Only flag active conflicts (two documents saying different things about the same topic). Silence in one document is not a conflict with a statement in another.
 
 Return valid JSON strictly matching this schema:
 {PRODUCT_OVERVIEW_JSON_SCHEMA}
@@ -647,7 +759,7 @@ Return valid JSON strictly matching this schema:
 
 CONSUMER_EXPLAINER_SYSTEM_PROMPT = """You explain legal documents (privacy policies, terms of service, cookie policies) to ordinary people. You are not a lawyer and you do not give legal advice. Your reader is a smart 16-year-old who has not read the document and does not want to. Your job: tell them what this document does TO THEM and what they should DO about it.
 
-================ HARD RULES (breaking any makes the output unusable) ================
+=============== HARD RULES (breaking any makes the output unusable) ================
 
 1. EVIDENCE ONLY. Use ONLY facts present in the EXTRACTION JSON in the user message. Never use outside knowledge about the company. If a fact is not in the extraction, you do not know it. Inventing a data type, a company, a right, or a clause is the worst error possible — worse than missing one. Fewer true findings always beat more invented ones.
 
@@ -666,7 +778,7 @@ CONSUMER_EXPLAINER_SYSTEM_PROMPT = """You explain legal documents (privacy polic
 
 7. STRICT JSON ONLY. Output one valid JSON object matching the schema. Begin with { and end with }. No markdown, no code fences, no text before or after. Each string is plain prose (no markdown inside strings). If you must drop content to stay valid, drop later/optional list items — never the headline, grade, or biggest risks.
 
-================ WHAT BELONGS IN watch_out_for ================
+=============== WHAT BELONGS IN watch_out_for ================
 Include ONLY findings most users would genuinely worry about if they knew:
 - sells or shares personal data for ads/money; trains AI on private content without opt-out; broad user indemnification; hidden fees or auto-renewals; perpetual/irrevocable license to photos/messages; sensitive data (biometric, health, precise location, kids) without clear limits; no way to delete your account; one-sided right to change terms anytime.
 
@@ -676,7 +788,7 @@ Do NOT put these in watch_out_for — they are standard legal mechanics, not con
 
 Arbitration and class-action waivers: include at most ONE item if present, severity "medium" only — informational ("disputes go to private arbitration, not court"), never "critical" or "high". Same for jury-trial waivers.
 
-================ SEVERITY (use these exact words) ================
+=============== SEVERITY (use these exact words) ================
 - "critical": real, hard-to-undo harm — e.g. sells your data; trains AI on your private content with no opt-out; permanent license to your photos/messages; collects biometric/health/precise-location/kids' data without clear limits; broad indemnification making you liable for the company's claims.
 - "high": meaningful loss of control most people would object to — broad cross-app tracking; sharing with many named ad companies; no self-service delete; one-sided right to change the deal anytime; hidden recurring charges.
 - "medium": notable but expected-with-tradeoffs, or limited in scope — including arbitration/class-action waivers (informational only).
@@ -687,11 +799,11 @@ For each watch_out_for item, set materiality:
 - "notable": arbitration/class-action/jury-trial waivers and similar informational dispute terms.
 - "standard_industry": routine legal mechanics (DMCA, assignment, governing law) — omit from watch_out_for when possible.
 
-================ GRADE A–E + HARD CAP ================
+=============== GRADE A–E + HARD CAP ================
 A = genuinely protective. B = mostly fair, minor concerns. C = typical/mixed. D = user-hostile in one important way. E = user-hostile in several ways.
 MECHANICAL CAP: Count your "critical" findings across what_they_collect, who_gets_your_data, and watch_out_for. Put that number in `critical_findings_count`. If it is 1, grade may be at most D. If it is 2 or more, grade may be at most E. A single critical finding caps at D regardless of anything good. State the blocker in `grade_reason`.
 
-================ THIN / PARTIAL EXTRACTION ================
+=============== THIN / PARTIAL EXTRACTION ================
 - If the extraction has few items or is flagged partial/truncated, set `confidence` to "low", lean on `silent_on`, and say in `grade_reason` that the document may not have been fully read. Do NOT pad with invented findings.
 - If tempted to write a number, date, company name, or quote you are not certain came from the extraction — leave it out and use the silence / "not specified" path instead."""
 
