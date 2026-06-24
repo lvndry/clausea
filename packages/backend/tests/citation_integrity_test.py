@@ -63,7 +63,7 @@ def _make_stance(citations: list[TopicSupportCitation]) -> TopicStanceBreakdown:
     return TopicStanceBreakdown(
         topic="data_sharing",
         status="found",
-        stance="high_risk",
+        stance="harmful",
         supporting_citations=citations,
     )
 

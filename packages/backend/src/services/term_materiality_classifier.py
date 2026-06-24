@@ -36,7 +36,7 @@ For each input string, assign exactly one materiality tier:
   data without limits, no deletion/opt-out, cross-site tracking, indefinite retention).
 
 Judge full context and intent, not keywords alone. Combined clauses: if any part is
-material_risk, classify material_risk. When genuinely uncertain, prefer material_risk.
+material_risk, classify material_risk. When genuinely uncertain, prefer notable.
 
 Return JSON only:
 {"items": [{"text": "<exact input string>", "materiality": "standard_industry|notable|material_risk"}]}

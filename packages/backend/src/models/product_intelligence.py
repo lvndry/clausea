@@ -33,6 +33,14 @@ class RollupItem(BaseModel):
         description="Per-document attribute dicts merged from findings (materiality, etc.).",
     )
     confidence: float | None = None
+    member_values: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Normalized values of the findings merged into this item by semantic "
+            "consolidation. Empty when the item was not consolidated. Read-time "
+            "hydration attaches evidence for any finding whose value matches a member."
+        ),
+    )
 
 
 class RollupConflict(BaseModel):

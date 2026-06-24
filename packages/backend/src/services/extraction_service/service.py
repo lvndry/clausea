@@ -1,23 +1,36 @@
-"""Evidence-first structured extraction engine for policy documents (v4 architecture).
+"""Stage 1 of the pipeline: turn a policy document into atomic, evidence-backed facts.
 
-**What it does**
-Takes a ``Document`` (with cleaned text), splits it into overlapping chunks,
-sends each chunk through the LLM with a structured JSON extraction prompt,
-parses the per-chunk results, merges them across chunks, and returns a complete
-``ExtractionResult`` with evidence quotes and confidence scores.
+Extraction has one job: capture *what the documents say* as discrete, verifiable
+facts. It does NOT judge whether a fact is good, bad, or risky — that is the
+analysis stage's job, working from these facts. Keeping extraction neutral keeps
+it high-recall and unbiased: the extractor is rewarded for completeness and exact
+evidence, not for hunting dangers. A fact the extractor drops is one analysis can
+never weigh, so the bar is "every materially relevant fact, stated plainly", not
+"only the alarming ones".
 
-**What it contains**
-- ``extract_document_facts(document, …)``: the main entry point, called by the pipeline.
-- ``_extract_chunk(chunk_text, document_type, cluster_keys)``: sends one chunk to
-  the LLM and parses the response.
-- ``_merge_all(results)``: invokes all ``_merge_*`` functions from ``merging.py``.
-- ``_EXTRACTION_PRIMARY``: cluster key for the primary extraction pass.
+Approach
+--------
+Every extracted fact is grounded in an exact substring of the source text (its
+evidence quote); items whose quote is not found verbatim are discarded, which is
+what prevents hallucination. Facts are organised into clusters (data practices;
+sharing & transfers; rights & AI; legal scope) so each LLM call carries a focused
+schema, and long documents are chunked so no single call overflows the context
+window.
 
-**What it allows/prevents**
-Allows the pipeline to turn a raw policy document into a structured fact set
-suitable for summarisation and comparison.  Prevents hallucinations by requiring
-every extracted fact to include a supporting quote from the source text.
-Prevents context-window overflow by chunking long documents.
+Steps
+-----
+1. Split the cleaned document text into overlapping chunks; the overlap preserves
+   facts that straddle a chunk boundary.
+2. For each chunk, send the applicable cluster schema(s) to the LLM and require
+   structured JSON in which every item carries an exact-substring evidence quote.
+3. Parse each chunk response into typed extraction items, discarding any item
+   whose quote does not appear verbatim in the chunk.
+4. Merge items across chunks (``merging.py``): deduplicate by normalised value,
+   union the evidence spans, and combine per-document attributes.
+5. Return an ``ExtractionResult`` of atomic facts with evidence and confidence,
+   ready for the analysis stage to interpret.
+
+Entry point: ``extract_document_facts(document, …)``, called by the pipeline.
 """
 
 from __future__ import annotations

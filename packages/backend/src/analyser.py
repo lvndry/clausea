@@ -1,12 +1,33 @@
-"""Document analysis module — evidence-first, deep analysis of policy documents.
+"""Stage 2 of the pipeline: judge a product's policies from the facts extraction captured.
 
-Flow per document:
-  1. extract_document_facts()  — structured evidence-backed extraction (chunked, parallel).
-  2. analyse_document()        — unified deep analysis from extraction (one LLM call).
+Analysis is where judgment lives. Extraction (stage 1) captures neutral facts;
+analysis decides what they mean for a user — grades, dangers, benefits, and the
+plain-English overview. Concentrating opinion here, rather than in extraction,
+keeps that judgment tunable in one place and lets extraction stay unbiased and
+high-recall. Two principles hold throughout: use only the extracted facts (never
+outside knowledge), and prefer qualitative labels over invented numbers — an LLM
+is reliable at categories and comparisons, not at absolute 0-10 scores.
 
-Flow for product overview (powers cached JSON on `/products/{slug}` in the app):
-  3. generate_product_overview() — LLM synthesis from CORE documents only; saved via ProductService.
-     This is separate from chat: the product page does not run embedding search to render the overview.
+Per-document flow
+-----------------
+1. ``extract_document_facts()`` — structured, evidence-backed facts (chunked,
+   parallel). Neutral; carries no judgment.
+2. ``analyse_document()`` — one LLM call turns the extracted facts into a deep
+   analysis: per-dimension letter grades (A–E) with justifications, key points,
+   and risk clauses. Grades are letters, not fabricated scores.
+
+Product-overview flow (powers the cached JSON on ``/products/{slug}``)
+----------------------------------------------------------------------
+3. The product rollup aggregates findings across the core documents and
+   consolidates paraphrase-duplicate findings (``topic_consolidation``).
+4. ``evaluate_topic_stances()`` assigns each topic a qualitative stance
+   (fair / concerning / harmful / conflicting / not_disclosed) from deterministic
+   rule-based signals; no per-topic number is produced or exposed.
+5. ``compose_product_risk_from_topics()`` rolls the distribution of stances up
+   into a single product risk band, which maps to the product grade.
+6. ``generate_product_overview()`` synthesises the user-facing overview from the
+   core documents and per-topic stances. The result is cached and served by the
+   product page directly (no embedding search at render time).
 """
 
 import asyncio
@@ -480,7 +501,7 @@ def _apply_positive_risk_adjustment(risk_score: int, meta_summary: MetaSummary) 
         adjustment += 1
     stances = meta_summary.topic_stances or []
     low_risk_topics = sum(
-        1 for stance in stances if stance.stance == "low_risk" and stance.status == "found"
+        1 for stance in stances if stance.stance == "fair" and stance.status == "found"
     )
     if low_risk_topics >= 3:
         adjustment += 1
@@ -616,7 +637,7 @@ def _headline_finding_for_topic(topic: Any) -> Any | None:
         return None
     stance = str(getattr(topic, "stance", "") or "")
     topic_name = str(getattr(topic, "topic", "") or "")
-    if stance == "low_risk":
+    if stance == "fair":
         for finding in findings:
             if _is_protective_finding_value(topic_name, getattr(finding, "value", None)):
                 return finding
@@ -2057,7 +2078,6 @@ async def generate_product_overview(
             "topic": topic.topic,
             "status": topic.status,
             "stance": topic.stance,
-            "topic_score": topic.topic_score,
             "rationale": topic.rationale,
             "sample_findings": [finding.value for finding in topic.findings[:3]],
         }
@@ -2251,7 +2271,6 @@ Per-document analyses and extractions:
                             topic=topic.topic,
                             status=topic.status,
                             stance=topic.stance,
-                            topic_score=topic.topic_score,
                             rationale=topic.rationale,
                             rationale_key=topic.rationale_key,
                             rationale_params=topic.rationale_params,
@@ -2279,7 +2298,7 @@ Per-document analyses and extractions:
                 topic_rows: dict[InsightCategory, dict[str, Any]] = {
                     topic.topic: {
                         "status": topic.status,
-                        "topic_score": topic.topic_score,
+                        "stance": topic.stance,
                     }
                     for topic in topic_report.topics
                 }

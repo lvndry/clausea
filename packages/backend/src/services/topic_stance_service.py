@@ -107,14 +107,12 @@ def _topic_row(
     *,
     status: str,
     stance: str,
-    topic_score: int | None,
     rationale_key: str,
     rationale_params: dict[str, int | str | None] | None = None,
 ) -> dict[str, Any]:
     return {
         "status": status,
         "stance": stance,
-        "topic_score": topic_score,
         "rationale_key": rationale_key,
         "rationale_params": rationale_params,
         "rationale": _render_rationale(rationale_key, rationale_params),
@@ -289,10 +287,10 @@ def _signals_from_findings(findings: list[AggregatedFinding]) -> dict[InsightCat
 
 def _score_to_stance(score: int) -> TopicStance:
     if score <= 3:
-        return "low_risk"
+        return "fair"
     if score <= 6:
-        return "moderate_risk"
-    return "high_risk"
+        return "concerning"
+    return "harmful"
 
 
 _PROTECTIVE_TOPICS: frozenset[InsightCategory] = frozenset(
@@ -330,14 +328,12 @@ def _apply_evidence_sufficiency_cap(row: dict[str, Any], substantive_count: int)
     """Downgrade topics with fewer than three substantive citations to low risk."""
     if row["status"] in {"missing", "not_disclosed"}:
         return
-    if row["stance"] == "mixed":
+    if row["stance"] == "conflicting":
         return
     if substantive_count >= MIN_SUBSTANTIVE_CITATIONS_FOR_ELEVATED_RISK:
         return
 
-    current_score = row.get("topic_score")
-    row["topic_score"] = min(current_score if isinstance(current_score, int) else 5, 3)
-    row["stance"] = "low_risk"
+    row["stance"] = "fair"
     row["rationale_key"] = "topic.thin_evidence"
     row["rationale_params"] = {
         "finding_count": row.get("finding_count", 0),
@@ -350,7 +346,7 @@ def _apply_evidence_sufficiency_cap(row: dict[str, Any], substantive_count: int)
 
 def _apply_positive_practice_rationale(topic: InsightCategory, row: dict[str, Any]) -> None:
     """Surface low-risk protective topics with a positive rationale when evidence is solid."""
-    if row["status"] != "found" or row["stance"] != "low_risk":
+    if row["status"] != "found" or row["stance"] != "fair":
         return
     if row.get("rationale_key") == "topic.thin_evidence":
         return
@@ -371,13 +367,16 @@ def evaluate_topic_stances(
     conflicts: list[FindingConflict],
     coverage: list[CoverageItem] | None,
 ) -> dict[InsightCategory, dict[str, Any]]:
-    """Return deterministic stance/status/score per topic.
+    """Return a deterministic qualitative stance/status per topic.
 
     Each output item contains:
     - status: found | missing | not_disclosed | ambiguous
-    - stance: low_risk | moderate_risk | high_risk | not_disclosed | mixed
-    - topic_score: 0-10 risk (None when undisclosed)
+    - stance: fair | concerning | harmful | not_disclosed | conflicting
     - rationale: concise deterministic explanation
+
+    No numeric per-topic score is produced or stored: rule-based signals are computed
+    transiently only to pick the qualitative stance. Product-level risk is rolled up
+    from the distribution of these stances in ``compose_product_risk_from_topics``.
     """
     by_topic: dict[InsightCategory, dict[str, Any]] = {}
     topic_document_ids: defaultdict[InsightCategory, set[str]] = defaultdict(set)
@@ -393,14 +392,12 @@ def evaluate_topic_stances(
             by_topic[item.category] = _topic_row(
                 status=base_status,
                 stance="not_disclosed",
-                topic_score=None,
                 rationale_key="topic.not_disclosed",
             )
         else:
             by_topic[item.category] = _topic_row(
                 status=base_status,
-                stance="moderate_risk",
-                topic_score=5,
+                stance="concerning",
                 rationale_key="topic.found_generic",
             )
 
@@ -410,8 +407,7 @@ def evaluate_topic_stances(
         if topic not in by_topic:
             by_topic[topic] = _topic_row(
                 status="found",
-                stance="moderate_risk",
-                topic_score=5,
+                stance="concerning",
                 rationale_key="topic.found_generic",
             )
         row = by_topic[topic]
@@ -424,32 +420,29 @@ def evaluate_topic_stances(
         if topic not in by_topic:
             by_topic[topic] = _topic_row(
                 status="found",
-                stance="moderate_risk",
-                topic_score=5,
+                stance="concerning",
                 rationale_key="topic.found_generic",
             )
-        score = round(sum(values) / len(values)) if values else 5
-        by_topic[topic]["topic_score"] = score
-        by_topic[topic]["stance"] = _score_to_stance(score)
+        # Signals are a transient deterministic ordinal (0-10) used only to pick a
+        # qualitative stance; the number itself is never stored or exposed.
+        signal = round(sum(values) / len(values)) if values else 5
+        by_topic[topic]["stance"] = _score_to_stance(signal)
 
     for conflict in conflicts:
         if conflict.category not in by_topic:
             by_topic[conflict.category] = _topic_row(
                 status="ambiguous",
-                stance="mixed",
-                topic_score=6,
+                stance="conflicting",
                 rationale_key="topic.conflicts_found",
                 rationale_params={"conflict_count": 1, "document_count": 0},
             )
 
         row = by_topic[conflict.category]
         row["status"] = "ambiguous"
-        row["stance"] = "mixed"
+        row["stance"] = "conflicting"
         row["conflict_count"] += 1
         row["evidence_count"] += len(conflict.evidence)
         topic_document_ids[conflict.category].update(conflict.document_ids)
-        current = row.get("topic_score")
-        row["topic_score"] = min(10, (current if isinstance(current, int) else 6) + 1)
 
     for topic, row in by_topic.items():
         row["document_count"] = len(topic_document_ids[topic])
@@ -499,23 +492,36 @@ _TOPIC_WEIGHT_DEFAULTS: dict[InsightCategory, float] = {
 }
 
 
-def compose_product_risk_from_topics(topic_rows: dict[InsightCategory, dict[str, Any]]) -> int:
-    """Compose product headline risk from per-topic deterministic scores.
+# Ordinal severity of each qualitative stance, used only to roll per-topic stances
+# up into a single product-level risk band. Per-topic findings carry no number;
+# this mapping lives at the product layer alone.
+_STANCE_SEVERITY: dict[str, int] = {
+    "harmful": 9,
+    "conflicting": 7,
+    "concerning": 6,
+    "fair": 2,
+}
 
-    Topics with status ``not_disclosed`` are intentionally excluded from weighting so silence
-    is not auto-scored as worst-case.
+
+def compose_product_risk_from_topics(topic_rows: dict[InsightCategory, dict[str, Any]]) -> int:
+    """Compose product headline risk (0-10) from the distribution of per-topic stances.
+
+    Each disclosed topic contributes its stance's ordinal severity, weighted by topic
+    importance. Topics with status ``not_disclosed``/``missing`` are excluded so silence is
+    not treated as worst-case. The 0-10 output is a deterministic product-level rollup of
+    qualitative stances — not a per-topic score and not an LLM-authored number — and feeds
+    the product grade downstream.
     """
     weighted_sum = 0.0
     weight_total = 0.0
     for topic, row in topic_rows.items():
-        score = row.get("topic_score")
-        status = row.get("status")
-        if not isinstance(score, int):
+        if row.get("status") in {"not_disclosed", "missing"}:
             continue
-        if status in {"not_disclosed", "missing"}:
+        severity = _STANCE_SEVERITY.get(str(row.get("stance")))
+        if severity is None:
             continue
         weight = _TOPIC_WEIGHT_DEFAULTS.get(topic, 0.05)
-        weighted_sum += score * weight
+        weighted_sum += severity * weight
         weight_total += weight
 
     if weight_total <= 0:

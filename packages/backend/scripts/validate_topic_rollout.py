@@ -2,7 +2,7 @@
 
 Checks:
 - deterministic topic payload generation (same input -> same payload)
-- coverage behavior (missing/not_disclosed topics do not carry numeric score)
+- coverage behavior (missing/not_disclosed topics carry the not_disclosed stance)
 - citation completeness for found findings
 - drift boundaries between legacy doc score and topic-composed score
 
@@ -61,7 +61,7 @@ def _topic_rows_for_composition(
             continue
         topic_rows[cast(InsightCategory, topic_name)] = {
             "status": topic.get("status"),
-            "topic_score": topic.get("topic_score"),
+            "stance": topic.get("stance"),
         }
     return topic_rows
 
@@ -130,17 +130,17 @@ async def _validate_slug(
     else:
         failures.append("topic payload is not deterministic")
 
-    # missing/not_disclosed should not have numeric score.
+    # missing/not_disclosed topics must carry the not_disclosed stance.
     invalid_missing_topics = [
         topic
         for topic in report_a.topics
-        if topic.status in {"missing", "not_disclosed"} and topic.topic_score is not None
+        if topic.status in {"missing", "not_disclosed"} and topic.stance != "not_disclosed"
     ]
     if not invalid_missing_topics:
-        checks.append("missing/not_disclosed topics are non-scoring")
+        checks.append("missing/not_disclosed topics are not_disclosed stance")
     else:
         failures.append(
-            f"missing/not_disclosed topics carry scores ({len(invalid_missing_topics)})"
+            f"missing/not_disclosed topics carry a risk stance ({len(invalid_missing_topics)})"
         )
 
     found_findings = [
@@ -155,12 +155,14 @@ async def _validate_slug(
     else:
         failures.append(f"citation gaps in found findings ({len(citation_gaps)})")
 
-    topic_score = compose_product_risk_from_topics(_topic_rows_for_composition(payload_a["topics"]))
+    product_risk = compose_product_risk_from_topics(
+        _topic_rows_for_composition(payload_a["topics"])
+    )
     legacy_score = _weighted_product_risk_score(docs)
     if legacy_score is None:
         checks.append("legacy score unavailable (skipped drift check)")
     else:
-        drift = abs(topic_score - legacy_score)
+        drift = abs(product_risk - legacy_score)
         if drift <= max_drift:
             checks.append(f"grade drift within boundary ({drift} <= {max_drift})")
         else:

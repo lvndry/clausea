@@ -217,7 +217,6 @@ def test_build_product_topic_report_keeps_silent_topics_as_missing() -> None:
     assert report.topics[0].topic == "data_sale"
     assert report.topics[0].coverage_status == "missing"
     assert report.topics[0].status == "missing"
-    assert report.topics[0].topic_score is None
     assert report.topics[0].rationale_key == "topic.not_disclosed"
     assert report.topics[0].findings == []
 
@@ -259,7 +258,7 @@ def test_build_product_topic_report_attaches_conflicts() -> None:
     assert ai_training.topic == "ai_training"
     assert ai_training.coverage_status == "ambiguous"
     assert ai_training.status == "ambiguous"
-    assert ai_training.stance == "mixed"
+    assert ai_training.stance == "conflicting"
     assert ai_training.rationale_key == "topic.conflicts_found"
     assert len(ai_training.conflicts) == 1
     assert ai_training.conflicts[0].document_ids == ["doc_1", "doc_2"]
@@ -427,6 +426,117 @@ def test_build_product_topic_report_conflict_for_existing_topic_sets_ambiguous_c
     topic = next(item for item in report.topics if item.topic == "data_collection")
     assert topic.coverage_status == "ambiguous"
     assert topic.status == "ambiguous"
+
+
+def test_build_product_topic_report_deduplicates_identical_quotes_from_same_document() -> None:
+    rollup = HydratedRollup(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="children",
+                value="Minimum age: 18",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="To use our service, you must be at least 18 years old.",
+                        start_char=0,
+                        end_char=53,
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="To use our service, you must be at least 18 years old.",
+                        start_char=1200,
+                        end_char=1253,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        rollup=rollup,
+        documents=_documents(),
+    )
+
+    children = next(topic for topic in report.topics if topic.topic == "children")
+    assert len(children.findings[0].citations) == 1
+
+
+def test_build_product_topic_report_deduplicates_quotes_differing_only_in_trailing_punctuation() -> (
+    None
+):
+    rollup = HydratedRollup(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="dangers",
+                value="All charges nonrefundable",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="Generally, all charges for purchases are nonrefundable",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="Generally, all charges for purchases are nonrefundable.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        rollup=rollup,
+        documents=_documents(),
+    )
+
+    dangers = next(topic for topic in report.topics if topic.topic == "dangers")
+    assert len(dangers.findings[0].citations) == 1
+
+
+def test_build_product_topic_report_deduplicates_british_american_license_spelling() -> None:
+    rollup = HydratedRollup(
+        product_id="product_1",
+        product_slug="example",
+        findings=[
+            AggregatedFinding(
+                category="content_ownership",
+                value="License to company",
+                documents=["doc_1"],
+                evidence=[
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="We may sub-license the above licence to our affiliates.",
+                    ),
+                    EvidenceSpan(
+                        document_id="doc_1",
+                        url="https://example.com/terms",
+                        quote="We may sub-license the above license to our affiliates.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    report = build_product_topic_report(
+        product_slug="example",
+        rollup=rollup,
+        documents=_documents(),
+    )
+
+    content_ownership = next(topic for topic in report.topics if topic.topic == "content_ownership")
+    assert len(content_ownership.findings[0].citations) == 1
 
 
 def test_build_product_topic_report_filters_dangers_via_materiality_labels() -> None:

@@ -168,9 +168,9 @@ def test_reconcile_derives_verdict_from_grade() -> None:
         privacy_signals=PrivacySignals(sells_data="yes"),
         benefits=["encryption at rest", "self-service deletion"],
         topic_stances=[
-            TopicStanceBreakdown(topic="data_sale", status="found", stance="low_risk"),
-            TopicStanceBreakdown(topic="ai_training", status="found", stance="low_risk"),
-            TopicStanceBreakdown(topic="security", status="found", stance="low_risk"),
+            TopicStanceBreakdown(topic="data_sale", status="found", stance="fair"),
+            TopicStanceBreakdown(topic="ai_training", status="found", stance="fair"),
+            TopicStanceBreakdown(topic="security", status="found", stance="fair"),
         ],
     )
     _reconcile_meta_summary_risk(meta)

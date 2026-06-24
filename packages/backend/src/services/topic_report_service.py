@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from src.models.document import DocumentSummary, EvidenceSpan, InsightCategory
 from src.models.finding import HydratedRollup
 from src.models.topic_report import (
@@ -28,15 +30,15 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return deduped
 
 
+def _normalize_quote_for_dedup(quote: str | None) -> str:
+    text = re.sub(r"\s+", " ", (quote or "")).strip().lower()
+    text = text.strip("\"'“”‘’")
+    text = text.rstrip(".,;:!?")
+    return text.replace("licence", "license")
+
+
 def _evidence_key(evidence: EvidenceSpan) -> tuple:
-    return (
-        evidence.document_id,
-        (evidence.quote or "").strip(),
-        evidence.start_char,
-        evidence.end_char,
-        evidence.section_title or "",
-        evidence.url or "",
-    )
+    return (evidence.document_id, _normalize_quote_for_dedup(evidence.quote))
 
 
 def _build_citations(
@@ -107,8 +109,7 @@ def build_product_topic_report(
                 topic=finding.category,
                 coverage_status="found",
                 status="found",
-                stance="moderate_risk",
-                topic_score=5,
+                stance="concerning",
             )
 
         topic_item = topics_by_category[finding.category]
@@ -143,8 +144,7 @@ def build_product_topic_report(
                 topic=conflict.category,
                 coverage_status="ambiguous",
                 status="ambiguous",
-                stance="mixed",
-                topic_score=6,
+                stance="conflicting",
             )
         topic_item = topics_by_category[conflict.category]
         topic_item.coverage_status = "ambiguous"
@@ -174,7 +174,6 @@ def build_product_topic_report(
             continue
         item.status = row["status"]
         item.stance = row["stance"]
-        item.topic_score = row["topic_score"]
         item.rationale = row["rationale"]
         item.rationale_key = row.get("rationale_key")
         item.rationale_params = row.get("rationale_params")
@@ -183,7 +182,6 @@ def build_product_topic_report(
         if item.status == "found" and not item.findings and not item.conflicts:
             item.status = "not_disclosed"
             item.stance = "not_disclosed"
-            item.topic_score = None
             item.rationale = "Topic lacks verifiable citation evidence."
             item.rationale_key = "topic.missing_verifiable_citation"
             item.rationale_params = None

@@ -35,8 +35,9 @@ def _evidence_for_item(
     category: InsightCategory,
     value: str,
     document_ids: list[str],
+    member_values: list[str] | None = None,
 ) -> list[EvidenceSpan]:
-    normalized = _normalize(value)
+    targets = set(member_values) if member_values else {_normalize(value)}
     allowed = set(document_ids)
     evidence: list[EvidenceSpan] = []
     for finding in findings:
@@ -44,7 +45,7 @@ def _evidence_for_item(
             continue
         if finding.document_id not in allowed:
             continue
-        if (finding.normalized_value or _normalize(finding.value)) != normalized:
+        if (finding.normalized_value or _normalize(finding.value)) not in targets:
             continue
         evidence.extend(finding.evidence)
     return filter_evidence_spans(evidence, category=category, finding_value=value)
@@ -66,6 +67,7 @@ def rollup_to_hydrated(
             category=item.category,
             value=item.value,
             document_ids=item.document_ids,
+            member_values=item.member_values,
         )
         aggregated.append(
             AggregatedFinding(
