@@ -14,9 +14,17 @@ class _FakeContent:
 
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._offset = 0
 
     async def read(self, n: int = -1) -> bytes:
-        return self._data if n < 0 else self._data[:n]
+        if n < 0:
+            n = len(self._data) - self._offset
+        if n == 0:
+            return b""
+        end = min(self._offset + n, len(self._data))
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
 
 
 # ---------------------------------------------------------------------------

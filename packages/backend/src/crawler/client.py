@@ -190,6 +190,25 @@ def _is_pdf_response(content_type: str, url: str) -> bool:
 # ---- ClauseaCrawler ----------------------------------------------------------------
 
 
+_RESPONSE_READ_CHUNK_SIZE = 65536
+
+
+async def _read_bounded_response_body(
+    content: aiohttp.StreamReader, max_bytes: int
+) -> tuple[bytes, bool]:
+    """Read response body in chunks up to *max_bytes* + 1 to detect oversize without OOM."""
+    chunks: list[bytes] = []
+    total = 0
+    while total <= max_bytes:
+        chunk = await content.read(_RESPONSE_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    body = b"".join(chunks)
+    return body, len(body) > max_bytes
+
+
 class ClauseaCrawler:
     """Powerful policy document crawler."""
 
@@ -532,17 +551,19 @@ class ClauseaCrawler:
                 )
 
             if is_text:
-                raw = await response.read()
-                if len(raw) > MAX_RESPONSE_BYTES:
+                raw, oversized = await _read_bounded_response_body(
+                    response.content, MAX_RESPONSE_BYTES
+                )
+                if oversized:
                     return StaticFetchResult(
                         url=url,
                         status_code=response.status,
                         content_type=content_type,
                         body="",
-                        raw_bytes=raw[:MAX_RESPONSE_BYTES],
+                        raw_bytes=b"",
                         headers=resp_headers,
                         resolved_url=final_url,
-                        error_message=f"Response too large ({len(raw)} bytes)",
+                        error_message=f"Response too large (exceeds {MAX_RESPONSE_BYTES} bytes)",
                     )
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
@@ -555,8 +576,10 @@ class ClauseaCrawler:
                     resolved_url=final_url,
                 )
             else:
-                raw_bytes = await response.read()
-                if len(raw_bytes) > MAX_RESPONSE_BYTES:
+                raw_bytes, oversized = await _read_bounded_response_body(
+                    response.content, MAX_RESPONSE_BYTES
+                )
+                if oversized:
                     raw_bytes = raw_bytes[:MAX_RESPONSE_BYTES]
                 return StaticFetchResult(
                     url=url,
@@ -599,9 +622,20 @@ class ClauseaCrawler:
                 ):
                     return None
 
-                raw = await response.read()
-                if len(raw) > MAX_RESPONSE_BYTES:
-                    return None
+                raw, oversized = await _read_bounded_response_body(
+                    response.content, MAX_RESPONSE_BYTES
+                )
+                if oversized:
+                    return StaticFetchResult(
+                        url=url,
+                        status_code=response.status,
+                        content_type=content_type,
+                        body="",
+                        raw_bytes=b"",
+                        headers=dict(response.headers.items()),
+                        resolved_url=str(response.url),
+                        error_message=f"Response too large (exceeds {MAX_RESPONSE_BYTES} bytes)",
+                    )
                 body = raw.decode(response.charset or "utf-8", errors="replace")
                 return StaticFetchResult(
                     url=url,

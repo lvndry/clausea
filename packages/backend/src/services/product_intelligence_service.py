@@ -154,7 +154,7 @@ class ProductIntelligenceService:
                 "overview_history": [snapshot.model_dump(mode="json") for snapshot in history],
                 "overview_generated_at": now,
                 "thin_evidence": thin_evidence,
-                "thin_evidence_reason": thin_evidence_reason if thin_evidence else None,
+                "thin_evidence_reason": (thin_evidence_reason or None) if thin_evidence else None,
             },
         )
         await self.update_product_stats(db, product_id=product_id, product_slug=product_slug)
@@ -218,11 +218,7 @@ class ProductIntelligenceService:
             "stats.document_count": document_count,
             "stats.has_overview": has_graded_overview,
             "stats.last_indexed_at": datetime.now(),
-            "stats.grade": (
-                intelligence.overview.grade
-                if has_graded_overview and intelligence and intelligence.overview
-                else None
-            ),
+            "stats.grade": intelligence.overview.grade if has_graded_overview else None,
         }
         await db.products.update_one({"id": product_id}, {"$set": stats})
 

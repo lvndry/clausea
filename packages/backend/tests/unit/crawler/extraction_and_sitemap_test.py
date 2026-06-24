@@ -10,9 +10,17 @@ from src.crawler import ClauseaCrawler, PageContent
 class _FakeContent:
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._offset = 0
 
     async def read(self, n: int = -1) -> bytes:
-        return self._data if n < 0 else self._data[:n]
+        if n < 0:
+            n = len(self._data) - self._offset
+        if n == 0:
+            return b""
+        end = min(self._offset + n, len(self._data))
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
 
 
 def test_extract_links_various_sources():
@@ -466,9 +474,10 @@ class _MappedResponse:
         self.url = url
         self.status = 200 if self._body is not None else 404
         self.headers: dict[str, str] = {}
+        self.content = _FakeContent((self._body or "").encode())
 
     async def read(self) -> bytes:
-        return (self._body or "").encode()
+        return await self.content.read()
 
     async def text(self) -> str:
         return self._body or ""
@@ -478,10 +487,6 @@ class _MappedResponse:
 
     async def __aexit__(self, *args):
         return None
-
-    @property
-    def content(self) -> _FakeContent:
-        return _FakeContent((self._body or "").encode())
 
 
 class _MappedSession:

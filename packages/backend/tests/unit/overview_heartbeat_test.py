@@ -20,7 +20,7 @@ from src.analyser import generate_product_overview
 from src.models.document import Document, DocumentAnalysis, DocumentAnalysisScores
 
 
-def _core_doc() -> Document:
+def _core_doc(*, doc_id: str = "doc_1", doc_type: str = "privacy_policy") -> Document:
     analysis = DocumentAnalysis(
         summary="x",
         scores={
@@ -37,17 +37,27 @@ def _core_doc() -> Document:
         critical_clauses=[],
     )
     return Document(
+        id=doc_id,
         url="https://example.com/privacy",
         product_id="p1",
-        doc_type="privacy_policy",  # type: ignore[arg-type]
+        doc_type=doc_type,  # type: ignore[arg-type]
         markdown="",
         analysis=analysis,
     )
 
 
+def _adequate_core_docs() -> list[Document]:
+    return [
+        _core_doc(doc_id="doc_1", doc_type="privacy_policy"),
+        _core_doc(doc_id="doc_2", doc_type="privacy_policy"),
+        _core_doc(doc_id="doc_3", doc_type="terms_of_service"),
+    ]
+
+
 def _overview_response() -> ModelResponse:
     payload = {
         "summary": "ok",
+        "headline_claim": "Example collects account and usage data for service delivery.",
         "scores": {
             "transparency": {"score": 5, "justification": ""},
             "data_collection_scope": {"score": 5, "justification": ""},
@@ -75,7 +85,7 @@ def _services() -> tuple[MagicMock, MagicMock]:
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
     product_svc.save_product_overview = AsyncMock(return_value=True)
     document_svc = MagicMock()
-    document_svc.get_product_documents_by_slug = AsyncMock(return_value=[_core_doc()])
+    document_svc.get_product_documents_by_slug = AsyncMock(return_value=_adequate_core_docs())
     return product_svc, document_svc
 
 

@@ -2309,6 +2309,9 @@ Per-document analyses and extractions:
                     if attached:
                         logger.info("Attached %d fallback citations to %s", attached, product_slug)
 
+                if is_thin:
+                    strip_overview_grading(meta_summary)
+
                 overview_dict = meta_summary.model_dump(mode="json")
                 deterministic = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
 
@@ -2349,7 +2352,6 @@ Per-document analyses and extractions:
                 logger.info("Overview warning for %s: %s", product_slug, warning)
 
         if is_thin:
-            strip_overview_grading(meta_summary)
             logger.info(
                 "Withholding overview grade for %s due to thin evidence: %s",
                 product_slug,

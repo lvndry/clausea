@@ -95,8 +95,19 @@ async def test_static_fetch_sends_accept_language() -> None:
     html = b"<html><body>privacy policy terms of service we collect your data</body></html>"
 
     class FakeContent:
-        async def read(self, _limit: int) -> bytes:
-            return html
+        def __init__(self) -> None:
+            self._data = html
+            self._offset = 0
+
+        async def read(self, n: int = -1) -> bytes:
+            if n < 0:
+                n = len(self._data) - self._offset
+            if n == 0:
+                return b""
+            end = min(self._offset + n, len(self._data))
+            chunk = self._data[self._offset : end]
+            self._offset = end
+            return chunk
 
     class FakeResponse:
         def __init__(self) -> None:
@@ -107,7 +118,7 @@ async def test_static_fetch_sends_accept_language() -> None:
             self.content = FakeContent()
 
         async def read(self) -> bytes:
-            return await self.content.read(0)
+            return await self.content.read()
 
         async def __aenter__(self):
             return self
