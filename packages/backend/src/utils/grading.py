@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
+from src.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 GradeLetter = Literal["A", "B", "C", "D", "E"]
 
 _VALID_GRADES: frozenset[str] = frozenset({"A", "B", "C", "D", "E"})
@@ -176,6 +180,11 @@ def clamp_grade(
     llm_idx = order.get(llm_grade)
     derived_idx = order.get(derived_grade)
     if llm_idx is None or derived_idx is None:
+        logger.warning(
+            "Invalid grade(s) in clamp_grade: llm=%r, derived=%r — falling back to derived",
+            llm_grade,
+            derived_grade,
+        )
         return coerce_grade(derived_grade)
     delta = llm_idx - derived_idx
     if abs(delta) <= max_delta:

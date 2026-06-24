@@ -179,8 +179,6 @@ def check_e_grade_on_silence(grade: str | None, topic_stances: list[Any]) -> boo
         evidence = _get_field(stance, "evidence_count")
         if isinstance(evidence, int):
             total_evidence += evidence
-    if total == 0:
-        return False
     return silent / total > 0.7 and total_evidence == 0
 
 

@@ -134,8 +134,50 @@ class ProductIntelligenceRepository(BaseRepository):
 
         await db[self.COLLECTION].update_many(
             {"overview.topic_stances.supporting_citations.document_id": document_id},
-            {"$set": {"overview.topic_stances.$[].supporting_citations.$[cite].stale": True}},
-            array_filters=[{"cite.document_id": document_id}],
+            [
+                {
+                    "$set": {
+                        "overview.topic_stances": {
+                            "$map": {
+                                "input": "$overview.topic_stances",
+                                "as": "stance",
+                                "in": {
+                                    "$mergeObjects": [
+                                        "$$stance",
+                                        {
+                                            "supporting_citations": {
+                                                "$map": {
+                                                    "input": "$$stance.supporting_citations",
+                                                    "as": "cite",
+                                                    "in": {
+                                                        "$mergeObjects": [
+                                                            "$$cite",
+                                                            {
+                                                                "stale": {
+                                                                    "$cond": [
+                                                                        {
+                                                                            "$eq": [
+                                                                                "$$cite.document_id",
+                                                                                document_id,
+                                                                            ]
+                                                                        },
+                                                                        True,
+                                                                        "$$cite.stale",
+                                                                    ]
+                                                                }
+                                                            },
+                                                        ]
+                                                    },
+                                                }
+                                            }
+                                        },
+                                    ]
+                                },
+                            }
+                        }
+                    }
+                }
+            ],
         )
         return citation_count
 

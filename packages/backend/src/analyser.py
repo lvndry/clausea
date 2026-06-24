@@ -2268,11 +2268,9 @@ Per-document analyses and extractions:
         overview_dict = meta_summary.model_dump(mode="json")
         validation = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
         if validation.should_re_roll:
-            logger.warning(
-                "Overview validation failed for %s: %s",
-                product_slug,
-                "; ".join(validation.re_roll_reasons),
-            )
+            reasons = "; ".join(validation.re_roll_reasons)
+            logger.warning("Overview validation failed for %s: %s", product_slug, reasons)
+            raise ValueError(f"Overview validation failed for {product_slug}: {reasons}")
         for warning in validation.warnings:
             logger.info("Overview warning for %s: %s", product_slug, warning)
 

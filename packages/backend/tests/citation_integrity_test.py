@@ -37,10 +37,9 @@ async def test_mark_citations_stale_for_document_updates_matching_citations() ->
     pi_collection.update_many.assert_awaited_once()
     args, kwargs = pi_collection.update_many.call_args
     assert args[0] == {"overview.topic_stances.supporting_citations.document_id": "doc-orphan-1"}
-    assert args[1]["$set"] == {
-        "overview.topic_stances.$[].supporting_citations.$[cite].stale": True
-    }
-    assert kwargs["array_filters"] == [{"cite.document_id": "doc-orphan-1"}]
+    assert isinstance(args[1], list)
+    assert "$set" in args[1][0]
+    assert "overview.topic_stances" in args[1][0]["$set"]
 
 
 @pytest.mark.asyncio

@@ -584,6 +584,7 @@ class DocumentRepository(BaseRepository):
                     document_id,
                     cite_error,
                 )
+                raise
 
             result = await db.documents.delete_one({"id": document_id})
             success = result.deleted_count > 0

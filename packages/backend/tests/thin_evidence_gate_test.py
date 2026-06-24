@@ -22,8 +22,14 @@ def test_two_same_type_docs_are_thin() -> None:
     assert "1" in reason
 
 
-def test_two_different_type_docs_are_not_thin() -> None:
+def test_two_different_type_docs_are_thin_due_to_count() -> None:
     is_thin, reason = check_thin_evidence(["privacy_policy", "terms_of_service"])
+    assert is_thin is True
+    assert reason is not None
+
+
+def test_two_same_type_plus_one_different_is_not_thin() -> None:
+    is_thin, reason = check_thin_evidence(["privacy_policy", "privacy_policy", "terms_of_service"])
     assert is_thin is False
     assert reason is None
 
@@ -43,7 +49,7 @@ def test_non_core_doc_types_are_ignored() -> None:
 
 def test_mixed_core_and_non_core_docs() -> None:
     is_thin, reason = check_thin_evidence(
-        ["privacy_policy", "terms_of_service", "community_guidelines", "other"]
+        ["privacy_policy", "terms_of_service", "cookie_policy", "community_guidelines", "other"]
     )
     assert is_thin is False
     assert reason is None

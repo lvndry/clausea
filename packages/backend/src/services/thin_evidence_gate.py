@@ -17,7 +17,7 @@ def check_thin_evidence(analyzed_core_docs: list[str]) -> tuple[bool, str | None
     distinct_type_count = len(set(core_doc_types))
     total_core_count = len(core_doc_types)
 
-    if distinct_type_count < MIN_DISTINCT_CORE_TYPES and total_core_count < MIN_TOTAL_CORE_DOCS:
+    if distinct_type_count < MIN_DISTINCT_CORE_TYPES or total_core_count < MIN_TOTAL_CORE_DOCS:
         if total_core_count == 0:
             return True, "No core policy documents have been analyzed yet."
         return True, (
