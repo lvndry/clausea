@@ -322,16 +322,14 @@ def test_extract_main_content_combines_split_blocks_over_small_sidebar():
     assert len(text) > 1000
 
 
-def test_extract_main_content_ignores_html_vector_content_class_false_positive():
+def test_extract_main_content_ignores_html_content_class_false_positive():
     """Fallback selectors must not treat the root ``html`` element as article body."""
     html = """
-    <html class="client-nojs vector-feature-limited-width-content-enabled">
+    <html class="site-feature-limited-width-content-enabled">
       <body>
         <main id="content">
-          <div id="mw-content-text" class="mw-parser-output">
-            <h1>Terms of Use</h1>
-            <p>These terms govern your use of Wikimedia projects and services.</p>
-          </div>
+          <h1>Terms of Use</h1>
+          <p>These terms govern your use of our products and services.</p>
         </main>
       </body>
     </html>
@@ -342,7 +340,7 @@ def test_extract_main_content_ignores_html_vector_content_class_false_positive()
     text = cleaned.get_text(" ", strip=True)
 
     assert "Terms of Use" in text
-    assert "Wikimedia projects" in text
+    assert "products and services" in text
 
 
 def test_decode_sitemap_bytes_inflates_gzip():

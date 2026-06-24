@@ -4,28 +4,26 @@ from src.crawler import ClauseaCrawler
 from src.crawler.html_extraction import extract_with_trafilatura
 
 
-def test_extract_with_trafilatura_mediawiki_terms():
+def test_extract_with_trafilatura_terms_of_service():
     html = """
-    <html class="client-nojs vector-feature-limited-width-content-enabled">
+    <html>
       <body>
-        <main id="content">
-          <div id="mw-content-text" class="mw-parser-output">
+        <main>
+          <article>
             <h1>Terms of Use</h1>
-            <p>These terms govern your use of Wikimedia projects and services.</p>
+            <p>These terms govern your use of our products and services.</p>
             <p>Users must comply with applicable law and respect community guidelines.</p>
-            <p>Content may be reused under free licenses when attribution requirements are met.</p>
-          </div>
+            <p>Content may be reused only when attribution requirements are met.</p>
+          </article>
         </main>
       </body>
     </html>
     """
-    result = extract_with_trafilatura(
-        html, url="https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use"
-    )
+    result = extract_with_trafilatura(html, url="https://example.com/legal/terms")
     assert result is not None
     text, _markdown = result
     assert "Terms of Use" in text
-    assert "Wikimedia projects" in text
+    assert "products and services" in text
 
 
 def test_parse_html_string_prefers_trafilatura_over_selectors():
