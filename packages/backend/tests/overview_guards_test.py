@@ -6,6 +6,7 @@ from src.analyzers.overview_guards import (
     check_e_grade_on_silence,
     check_rights_have_paths,
     find_long_sentences,
+    format_overview_retry_feedback,
     merge_llm_review,
     validate_headline_length,
     validate_headline_not_empty,
@@ -372,3 +373,16 @@ def test_merge_llm_review_all_pass_no_changes() -> None:
     assert merged.re_roll_reasons == []
     assert merged.warnings == ["summary too long"]
     assert merged.checks_passed["llm_unsupported_claims"] is True
+
+
+def test_format_overview_retry_feedback_empty_reasons() -> None:
+    assert format_overview_retry_feedback([]) == ""
+
+
+def test_format_overview_retry_feedback_includes_reasons() -> None:
+    text = format_overview_retry_feedback(
+        ["UNSUPPORTED_CLAIMS: headline overclaims voice recordings"]
+    )
+    assert "Your previous JSON response was rejected" in text
+    assert "UNSUPPORTED_CLAIMS: headline overclaims voice recordings" in text
+    assert text.startswith("\n\n")

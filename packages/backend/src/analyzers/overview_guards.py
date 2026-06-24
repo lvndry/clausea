@@ -50,6 +50,23 @@ class OverviewValidationResult(BaseModel):
     checks_passed: dict[str, bool]
 
 
+MAX_OVERVIEW_RE_ROLLS = 3
+
+
+def format_overview_retry_feedback(reasons: list[str]) -> str:
+    """User-prompt appendix telling the overview LLM how to fix a rejected draft."""
+    if not reasons:
+        return ""
+    bullets = "\n".join(f"- {reason}" for reason in reasons)
+    return (
+        "\n\nYour previous JSON response was rejected by quality review. "
+        "Revise the overview to fix every issue below. Keep headline and summary "
+        "strictly evidence-backed — do not overgeneralize optional features or "
+        "use stronger wording than the policy supports:\n"
+        f"{bullets}\n"
+    )
+
+
 def _get_field(obj: Any, name: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(name)
