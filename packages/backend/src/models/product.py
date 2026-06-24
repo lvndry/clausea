@@ -14,6 +14,18 @@ class ProductStats(BaseModel):
     last_indexed_at: datetime | None = None
 
 
+# Provenance of ``Product.name``. Controls whether the pipeline is allowed to
+# overwrite the name with a brand extracted from crawled page metadata.
+#   - "manual":          set by a human via the dashboard -> never overwritten.
+#   - "auto_domain":     derived from the domain at extension/pipeline creation
+#                        (e.g. "Netflix" from netflix.com) -> pipeline may improve it.
+#   - "auto_extracted":  already improved by the pipeline from metadata -> frozen.
+#   - None:              legacy products created before this field existed.
+NAME_SOURCE_MANUAL = "manual"
+NAME_SOURCE_AUTO_DOMAIN = "auto_domain"
+NAME_SOURCE_AUTO_EXTRACTED = "auto_extracted"
+
+
 class Product(BaseModel):
     id: str
     name: str
@@ -32,3 +44,4 @@ class Product(BaseModel):
     stats: ProductStats = Field(default_factory=ProductStats)
     thin_evidence: bool = False
     thin_evidence_reason: str | None = None
+    name_source: str | None = None
