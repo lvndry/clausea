@@ -93,6 +93,9 @@ class ProductIntelligence(BaseModel):
 
     overview_history: list[OverviewSnapshot] = Field(default_factory=list)
 
+    thin_evidence: bool = False
+    thin_evidence_reason: str | None = None
+
     generated_at: datetime = Field(default_factory=datetime.now)
     rollup_generated_at: datetime | None = None
     overview_generated_at: datetime | None = None

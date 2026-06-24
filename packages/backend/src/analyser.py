@@ -2247,9 +2247,26 @@ Per-document analyses and extractions:
         _reconcile_meta_summary_risk(meta_summary)
 
         from src.analyzers.overview_guards import validate_overview
+        from src.services.thin_evidence_gate import check_thin_evidence
+        from src.services.topic_evidence_fallback import attach_fallback_evidence
+
+        is_thin, thin_reason = check_thin_evidence(
+            [d.doc_type for d in core_docs if d.doc_type in OVERVIEW_CORE_DOC_TYPES]
+        )
+        if is_thin:
+            logger.warning(
+                "Thin evidence for %s: %s — overview may be incomplete",
+                product_slug,
+                thin_reason,
+            )
+
+        if meta_summary.topic_stances:
+            attached = await attach_fallback_evidence(meta_summary.topic_stances, core_docs)
+            if attached:
+                logger.info("Attached %d fallback citations to %s", attached, product_slug)
 
         overview_dict = meta_summary.model_dump(mode="json")
-        validation = validate_overview(overview_dict, has_adequate_evidence=len(core_docs) >= 3)
+        validation = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
         if validation.should_re_roll:
             logger.warning(
                 "Overview validation failed for %s: %s",

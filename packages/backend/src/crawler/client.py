@@ -65,6 +65,7 @@ from src.crawler.constants import (
     _TRACKING_QUERY_PARAMS,
     ACCEPT_HEADER,
     BROWSER_DOMAIN_FAILURE_CAP,
+    BROWSER_DOMAIN_FAILURE_COOLDOWN_S,
     BROWSER_LOAD_STATE_TIMEOUT_MS,
     BROWSER_NAV_TIMEOUT_MS,
     BROWSER_NETWORKIDLE_TIMEOUT_MS,
@@ -203,6 +204,7 @@ class ClauseaCrawler:
         delay_between_requests: float = 1.0,
         timeout: int = 60,
         allowed_domains: list[str] | None = None,
+        denied_domains: list[str] | None = None,
         respect_robots_txt: bool = True,
         user_agent: str = DEFAULT_USER_AGENT,
         follow_external_links: bool = False,
@@ -243,6 +245,7 @@ class ClauseaCrawler:
         )
         self.timeout = timeout
         self.allowed_domains: set[str] | None = set(allowed_domains) if allowed_domains else None
+        self.denied_domains: set[str] = set(denied_domains or [])
         self.respect_robots_txt = respect_robots_txt
         self.user_agent = user_agent
         self.follow_external_links = follow_external_links
@@ -317,6 +320,7 @@ class ClauseaCrawler:
         self._render_recovered: int = 0
         self._domain_extra_delay: dict[str, float] = {}
         self._consecutive_browser_failures: int = 0
+        self._last_browser_failure_at: float = 0.0
 
         self.rate_limiter = DomainRateLimiter(
             delay_between_requests=delay_between_requests, jitter=self.delay_jitter
@@ -1357,17 +1361,31 @@ class ClauseaCrawler:
         return {"user_agents": {}}
 
     def is_allowed_domain(self, url: str) -> bool:
+        if not self.allowed_domains and not self.denied_domains:
+            return True
+
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+
+        if self._hostname_is_denied(hostname):
+            return False
+
         if not self.allowed_domains:
             return True
 
-        url_ext = _TLD_EXTRACT(url)
-        url_domain = url_ext.domain
-
         for allowed in self.allowed_domains:
-            allowed_ext = _TLD_EXTRACT(allowed)
-            if url_domain == allowed_ext.domain:
+            allowed_host = allowed.lower()
+            if hostname == allowed_host or hostname.endswith("." + allowed_host):
                 return True
+        return False
 
+    def _hostname_is_denied(self, hostname: str) -> bool:
+        for denied in self.denied_domains:
+            denied_host = denied.lower()
+            if hostname == denied_host or hostname.endswith("." + denied_host):
+                return True
         return False
 
     def is_same_domain(self, url1: str, url2: str) -> bool:
@@ -1660,6 +1678,21 @@ class ClauseaCrawler:
         else:
             self._domain_extra_delay[domain] = self.browser_extra_delay
 
+    def _maybe_reset_browser_cooldown(self) -> bool:
+        if self._consecutive_browser_failures < BROWSER_DOMAIN_FAILURE_CAP:
+            return False
+        if not self._last_browser_failure_at:
+            return False
+        if (time.monotonic() - self._last_browser_failure_at) < BROWSER_DOMAIN_FAILURE_COOLDOWN_S:
+            return False
+        self._consecutive_browser_failures = 0
+        self._last_browser_failure_at = 0.0
+        logger.debug(
+            "Browser failure counter reset after %.0fs cooldown — re-enabling browser rendering",
+            BROWSER_DOMAIN_FAILURE_COOLDOWN_S,
+        )
+        return True
+
     async def _fetch_page_internal(self, session: aiohttp.ClientSession, url: str) -> CrawlResult:
         try:
             raw = await self._static_fetch(session, url)
@@ -1718,64 +1751,60 @@ class ClauseaCrawler:
                 )
                 if force_browser_render or relevance >= self.min_legal_score:
                     if self._consecutive_browser_failures >= BROWSER_DOMAIN_FAILURE_CAP:
-                        logger.debug(
-                            "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",
-                            self._consecutive_browser_failures,
-                        )
-                        return CrawlResult(
-                            url=effective_url,
-                            title=(page.title if page else ""),
-                            content="",
-                            markdown="",
-                            metadata=(page.metadata if page else {}),
-                            status_code=raw.status_code,
-                            success=False,
-                            error_message="Static content unusable and browser rendering skipped due to domain failure cap",
-                            discovered_links=(page.discovered_links if page else []),
-                        )
-                    else:
-                        slot_wait_start = time.monotonic()
-                        async with self._browser_render_slot():
-                            self._render_slot_wait_total += time.monotonic() - slot_wait_start
-                            self._render_attempts += 1
-                            browser_page = await self._browser_fetch(effective_url)
-                        if browser_page is not None and self._content_is_sufficient(
-                            browser_page, effective_url
-                        ):
-                            self._consecutive_browser_failures = 0
-                            self._note_browser_domain_delay(effective_url, failed=False)
-                            browser_resolved = browser_page.metadata.pop(
-                                "_browser_resolved_url", None
+                        if not self._maybe_reset_browser_cooldown():
+                            logger.debug(
+                                "Browser cap reached (%d consecutive failures) — disabling browser for remainder of crawl",
+                                self._consecutive_browser_failures,
                             )
-                            if browser_resolved and browser_resolved != effective_url:
-                                effective_url = browser_resolved
-                                self.visited_urls.add(self.normalize_url(effective_url))
-                            if self._in_render_retry:
-                                self._render_recovered += 1
-                            return self._build_crawl_result(effective_url, browser_page)
+                            return CrawlResult(
+                                url=effective_url,
+                                title=(page.title if page else ""),
+                                content="",
+                                markdown="",
+                                metadata=(page.metadata if page else {}),
+                                status_code=raw.status_code,
+                                success=False,
+                                error_message="Static content unusable and browser rendering skipped due to domain failure cap",
+                                discovered_links=(page.discovered_links if page else []),
+                            )
+                    slot_wait_start = time.monotonic()
+                    async with self._browser_render_slot():
+                        self._render_slot_wait_total += time.monotonic() - slot_wait_start
+                        self._render_attempts += 1
+                        browser_page = await self._browser_fetch(effective_url)
+                    if browser_page is not None and self._content_is_sufficient(
+                        browser_page, effective_url
+                    ):
+                        self._consecutive_browser_failures = 0
+                        self._last_browser_failure_at = 0.0
+                        self._note_browser_domain_delay(effective_url, failed=False)
+                        browser_resolved = browser_page.metadata.pop("_browser_resolved_url", None)
+                        if browser_resolved and browser_resolved != effective_url:
+                            effective_url = browser_resolved
+                            self.visited_urls.add(self.normalize_url(effective_url))
+                        if self._in_render_retry:
+                            self._render_recovered += 1
+                        return self._build_crawl_result(effective_url, browser_page)
 
-                        self._consecutive_browser_failures += 1
-                        self._note_browser_domain_delay(effective_url, failed=True)
-                        if browser_page is None:
-                            self._render_failures += 1
-                            if not self._in_render_retry:
-                                self._render_retry_queue.append(effective_url)
+                    self._consecutive_browser_failures += 1
+                    self._last_browser_failure_at = time.monotonic()
+                    self._note_browser_domain_delay(effective_url, failed=True)
+                    if browser_page is None:
+                        self._render_failures += 1
+                        if not self._in_render_retry:
+                            self._render_retry_queue.append(effective_url)
 
-                        return CrawlResult(
-                            url=effective_url,
-                            title=(browser_page.title if browser_page else ""),
-                            content="",
-                            markdown="",
-                            metadata=(browser_page.metadata if browser_page else {}),
-                            status_code=(
-                                browser_page.status_code if browser_page else raw.status_code
-                            ),
-                            success=False,
-                            error_message="Static content unusable and browser rendering failed",
-                            discovered_links=(
-                                browser_page.discovered_links if browser_page else []
-                            ),
-                        )
+                    return CrawlResult(
+                        url=effective_url,
+                        title=(browser_page.title if browser_page else ""),
+                        content="",
+                        markdown="",
+                        metadata=(browser_page.metadata if browser_page else {}),
+                        status_code=(browser_page.status_code if browser_page else raw.status_code),
+                        success=False,
+                        error_message="Static content unusable and browser rendering failed",
+                        discovered_links=(browser_page.discovered_links if browser_page else []),
+                    )
 
                 if page is not None:
                     return self._build_crawl_result(effective_url, page)

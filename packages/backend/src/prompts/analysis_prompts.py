@@ -233,11 +233,14 @@ Explicitly surface, when the inputs support it: children's or teens' data, sale 
 - If a field cannot be filled from the evidence, use "Not specified in documents" — never invent.
 - Be honest: if the company collects a lot of data, do not soften it; but do not invent or exaggerate risks beyond what the documents support.
 - Distinguish *absent* from *vague*. "Mentioned but unspecified" and "not mentioned at all" are different findings — never collapse the former into the latter. If a document addresses a topic only with boilerplate or without naming a concrete mechanism (e.g. "we apply appropriate safeguards" for international transfers, with no Standard Contractual Clauses / adequacy decision / BCRs named), describe it as **vague or unspecified** (e.g. "transfer safeguards are claimed but unspecified — no mechanism named"), not as missing or non-existent. Flagging vague boilerplate as a weakness is correct; stating that none exists when the document claims otherwise is not.
+  Example: If a privacy policy says "we apply appropriate safeguards for international transfers" without naming SCCs, adequacy decisions, or BCRs, describe this as "transfer safeguards claimed but unspecified" — NOT as "no transfer safeguards exist."
+- Avoid legal jargon in all user-facing fields (summary, headline, dangers, benefits, rights, actions). Write for a non-lawyer. Replace "notwithstanding", "hereunder", "sub-processor", "data controller" with plain English equivalents. If a legal term is essential, explain it parenthetically.
 
 ## HEADLINE CLAIM
 One plain-English sentence (max 25 words) that captures the single most important fact about this product's privacy posture. It must be specific enough that it could not apply to any other product.
 - Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
 - Bad: "This service collects some data and shares it with third parties."
+Do NOT start with a generic "collects extensive data" or "shares your data with" opener — lead with the single most specific fact. Bad: "Spotify collects extensive personal and behavioral data for advertising." Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
 Return null only if the evidence is genuinely insufficient to make a specific claim.
 
 ## SUMMARY
@@ -278,6 +281,7 @@ Every named or implied third-party recipient from all documents. For each: what 
 
 ## YOUR RIGHTS
 8-12 items: what the documents say users may do (controls, opt-outs, access/deletion paths). Phrase as helpful facts, not lectures. Include how to exercise it — URL, email, in-app path.
+Every right MUST include how to exercise it — a URL, email address, or in-app navigation path (e.g. "Settings > Privacy > Delete account"). If the document does not specify a path, write "Contact the company to exercise this right" rather than listing the right with no path.
 
 ## DANGERS
 5-7 meaningful risks actually stated in documents. Skip normal category requirements (phone for messaging, email for accounts) unless tied to unusual processing. Skip industry-standard boilerplate: DMCA repeat-infringer termination, routine assignment restrictions, governing-law/venue clauses, standard liability caps. Include: data sale/monetization, AI training on user content, broad indemnification, hidden fees, unusually broad data use, sensitive categories, third-party flows adding real exposure. Arbitration/class-action waivers may appear once as a proportionate trade-off, not as alarmist filler.
@@ -287,6 +291,7 @@ Up to 8 specific protections the documents actually describe. Balance dangers wi
 
 ## RECOMMENDED ACTIONS
 Up to 8 practical next steps with exact navigation paths/URLs/contact details.
+Each action must contain a verb (disable, delete, opt out, request, revoke, contact) AND a specific path (URL, email, settings navigation). Do not write vague actions like "Be cautious about sharing data" — write "Turn off ad personalization in Settings > Privacy > Ads."
 
 ## PRIVACY SIGNALS
 Synthesize from all documents. Use conservative value on conflict.

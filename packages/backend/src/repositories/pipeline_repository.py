@@ -494,6 +494,15 @@ class PipelineRepository(BaseRepository):
             logger.info("Re-queued %d failed job(s) for retry", count)
         return count
 
+    async def cleanup_stale_sessions(self, db: AgnosticDatabase, max_age_minutes: int = 30) -> int:
+        """Mark in-flight jobs that have gone silent as failed so they auto-retry.
+
+        Thin convenience wrapper around :meth:`mark_stale_as_failed` for callers that
+        only care about a single max-age threshold (e.g. booking-style orphaned
+        sessions left running without a live worker).
+        """
+        return await self.mark_stale_as_failed(db, stale_threshold_minutes=max_age_minutes)
+
     async def mark_stale_as_failed(
         self,
         db: AgnosticDatabase,

@@ -19,6 +19,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.analyzers.signal_consistency import find_signal_prose_contradictions
+
 _SUMMARY_MAX_WORDS = 20
 _HEADLINE_MAX_WORDS = 25
 _SENTENCE_DEFAULT_MAX_WORDS = 35
@@ -320,6 +322,14 @@ def validate_overview(
     checks["no_unsupported_strong_claims"] = not unsupported
     if unsupported:
         re_roll_reasons.append("Strong claims lack supporting evidence: " + ", ".join(unsupported))
+
+    signal_contradictions = find_signal_prose_contradictions(
+        headline or "", summary, privacy_signals, citations
+    )
+    checks["no_signal_prose_contradictions"] = not signal_contradictions
+    if signal_contradictions:
+        contradiction_descs = "; ".join(c.get("issue", "unknown") for c in signal_contradictions)
+        re_roll_reasons.append(f"Signal/prose contradictions: {contradiction_descs}")
 
     internal_state_hits = {
         "summary": find_internal_state_language(summary),

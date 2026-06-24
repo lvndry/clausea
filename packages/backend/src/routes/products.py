@@ -441,6 +441,12 @@ async def get_product_by_slug(
     product = await service.get_product_by_slug(db, slug)
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+
+    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    if intelligence and intelligence.thin_evidence:
+        product.thin_evidence = True
+        product.thin_evidence_reason = intelligence.thin_evidence_reason
+
     return product
 
 

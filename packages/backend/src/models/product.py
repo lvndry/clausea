@@ -25,6 +25,10 @@ class Product(BaseModel):
     crawl_base_urls: list[str] = Field(default_factory=list)
     crawl_allowed_paths: list[str] = Field(default_factory=list)
     crawl_denied_paths: list[str] = Field(default_factory=list)
+    crawl_denied_domains: list[str] = Field(default_factory=list)
+    crawl_ignore_robots: bool = False
     logo: str | None = None
     visible_to_tiers: list[UserTier] = Field(default_factory=lambda: [UserTier.FREE, UserTier.PRO])
     stats: ProductStats = Field(default_factory=ProductStats)
+    thin_evidence: bool = False
+    thin_evidence_reason: str | None = None
