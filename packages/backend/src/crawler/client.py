@@ -193,6 +193,13 @@ def _is_pdf_response(content_type: str, url: str) -> bool:
 
 _RESPONSE_READ_CHUNK_SIZE = 65536
 
+_BOILERPLATE_PATTERN = re.compile(
+    r"(cookie|consent|banner|popup|modal|newsletter|subscribe|breadcrumb|"
+    r"social|share|tracking|advert|promo|sidebar|drawer|menu|navigation|"
+    r"footer|header|masthead|toolbar)",
+    re.IGNORECASE,
+)
+
 
 async def _read_bounded_response_body(
     content: aiohttp.StreamReader, max_bytes: int
@@ -556,12 +563,13 @@ class ClauseaCrawler:
                     response.content, MAX_RESPONSE_BYTES
                 )
                 if oversized:
+                    truncated = raw[:MAX_RESPONSE_BYTES]
                     return StaticFetchResult(
                         url=url,
                         status_code=response.status,
                         content_type=content_type,
                         body="",
-                        raw_bytes=b"",
+                        raw_bytes=truncated,
                         headers=resp_headers,
                         resolved_url=final_url,
                         error_message=f"Response too large (exceeds {MAX_RESPONSE_BYTES} bytes)",
@@ -632,7 +640,7 @@ class ClauseaCrawler:
                         status_code=response.status,
                         content_type=content_type,
                         body="",
-                        raw_bytes=b"",
+                        raw_bytes=raw[:MAX_RESPONSE_BYTES],
                         headers=dict(response.headers.items()),
                         resolved_url=str(response.url),
                         error_message=f"Response too large (exceeds {MAX_RESPONSE_BYTES} bytes)",
@@ -1067,13 +1075,6 @@ class ClauseaCrawler:
             if tag.attrs is not None and self._is_consent_container(tag):
                 tag.decompose()
 
-        boilerplate_pattern = re.compile(
-            r"(cookie|consent|banner|popup|modal|newsletter|subscribe|breadcrumb|"
-            r"social|share|tracking|advert|promo|sidebar|drawer|menu|navigation|"
-            r"footer|header|masthead|toolbar)",
-            re.IGNORECASE,
-        )
-
         for tag in cleaned.find_all(True):
             if tag.attrs is None:
                 continue
@@ -1087,7 +1088,7 @@ class ClauseaCrawler:
             attrs = " ".join(
                 str(value) for value in [tag.get("id", ""), classes, tag.get("aria-label", "")]
             )
-            if attrs and boilerplate_pattern.search(attrs):
+            if attrs and _BOILERPLATE_PATTERN.search(attrs):
                 tag_text = tag.get_text(" ", strip=True)
                 if self._is_substantive_legal_policy_container(attrs, tag_text):
                     continue
