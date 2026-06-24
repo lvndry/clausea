@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveProductPageOverviewState } from "./product-page-fetch-state";
+import {
+  deriveProductPageOverviewState,
+  isProductNotFound,
+} from "./product-page-fetch-state";
 
 describe("deriveProductPageOverviewState", () => {
   it("returns ready when overview request succeeds", () => {
@@ -47,6 +50,18 @@ describe("deriveProductPageOverviewState", () => {
     expect(result).toBe("limit_reached");
   });
 
+  it("returns server_error for 5xx responses", () => {
+    const result = deriveProductPageOverviewState({
+      overviewOk: false,
+      overviewStatus: 500,
+      explainerStatus: 200,
+      topicsStatus: 200,
+      productStatus: 200,
+    });
+
+    expect(result).toBe("server_error");
+  });
+
   it("returns indexing for non-limit overview misses like 425", () => {
     const result = deriveProductPageOverviewState({
       overviewOk: false,
@@ -56,5 +71,13 @@ describe("deriveProductPageOverviewState", () => {
     });
 
     expect(result).toBe("indexing");
+  });
+});
+
+describe("isProductNotFound", () => {
+  it("returns true only for HTTP 404", () => {
+    expect(isProductNotFound(404)).toBe(true);
+    expect(isProductNotFound(500)).toBe(false);
+    expect(isProductNotFound(429)).toBe(false);
   });
 });

@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 
 from motor.core import AgnosticDatabase
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
 
 ANONYMOUS_LIMIT = 15
 
@@ -26,72 +25,6 @@ class ProductPreviewUsageService:
             return 0
         return int(doc.get("count", 0))
 
-    def _count_after_increment(self, before: dict | None, month_key: str) -> int:
-        if before is None:
-            return 1
-        if before.get("month_key") != month_key:
-            return 1
-        return self._effective_count(before, month_key) + 1
-
-    def _build_increment_update(
-        self,
-        *,
-        month_key: str,
-        now: datetime,
-        token: str | None,
-        ip: str,
-    ) -> tuple[list[dict], dict]:
-        set_on_insert: dict = {"first_seen": now}
-        extra_set: dict = {"month_key": month_key, "last_seen": now}
-        if token:
-            set_on_insert["token"] = token
-            extra_set["ip"] = ip
-        else:
-            set_on_insert["ip"] = ip
-
-        pipeline = [
-            {
-                "$set": {
-                    **extra_set,
-                    "count": {
-                        "$cond": {
-                            "if": {
-                                "$lt": [
-                                    {
-                                        "$cond": {
-                                            "if": {
-                                                "$ne": [
-                                                    {"$ifNull": ["$month_key", ""]},
-                                                    month_key,
-                                                ]
-                                            },
-                                            "then": 0,
-                                            "else": {"$ifNull": ["$count", 0]},
-                                        }
-                                    },
-                                    ANONYMOUS_LIMIT,
-                                ]
-                            },
-                            "then": {
-                                "$cond": {
-                                    "if": {
-                                        "$ne": [
-                                            {"$ifNull": ["$month_key", ""]},
-                                            month_key,
-                                        ]
-                                    },
-                                    "then": 1,
-                                    "else": {"$add": ["$count", 1]},
-                                }
-                            },
-                            "else": {"$ifNull": ["$count", 0]},
-                        }
-                    },
-                }
-            }
-        ]
-        return pipeline, set_on_insert
-
     async def check_and_increment(
         self,
         db: AgnosticDatabase,
@@ -107,40 +40,52 @@ class ProductPreviewUsageService:
         """
         key_filter = self._key_filter(token=token, ip=ip)
         month_key = self._current_month_key()
+        collection = db[self.COLLECTION]
 
         if not increment:
-            doc = await db[self.COLLECTION].find_one(key_filter, {"count": 1, "month_key": 1})
+            doc = await collection.find_one(key_filter, {"count": 1, "month_key": 1})
             current = self._effective_count(doc, month_key)
             return current < ANONYMOUS_LIMIT, current
 
         now = datetime.now(tz=UTC)
-        pipeline, set_on_insert = self._build_increment_update(
-            month_key=month_key,
-            now=now,
-            token=token,
-            ip=ip,
+        set_on_insert: dict = {"first_seen": now, "count": 0, "month_key": month_key}
+        if token:
+            set_on_insert["token"] = token
+        else:
+            set_on_insert["ip"] = ip
+
+        set_fields: dict = {"last_seen": now}
+        if token:
+            set_fields["ip"] = ip
+
+        await collection.update_one(
+            key_filter,
+            {"$setOnInsert": set_on_insert, "$set": set_fields},
+            upsert=True,
         )
 
-        try:
-            before = await db[self.COLLECTION].find_one_and_update(
+        doc = await collection.find_one(key_filter, {"count": 1, "month_key": 1})
+        current = self._effective_count(doc, month_key)
+
+        if doc and doc.get("month_key") == month_key and current >= ANONYMOUS_LIMIT:
+            return False, current
+
+        if doc and doc.get("month_key") != month_key:
+            updated = await collection.find_one_and_update(
                 key_filter,
-                pipeline,
-                upsert=True,
-                return_document=ReturnDocument.BEFORE,
-                set_on_insert=set_on_insert,
+                {"$set": {"count": 1, "month_key": month_key, "last_seen": now}},
+                return_document=ReturnDocument.AFTER,
             )
-        except DuplicateKeyError:
-            before = await db[self.COLLECTION].find_one_and_update(
-                key_filter,
-                pipeline,
-                return_document=ReturnDocument.BEFORE,
-            )
+            return True, int(updated["count"]) if updated else 1
 
-        if before is None:
-            return True, 1
+        updated = await collection.find_one_and_update(
+            {**key_filter, "month_key": month_key, "count": {"$lt": ANONYMOUS_LIMIT}},
+            {"$inc": {"count": 1}, "$set": {"last_seen": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated:
+            return True, int(updated["count"])
 
-        before_count = self._effective_count(before, month_key)
-        if before.get("month_key") == month_key and before_count >= ANONYMOUS_LIMIT:
-            return False, before_count
-
-        return True, self._count_after_increment(before, month_key)
+        doc = await collection.find_one(key_filter, {"count": 1, "month_key": 1})
+        current = self._effective_count(doc, month_key)
+        return False, current

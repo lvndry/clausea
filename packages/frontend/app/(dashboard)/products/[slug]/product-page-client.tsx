@@ -45,7 +45,10 @@ import type {
 } from "@/types";
 import { useAuth } from "@clerk/nextjs";
 
-import { deriveProductPageOverviewState } from "./product-page-fetch-state";
+import {
+  deriveProductPageOverviewState,
+  isProductNotFound,
+} from "./product-page-fetch-state";
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
@@ -125,7 +128,12 @@ export default function CompanyPage({
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [thinEvidence, setThinEvidence] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
-    "ready" | "indexing" | "limit_reached" | "unknown"
+    | "ready"
+    | "indexing"
+    | "limit_reached"
+    | "not_found"
+    | "server_error"
+    | "unknown"
   >(initialOverview ? "ready" : "unknown");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [failedJob, setFailedJob] = useState<FailedCrawlJob | null>(null);
@@ -216,9 +224,21 @@ export default function CompanyPage({
           return;
         }
 
+        if (overviewState === "server_error" || prodRes.status >= 500) {
+          setData(null);
+          setIndexationMode("server_error");
+          return;
+        }
+
+        if (isProductNotFound(prodRes.status)) {
+          setData(null);
+          setIndexationMode("not_found");
+          return;
+        }
+
         if (!prodJson) {
           setData(null);
-          setIndexationMode("ready"); // render not-found
+          setIndexationMode("server_error");
           return;
         }
 
@@ -922,27 +942,87 @@ export default function CompanyPage({
       );
     }
 
+    if (indexationMode === "server_error") {
+      return (
+        <div className="space-y-8">
+          <div className="border-b border-border pb-8">
+            <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-4">
+              Something went wrong
+            </p>
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+              Couldn&apos;t load this report
+            </h1>
+            <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
+              We hit an error loading {limitReachedDisplayName}. This is usually
+              temporary — try again in a moment.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button
+              onClick={() => window.location.reload()}
+              className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+            >
+              <RotateCcw className="mr-2 h-3.5 w-3.5" />
+              Try again
+            </Button>
+            <Link
+              href="/products"
+              className="inline-flex items-center justify-center gap-2 h-11 px-6 border border-border text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Browse Products
+            </Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (indexationMode === "not_found") {
+      return (
+        <div className="space-y-8">
+          <div className="border-b border-border pb-8">
+            <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-4">
+              404 — Not Found
+            </p>
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+              Product Not Found
+            </h1>
+            <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
+              The product you&apos;re looking for doesn&apos;t exist or has been
+              removed.
+            </p>
+          </div>
+          <Link
+            href="/products"
+            className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Browse Products
+          </Link>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-8">
         <div className="border-b border-border pb-8">
           <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-4">
-            404 — Not Found
+            Something went wrong
           </p>
           <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
-            Product Not Found
+            Couldn&apos;t load this report
           </h1>
           <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
-            The product you&apos;re looking for doesn&apos;t exist or has been
-            removed.
+            We hit an error loading {limitReachedDisplayName}. Please try again.
           </p>
         </div>
-        <Link
-          href="/products"
-          className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
+        <Button
+          onClick={() => window.location.reload()}
+          className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Browse Products
-        </Link>
+          <RotateCcw className="mr-2 h-3.5 w-3.5" />
+          Try again
+        </Button>
       </div>
     );
   }

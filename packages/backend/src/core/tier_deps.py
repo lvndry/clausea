@@ -10,6 +10,7 @@ from motor.core import AgnosticDatabase
 
 from src.core.database import get_db
 from src.core.jwt import clerk_auth_service
+from src.core.logging import get_logger
 from src.models.user import UserTier
 from src.services.product_preview_usage import ProductPreviewUsageService
 from src.services.service_factory import create_user_service
@@ -28,6 +29,10 @@ _METERED_PRODUCT_GET_RE = re.compile(
     r")$"
 )
 _preview_usage_svc = ProductPreviewUsageService()
+logger = get_logger(__name__)
+
+# 429 Too Many Requests — preview/monthly quota exhausted.
+USAGE_LIMIT_STATUS = 429
 
 
 def _user_id_from_state(request: Request) -> str | None:
@@ -136,28 +141,36 @@ async def check_usage_limit(
 
         preview_token = request.headers.get("X-Preview-Token", "").strip() or None
         client_ip = _get_client_ip(request)
-        allowed, _ = await _preview_usage_svc.check_and_increment(
-            db,
-            token=preview_token,
-            ip=client_ip,
-            increment=_should_increment_preview(request),
-        )
+        try:
+            allowed, _ = await _preview_usage_svc.check_and_increment(
+                db,
+                token=preview_token,
+                ip=client_ip,
+                increment=_should_increment_preview(request),
+            )
+        except Exception:
+            logger.exception("Anonymous preview usage check failed")
+            raise HTTPException(
+                status_code=503,
+                detail="Usage metering temporarily unavailable. Please try again.",
+            ) from None
         if not allowed:
             raise HTTPException(
-                status_code=429,
+                status_code=USAGE_LIMIT_STATUS,
                 detail="Free preview limit reached. Sign in for unlimited access.",
             )
         return
 
     user_service = create_user_service()
     user = await user_service.get_user_by_id(db, user_id)
+    # Pro (and bypass accounts) never hit anonymous preview or free-tier monthly caps.
     if user and user.tier == UserTier.PRO:
         return
 
     allowed, _ = await UsageService.check_usage_limit(db, user_id)
     if not allowed:
         raise HTTPException(
-            status_code=429,
+            status_code=USAGE_LIMIT_STATUS,
             detail="Monthly usage limit reached. Upgrade to Pro for unlimited access.",
         )
 

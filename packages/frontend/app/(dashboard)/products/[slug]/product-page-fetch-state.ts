@@ -2,6 +2,7 @@ export type ProductPageOverviewState =
   | "ready"
   | "unauthorized"
   | "limit_reached"
+  | "server_error"
   | "indexing";
 
 interface ProductPageOverviewStateInput {
@@ -13,8 +14,17 @@ interface ProductPageOverviewStateInput {
   documentsStatus?: number;
 }
 
-const USAGE_LIMIT_HTTP_STATUS = 429;
 const OVERVIEW_UNAUTHORIZED_HTTP_STATUS = 401;
+/** 429 Too Many Requests — monthly/preview quota exhausted. */
+const USAGE_LIMIT_HTTP_STATUS = 429;
+
+function isUsageLimitStatus(status: number): boolean {
+  return status === USAGE_LIMIT_HTTP_STATUS;
+}
+
+function isServerErrorStatus(status: number): boolean {
+  return status >= 500;
+}
 
 export function deriveProductPageOverviewState({
   overviewOk,
@@ -32,17 +42,25 @@ export function deriveProductPageOverviewState({
     return "unauthorized";
   }
 
-  const hasUsageLimitResponse = [
+  const statuses = [
     overviewStatus,
     explainerStatus,
     topicsStatus,
     productStatus,
     documentsStatus,
-  ].some((status) => status === USAGE_LIMIT_HTTP_STATUS);
+  ].filter((status): status is number => status !== undefined);
 
-  if (hasUsageLimitResponse) {
+  if (statuses.some(isUsageLimitStatus)) {
     return "limit_reached";
   }
 
+  if (statuses.some(isServerErrorStatus)) {
+    return "server_error";
+  }
+
   return "indexing";
+}
+
+export function isProductNotFound(productStatus: number): boolean {
+  return productStatus === 404;
 }

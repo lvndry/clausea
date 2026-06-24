@@ -174,6 +174,25 @@ async def test_check_usage_limit_blocks_anonymous_product_preview() -> None:
 
 
 @pytest.mark.asyncio
+async def test_check_usage_limit_preview_metering_failure_returns_503() -> None:
+    request = _mock_request(None)
+    request.method = "GET"
+    request.url.path = "/products/acme/overview"
+    request.headers = {"X-Preview-Token": "preview-token-1"}
+    request.client = MagicMock(host="1.2.3.4")
+    db = AsyncMock()
+
+    with patch("src.core.tier_deps._preview_usage_svc") as mock_preview_svc:
+        mock_preview_svc.check_and_increment = AsyncMock(
+            side_effect=RuntimeError("mongo unavailable")
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await check_usage_limit(request=request, db=db)
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_check_usage_limit_skips_crawler_user_agents() -> None:
     request = _mock_request(None)
     request.method = "GET"
