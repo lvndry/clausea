@@ -4,7 +4,7 @@ from streamlit_tags import st_tags
 
 from src.dashboard.db_utils import create_product_isolated, get_product_by_slug_isolated
 from src.dashboard.utils import run_async_with_retry
-from src.models.product import Product
+from src.models.product import NAME_SOURCE_MANUAL, Product
 
 # Session state keys for form fields
 FORM_FIELD_KEYS = [
@@ -196,6 +196,7 @@ def show_product_creation() -> None:
                     domains=domains_list,
                     categories=categories_list,
                     crawl_base_urls=crawl_base_urls_list,
+                    name_source=NAME_SOURCE_MANUAL,
                 )
 
                 # Save product to database with retry

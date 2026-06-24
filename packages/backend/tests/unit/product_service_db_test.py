@@ -87,6 +87,7 @@ async def test_get_product_overview(
                 "third_party_sharing": {"score": 3, "justification": "Bad"},
             },
             "risk_score": 5,
+            "grade": "C",
             "verdict": "moderate",
             "keypoints": ["Point 1"],
             "data_collected": ["Email"],
@@ -105,7 +106,7 @@ async def test_get_product_overview(
     overview = await product_service.get_product_overview(mock_db, "test-product")
     assert overview is not None
     assert overview.product_slug == "test-product"
-    assert overview.risk_score == 5
+    assert overview.grade == "C"
     mock_product_repo.get_product_overview.assert_called_once_with(mock_db, "test-product")
 
 
@@ -181,7 +182,7 @@ async def test_get_product_explainer_uses_canonical_overview_grade(
 
 
 @pytest.mark.asyncio
-async def test_get_product_explainer_derives_grade_from_risk_score_when_missing_grade(
+async def test_get_product_explainer_keeps_grade_when_overview_grade_missing(
     product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
 ) -> None:
     mock_product_repo.get_product_explainer = AsyncMock(
@@ -194,13 +195,8 @@ async def test_get_product_explainer_derives_grade_from_risk_score_when_missing_
     explainer = await product_service.get_product_explainer(mock_db, "test-product")
 
     assert explainer is not None
-    assert explainer["grade"] == "D"
-    mock_product_repo.update_product_explainer_grade.assert_awaited_once_with(
-        mock_db,
-        "test-product",
-        "D",
-        grade_reason="Pervasive risk: significant issues with data practices, limited user rights, or broad data sharing.",
-    )
+    assert explainer["grade"] == "B"
+    mock_product_repo.update_product_explainer_grade.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -155,7 +155,7 @@ def test_protective_finding_rejects_no_substring_false_positives() -> None:
     assert _is_protective_finding_value("ai_training", "no ai training on user content")
 
 
-def test_signal_floor_holds_after_positive_adjustment() -> None:
+def test_reconcile_derives_verdict_from_grade() -> None:
     meta = MetaSummary(
         summary="ok",
         grade="B",
@@ -174,4 +174,6 @@ def test_signal_floor_holds_after_positive_adjustment() -> None:
         ],
     )
     _reconcile_meta_summary_risk(meta)
-    assert meta.risk_score == 6
+    assert meta.grade == "B"
+    assert meta.verdict == "user_friendly"
+    assert meta.risk_score == 3

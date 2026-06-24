@@ -68,8 +68,8 @@ class OverviewSnapshot(BaseModel):
 
     snapshot_at: datetime = Field(default_factory=datetime.now)
     overview_hash: str
-    risk_score: int | None = None
-    risk_score_delta: int | None = None
+    grade: str | None = None
+    grade_delta: int | None = None
     verdict: str | None = None
     one_line_summary: str | None = None
     changed_overview_fields: list[str] = Field(default_factory=list)
@@ -92,6 +92,9 @@ class ProductIntelligence(BaseModel):
     deep_analysis_document_signature: str | None = None
 
     overview_history: list[OverviewSnapshot] = Field(default_factory=list)
+
+    thin_evidence: bool = False
+    thin_evidence_reason: str | None = None
 
     generated_at: datetime = Field(default_factory=datetime.now)
     rollup_generated_at: datetime | None = None

@@ -30,7 +30,7 @@ from src.models.pipeline_job import (
     PipelineJob,
     is_hard_crawl_error,
 )
-from src.models.product import Product
+from src.models.product import NAME_SOURCE_AUTO_DOMAIN, NAME_SOURCE_AUTO_EXTRACTED, Product
 from src.pipeline import PolicyDocumentPipeline
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
@@ -79,6 +79,38 @@ def _domain_to_slug(domain: str) -> str:
         open-ai.com -> open-ai
     """
     return domain.split(".")[0].lower()
+
+
+def _should_override_product_name(
+    product_name: str, product_name_source: str | None, brand_name: str | None
+) -> bool:
+    """Decide whether the pipeline may overwrite ``product_name`` with ``brand_name``.
+
+    A name is only improvable when it was auto-derived from the domain
+    (``name_source`` in ``(None, "auto_domain")``) and the extracted brand name is
+    both present and different. Manually curated ("manual") and already-extracted
+    ("auto_extracted") names are frozen so a later crawl can never degrade a good
+    name into a section title like "Help Center".
+    """
+    if not brand_name or brand_name == product_name:
+        return False
+    return product_name_source in (None, NAME_SOURCE_AUTO_DOMAIN)
+
+
+def _should_override_product_name(
+    product_name: str, product_name_source: str | None, brand_name: str | None
+) -> bool:
+    """Decide whether the pipeline may overwrite ``product_name`` with ``brand_name``.
+
+    A name is only improvable when it was auto-derived from the domain
+    (``name_source`` in ``(None, "auto_domain")``) and the extracted brand name is
+    both present and different. Manually curated ("manual") and already-extracted
+    ("auto_extracted") names are frozen so a later crawl can never degrade a good
+    name into a section title like "Help Center".
+    """
+    if not brand_name or brand_name == product_name:
+        return False
+    return product_name_source in (None, NAME_SOURCE_AUTO_DOMAIN)
 
 
 class PipelineService:
@@ -151,6 +183,7 @@ class PipelineService:
                 slug=slug,
                 domains=[domain],
                 crawl_base_urls=[url],
+                name_source=NAME_SOURCE_AUTO_DOMAIN,
             )
             await product_svc.create_product(db, product)
             logger.info(f"Created new product '{product.name}' ({product.slug}) from URL: {url}")
@@ -427,11 +460,21 @@ class PipelineService:
 
                     # Update the product display name when the crawler found a better one in
                     # page metadata (e.g. og:site_name "OpenAI" vs domain-derived "Openai").
+                    # Only auto-derived placeholder names are eligible for improvement;
+                    # manually curated ("manual") or already-extracted names are frozen so a
+                    # later crawl can never degrade a good name into a section title like
+                    # "Help Center".
                     brand_name: str | None = getattr(stats, "brand_name", None)
-                    if brand_name and brand_name != product.name:
+                    if _should_override_product_name(product.name, product.name_source, brand_name):
+                        assert brand_name is not None  # guaranteed by _should_override_product_name
                         try:
                             product_svc_upd = create_product_service()
-                            await product_svc_upd.update_product_name(db, product.id, brand_name)
+                            await product_svc_upd.update_product_name(
+                                db,
+                                product.id,
+                                brand_name,
+                                name_source=NAME_SOURCE_AUTO_EXTRACTED,
+                            )
                             logger.info(
                                 "Product name updated: '%s' → '%s' (%s)",
                                 product.name,
@@ -439,6 +482,7 @@ class PipelineService:
                                 job.product_slug,
                             )
                             product.name = brand_name
+                            product.name_source = NAME_SOURCE_AUTO_EXTRACTED
                             job.product_name = brand_name
                             await self._pipeline_repo.update_fields(
                                 db, job.id, {"product_name": brand_name}

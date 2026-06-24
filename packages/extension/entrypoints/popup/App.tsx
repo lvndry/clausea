@@ -601,22 +601,13 @@ export default function App() {
                     </span>
                   </div>
 
-                  {data.risk_score !== null && (
+                  {data.grade && (
                     <div>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>Risk score</span>
+                        <span>Privacy grade</span>
                         <span className="font-semibold text-foreground">
-                          {data.risk_score}/10
+                          {data.grade}
                         </span>
-                      </div>
-                      <div className="mt-2 h-1.5 bg-muted">
-                        <div
-                          className={cn(
-                            "h-full transition-all duration-500",
-                            tone.bar,
-                          )}
-                          style={{ width: `${data.risk_score * 10}%` }}
-                        />
                       </div>
                     </div>
                   )}

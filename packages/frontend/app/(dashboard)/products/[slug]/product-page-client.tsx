@@ -25,6 +25,7 @@ import { DataStory } from "@/components/dashboard/overview/data-story";
 import { PrivacySignals } from "@/components/dashboard/overview/privacy-signals";
 import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown";
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
+import { StillAnalyzing } from "@/components/dashboard/overview/still-analyzing";
 import { VerdictHero } from "@/components/dashboard/overview/verdict-hero";
 import { YourPower } from "@/components/dashboard/overview/your-power";
 import { PipelineProgress } from "@/components/pipeline/pipeline-progress";
@@ -122,6 +123,7 @@ export default function CompanyPage({
   );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [thinEvidence, setThinEvidence] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
     "ready" | "indexing" | "limit_reached" | "unknown"
   >(initialOverview ? "ready" : "unknown");
@@ -198,6 +200,12 @@ export default function CompanyPage({
           : [];
         setDocuments(docsJson);
         setDocumentsLoading(false);
+
+        if (prodJson?.thin_evidence) {
+          setThinEvidence(true);
+          setData(null);
+          return;
+        }
 
         if (overviewState === "limit_reached") {
           setData(null);
@@ -572,6 +580,23 @@ export default function CompanyPage({
               </div>
             </div>
           </div>
+        </div>
+      );
+    }
+
+    // Thin evidence: overview blocked because too few core documents analyzed.
+    if (product && thinEvidence) {
+      return (
+        <div className="space-y-8">
+          <div className="border-b border-border pb-8">
+            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
+              {product.name}
+            </h1>
+            <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
+              Policy overview in progress
+            </p>
+          </div>
+          <StillAnalyzing />
         </div>
       );
     }
@@ -1030,7 +1055,6 @@ export default function CompanyPage({
             verdict={data.verdict}
             grade={data.grade}
             gradeJustification={data.grade_justification}
-            riskScore={data.risk_score}
             summary={data.one_line_summary}
             keypoints={data.keypoints}
           />

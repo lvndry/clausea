@@ -42,7 +42,7 @@ async def main(slug: str) -> None:
             print(f"    locale={d.locale} regions={d.regions} effective_date={d.effective_date}")
             print(f"    markdown_len={len(d.markdown or '')}")
             if a:
-                print(f"    verdict={a.verdict} risk_score={a.risk_score}")
+                print(f"    verdict={a.verdict} grade={a.grade}")
                 if a.scores:
                     sc = ", ".join(f"{k}={v.score}" for k, v in a.scores.items())
                     print(f"    scores: {sc}")
@@ -73,7 +73,7 @@ async def main(slug: str) -> None:
         o = overview
         print(f"product_name : {o.product_name}")
         print(f"verdict      : {o.verdict}")
-        print(f"risk_score   : {o.risk_score}")
+        print(f"grade        : {o.grade}")
         print(f"one_line     : {o.one_line_summary}")
         if o.detailed_scores:
             print("detailed_scores:")

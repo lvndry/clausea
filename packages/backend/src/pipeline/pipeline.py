@@ -25,8 +25,10 @@ on individual product failures (catches and logs, continues to next product).
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import tracemalloc
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
@@ -58,85 +60,436 @@ from src.utils.perf import log_memory_usage, memory_monitor_task
 load_dotenv()
 
 
-def _is_valid_brand_name(name: str) -> bool:
-    """Return True if name looks like a real brand name rather than a URL or placeholder."""
-    name = name.strip()
-    if not name or not (2 <= len(name) <= 80):
+_GENERIC_PLACEHOLDERS = {
+    "undefined",
+    "null",
+    "none",
+    "unknown",
+    "website",
+    "home",
+    "homepage",
+    "privacy",
+    "privacy policy",
+    "terms",
+    "terms of service",
+    "terms of use",
+    "cookie policy",
+    "cookies",
+    "legal",
+    "legal notice",
+    "tos",
+    "about",
+    "about us",
+    "contact",
+    "contact us",
+    "help",
+    "help center",
+    "help centre",
+    "support",
+    "faq",
+    "blog",
+    "news",
+    "newsroom",
+    "documentation",
+    "docs",
+    "developer",
+    "developers",
+    "status",
+    "login",
+    "sign in",
+    "dashboard",
+    "account",
+    "settings",
+    "search",
+    "menu",
+    "navigation",
+    "skip to content",
+    "home page",
+    "loading",
+    "application card",
+    "app",
+    "transparency center",
+    "transparency",
+    "trust center",
+    "trust centre",
+    "community",
+    "forum",
+    "forums",
+    "resources",
+    "knowledge base",
+    "announcements",
+}
+
+# Trailing phrases stripped from a raw site name/title to reveal the brand.
+# "23andMe Blog" -> "23andMe", "Apple Legal" -> "Apple", "Help Center" -> "".
+_SECTION_SUFFIXES = (
+    "help center",
+    "help centre",
+    "trust center",
+    "trust centre",
+    "transparency center",
+    "transparency centre",
+    "community forum",
+    "product blog",
+    "company blog",
+    "tech blog",
+    "engineering blog",
+    "developer center",
+    "developer centre",
+    "knowledge base",
+    "privacy policy",
+    "terms of service",
+    "terms of use",
+    "cookie policy",
+    "legal notice",
+    "community guidelines",
+    "status page",
+    "blog",
+    "legal",
+    "law",
+    "privacy",
+    "terms",
+    "compliance",
+    "policy",
+    "policies",
+    "support",
+    "community",
+    "forum",
+    "forums",
+    "docs",
+    "documentation",
+    "developer",
+    "developers",
+    "status",
+    "security",
+    "newsroom",
+    "news",
+    "press",
+    "media",
+    "careers",
+    "jobs",
+    "about",
+    "insights",
+    "resources",
+    "announcements",
+    "engineering",
+    "learn",
+    "help",
+    "center",
+    "centre",
+    "portal",
+    "site",
+    "page",
+    "card",
+    "web player",
+    "player",
+    "web",
+)
+
+# Trailing corporate-designation tokens stripped from a brand name.
+_CORPORATE_SUFFIXES = (
+    "group",
+    "inc",
+    "ltd",
+    "llc",
+    "corp",
+    "corporation",
+    "company",
+    "gmbh",
+    "sa",
+    "bv",
+    "ag",
+    "co",
+)
+
+# Separators used to split a page <title> into brand / section segments.
+_TITLE_SEPARATORS = (" - ", " | ", " — ", " – ", " · ", ": ", " :: ", " » ")
+
+# Matches month-name + year blog-post titles like "Aug 2022" that are not brands.
+_DATEISH = re.compile(
+    r"^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}$",
+    re.IGNORECASE,
+)
+
+# TLDs whose preceding label is the registrable brand ("netflix.com" -> "netflix").
+_COMMON_TLDS = {
+    "com",
+    "org",
+    "net",
+    "io",
+    "ai",
+    "co",
+    "app",
+    "dev",
+    "gg",
+    "so",
+    "me",
+    "ly",
+    "tv",
+    "fm",
+    "to",
+    "sh",
+    "cloud",
+    "tech",
+    "xyz",
+    "finance",
+}
+
+# Words that, when present in a multi-word candidate, mark it as a descriptive
+# phrase rather than a brand name ("Google Cloud", "Manage your privacy on
+# Facebook", "Peloton Apparel US"). Single-word candidates are never flagged
+# here — affinity to the slug guards those.
+_DESCRIPTIVE_WORDS = {
+    "account",
+    "console",
+    "cloud",
+    "view",
+    "manage",
+    "your",
+    "privacy",
+    "terms",
+    "center",
+    "centre",
+    "portal",
+    "supplemental",
+    "report",
+    "form",
+    "notice",
+    "official",
+    "website",
+    "online",
+    "shop",
+    "store",
+    "apparel",
+    "wear",
+    "clothing",
+    "men",
+    "women",
+    "player",
+    "web",
+    "news",
+    "media",
+    "mobile",
+    "product",
+    "services",
+    "platform",
+    "suite",
+    "365",
+    "data",
+    "acceptable",
+    "use",
+    "management",
+    "policy",
+    "agreement",
+    "at",
+    "on",
+    "of",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "cookie",
+    "cookies",
+}
+
+
+def _domain_root(domain: str) -> str:
+    """Return the registrable brand label from a domain.
+
+    "netflix.com" -> "netflix", "help.netflix.com" -> "netflix",
+    "bsky.app" -> "bsky", "23andme.com" -> "23andme".
+    """
+    host = domain.strip().lower()
+    host = host.removeprefix("https://").removeprefix("http://").removeprefix("www.")
+    host = host.split("/")[0].split(":")[0]
+    parts = host.split(".")
+    if len(parts) >= 2 and parts[-1] in _COMMON_TLDS:
+        return parts[-2]
+    if (
+        len(parts) >= 3
+        and parts[-1] in {"uk", "au", "de", "fr", "jp", "eu", "br", "ca"}
+        and parts[-2] in _COMMON_TLDS
+    ):
+        return parts[-3]
+    return parts[0] if parts else host
+
+
+def _is_subsequence(short: str, long: str) -> bool:
+    """True when every char of ``short`` appears in ``long`` in order (not contiguous)."""
+    it = iter(long)
+    return all(ch in it for ch in short)
+
+
+def _affinity_match(token: str, key: str) -> bool:
+    """Substring, containment, or (for keys >= 4 chars) ordered subsequence."""
+    if not key:
         return False
-    if name.lower() in {
-        "undefined",
-        "null",
-        "none",
-        "unknown",
-        "website",
-        "home",
-        "homepage",
-        "privacy",
-        "privacy policy",
-        "terms",
-        "terms of service",
-        "terms of use",
-        "cookie policy",
-        "cookies",
-        "legal",
-        "legal notice",
-        "tos",
-        "about",
-        "about us",
-        "contact",
-        "contact us",
-        "help",
-        "support",
-        "faq",
-    }:
+    if key in token or token in key:
+        return True
+    return len(key) >= 4 and _is_subsequence(key, token)
+
+
+def _has_strict_slug_affinity(name: str, slug: str) -> bool:
+    """Affinity to the product slug only (the specific product identity).
+
+    Used by the extractor so a generic parent-domain ``og:site_name`` like
+    "Google Cloud" cannot match the Gemini product: slug "gemini" is not a
+    substring/subsequence of "googlecloud".
+    """
+    if not name or not slug:
+        return False
+    return _affinity_match(
+        re.sub(r"[^a-z0-9]", "", name.lower()), re.sub(r"[^a-z0-9]", "", slug.lower())
+    )
+
+
+def _has_affinity(name: str, slug: str, domains: list[str]) -> bool:
+    """Lenient affinity: the name matches the slug OR any domain root.
+
+    Used to decide whether a *current* name is plausibly related to the product
+    (and therefore should be kept). Leniency matters because some products have
+    a brand that differs from their slug (e.g. slug "grok", brand "xAI", domain
+    "x.ai" -> root "x" matches "xai"); strict slug-only affinity would wrongly
+    flag those as bad.
+    """
+    if not name:
+        return False
+    token = re.sub(r"[^a-z0-9]", "", name.lower())
+    if slug and _affinity_match(token, re.sub(r"[^a-z0-9]", "", slug.lower())):
+        return True
+    for domain in domains:
+        if domain and _affinity_match(token, re.sub(r"[^a-z0-9]", "", _domain_root(domain))):
+            return True
+    return False
+
+
+def _looks_like_descriptive_phrase(name: str) -> bool:
+    """True for multi-word names that contain a descriptive/non-brand word.
+
+    "Google Cloud", "Manage your privacy on Facebook", "Peloton Apparel US" are
+    rejected here. Single-word names are never flagged — affinity guards those.
+    """
+    words = name.lower().split()
+    if len(words) <= 1:
+        return False
+    return any(word in _DESCRIPTIVE_WORDS for word in words)
+
+
+def _clean_brand_name(name: str) -> str:
+    """Strip section/corporate suffixes from a brand candidate.
+
+    "23andMe Blog" -> "23andMe", "Apple Legal" -> "Apple",
+    "SHEIN Group" -> "SHEIN", "Transparency Center" -> "".
+    Trailing commas/periods are removed but TLDs are intentionally preserved so
+    brands like "character.ai" are not truncated to "character".
+    """
+    name = re.sub(r"\s+", " ", name.strip()).strip(" -|·:—»")
+    name = name.rstrip(",.").strip(" -|·:—»")
+    # Drop trailing trademark/copyright symbols ("Peloton®" -> "Peloton").
+    name = name.rstrip("®™©℠").strip(" -|·:—»").rstrip(",.").strip(" -|·:—»")
+    if not name:
+        return ""
+    # Drop separator-delimited segments that are pure section words.
+    segments = re.split(r"\s*(?: - | – | — | \| | · | : | :: | » )\s*", name)
+    kept = [seg for seg in segments if seg and seg.lower() not in _SECTION_SUFFIXES]
+    if kept and len(kept) < len(segments):
+        name = " - ".join(kept).strip(" -|·:—»")
+    # Iteratively strip trailing section/corporate suffix tokens.
+    changed = True
+    while changed:
+        changed = False
+        lower = name.lower()
+        for suffix in (*_SECTION_SUFFIXES, *_CORPORATE_SUFFIXES):
+            if lower == suffix:
+                return ""
+            if lower.endswith(" " + suffix):
+                name = name[: len(name) - len(suffix) - 1].strip(" -|·:—»")
+                changed = True
+                break
+    return name.strip(" -|·:—»").rstrip(",.").strip(" -|·:—»")
+
+
+def _is_valid_brand_name(name: str) -> bool:
+    """Return True if name looks like a real brand name rather than a placeholder."""
+    name = name.strip()
+    if not name or not (2 <= len(name) <= 60):
+        return False
+    if name.lower() in _GENERIC_PLACEHOLDERS:
         return False
     if "://" in name or name.startswith("www."):
         return False
-    # Reject ISO-style abbreviations (2-letter country/language codes like "GB", "US", "EN")
-    # that can appear as the trailing segment of titles such as "Privacy Policy - GB".
+    if name.replace(".", "").isdigit():
+        return False
+    if _DATEISH.match(name):
+        return False
+    # Reject ISO-style 2-letter country/language codes ("GB", "US", "EN").
     if len(name) == 2 and name.isupper():
         return False
     return True
 
 
-def _extract_brand_name(results: list[CrawlResult]) -> str | None:
+def _is_acceptable_brand(cleaned: str, slug: str) -> bool:
+    """Shared gate for a cleaned brand candidate against the product slug."""
+    return (
+        _is_valid_brand_name(cleaned)
+        and len(cleaned.split()) <= 2
+        and not _looks_like_descriptive_phrase(cleaned)
+        and _has_strict_slug_affinity(cleaned, slug)
+    )
+
+
+def _extract_brand_name(results: list[CrawlResult], slug: str, domains: list[str]) -> str | None:
     """Extract the canonical brand name from crawl result metadata.
 
-    Priority:
-    1. ``og:site_name`` — brands set this to their authoritative display name (e.g. "OpenAI",
-       "GitHub").  It is the most reliable signal and avoids the ambiguity of page titles.
+    The pipeline only uses this to *improve* an auto-derived placeholder name,
+    so it is deliberately conservative. A candidate must:
+
+    (a) win a plurality vote across crawled pages for its metadata source,
+    (b) pass ``_is_valid_brand_name``,
+    (c) be at most two words (longer candidates are policy/page titles, not
+        brands — "Google Meet Acceptable Use Policy", "Data management at
+        Microsoft"),
+    (d) not be a descriptive phrase (``_looks_like_descriptive_phrase``), and
+    (e) show strict affinity to the product **slug** (``_has_strict_slug_affinity``).
+
+    When nothing qualifies, ``None`` is returned and the existing domain-derived
+    name is kept. (e) is what prevents "Google Cloud" (a generic parent-domain
+    ``og:site_name``) from replacing the Gemini product: "googlecloud" has no
+    affinity to slug "gemini".
+
+    Priority of metadata sources:
+    1. ``og:site_name`` — brands set this to their authoritative display name.
     2. ``application-name`` meta tag — used by PWAs and some SaaS products.
-    3. First segment of the page ``<title>`` before a common separator (e.g. "Netflix" from
-       "Netflix - Watch TV Shows Online").
-
-    Returns ``None`` when no suitable name can be found.
+    3. Page ``<title>`` — the brand segment (usually the *last* segment after a
+       separator) is preferred over section/tagline segments.
     """
-    for result in results:
-        if not result.success:
+    for source in ("og:site_name", "application-name"):
+        values = [
+            (result.metadata or {}).get(source, "")
+            for result in results
+            if result.success and isinstance(result.metadata, dict)
+        ]
+        counts = Counter(v.strip() for v in values if isinstance(v, str) and v.strip())
+        if not counts:
             continue
-        name = (result.metadata or {}).get("og:site_name", "")
-        if isinstance(name, str) and _is_valid_brand_name(name):
-            return name.strip()
-
-    for result in results:
-        if not result.success:
-            continue
-        name = (result.metadata or {}).get("application-name", "")
-        if isinstance(name, str) and _is_valid_brand_name(name):
-            return name.strip()
+        for raw, _count in counts.most_common():
+            cleaned = _clean_brand_name(raw)
+            if _is_acceptable_brand(cleaned, slug):
+                return cleaned
 
     for result in results:
         if not result.success:
             continue
         meta = result.metadata or {}
         title = (meta.get("title") or result.title or "").strip()
-        for sep in (" - ", " | ", " — ", " · ", ": "):
-            if sep in title:
-                parts = title.split(sep)
-                for part in parts:
-                    candidate = part.strip()
-                    if _is_valid_brand_name(candidate):
-                        return candidate
+        if not title:
+            continue
+        segments = re.split(r"\s*(?: - | – | — | \| | · | : | :: | » )\s*", title)
+        for segment in reversed(segments):
+            cleaned = _clean_brand_name(segment)
+            if _is_acceptable_brand(cleaned, slug):
+                return cleaned
 
     return None
 
@@ -288,7 +641,8 @@ class PolicyDocumentPipeline:
             browser_failure_backoff_max_s=config.crawler.browser_failure_backoff_max_s,
             timeout=self.timeout,
             allowed_domains=self._allowed_domains_for_product(product),
-            respect_robots_txt=self.respect_robots_txt,
+            denied_domains=product.crawl_denied_domains,
+            respect_robots_txt=self.respect_robots_txt and not product.crawl_ignore_robots,
             user_agent=self.user_agent,
             follow_external_links=False,
             min_legal_score=min_legal_score if min_legal_score is not None else 0.0,
@@ -502,7 +856,9 @@ class PolicyDocumentPipeline:
             # This runs once after the discovery pass so the pipeline service can update the
             # product record without a separate HTTP fetch.
             if self.stats.brand_name is None:
-                self.stats.brand_name = _extract_brand_name(discovery_results)
+                self.stats.brand_name = _extract_brand_name(
+                    discovery_results, product.slug, product.domains
+                )
                 if self.stats.brand_name:
                     logger_discovery.info(
                         f"🏷️  [{product.name}] Brand name extracted from metadata: "

@@ -8,7 +8,7 @@ from src.dashboard.db_utils import (
     update_product_isolated,
 )
 from src.dashboard.utils import run_async_with_retry
-from src.models.product import Product
+from src.models.product import NAME_SOURCE_MANUAL, Product
 from src.models.user import UserTier
 
 
@@ -105,6 +105,7 @@ def show_edit_form(product: Product) -> None:
                     categories=categories_list,
                     crawl_base_urls=crawl_base_urls_list if crawl_base_urls_list else [],
                     visible_to_tiers=visible_tiers,
+                    name_source=NAME_SOURCE_MANUAL if name != product.name else product.name_source,
                 )
 
                 # Update in database with retry

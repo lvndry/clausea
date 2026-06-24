@@ -15,7 +15,6 @@ interface ProductMetadata {
   company_name?: string | null;
   one_line_summary?: string;
   grade?: "A" | "B" | "C" | "D" | "E" | null;
-  risk_score?: number;
   verdict?:
     | "very_user_friendly"
     | "user_friendly"
@@ -109,12 +108,9 @@ const fetchProductForMetadata = cache(async function (
       try {
         const overview = (await overviewRes.json()) as {
           grade?: ProductMetadata["grade"];
-          risk_score?: number;
           verdict?: ProductMetadata["verdict"];
         };
         if (overview.grade) product.grade = overview.grade;
-        if (overview.risk_score != null)
-          product.risk_score = overview.risk_score;
         if (overview.verdict) product.verdict = overview.verdict;
       } catch {
         // Overview unavailable or malformed — OG card shows name only
@@ -295,16 +291,16 @@ export default async function ProductLayout({
                       }
                     : {}),
                 },
-                ...(typeof product.risk_score === "number"
+                ...(typeof product.grade === "string" && product.grade
                   ? {
                       review: {
                         "@type": "Review",
                         reviewAspect: "Privacy & Data Practices",
                         reviewRating: {
                           "@type": "Rating",
-                          ratingValue: String(product.risk_score),
-                          bestRating: "10",
-                          worstRating: "0",
+                          ratingValue: String(product.grade),
+                          bestRating: "E",
+                          worstRating: "A",
                           description:
                             product.verdict === "very_user_friendly"
                               ? "Very user-friendly"

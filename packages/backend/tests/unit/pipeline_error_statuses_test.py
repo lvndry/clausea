@@ -44,7 +44,9 @@ def _make_service(job: PipelineJob) -> PipelineService:
 
 
 def _make_product_svc() -> MagicMock:
-    product = SimpleNamespace(id="test-product-id", slug="test-product", name="Test Product")
+    product = SimpleNamespace(
+        id="test-product-id", slug="test-product", name="Test Product", name_source=None
+    )
     svc = MagicMock()
     svc.get_product_by_slug = AsyncMock(return_value=product)
     return svc

@@ -196,7 +196,13 @@ CRAWL_BOT_WALL_ABORT = int(os.getenv("CRAWLER_BOT_WALL_ABORT", "20"))
 # Stop attempting browser renders once this many consecutive browser fetches in a single
 # crawl session have failed (timeout, crash). Prevents zombie Camoufox processes from
 # accumulating when pages consistently timeout in the browser.
-BROWSER_DOMAIN_FAILURE_CAP = int(os.getenv("CRAWLER_BROWSER_DOMAIN_FAILURE_CAP", "3"))
+BROWSER_DOMAIN_FAILURE_CAP = int(os.getenv("CRAWLER_BROWSER_DOMAIN_FAILURE_CAP", "5"))
+# Once the failure cap is reached, wait this many seconds before resetting the counter and
+# giving the browser another chance. Keeps transient Camoufox crashes from permanently
+# disabling rendering for the rest of a long crawl (booking/suno/qwen style SPA shells).
+BROWSER_DOMAIN_FAILURE_COOLDOWN_S = float(
+    os.getenv("CRAWLER_BROWSER_DOMAIN_FAILURE_COOLDOWN_S", "60")
+)
 MIN_PAGES_PER_SEED = int(os.getenv("CRAWLER_MIN_PAGES_PER_SEED", "60"))
 MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC = int(
     os.getenv("CRAWLER_MAX_ENGLISH_LOCALE_VARIANTS_PER_DOC", "2")
