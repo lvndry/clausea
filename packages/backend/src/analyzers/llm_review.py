@@ -56,15 +56,16 @@ Check for these specific problems:
 
 OUTPUT RULES (strict):
 - Return all six checks every time.
-- If a check passes: `"pass": true` and `"description": ""` (empty string).
+- If a check passes: `"pass": true` and `"description"` must briefly explain why
+  (cite the relevant privacy_signal, evidence quote, or wording that supports pass).
 - If a check fails: `"pass": false` and `"description"` must name the specific defect.
-- Never set `"pass": false` when you found no issue. Do not explain why a check passed
-  in `description` — leave it empty.
+- The `pass` flag and `description` must agree: never set `"pass": false` when your
+  description concludes the check passed or that no issue was found.
 
 Return JSON only:
 {
   "checks": [
-    {"check": "UNSUPPORTED_CLAIMS", "pass": true|false, "severity": "high|medium", "description": "specific issue or empty"},
+    {"check": "UNSUPPORTED_CLAIMS", "pass": true|false, "severity": "high|medium", "description": "why it passed or specific defect"},
     {"check": "SIGNAL_CONTRADICTIONS", "pass": true|false, "severity": "high|medium", "description": "..."},
     {"check": "LEGAL_JARGON", "pass": true|false, "severity": "medium", "description": "..."},
     {"check": "GENERIC_HEADLINE", "pass": true|false, "severity": "medium", "description": "..."},
