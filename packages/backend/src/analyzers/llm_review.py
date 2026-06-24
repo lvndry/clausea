@@ -54,34 +54,25 @@ Check for these specific problems:
 6. JARGON_IN_RIGHTS_OR_ACTIONS: Are your_rights or recommended_actions written in
    legal language instead of plain English a person can follow?
 
-For each check, set `failure` to null when the check passes. When the check fails,
-set `failure` to a specific description of the defect. Do not use a separate
-pass boolean — pass/fail is determined solely by whether `failure` is null.
+OUTPUT RULES (strict):
+- Return all six checks every time.
+- If a check passes: `"pass": true` and `"description": ""` (empty string).
+- If a check fails: `"pass": false` and `"description"` must name the specific defect.
+- Never set `"pass": false` when you found no issue. Do not explain why a check passed
+  in `description` — leave it empty.
 
 Return JSON only:
 {
   "checks": [
-    {"check": "UNSUPPORTED_CLAIMS", "severity": "high|medium", "failure": null | "specific issue"},
-    {"check": "SIGNAL_CONTRADICTIONS", "severity": "high|medium", "failure": null | "..."},
-    {"check": "LEGAL_JARGON", "severity": "medium", "failure": null | "..."},
-    {"check": "GENERIC_HEADLINE", "severity": "medium", "failure": null | "..."},
-    {"check": "INTERNAL_STATE_LANGUAGE", "severity": "high", "failure": null | "..."},
-    {"check": "JARGON_IN_RIGHTS_OR_ACTIONS", "severity": "medium", "failure": null | "..."}
+    {"check": "UNSUPPORTED_CLAIMS", "pass": true|false, "severity": "high|medium", "description": "specific issue or empty"},
+    {"check": "SIGNAL_CONTRADICTIONS", "pass": true|false, "severity": "high|medium", "description": "..."},
+    {"check": "LEGAL_JARGON", "pass": true|false, "severity": "medium", "description": "..."},
+    {"check": "GENERIC_HEADLINE", "pass": true|false, "severity": "medium", "description": "..."},
+    {"check": "INTERNAL_STATE_LANGUAGE", "pass": true|false, "severity": "high", "description": "..."},
+    {"check": "JARGON_IN_RIGHTS_OR_ACTIONS", "pass": true|false, "severity": "medium", "description": "..."}
   ]
 }
 """
-
-
-def _parse_check_passed(raw: dict[str, Any]) -> bool:
-    """Pass when failure is absent or empty; legacy responses may still use pass=true."""
-    if "failure" in raw:
-        failure = raw.get("failure")
-        if failure is None:
-            return True
-        if isinstance(failure, str) and not failure.strip():
-            return True
-        return False
-    return bool(raw.get("pass", False))
 
 
 class LLMReviewCheck(BaseModel):
@@ -169,9 +160,9 @@ async def llm_review_overview(
         checks = [
             LLMReviewCheck(
                 check=str(c.get("check", "unknown")),
-                passed=_parse_check_passed(c),
+                passed=bool(c.get("pass", False)),
                 severity=str(c.get("severity", "medium")),
-                description=str(c.get("failure") or c.get("description") or ""),
+                description=str(c.get("description", "")),
             )
             for c in raw_checks
             if isinstance(c, dict)
