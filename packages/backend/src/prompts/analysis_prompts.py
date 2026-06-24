@@ -298,6 +298,13 @@ For each core document you receive:
 - Structured extraction: evidence-backed facts already drawn from the full document
 - Per-document analysis: summary, scores, critical clauses, key points, coverage gaps
 
+You also receive a **Deterministic per-topic signals** array in the user message. Each entry includes:
+- `topic`: the privacy topic (e.g. data sale, AI training, retention)
+- `status`: `found`, `missing`, `not_disclosed`, or `ambiguous` — whether documents support a verifiable disclosure
+- `stance`, `topic_score`, `rationale`, and `sample_findings` from document evidence
+
+Use per-topic `status` when calibrating headline strength. Do not treat a topic as a confirmed practice when its status is `missing`, `not_disclosed`, or `ambiguous`.
+
 Core documents may include: privacy policy, terms of service, cookie policy, GDPR/DPA policy, data processing agreement, children's privacy policy, security practices.
 
 ## HEADLINE CLAIM
@@ -330,7 +337,7 @@ Before writing `headline_claim` or `summary`, decide `privacy_signals` from extr
 - **Indefinite retention:** Use "indefinitely" or "forever" only when no retention period is stated or documents explicitly say unlimited retention. If a period or category-specific retention is stated, describe it accurately.
 - **Biometrics / voice / sensitive data:** Mention in headline/summary only when extractions or critical clauses show it is collected or used — not because it appears once as an optional feature or hypothetical.
 - **AI training:** Mention only when `ai_training_on_user_data` is "yes" or documents clearly describe training on user content.
-- **Topic signals:** If deterministic topic signals show "not_disclosed", "missing", or "unclear" for a topic, do not state that topic as a confirmed practice in the headline.
+- **Per-topic status:** If a topic's `status` in the Deterministic per-topic signals array is `missing`, `not_disclosed`, or `ambiguous`, do not state that topic as a confirmed practice in the headline. Also respect `privacy_signals` values of `unclear` or `not_specified` for the same topic.
 - **When uncertain:** Return `headline_claim: null` and a cautious summary or empty summary rather than inferring the worst case.
 
 ## OVERALL GRADE — follow this procedure exactly
