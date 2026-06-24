@@ -208,6 +208,10 @@ class PipelineRepository(BaseRepository):
         Flips status pending -> crawling in one step so two workers (or concurrent claim
         loops) never pick up the same job. Returns the claimed job, or None if none pending.
 
+        Jobs with ``skip_crawl=True`` (analysis-only requeues) are claimed before full
+        crawl+analysis jobs so stored documents can be re-analyzed without waiting behind
+        a long crawl backlog.
+
         Before claiming, checks the domain circuit breaker: if the job's accumulated hard
         failure count (bot detection, 403s, persistent access blocks) has reached
         DOMAIN_CIRCUIT_BREAKER_THRESHOLD, the job is marked as failed with
@@ -217,9 +221,10 @@ class PipelineRepository(BaseRepository):
         # Peek at the next candidate without claiming, so we can check the circuit
         # breaker first.  Uses the same sort as the eventual claim so we always inspect
         # the job that *would* be claimed.
+        # Analysis-only jobs (skip_crawl) drain before full crawl+analysis backlogs.
         candidate: dict[str, Any] | None = await db[self.COLLECTION].find_one(
             {"status": "pending"},
-            sort=[("created_at", 1)],
+            sort=[("skip_crawl", -1), ("created_at", 1)],
         )
         if not candidate:
             return None
