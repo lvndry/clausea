@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from src.models.document import CoverageStatus, InsightCategory
 
 TopicStatus = Literal["found", "missing", "not_disclosed", "ambiguous"]
-TopicStance = Literal["low_risk", "moderate_risk", "high_risk", "not_disclosed", "mixed"]
+TopicStance = Literal["fair", "concerning", "harmful", "not_disclosed", "conflicting"]
 
 
 class TopicCitation(BaseModel):

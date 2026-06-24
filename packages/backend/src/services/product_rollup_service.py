@@ -39,6 +39,23 @@ class ProductRollupService:
     def _normalize_value(value: str) -> str:
         return re.sub(r"\s+", " ", (value or "")).strip().lower()
 
+    @staticmethod
+    def _children_conflict_key(normalized_value: str) -> str:
+        """Map children finding normalized values to a canonical allow/restrict key.
+
+        Both "children_data_collection:no" and "minimum age: 18" mean children
+        are not allowed — they should not be treated as conflicting with each other.
+        """
+        nv = (normalized_value or "").lower()
+        if "children_data_collection:no" in nv:
+            return "restricted"
+        if "children_data_collection:yes" in nv:
+            return "allowed"
+        match = re.search(r"minimum age:\s*(\d+)", nv)
+        if match:
+            return "restricted" if int(match.group(1)) >= 18 else "allowed"
+        return nv
+
     # ------------------------------------------------------------------
     # Generic finding builders
     # ------------------------------------------------------------------
@@ -692,6 +709,8 @@ class ProductRollupService:
             if finding.category not in conflictable:
                 continue
             normalized = finding.normalized_value or self._normalize_value(finding.value)
+            if finding.category == "children":
+                normalized = self._children_conflict_key(normalized)
             by_category.setdefault(finding.category, {}).setdefault(normalized, []).append(
                 finding.document_id
             )
@@ -742,6 +761,9 @@ class ProductRollupService:
             items=self._aggregate_findings_slim(findings),
             conflicts=self._detect_conflicts_slim(findings),
         )
+        from src.services.topic_consolidation import consolidate_rollup_items
+
+        rollup.items = await consolidate_rollup_items(rollup.items)
         source_hashes = await self._intelligence_service.compute_source_hashes(db, product_id)
         await self._intelligence_service.save_rollup(
             db,
@@ -804,7 +826,9 @@ class ProductRollupService:
         for finding in findings:
             if finding.category not in conflictable:
                 continue
-            by_category.setdefault(finding.category, set()).add(finding.normalized_value or "")
+            nv = finding.normalized_value or ""
+            key = self._children_conflict_key(nv) if finding.category == "children" else nv
+            by_category.setdefault(finding.category, set()).add(key)
 
         for category, values in by_category.items():
             if len(values) > 1:

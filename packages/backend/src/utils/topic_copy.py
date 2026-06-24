@@ -91,7 +91,7 @@ def why_it_matters_for(topic: str, status: str, stance: str, conflict_count: int
     """
     if status in {"missing", "not_disclosed"}:
         return "The policy doesn't mention this, so you can't be sure how the company handles it."
-    if status == "ambiguous" or stance == "mixed":
+    if status == "ambiguous" or stance == "conflicting":
         return f"The policies disagree on this ({conflict_count} conflict(s)), so assume the broader interpretation applies."
     return TOPIC_WHY_IT_MATTERS.get(
         topic,
@@ -108,7 +108,7 @@ def recommended_action_for(topic: str, status: str, stance: str) -> str:
     """
     if status in {"missing", "not_disclosed"}:
         return "If this matters to you, email the company and ask them directly."
-    if status == "ambiguous" or stance == "mixed":
+    if status == "ambiguous" or stance == "conflicting":
         return "The policies disagree — assume the broader one applies and adjust your settings accordingly."
     return TOPIC_RECOMMENDED_ACTIONS.get(
         topic,

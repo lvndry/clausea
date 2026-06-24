@@ -349,3 +349,85 @@ class TestBuildCoverageNoLegacyGaps:
         coverage_categories = {item.category for item in coverage}
         assert "advertising" not in coverage_categories
         assert "profiling_ai" not in coverage_categories
+
+
+# ── _children_conflict_key / _detect_conflicts ──────────────────────
+
+
+class TestChildrenConflictKey:
+    def test_children_data_collection_no_maps_to_restricted(self) -> None:
+        assert (
+            ProductRollupService._children_conflict_key("children_data_collection:no")
+            == "restricted"
+        )
+
+    def test_minimum_age_18_maps_to_restricted(self) -> None:
+        assert ProductRollupService._children_conflict_key("minimum age: 18") == "restricted"
+
+    def test_minimum_age_18_with_parental_consent_maps_to_restricted(self) -> None:
+        assert (
+            ProductRollupService._children_conflict_key(
+                "minimum age: 18; parental consent required"
+            )
+            == "restricted"
+        )
+
+    def test_minimum_age_13_maps_to_allowed(self) -> None:
+        assert ProductRollupService._children_conflict_key("minimum age: 13") == "allowed"
+
+    def test_children_data_collection_yes_maps_to_allowed(self) -> None:
+        assert (
+            ProductRollupService._children_conflict_key("children_data_collection:yes") == "allowed"
+        )
+
+
+class TestDetectConflictsChildren:
+    def test_no_false_conflict_when_all_findings_restrict_children(self) -> None:
+        service = _service()
+        findings = [
+            Finding(
+                product_id="p1",
+                document_id="d1",
+                category="children",
+                value="Minimum age: 18",
+                normalized_value="minimum age: 18",
+            ),
+            Finding(
+                product_id="p1",
+                document_id="d2",
+                category="children",
+                value="children_data_collection: no",
+                normalized_value="children_data_collection:no",
+            ),
+            Finding(
+                product_id="p1",
+                document_id="d3",
+                category="children",
+                value="Minimum age: 18; Parental consent required",
+                normalized_value="minimum age: 18; parental consent required",
+            ),
+        ]
+        conflicts = service._detect_conflicts(findings)
+        assert conflicts == []
+
+    def test_real_conflict_when_one_document_allows_children(self) -> None:
+        service = _service()
+        findings = [
+            Finding(
+                product_id="p1",
+                document_id="d1",
+                category="children",
+                value="Minimum age: 18",
+                normalized_value="minimum age: 18",
+            ),
+            Finding(
+                product_id="p1",
+                document_id="d2",
+                category="children",
+                value="children_data_collection: yes",
+                normalized_value="children_data_collection:yes",
+            ),
+        ]
+        conflicts = service._detect_conflicts(findings)
+        assert len(conflicts) == 1
+        assert conflicts[0].category == "children"

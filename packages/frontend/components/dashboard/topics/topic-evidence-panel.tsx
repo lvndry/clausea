@@ -31,6 +31,16 @@ interface TopicEvidencePanelProps {
 
 const TOPIC_CITATION_PREVIEW_LIMIT = 5;
 
+function normalizeQuoteForDedup(quote: string | null | undefined): string {
+  return (quote || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[.,;:!?]+$/g, "")
+    .replace(/licence/g, "license");
+}
+
 function collectTopicPreviewCitations(
   findings: Array<{ citations?: TopicCitation[] | null }>,
   limit: number,
@@ -40,7 +50,7 @@ function collectTopicPreviewCitations(
 
   for (const finding of findings) {
     for (const citation of finding.citations || []) {
-      const key = `${citation.document_id}:${citation.quote}`;
+      const key = `${citation.document_id}:${normalizeQuoteForDedup(citation.quote)}`;
       if (seen.has(key)) {
         continue;
       }
@@ -59,18 +69,18 @@ const stanceStyles: Record<
   TopicStanceBreakdown["stance"],
   { label: string; className: string; icon: typeof Shield }
 > = {
-  low_risk: {
-    label: "Low Risk",
+  fair: {
+    label: "Fair",
     className: "text-risk-low border-risk-low/20 bg-risk-low/5",
     icon: Shield,
   },
-  moderate_risk: {
-    label: "Moderate Risk",
+  concerning: {
+    label: "Concerning",
     className: "text-risk-medium border-risk-medium/20 bg-risk-medium/5",
     icon: Info,
   },
-  high_risk: {
-    label: "High Risk",
+  harmful: {
+    label: "Harmful",
     className: "text-risk-high border-risk-high/20 bg-risk-high/5",
     icon: ShieldAlert,
   },
@@ -79,7 +89,7 @@ const stanceStyles: Record<
     className: "text-muted-foreground border-border bg-muted/5",
     icon: Info,
   },
-  mixed: {
+  conflicting: {
     label: "Conflicting",
     className: "text-risk-high border-risk-high/20 bg-risk-high/5",
     icon: AlertTriangle,
@@ -184,7 +194,6 @@ export function TopicEvidencePanel({
       topic: item.topic,
       status: stance?.status ?? item.status,
       stance: stance?.stance ?? item.stance,
-      topic_score: stance?.topic_score ?? item.topic_score,
       rationale: stance?.rationale ?? item.rationale,
       rationale_key: stance?.rationale_key ?? item.rationale_key,
       rationale_params: stance?.rationale_params ?? item.rationale_params,
@@ -221,10 +230,10 @@ export function TopicEvidencePanel({
   ];
 
   const stanceWeight: Record<string, number> = {
-    high_risk: 0,
-    mixed: 1,
-    moderate_risk: 2,
-    low_risk: 3,
+    harmful: 0,
+    conflicting: 1,
+    concerning: 2,
+    fair: 3,
     not_disclosed: 4,
   };
   allTopics.sort((a, b) => {
@@ -284,12 +293,12 @@ export function TopicEvidencePanel({
                 <p
                   className={cn(
                     "text-sm leading-relaxed",
-                    topic.stance === "low_risk"
+                    topic.stance === "fair"
                       ? "text-risk-low"
                       : "text-foreground/90",
                   )}
                 >
-                  {topic.stance === "low_risk" ? "Good practice: " : ""}
+                  {topic.stance === "fair" ? "Good practice: " : ""}
                   {topic.headline_claim}
                 </p>
               )}
@@ -333,20 +342,32 @@ export function TopicEvidencePanel({
 
               {topic.findings.length > 0 && (
                 <div className="space-y-2">
-                  {topic.findings.slice(0, 5).map((finding, idx) => (
-                    <div
-                      key={`${topic.topic}-f-${idx}`}
-                      className={cn(
-                        "text-xs leading-relaxed border-l pl-2",
-                        topic.stance === "low_risk"
-                          ? "text-risk-low border-risk-low/40"
-                          : "text-foreground/80 border-border/60",
-                      )}
-                    >
-                      {topic.stance === "low_risk" ? "+ " : "- "}
-                      {finding.value}
-                    </div>
-                  ))}
+                  {topic.findings.slice(0, 5).map((finding, idx) => {
+                    const documentCount = finding.document_ids?.length ?? 0;
+                    return (
+                      <div
+                        key={`${topic.topic}-f-${idx}`}
+                        className={cn(
+                          "text-xs leading-relaxed border-l pl-2",
+                          topic.stance === "fair"
+                            ? "text-risk-low border-risk-low/40"
+                            : "text-foreground/80 border-border/60",
+                        )}
+                      >
+                        {topic.stance === "fair" ? "+ " : "- "}
+                        {finding.value}
+                        {documentCount > 1 && (
+                          <Badge
+                            variant="outline"
+                            size="sm"
+                            className="ml-2 align-middle"
+                          >
+                            Stated in {documentCount} documents
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -424,11 +445,6 @@ export function TopicEvidencePanel({
                     <Icon className="h-3 w-3" />
                     {style.label}
                   </Badge>
-                  {typeof topic.topic_score === "number" && (
-                    <Badge variant="outline" size="sm">
-                      Score: {topic.topic_score}/10
-                    </Badge>
-                  )}
                   {collapsibleTopics && (
                     <button
                       type="button"

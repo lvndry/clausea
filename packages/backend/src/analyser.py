@@ -480,7 +480,7 @@ def _apply_positive_risk_adjustment(risk_score: int, meta_summary: MetaSummary) 
         adjustment += 1
     stances = meta_summary.topic_stances or []
     low_risk_topics = sum(
-        1 for stance in stances if stance.stance == "low_risk" and stance.status == "found"
+        1 for stance in stances if stance.stance == "fair" and stance.status == "found"
     )
     if low_risk_topics >= 3:
         adjustment += 1
@@ -616,7 +616,7 @@ def _headline_finding_for_topic(topic: Any) -> Any | None:
         return None
     stance = str(getattr(topic, "stance", "") or "")
     topic_name = str(getattr(topic, "topic", "") or "")
-    if stance == "low_risk":
+    if stance == "fair":
         for finding in findings:
             if _is_protective_finding_value(topic_name, getattr(finding, "value", None)):
                 return finding
@@ -2057,7 +2057,6 @@ async def generate_product_overview(
             "topic": topic.topic,
             "status": topic.status,
             "stance": topic.stance,
-            "topic_score": topic.topic_score,
             "rationale": topic.rationale,
             "sample_findings": [finding.value for finding in topic.findings[:3]],
         }
@@ -2251,7 +2250,6 @@ Per-document analyses and extractions:
                             topic=topic.topic,
                             status=topic.status,
                             stance=topic.stance,
-                            topic_score=topic.topic_score,
                             rationale=topic.rationale,
                             rationale_key=topic.rationale_key,
                             rationale_params=topic.rationale_params,
@@ -2279,7 +2277,7 @@ Per-document analyses and extractions:
                 topic_rows: dict[InsightCategory, dict[str, Any]] = {
                     topic.topic: {
                         "status": topic.status,
-                        "topic_score": topic.topic_score,
+                        "topic_score": topic.topic_score,  # internal only — not exposed in API
                     }
                     for topic in topic_report.topics
                 }

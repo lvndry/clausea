@@ -62,11 +62,11 @@ def test_evaluate_topic_stances_detects_yes_no_signals() -> None:
     rows = evaluate_topic_stances(findings=findings, conflicts=[], coverage=None)
     assert rows["data_sale"]["status"] == "found"
     assert rows["data_sale"]["topic_score"] == 9
-    assert rows["data_sale"]["stance"] == "high_risk"
+    assert rows["data_sale"]["stance"] == "harmful"
     assert rows["data_sale"]["rationale_key"] == "topic.findings_summary"
     assert rows["data_sale"]["rationale_params"]["finding_count"] == 1
     assert rows["data_sale"]["rationale_params"]["document_count"] == 1
-    assert rows["security"]["stance"] == "low_risk"
+    assert rows["security"]["stance"] == "fair"
 
 
 def test_evaluate_topic_stances_ai_training_uses_structured_attributes() -> None:
@@ -100,7 +100,7 @@ def test_evaluate_topic_stances_ai_training_uses_structured_attributes() -> None
         coverage=None,
     )
     assert rows["ai_training"]["topic_score"] == 8
-    assert rows["ai_training"]["stance"] == "high_risk"
+    assert rows["ai_training"]["stance"] == "harmful"
 
 
 def test_evaluate_topic_stances_ai_training_parses_flexible_signal_format() -> None:
@@ -123,7 +123,7 @@ def test_evaluate_topic_stances_ai_training_parses_flexible_signal_format() -> N
         coverage=None,
     )
     assert rows["ai_training"]["topic_score"] == 3
-    assert rows["ai_training"]["stance"] == "low_risk"
+    assert rows["ai_training"]["stance"] == "fair"
 
 
 def test_evaluate_topic_stances_marks_conflicts_as_mixed() -> None:
@@ -140,7 +140,7 @@ def test_evaluate_topic_stances_marks_conflicts_as_mixed() -> None:
         coverage=None,
     )
     assert rows["ai_training"]["status"] == "ambiguous"
-    assert rows["ai_training"]["stance"] == "mixed"
+    assert rows["ai_training"]["stance"] == "conflicting"
     assert rows["ai_training"]["topic_score"] == 7
     assert rows["ai_training"]["rationale_key"] == "topic.conflicts_found"
     assert rows["ai_training"]["rationale_params"]["conflict_count"] == 1
@@ -249,7 +249,7 @@ def test_evaluate_topic_stances_downgrades_standard_dangers() -> None:
         coverage=None,
     )
     assert rows["dangers"]["topic_score"] == 8
-    assert rows["dangers"]["stance"] == "high_risk"
+    assert rows["dangers"]["stance"] == "harmful"
 
 
 def test_evaluate_topic_stances_omits_boilerplate_from_dangers_score() -> None:
@@ -276,7 +276,7 @@ def test_evaluate_topic_stances_omits_boilerplate_from_dangers_score() -> None:
     # Both findings are excluded from dangers scoring — topic falls back to generic 5,
     # then thin-evidence cap reduces it to low risk.
     assert rows["dangers"]["topic_score"] == 3
-    assert rows["dangers"]["stance"] == "low_risk"
+    assert rows["dangers"]["stance"] == "fair"
 
 
 def test_evaluate_topic_stances_dispute_resolution_moderate_for_arbitration() -> None:
@@ -310,7 +310,7 @@ def test_evaluate_topic_stances_dispute_resolution_moderate_for_arbitration() ->
         coverage=None,
     )
     assert rows["dispute_resolution"]["topic_score"] == 4
-    assert rows["dispute_resolution"]["stance"] == "moderate_risk"
+    assert rows["dispute_resolution"]["stance"] == "concerning"
 
 
 def test_evaluate_topic_stances_downgrades_thin_evidence_to_low_risk() -> None:
@@ -332,7 +332,7 @@ def test_evaluate_topic_stances_downgrades_thin_evidence_to_low_risk() -> None:
         conflicts=[],
         coverage=None,
     )
-    assert rows["data_sale"]["stance"] == "low_risk"
+    assert rows["data_sale"]["stance"] == "fair"
     assert rows["data_sale"]["topic_score"] == 3
     assert rows["data_sale"]["rationale_key"] == "topic.thin_evidence"
 
@@ -364,5 +364,5 @@ def test_evaluate_topic_stances_marks_protective_security_as_positive_practice()
         conflicts=[],
         coverage=None,
     )
-    assert rows["security"]["stance"] == "low_risk"
+    assert rows["security"]["stance"] == "fair"
     assert rows["security"]["rationale_key"] == "topic.positive_practice"

@@ -289,10 +289,10 @@ def _signals_from_findings(findings: list[AggregatedFinding]) -> dict[InsightCat
 
 def _score_to_stance(score: int) -> TopicStance:
     if score <= 3:
-        return "low_risk"
+        return "fair"
     if score <= 6:
-        return "moderate_risk"
-    return "high_risk"
+        return "concerning"
+    return "harmful"
 
 
 _PROTECTIVE_TOPICS: frozenset[InsightCategory] = frozenset(
@@ -330,14 +330,14 @@ def _apply_evidence_sufficiency_cap(row: dict[str, Any], substantive_count: int)
     """Downgrade topics with fewer than three substantive citations to low risk."""
     if row["status"] in {"missing", "not_disclosed"}:
         return
-    if row["stance"] == "mixed":
+    if row["stance"] == "conflicting":
         return
     if substantive_count >= MIN_SUBSTANTIVE_CITATIONS_FOR_ELEVATED_RISK:
         return
 
     current_score = row.get("topic_score")
     row["topic_score"] = min(current_score if isinstance(current_score, int) else 5, 3)
-    row["stance"] = "low_risk"
+    row["stance"] = "fair"
     row["rationale_key"] = "topic.thin_evidence"
     row["rationale_params"] = {
         "finding_count": row.get("finding_count", 0),
@@ -350,7 +350,7 @@ def _apply_evidence_sufficiency_cap(row: dict[str, Any], substantive_count: int)
 
 def _apply_positive_practice_rationale(topic: InsightCategory, row: dict[str, Any]) -> None:
     """Surface low-risk protective topics with a positive rationale when evidence is solid."""
-    if row["status"] != "found" or row["stance"] != "low_risk":
+    if row["status"] != "found" or row["stance"] != "fair":
         return
     if row.get("rationale_key") == "topic.thin_evidence":
         return
@@ -375,8 +375,8 @@ def evaluate_topic_stances(
 
     Each output item contains:
     - status: found | missing | not_disclosed | ambiguous
-    - stance: low_risk | moderate_risk | high_risk | not_disclosed | mixed
-    - topic_score: 0-10 risk (None when undisclosed)
+    - stance: fair | concerning | harmful | not_disclosed | conflicting
+    - topic_score: 0-10 internal risk (None when undisclosed)
     - rationale: concise deterministic explanation
     """
     by_topic: dict[InsightCategory, dict[str, Any]] = {}
@@ -399,7 +399,7 @@ def evaluate_topic_stances(
         else:
             by_topic[item.category] = _topic_row(
                 status=base_status,
-                stance="moderate_risk",
+                stance="concerning",
                 topic_score=5,
                 rationale_key="topic.found_generic",
             )
@@ -410,7 +410,7 @@ def evaluate_topic_stances(
         if topic not in by_topic:
             by_topic[topic] = _topic_row(
                 status="found",
-                stance="moderate_risk",
+                stance="concerning",
                 topic_score=5,
                 rationale_key="topic.found_generic",
             )
@@ -424,7 +424,7 @@ def evaluate_topic_stances(
         if topic not in by_topic:
             by_topic[topic] = _topic_row(
                 status="found",
-                stance="moderate_risk",
+                stance="concerning",
                 topic_score=5,
                 rationale_key="topic.found_generic",
             )
@@ -436,7 +436,7 @@ def evaluate_topic_stances(
         if conflict.category not in by_topic:
             by_topic[conflict.category] = _topic_row(
                 status="ambiguous",
-                stance="mixed",
+                stance="conflicting",
                 topic_score=6,
                 rationale_key="topic.conflicts_found",
                 rationale_params={"conflict_count": 1, "document_count": 0},
@@ -444,7 +444,7 @@ def evaluate_topic_stances(
 
         row = by_topic[conflict.category]
         row["status"] = "ambiguous"
-        row["stance"] = "mixed"
+        row["stance"] = "conflicting"
         row["conflict_count"] += 1
         row["evidence_count"] += len(conflict.evidence)
         topic_document_ids[conflict.category].update(conflict.document_ids)

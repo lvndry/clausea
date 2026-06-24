@@ -68,7 +68,7 @@ async def test_attach_fallback_evidence_attaches_citations_for_found_topic_with_
     stance = TopicStanceBreakdown(
         topic="data_collection",
         status="found",
-        stance="moderate_risk",
+        stance="concerning",
         supporting_citations=[],
     )
 
@@ -114,7 +114,7 @@ async def test_attach_fallback_evidence_skips_topic_stances_with_existing_citati
     stance = TopicStanceBreakdown(
         topic="data_collection",
         status="found",
-        stance="moderate_risk",
+        stance="concerning",
         supporting_citations=[existing],
     )
 
@@ -153,7 +153,7 @@ async def test_attach_fallback_evidence_caps_at_three_citations() -> None:
     stance = TopicStanceBreakdown(
         topic="data_collection",
         status="found",
-        stance="moderate_risk",
+        stance="concerning",
         supporting_citations=[],
     )
 
@@ -203,7 +203,7 @@ async def test_attach_fallback_evidence_filters_data_purposes_by_keyword() -> No
     stance = TopicStanceBreakdown(
         topic="advertising",
         status="found",
-        stance="moderate_risk",
+        stance="concerning",
         supporting_citations=[],
     )
 
@@ -240,7 +240,7 @@ async def test_attach_fallback_evidence_handles_children_policy_single_object() 
     stance = TopicStanceBreakdown(
         topic="children",
         status="found",
-        stance="moderate_risk",
+        stance="concerning",
         supporting_citations=[],
     )
 

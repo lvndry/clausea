@@ -48,13 +48,7 @@ export interface CoverageItem {
 export interface TopicStanceBreakdown {
   topic: string;
   status: "found" | "missing" | "not_disclosed" | "ambiguous";
-  stance:
-    | "low_risk"
-    | "moderate_risk"
-    | "high_risk"
-    | "not_disclosed"
-    | "mixed";
-  topic_score?: number | null;
+  stance: "fair" | "concerning" | "harmful" | "not_disclosed" | "conflicting";
   rationale?: string | null;
   rationale_key?: string | null;
   rationale_params?: Record<string, string | number | null> | null;
@@ -211,13 +205,7 @@ export interface TopicReportItem {
   topic: string;
   coverage_status: "found" | "missing" | "ambiguous" | "not_analyzed";
   status: "found" | "missing" | "not_disclosed" | "ambiguous";
-  stance:
-    | "low_risk"
-    | "moderate_risk"
-    | "high_risk"
-    | "not_disclosed"
-    | "mixed";
-  topic_score?: number | null;
+  stance: "fair" | "concerning" | "harmful" | "not_disclosed" | "conflicting";
   rationale?: string | null;
   rationale_key?: string | null;
   rationale_params?: Record<string, string | number | null> | null;

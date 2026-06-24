@@ -425,7 +425,7 @@ class CoverageItem(BaseModel):
 
 
 TopicStatus = Literal["found", "missing", "not_disclosed", "ambiguous"]
-TopicStance = Literal["low_risk", "moderate_risk", "high_risk", "not_disclosed", "mixed"]
+TopicStance = Literal["fair", "concerning", "harmful", "not_disclosed", "conflicting"]
 
 
 class TopicStanceBreakdown(BaseModel):
@@ -434,7 +434,6 @@ class TopicStanceBreakdown(BaseModel):
     topic: InsightCategory
     status: TopicStatus
     stance: TopicStance
-    topic_score: int | None = Field(default=None, ge=0, le=10)
     rationale: str | None = None
     rationale_key: str | None = None
     rationale_params: dict[str, int | str | None] | None = None
