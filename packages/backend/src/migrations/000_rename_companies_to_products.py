@@ -6,7 +6,8 @@
 4. Updates any remaining 'company_id' references in product_intelligence.
 
 Idempotent: the rename is skipped once 'products' exists, and every ``$rename``
-is guarded by ``$exists`` so re-runs touch zero documents.
+is guarded by ``$exists`` on the source AND ``$exists: False`` on the target so
+re-runs touch zero documents and partial migrations don't fail on pre-patched docs.
 """
 
 from __future__ import annotations
@@ -40,19 +41,19 @@ async def migrate_companies_to_products(db: AgnosticDatabase) -> dict[str, Any]:
         detail["renamed_collection"] = False
 
     result = await db.documents.update_many(
-        {"company_id": {"$exists": True}},
+        {"company_id": {"$exists": True}, "product_id": {"$exists": False}},
         {"$rename": {"company_id": "product_id"}},
     )
     detail["documents_renamed"] = result.modified_count
 
     result = await db.product_intelligence.update_many(
-        {"company_slug": {"$exists": True}},
+        {"company_slug": {"$exists": True}, "product_slug": {"$exists": False}},
         {"$rename": {"company_slug": "product_slug"}},
     )
     detail["product_intelligence_slug_renamed"] = result.modified_count
 
     result = await db.product_intelligence.update_many(
-        {"company_id": {"$exists": True}},
+        {"company_id": {"$exists": True}, "product_id": {"$exists": False}},
         {"$rename": {"company_id": "product_id"}},
     )
     detail["product_intelligence_id_renamed"] = result.modified_count
