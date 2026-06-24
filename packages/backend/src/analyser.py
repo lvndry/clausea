@@ -2083,204 +2083,270 @@ Per-document analyses and extractions:
     if on_progress is not None:
         await _maybe_await(on_progress())
 
+    from src.analyzers.llm_review import llm_review_overview
+    from src.analyzers.overview_guards import (
+        MAX_OVERVIEW_RE_ROLLS,
+        OverviewValidationResult,
+        _collect_citations,
+        format_overview_retry_feedback,
+        merge_llm_review,
+        validate_overview,
+    )
+    from src.services.thin_evidence_gate import check_thin_evidence
+    from src.services.topic_evidence_fallback import attach_fallback_evidence
+
+    is_thin, thin_reason = check_thin_evidence(
+        [d.doc_type for d in core_docs if d.doc_type in OVERVIEW_CORE_DOC_TYPES]
+    )
+    if is_thin:
+        logger.warning(
+            "Thin evidence for %s: %s — overview may be incomplete",
+            product_slug,
+            thin_reason,
+        )
+
     try:
         async with usage_tracking(tracker_callback):
-            # Wrap the LLM call in a cancellable task
-            llm_task = asyncio.create_task(
-                acompletion_with_fallback(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": PRODUCT_OVERVIEW_PROMPT,
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    model_priority=_OVERVIEW_PRIORITY,
-                    response_format={"type": "json_object"},
-                    temperature=0,
-                    heartbeat_callback=on_progress,
+            feedback_suffix = ""
+            meta_summary: MetaSummary | None = None
+            validation: OverviewValidationResult | None = None
+
+            for attempt in range(1, MAX_OVERVIEW_RE_ROLLS + 1):
+                if attempt > 1:
+                    logger.info(
+                        "Regenerating overview for %s after validation feedback (attempt %d/%d)",
+                        product_slug,
+                        attempt,
+                        MAX_OVERVIEW_RE_ROLLS,
+                    )
+                    await token.check_cancellation()
+                    if on_progress is not None:
+                        await _maybe_await(on_progress())
+
+                user_content = prompt + feedback_suffix
+
+                # Wrap the LLM call in a cancellable task
+                llm_task = asyncio.create_task(
+                    acompletion_with_fallback(
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": PRODUCT_OVERVIEW_PROMPT,
+                            },
+                            {"role": "user", "content": user_content},
+                        ],
+                        model_priority=_OVERVIEW_PRIORITY,
+                        response_format={"type": "json_object"},
+                        temperature=0,
+                        heartbeat_callback=on_progress,
+                    )
                 )
-            )
 
-            # Wait for either completion or cancellation
-            cancellation_task = asyncio.create_task(token.cancelled.wait())
-            done, pending = await asyncio.wait(
-                [llm_task, cancellation_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            # Cancel pending tasks
-            for pending_task in pending:
-                pending_task.cancel()
-                try:
-                    await pending_task
-                except asyncio.CancelledError:
-                    pass
-
-            # If cancellation was requested, cancel the LLM task
-            if token.is_cancelled():
-                llm_task.cancel()
-                try:
-                    await llm_task
-                except asyncio.CancelledError:
-                    pass
-                raise asyncio.CancelledError("Meta-summary generation cancelled")
-
-            # Get the response
-            response = await llm_task
-
-        choice = response.choices[0]
-        # Non-streaming responses always have message attribute
-        if not hasattr(choice, "message"):
-            raise ValueError("Unexpected response format: missing message attribute")
-        message = choice.message  # type: ignore[attr-defined]
-        if not message:
-            raise ValueError("Unexpected response format: message is None")
-        content = message.content  # type: ignore[attr-defined]
-        if not content:
-            raise ValueError("Empty response from LLM")
-
-        logger.debug(content)
-
-        # Parse the product overview
-        overview_dict = json.loads(content)
-        _merge_legacy_dimension_justifications(overview_dict)
-
-        # Parse contradictions before model validation
-        raw_contradictions = overview_dict.pop("contradictions", None)
-
-        meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
-        meta_summary.coverage = hydrated_rollup.coverage
-        if meta_summary.dangers:
-            meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
-
-        # Attach contradictions
-        if isinstance(raw_contradictions, list):
-            try:
-                meta_summary.contradictions = [
-                    ProductContradiction.model_validate(c)
-                    for c in raw_contradictions
-                    if isinstance(c, dict)
-                ]
-            except Exception as e:
-                logger.warning(f"Failed to parse contradictions: {e}")
-
-        # Attach deterministic topic stances used for both UI explainability and scoring.
-        meta_summary.topic_stances = []
-        for topic in topic_report.topics:
-            cited_document_ids: set[str] = set()
-            evidence_count = 0
-            for finding in topic.findings:
-                cited_document_ids.update(finding.document_ids)
-                evidence_count += len(finding.citations)
-            for conflict in topic.conflicts:
-                cited_document_ids.update(conflict.document_ids)
-                evidence_count += len(conflict.citations)
-            primary_finding = _headline_finding_for_topic(topic)
-            primary_conflict = topic.conflicts[0] if topic.conflicts else None
-            supporting_citations = _topic_supporting_citations(topic)
-            if primary_finding and primary_finding.value:
-                headline_claim = _truncate_text(primary_finding.value)
-            elif primary_conflict and primary_conflict.description:
-                headline_claim = _truncate_text(primary_conflict.description)
-            elif topic.status in {"missing", "not_disclosed"}:
-                headline_claim = "No verifiable disclosure found across analyzed documents."
-            else:
-                headline_claim = None
-
-            meta_summary.topic_stances.append(
-                TopicStanceBreakdown(
-                    topic=topic.topic,
-                    status=topic.status,
-                    stance=topic.stance,
-                    topic_score=topic.topic_score,
-                    rationale=topic.rationale,
-                    rationale_key=topic.rationale_key,
-                    rationale_params=topic.rationale_params,
-                    evidence_count=evidence_count,
-                    document_count=len(cited_document_ids),
-                    headline_claim=headline_claim,
-                    supporting_citations=supporting_citations,
-                    conflict_note=_truncate_text(
-                        primary_conflict.description if primary_conflict else None
-                    ),
-                    why_it_matters=_topic_why_it_matters(
-                        topic=str(topic.topic),
-                        status=str(topic.status),
-                        stance=str(topic.stance),
-                        conflict_count=len(topic.conflicts),
-                    ),
-                    recommended_action=_topic_recommended_action(
-                        topic=str(topic.topic),
-                        status=str(topic.status),
-                        stance=str(topic.stance),
-                    ),
+                # Wait for either completion or cancellation
+                cancellation_task = asyncio.create_task(token.cancelled.wait())
+                done, pending = await asyncio.wait(
+                    [llm_task, cancellation_task],
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-            )
 
-        topic_rows: dict[InsightCategory, dict[str, Any]] = {
-            topic.topic: {
-                "status": topic.status,
-                "topic_score": topic.topic_score,
-            }
-            for topic in topic_report.topics
-        }
-        topic_blended = compose_product_risk_from_topics(topic_rows)
-        legacy_blended = _weighted_product_risk_score(core_docs)
-        dimension_risk = _calculate_overview_risk_score(meta_summary.scores)
-        if legacy_blended is not None:
-            logger.info(
-                "overview scoring comparison for %s: legacy_doc=%s topic=%s dimension=%s",
-                product_slug,
-                legacy_blended,
-                topic_blended,
-                dimension_risk,
-            )
-        else:
-            logger.info(
-                "overview scoring comparison for %s: topic=%s dimension=%s",
-                product_slug,
-                topic_blended,
-                dimension_risk,
-            )
+                # Cancel pending tasks
+                for pending_task in pending:
+                    pending_task.cancel()
+                    try:
+                        await pending_task
+                    except asyncio.CancelledError:
+                        pass
 
-        _reconcile_meta_summary_risk(meta_summary)
+                # If cancellation was requested, cancel the LLM task
+                if token.is_cancelled():
+                    llm_task.cancel()
+                    try:
+                        await llm_task
+                    except asyncio.CancelledError:
+                        pass
+                    raise asyncio.CancelledError("Meta-summary generation cancelled")
 
-        from src.analyzers.llm_review import llm_review_overview
-        from src.analyzers.overview_guards import merge_llm_review, validate_overview
-        from src.services.thin_evidence_gate import check_thin_evidence
-        from src.services.topic_evidence_fallback import attach_fallback_evidence
+                # Get the response
+                response = await llm_task
 
-        is_thin, thin_reason = check_thin_evidence(
-            [d.doc_type for d in core_docs if d.doc_type in OVERVIEW_CORE_DOC_TYPES]
-        )
-        if is_thin:
-            logger.warning(
-                "Thin evidence for %s: %s — overview may be incomplete",
-                product_slug,
-                thin_reason,
-            )
+                choice = response.choices[0]
+                # Non-streaming responses always have message attribute
+                if not hasattr(choice, "message"):
+                    raise ValueError("Unexpected response format: missing message attribute")
+                message = choice.message  # type: ignore[attr-defined]
+                if not message:
+                    raise ValueError("Unexpected response format: message is None")
+                content = message.content  # type: ignore[attr-defined]
+                if not content:
+                    raise ValueError("Empty response from LLM")
 
-        if meta_summary.topic_stances:
-            attached = await attach_fallback_evidence(meta_summary.topic_stances, core_docs)
-            if attached:
-                logger.info("Attached %d fallback citations to %s", attached, product_slug)
+                logger.debug(content)
 
-        overview_dict = meta_summary.model_dump(mode="json")
-        deterministic = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
+                try:
+                    overview_dict = json.loads(content)
+                    _merge_legacy_dimension_justifications(overview_dict)
+                    raw_contradictions = overview_dict.pop("contradictions", None)
+                    meta_summary = MetaSummary.model_validate(overview_dict, strict=False)
+                except (json.JSONDecodeError, ValueError) as parse_error:
+                    logger.warning(
+                        "Overview parsing failed for %s (attempt %d/%d): %s",
+                        product_slug,
+                        attempt,
+                        MAX_OVERVIEW_RE_ROLLS,
+                        parse_error,
+                    )
+                    if attempt >= MAX_OVERVIEW_RE_ROLLS:
+                        raise ValueError(
+                            f"Overview parsing failed for {product_slug}: {parse_error}"
+                        ) from parse_error
+                    feedback_suffix += format_overview_retry_feedback(
+                        [
+                            f"Invalid JSON or schema: {parse_error}. "
+                            "Output a valid JSON object matching the requested schema."
+                        ],
+                        attempt=attempt,
+                    )
+                    continue
 
-        from src.analyzers.overview_guards import _collect_citations
+                meta_summary.coverage = hydrated_rollup.coverage
+                if meta_summary.dangers:
+                    meta_summary.dangers = await filter_danger_strings_llm(meta_summary.dangers)
 
-        citations_for_review = _collect_citations(overview_dict.get("topic_stances") or [])
-        llm_result = await llm_review_overview(overview_dict, citations_for_review)
-        validation = merge_llm_review(deterministic, llm_result)
+                # Attach contradictions
+                if isinstance(raw_contradictions, list):
+                    try:
+                        meta_summary.contradictions = [
+                            ProductContradiction.model_validate(c)
+                            for c in raw_contradictions
+                            if isinstance(c, dict)
+                        ]
+                    except Exception as e:
+                        logger.warning(f"Failed to parse contradictions: {e}")
 
-        if validation.should_re_roll:
-            reasons = "; ".join(validation.re_roll_reasons)
-            logger.warning("Overview validation failed for %s: %s", product_slug, reasons)
-            raise ValueError(f"Overview validation failed for {product_slug}: {reasons}")
-        for warning in validation.warnings:
-            logger.info("Overview warning for %s: %s", product_slug, warning)
+                # Attach deterministic topic stances used for both UI explainability and scoring.
+                meta_summary.topic_stances = []
+                for topic in topic_report.topics:
+                    cited_document_ids: set[str] = set()
+                    evidence_count = 0
+                    for finding in topic.findings:
+                        cited_document_ids.update(finding.document_ids)
+                        evidence_count += len(finding.citations)
+                    for conflict in topic.conflicts:
+                        cited_document_ids.update(conflict.document_ids)
+                        evidence_count += len(conflict.citations)
+                    primary_finding = _headline_finding_for_topic(topic)
+                    primary_conflict = topic.conflicts[0] if topic.conflicts else None
+                    supporting_citations = _topic_supporting_citations(topic)
+                    if primary_finding and primary_finding.value:
+                        headline_claim = _truncate_text(primary_finding.value)
+                    elif primary_conflict and primary_conflict.description:
+                        headline_claim = _truncate_text(primary_conflict.description)
+                    elif topic.status in {"missing", "not_disclosed"}:
+                        headline_claim = "No verifiable disclosure found across analyzed documents."
+                    else:
+                        headline_claim = None
+
+                    meta_summary.topic_stances.append(
+                        TopicStanceBreakdown(
+                            topic=topic.topic,
+                            status=topic.status,
+                            stance=topic.stance,
+                            topic_score=topic.topic_score,
+                            rationale=topic.rationale,
+                            rationale_key=topic.rationale_key,
+                            rationale_params=topic.rationale_params,
+                            evidence_count=evidence_count,
+                            document_count=len(cited_document_ids),
+                            headline_claim=headline_claim,
+                            supporting_citations=supporting_citations,
+                            conflict_note=_truncate_text(
+                                primary_conflict.description if primary_conflict else None
+                            ),
+                            why_it_matters=_topic_why_it_matters(
+                                topic=str(topic.topic),
+                                status=str(topic.status),
+                                stance=str(topic.stance),
+                                conflict_count=len(topic.conflicts),
+                            ),
+                            recommended_action=_topic_recommended_action(
+                                topic=str(topic.topic),
+                                status=str(topic.status),
+                                stance=str(topic.stance),
+                            ),
+                        )
+                    )
+
+                topic_rows: dict[InsightCategory, dict[str, Any]] = {
+                    topic.topic: {
+                        "status": topic.status,
+                        "topic_score": topic.topic_score,
+                    }
+                    for topic in topic_report.topics
+                }
+                topic_blended = compose_product_risk_from_topics(topic_rows)
+                legacy_blended = _weighted_product_risk_score(core_docs)
+                dimension_risk = _calculate_overview_risk_score(meta_summary.scores)
+                if legacy_blended is not None:
+                    logger.info(
+                        "overview scoring comparison for %s: legacy_doc=%s topic=%s dimension=%s",
+                        product_slug,
+                        legacy_blended,
+                        topic_blended,
+                        dimension_risk,
+                    )
+                else:
+                    logger.info(
+                        "overview scoring comparison for %s: topic=%s dimension=%s",
+                        product_slug,
+                        topic_blended,
+                        dimension_risk,
+                    )
+
+                _reconcile_meta_summary_risk(meta_summary)
+
+                if meta_summary.topic_stances:
+                    attached = await attach_fallback_evidence(meta_summary.topic_stances, core_docs)
+                    if attached:
+                        logger.info("Attached %d fallback citations to %s", attached, product_slug)
+
+                overview_dict = meta_summary.model_dump(mode="json")
+                deterministic = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
+
+                if deterministic.should_re_roll:
+                    validation = deterministic
+                else:
+                    citations_for_review = _collect_citations(
+                        overview_dict.get("topic_stances") or []
+                    )
+                    llm_result = await llm_review_overview(overview_dict, citations_for_review)
+                    validation = merge_llm_review(deterministic, llm_result)
+
+                if validation.should_re_roll:
+                    reasons = "; ".join(validation.re_roll_reasons)
+                    logger.warning(
+                        "Overview validation failed for %s (attempt %d/%d): %s",
+                        product_slug,
+                        attempt,
+                        MAX_OVERVIEW_RE_ROLLS,
+                        reasons,
+                    )
+                    if attempt >= MAX_OVERVIEW_RE_ROLLS:
+                        raise ValueError(
+                            f"Overview validation failed for {product_slug}: {reasons}"
+                        )
+                    feedback_suffix += format_overview_retry_feedback(
+                        validation.re_roll_reasons,
+                        attempt=attempt,
+                    )
+                    continue
+
+                break
+
+            if meta_summary is None or validation is None:
+                raise ValueError(f"Overview generation produced no result for {product_slug}")
+
+            for warning in validation.warnings:
+                logger.info("Overview warning for %s: %s", product_slug, warning)
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(

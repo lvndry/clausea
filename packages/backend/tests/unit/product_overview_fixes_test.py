@@ -7,6 +7,7 @@ import pytest
 from litellm import ModelResponse
 
 from src.analyser import generate_product_overview
+from src.analyzers.overview_guards import OverviewValidationResult
 from src.models.document import (
     Document,
     DocumentAnalysis,
@@ -331,3 +332,99 @@ async def test_generate_product_overview_headline_claim_none_when_llm_omits_it()
         )
 
     assert result.headline_claim is None
+
+
+def _validation_result(
+    *, should_re_roll: bool, reasons: list[str] | None = None
+) -> OverviewValidationResult:
+    return OverviewValidationResult(
+        should_re_roll=should_re_roll,
+        re_roll_reasons=reasons or [],
+        warnings=[],
+        checks_passed={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_product_overview_retries_after_validation_failure() -> None:
+    """Failed overview validation should feed back to the LLM and retry."""
+    product_svc, document_svc = _services()
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
+        return_value=MagicMock(
+            findings=[],
+            coverage=[],
+            conflicts=[],
+            product_id="p1",
+            product_slug="example",
+        )
+    )
+    llm_mock = AsyncMock(return_value=_llm_response(_base_llm_payload()))
+    merge_mock = MagicMock(
+        side_effect=[
+            _validation_result(
+                should_re_roll=True,
+                reasons=["UNSUPPORTED_CLAIMS: headline overclaims retention"],
+            ),
+            _validation_result(should_re_roll=False),
+        ]
+    )
+
+    with (
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
+        patch("src.analyser.acompletion_with_fallback", llm_mock),
+        patch("src.analyzers.overview_guards.merge_llm_review", merge_mock),
+    ):
+        await generate_product_overview(
+            MagicMock(),
+            "example",
+            force_regenerate=True,
+            product_svc=product_svc,
+            document_svc=document_svc,
+        )
+
+    assert llm_mock.await_count == 2
+    second_user_message = llm_mock.await_args_list[1].kwargs["messages"][1]["content"]
+    assert "Your previous JSON response was rejected" in second_user_message
+    assert "UNSUPPORTED_CLAIMS: headline overclaims retention" in second_user_message
+    product_svc.save_product_overview.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_product_overview_raises_after_max_validation_retries() -> None:
+    """Overview generation must fail only after exhausting validation retries."""
+    product_svc, document_svc = _services()
+    rollup_service = MagicMock()
+    rollup_service.build_product_rollup = AsyncMock(
+        return_value=MagicMock(
+            findings=[],
+            coverage=[],
+            conflicts=[],
+            product_id="p1",
+            product_slug="example",
+        )
+    )
+    llm_mock = AsyncMock(return_value=_llm_response(_base_llm_payload()))
+    merge_mock = MagicMock(
+        return_value=_validation_result(
+            should_re_roll=True,
+            reasons=["UNSUPPORTED_CLAIMS: headline overclaims retention"],
+        )
+    )
+
+    with (
+        patch("src.analyser.ProductRollupService", return_value=rollup_service),
+        patch("src.analyser.acompletion_with_fallback", llm_mock),
+        patch("src.analyzers.overview_guards.merge_llm_review", merge_mock),
+        pytest.raises(RuntimeError, match="Overview validation failed for example"),
+    ):
+        await generate_product_overview(
+            MagicMock(),
+            "example",
+            force_regenerate=True,
+            product_svc=product_svc,
+            document_svc=document_svc,
+        )
+
+    assert llm_mock.await_count == 3
+    product_svc.save_product_overview.assert_not_awaited()
