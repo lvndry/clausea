@@ -290,6 +290,7 @@ PRODUCT_OVERVIEW_PROMPT = f"""You are a senior policy analyst. Synthesize the fu
 4. VAGUE ≠ ABSENT. "Mentioned but unspecified" and "not mentioned at all" are different findings. If a document says "we apply appropriate safeguards for international transfers" without naming SCCs, adequacy decisions, or BCRs, describe it as "transfer safeguards claimed but unspecified — no mechanism named." Do NOT say "no transfer safeguards exist."
 5. NO LEGAL JARGON. Write for a non-lawyer in all user-facing fields. Replace "notwithstanding", "hereunder", "sub-processor", "data controller" with plain English. If a legal term is essential, explain it parenthetically.
 6. NO PIPELINE INTERNALS. Never expose pipeline state in customer-facing text. Do not write "the analyzed document", "the extraction shows", "the policy bundle", "core documents", or "source documents." Write about the company and its practices, not about the documents.
+7. CALIBRATE STRENGTH. Decide `privacy_signals` from the evidence first. Then write `headline_claim` and `summary` so they are no stronger than those signals and the extractions/critical clauses support. Prefer null headline or empty summary over an overclaim.
 
 ## INPUT
 For each core document you receive:
@@ -304,19 +305,33 @@ One plain-English sentence (max 25 words). Requirements:
 - Specific enough that it could not apply to any other product.
 - Lead with the single most specific fact, not a generic opener.
 - Must be a claim the evidence supports — if the evidence is insufficient for a specific claim, return null.
+- Must not be stronger than the `privacy_signals` you output in the same JSON (see calibration below).
 
-Good: "Spotify sells your listening history to advertisers and retains it indefinitely after account deletion."
+Good: "Netflix shares viewing history with advertising partners and retains some account data after deletion."
+Good: "Signal encrypts message content end-to-end and does not sell personal data to brokers."
 Bad: "This service collects some data and shares it with third parties."
 Bad: "Spotify collects extensive personal and behavioral data for advertising." (generic opener)
+Bad: "Netflix sells your data and keeps voice recordings indefinitely." (overclaims if signals/extractions only show ad sharing or optional voice features)
 
 ## SUMMARY
 One sentence (max 20 words) telling a non-technical user the single most important thing about this service's data practices. Requirements:
 - Start with the service name.
 - Name the actual risk or strength, not generic labels.
 - If you cannot write a confident, specific sentence from the evidence, return an empty string "". Never return "None", "N/A", "null", or a generic statement.
+- Use the same strength calibration as the headline — do not overstate.
 
-Good: "Spotify sells your listening history to advertisers and retains it after deletion."
+Good: "Netflix shares viewing data with ad partners; retention periods vary by data type."
+Good: "Signal encrypts messages by default and states it does not sell user data."
 Bad: "This service collects data for various purposes."
+
+## HEADLINE AND SUMMARY CALIBRATION (match quality review)
+Before writing `headline_claim` or `summary`, decide `privacy_signals` from extractions and critical clauses. Then apply:
+- **Sells vs shares:** Use "sells" or "sold to brokers" only when documents say sale or valuable consideration, or `sells_data` is "yes". Otherwise use "shares with advertisers/partners" or "uses for targeted ads".
+- **Indefinite retention:** Use "indefinitely" or "forever" only when no retention period is stated or documents explicitly say unlimited retention. If a period or category-specific retention is stated, describe it accurately.
+- **Biometrics / voice / sensitive data:** Mention in headline/summary only when extractions or critical clauses show it is collected or used — not because it appears once as an optional feature or hypothetical.
+- **AI training:** Mention only when `ai_training_on_user_data` is "yes" or documents clearly describe training on user content.
+- **Topic signals:** If deterministic topic signals show "not_disclosed", "missing", or "unclear" for a topic, do not state that topic as a confirmed practice in the headline.
+- **When uncertain:** Return `headline_claim: null` and a cautious summary or empty summary rather than inferring the worst case.
 
 ## OVERALL GRADE — follow this procedure exactly
 
@@ -437,7 +452,7 @@ Bad: "Review the privacy policy." (no specific action)
 If the document does not give a path for an action, write "Contact the company to [action]" — do not write the action without a path.
 
 ## PRIVACY SIGNALS
-Synthesize from all documents. Set each signal based on what the documents explicitly state:
+Synthesize from all documents. Set each signal based on what the documents explicitly state — these signals constrain how strong your headline and summary may be:
 - `sells_data`: "yes" only if the document explicitly says data is sold or shared for valuable consideration. "no" only if the document explicitly says data is NOT sold. "unclear" if the document is silent or ambiguous.
 - `cross_site_tracking`: "yes" if cross-site/cross-app tracking is described. "no" if the document says they don't track across sites. "unclear" otherwise.
 - `account_deletion`: "self_service" if there's a UI path (Settings, button, link). "request_required" if you must email/contact. "not_specified" if silent.
