@@ -34,30 +34,6 @@ const GRADE_TONE_STYLES: Record<GradeTone, GradeStyle> = {
   },
 };
 
-interface GradeBand {
-  min: number;
-  letter: string;
-  tone: GradeTone;
-}
-
-// Bands map a 0-10 "higher = better" score to a 13-step letter scale.
-// good: A+ A A-  |  ok: B+ B B-  |  warn: C+ C C-  |  bad: D+ D D- E
-const GRADE_BANDS: GradeBand[] = [
-  { min: 9.5, letter: "A+", tone: "good" },
-  { min: 8.5, letter: "A", tone: "good" },
-  { min: 8.0, letter: "A-", tone: "good" },
-  { min: 7.5, letter: "B+", tone: "ok" },
-  { min: 6.5, letter: "B", tone: "ok" },
-  { min: 6.0, letter: "B-", tone: "ok" },
-  { min: 5.5, letter: "C+", tone: "warn" },
-  { min: 4.5, letter: "C", tone: "warn" },
-  { min: 4.0, letter: "C-", tone: "warn" },
-  { min: 3.5, letter: "D+", tone: "bad" },
-  { min: 2.5, letter: "D", tone: "bad" },
-  { min: 1.0, letter: "D-", tone: "bad" },
-  { min: -Infinity, letter: "E", tone: "bad" },
-];
-
 export function letterGradeToTone(letter: string): GradeTone {
   switch (letter.toUpperCase().charAt(0)) {
     case "A":
@@ -77,19 +53,6 @@ export function parseLetterGrade(letter: string): Grade {
     return { letter: "—", tone: "warn" };
   }
   return { letter: normalized, tone: letterGradeToTone(normalized) };
-}
-
-export function scoreToGrade(
-  score: number,
-  opts?: { invert?: boolean },
-): Grade {
-  const clamped = Math.max(0, Math.min(10, score));
-  // riskScore is "higher = worse"; inverting maps it onto the "higher = better" bands.
-  const effective = opts?.invert ? 10 - clamped : clamped;
-  const band =
-    GRADE_BANDS.find((entry) => effective >= entry.min) ??
-    GRADE_BANDS[GRADE_BANDS.length - 1];
-  return { letter: band.letter, tone: band.tone };
 }
 
 export function gradeToneStyle(tone: GradeTone): GradeStyle {

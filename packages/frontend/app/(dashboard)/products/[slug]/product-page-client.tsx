@@ -1030,7 +1030,6 @@ export default function CompanyPage({
             verdict={data.verdict}
             grade={data.grade}
             gradeJustification={data.grade_justification}
-            riskScore={data.risk_score}
             summary={data.one_line_summary}
             keypoints={data.keypoints}
           />

@@ -108,6 +108,37 @@ class ProductIntelligenceRepository(BaseRepository):
         result = await db[self.COLLECTION].delete_many({"product_id": product_id})
         return result.deleted_count
 
+    async def mark_citations_stale_for_document(
+        self, db: AgnosticDatabase, document_id: str
+    ) -> int:
+        """Flag every overview citation pointing at ``document_id`` as stale.
+
+        Called when a source document is deleted or superseded so that citations
+        referencing it are no longer rendered. Matches across all
+        ``overview.topic_stances.supporting_citations`` entries and sets
+        ``stale: True`` only on the citations whose ``document_id`` matches,
+        leaving sibling citations intact. Returns the number of citations marked.
+        """
+        count_pipeline = [
+            {"$match": {"overview.topic_stances.supporting_citations.document_id": document_id}},
+            {"$unwind": "$overview.topic_stances"},
+            {"$unwind": "$overview.topic_stances.supporting_citations"},
+            {"$match": {"overview.topic_stances.supporting_citations.document_id": document_id}},
+            {"$count": "total"},
+        ]
+        cursor = db[self.COLLECTION].aggregate(count_pipeline)
+        count_rows = await cursor.to_list(length=None)
+        citation_count = count_rows[0]["total"] if count_rows else 0
+        if citation_count == 0:
+            return 0
+
+        await db[self.COLLECTION].update_many(
+            {"overview.topic_stances.supporting_citations.document_id": document_id},
+            {"$set": {"overview.topic_stances.$[].supporting_citations.$[cite].stale": True}},
+            array_filters=[{"cite.document_id": document_id}],
+        )
+        return citation_count
+
     async def count_with_overview(self, db: AgnosticDatabase) -> int:
         return await db[self.COLLECTION].count_documents(
             {"overview": {"$exists": True, "$ne": None}}

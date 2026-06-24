@@ -29,7 +29,6 @@ interface VerdictHeroProps {
     | null;
   grade?: "A" | "B" | "C" | "D" | "E" | null;
   gradeJustification?: string | null;
-  riskScore?: number | null;
   summary: string;
   keypoints?: string[] | null;
 }
@@ -91,7 +90,6 @@ export function VerdictHero({
   verdict,
   grade,
   gradeJustification,
-  riskScore,
   summary,
   keypoints,
 }: VerdictHeroProps) {
@@ -201,11 +199,6 @@ export function VerdictHero({
             <Icon className="h-3 w-3" />
             {hasGrade && verdictDisplay ? verdictDisplay.label : "Unavailable"}
           </div>
-          {riskScore != null && (
-            <p className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-              Legacy risk index: {riskScore}/10
-            </p>
-          )}
         </div>
       </div>
 

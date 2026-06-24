@@ -60,7 +60,7 @@ class ExtensionCheckResponse(BaseModel):
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = None
-    risk_score: int | None = None
+    grade: str | None = None
     one_line_summary: str | None = None
     top_concerns: list[str] | None = None
     analysis_url: str | None = None
@@ -206,7 +206,7 @@ async def check_url(
         product_status=product_status,
         pipeline_active=active_job is not None,
         verdict=overview.verdict,
-        risk_score=overview.risk_score,
+        grade=overview.grade,
         one_line_summary=overview.one_line_summary,
         top_concerns=top_concerns,
         analysis_url=f"https://clausea.co/products/{product.slug}",

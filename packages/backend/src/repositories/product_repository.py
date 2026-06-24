@@ -106,17 +106,30 @@ class ProductRepository(BaseRepository):
             {"$addToSet": {"crawl_base_urls": {"$each": urls}}},
         )
 
-    async def update_name(self, db: AgnosticDatabase, product_id: str, name: str) -> None:
+    async def update_name(
+        self,
+        db: AgnosticDatabase,
+        product_id: str,
+        name: str,
+        name_source: str | None = None,
+    ) -> None:
         """Update the display name of a product.
 
         Used after a crawl to replace the domain-derived name with the canonical
-        brand name extracted from page metadata (e.g. og:site_name).
+        brand name extracted from page metadata (e.g. og:site_name). ``name_source``
+        records the provenance so the pipeline knows not to overwrite a name that
+        has already been improved or was manually curated.
         """
+        update: dict[str, Any] = {"name": name}
+        if name_source is not None:
+            update["name_source"] = name_source
         await db.products.update_one(
             {"id": product_id},
-            {"$set": {"name": name}},
+            {"$set": update},
         )
-        logger.debug("Updated product name for %s to '%s'", product_id, name)
+        logger.debug(
+            "Updated product name for %s to '%s' (source=%s)", product_id, name, name_source
+        )
 
     async def find_all(self, db: AgnosticDatabase) -> list[Product]:
         """Get all products.

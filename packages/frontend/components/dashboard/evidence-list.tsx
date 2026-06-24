@@ -363,21 +363,6 @@ export function EvidenceList({
                                   {verdictConfig.label}
                                 </Badge>
                               )}
-                              {doc.risk_score !== null &&
-                                doc.risk_score !== undefined && (
-                                  <Badge
-                                    variant={
-                                      doc.risk_score >= 7
-                                        ? "danger"
-                                        : doc.risk_score >= 4
-                                          ? "warning"
-                                          : "success"
-                                    }
-                                    size="sm"
-                                  >
-                                    Risk: {doc.risk_score}/10
-                                  </Badge>
-                                )}
                             </div>
                           </div>
 

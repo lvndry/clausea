@@ -40,7 +40,7 @@ export interface ExtensionCheckResponse {
   pipeline_error: string | null;
   crawl_errors: ExtensionCrawlError[] | null;
   verdict: Verdict | null;
-  risk_score: number | null;
+  grade: string | null;
   one_line_summary: string | null;
   top_concerns: string[] | null;
   analysis_url: string | null;

@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 _OVERVIEW_HISTORY_CAP = 20
 _TRACKED_OVERVIEW_FIELDS = [
-    "risk_score",
+    "grade",
     "verdict",
     "one_line_summary",
     "dangers",
@@ -119,16 +119,18 @@ class ProductIntelligenceService:
 
         snapshot: OverviewSnapshot | None = None
         if prev_hash != overview_hash:
-            risk_score = overview_data.get("risk_score")
-            prev_risk = prev_overview.get("risk_score") if prev_overview else None
+            grade = overview_data.get("grade")
+            prev_grade = prev_overview.get("grade") if prev_overview else None
+            grade_order = {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5}
+            grade_delta = (
+                (grade_order.get(grade, 0) - grade_order.get(prev_grade, 0))
+                if (grade and prev_grade)
+                else None
+            )
             snapshot = OverviewSnapshot(
                 overview_hash=overview_hash,
-                risk_score=risk_score,
-                risk_score_delta=(
-                    (risk_score - prev_risk)
-                    if (risk_score is not None and prev_risk is not None)
-                    else None
-                ),
+                grade=grade,
+                grade_delta=grade_delta,
                 verdict=overview_data.get("verdict"),
                 one_line_summary=overview_data.get("one_line_summary"),
                 changed_overview_fields=_changed_overview_fields(prev_overview, overview_data),
@@ -206,8 +208,8 @@ class ProductIntelligenceService:
             "stats.document_count": document_count,
             "stats.has_overview": intelligence is not None and intelligence.overview is not None,
             "stats.last_indexed_at": datetime.now(),
-            "stats.risk_score": (
-                intelligence.overview.risk_score if intelligence and intelligence.overview else None
+            "stats.grade": (
+                intelligence.overview.grade if intelligence and intelligence.overview else None
             ),
         }
         await db.products.update_one({"id": product_id}, {"$set": stats})

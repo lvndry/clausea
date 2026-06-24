@@ -2,9 +2,38 @@
 
 import { AlertCircle, Check, ShieldCheck, X } from "lucide-react";
 
-import { gradeToneStyle, scoreToGrade } from "@/lib/grade";
+import { gradeToneStyle } from "@/lib/grade";
+import type { Grade, GradeTone } from "@/lib/grade";
 import { cn } from "@/lib/utils";
 import type { ComplianceBreakdown } from "@/types";
+
+const COMPLIANCE_GRADE_BANDS: {
+  min: number;
+  letter: string;
+  tone: GradeTone;
+}[] = [
+  { min: 9.5, letter: "A+", tone: "good" },
+  { min: 8.5, letter: "A", tone: "good" },
+  { min: 8.0, letter: "A-", tone: "good" },
+  { min: 7.5, letter: "B+", tone: "ok" },
+  { min: 6.5, letter: "B", tone: "ok" },
+  { min: 6.0, letter: "B-", tone: "ok" },
+  { min: 5.5, letter: "C+", tone: "warn" },
+  { min: 4.5, letter: "C", tone: "warn" },
+  { min: 4.0, letter: "C-", tone: "warn" },
+  { min: 3.5, letter: "D+", tone: "bad" },
+  { min: 2.5, letter: "D", tone: "bad" },
+  { min: 1.0, letter: "D-", tone: "bad" },
+  { min: -Infinity, letter: "E", tone: "bad" },
+];
+
+function complianceScoreToGrade(score: number): Grade {
+  const clamped = Math.max(0, Math.min(10, score));
+  const band =
+    COMPLIANCE_GRADE_BANDS.find((entry) => clamped >= entry.min) ??
+    COMPLIANCE_GRADE_BANDS[COMPLIANCE_GRADE_BANDS.length - 1];
+  return { letter: band.letter, tone: band.tone };
+}
 
 export type ComplianceStatus =
   | "Compliant"
@@ -126,7 +155,9 @@ export function ComplianceBadges({
 
       <div className="divide-y divide-border">
         {entries.map(({ regulation, breakdown, hasEvidence }) => {
-          const grade = hasEvidence ? scoreToGrade(breakdown.score) : null;
+          const grade = hasEvidence
+            ? complianceScoreToGrade(breakdown.score)
+            : null;
           const style = grade ? gradeToneStyle(grade.tone) : null;
           const label = regulationLabels[regulation] ?? regulation;
 

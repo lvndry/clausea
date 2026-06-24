@@ -252,6 +252,10 @@ Rules: be concrete (exact data types, third parties, exercise paths); use "This 
 ## OVERALL GRADE
 Assign an overall **grade** (A–E) for this product's privacy posture and **grade_justification** (2–4 sentences) explaining why. Be specific about the single biggest factor driving your judgment.
 
+**Grade must be consistent with your dimensions.** Your overall grade cannot be more than one letter more negative than your dimension grades warrant. If your dimensions average to B (e.g. B/C/B/B), the overall grade must be A, B, or C — never D or E. If they average to C, the overall must be B, C, or D.
+
+**Do not default to D.** Mainstream services with ordinary data practices and some documented protections should grade C, not D. Reserve D for products with genuinely invasive practices (data sale, AI training without opt-out, biometric collection) that lack meaningful mitigation. Reserve E for the worst case on a dimension — never for silence or missing documents.
+
 ## DIMENSION GRADES
 Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for:
 transparency, data_collection_scope, user_control, third_party_sharing.

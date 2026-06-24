@@ -548,6 +548,9 @@ class DocumentRepository(BaseRepository):
     async def delete(self, db: AgnosticDatabase, document_id: str) -> bool:
         """Delete a document from the database.
 
+        Before deletion, invalidates any overview citations pointing at this
+        document so the product overview does not render orphan sources.
+
         Args:
             db: Database instance
             document_id: ID of document to delete
@@ -559,6 +562,29 @@ class DocumentRepository(BaseRepository):
             Exception: If deletion fails
         """
         try:
+            from src.repositories.product_intelligence_repository import (
+                ProductIntelligenceRepository,
+            )
+
+            try:
+                stale_count = (
+                    await ProductIntelligenceRepository().mark_citations_stale_for_document(
+                        db, document_id
+                    )
+                )
+                if stale_count:
+                    logger.info(
+                        "Marked %d overview citation(s) stale for deleted document %s",
+                        stale_count,
+                        document_id,
+                    )
+            except Exception as cite_error:  # noqa: BLE001
+                logger.warning(
+                    "Failed to mark citations stale for document %s: %s",
+                    document_id,
+                    cite_error,
+                )
+
             result = await db.documents.delete_one({"id": document_id})
             success = result.deleted_count > 0
             if success:

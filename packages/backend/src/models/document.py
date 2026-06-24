@@ -100,6 +100,7 @@ class SourceCitation(BaseModel):
     end_char: int | None = None
     content_hash: str | None = None
     verified: bool = True
+    stale: bool = False
 
 
 class ExtractedTextItem(BaseModel):
@@ -455,6 +456,7 @@ class TopicSupportCitation(BaseModel):
     quote: str
     section_title: str | None = None
     verified: bool = True
+    stale: bool = False
 
 
 class DocumentAnalysis(BaseModel):
@@ -1019,15 +1021,6 @@ class ProductOverview(BaseModel):
         Literal["very_user_friendly", "user_friendly", "moderate", "pervasive", "very_pervasive"]
         | None
     ) = None
-    risk_score: int | None = Field(
-        default=None,
-        ge=0,
-        le=10,
-        description=(
-            "Overall risk 0-10; derived deterministically from computed dimension scores "
-            "(not a separate LLM risk assignment)"
-        ),
-    )
     one_line_summary: str = Field(
         examples=["Spotify collects extensive data for ads but offers strong user rights"]
     )

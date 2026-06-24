@@ -119,3 +119,70 @@ def risk_score_to_verdict(
     if risk_score <= 8:
         return "pervasive"
     return "very_pervasive"
+
+
+_GradeLetter = Literal["A", "B", "C", "D", "E"]
+
+_VERDICT_FROM_GRADE: dict[
+    str,
+    Literal[
+        "very_user_friendly",
+        "user_friendly",
+        "moderate",
+        "pervasive",
+        "very_pervasive",
+    ],
+] = {
+    "A": "very_user_friendly",
+    "B": "user_friendly",
+    "C": "moderate",
+    "D": "pervasive",
+    "E": "very_pervasive",
+}
+
+
+def grade_to_verdict(
+    grade: str,
+) -> Literal[
+    "very_user_friendly",
+    "user_friendly",
+    "moderate",
+    "pervasive",
+    "very_pervasive",
+]:
+    """Derive the verdict label directly from the A-E grade.
+
+    This is the canonical derivation — verdict always tracks grade, never a
+    separately-adjusted risk_score.  Keeping them in lockstep eliminates the
+    grade/verdict contradictions that 38% of production overviews exhibited.
+    """
+    return _VERDICT_FROM_GRADE.get(grade, "moderate")
+
+
+def clamp_grade(
+    llm_grade: str,
+    derived_grade: str,
+    max_delta: int = 1,
+) -> GradeLetter:
+    """Constrain the LLM overall grade to within ``max_delta`` letters of the
+    dimension-derived grade.
+
+    The LLM exhibits a strong negativity bias — 44/45 disagreements with its
+    own dimensions were *more* negative.  Clamping to ±1 letter keeps the
+    LLM's holistic judgment while preventing it from diverging arbitrarily
+    from the evidence-backed per-dimension grades.
+    """
+    order: dict[str, int] = {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5}
+    llm_idx = order.get(llm_grade)
+    derived_idx = order.get(derived_grade)
+    if llm_idx is None or derived_idx is None:
+        return coerce_grade(derived_grade)
+    delta = llm_idx - derived_idx
+    if abs(delta) <= max_delta:
+        return coerce_grade(llm_grade)
+    if delta > max_delta:
+        clamped_idx = derived_idx + max_delta
+    else:
+        clamped_idx = derived_idx - max_delta
+    reverse: dict[int, str] = {v: k for k, v in order.items()}
+    return coerce_grade(reverse.get(clamped_idx, derived_grade))

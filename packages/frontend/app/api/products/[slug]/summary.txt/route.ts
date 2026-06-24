@@ -29,9 +29,9 @@ export async function GET(
   const lines: string[] = [
     `# ${d.product_name} — Privacy Policy Analysis by Clausea AI`,
     "",
-    d.risk_score != null
-      ? `Risk Score: ${d.risk_score}/10`
-      : "Risk Score: unavailable (analysis incomplete)",
+    d.grade
+      ? `Privacy Grade: ${d.grade}`
+      : "Privacy Grade: unavailable (analysis incomplete)",
     d.verdict
       ? `Verdict: ${VERDICT_LABEL[d.verdict] ?? d.verdict}`
       : "Verdict: unavailable (analysis incomplete)",

@@ -9,7 +9,7 @@ class ProductStats(BaseModel):
     """Denormalized product stats for list/extension queries."""
 
     document_count: int = 0
-    risk_score: int | None = None
+    grade: str | None = None
     has_overview: bool = False
     last_indexed_at: datetime | None = None
 

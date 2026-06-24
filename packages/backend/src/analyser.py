@@ -87,11 +87,13 @@ from src.services.watch_out_calibration import calibrate_consumer_explainer
 from src.utils.cancellation import CancellationToken
 from src.utils.grading import (
     aggregate_dimension_grades,
+    clamp_grade,
     coerce_grade,
     grade_to_risk_score,
-    risk_score_to_verdict,
+    grade_to_verdict,
 )
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
+from src.utils.topic_copy import recommended_action_for, why_it_matters_for
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -386,7 +388,14 @@ def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
 
 
 def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
-    """Set headline risk and verdict from LLM grade; apply signal floors to risk only."""
+    """Set headline grade, verdict, and deprecated risk_score from evidence.
+
+    The LLM overall grade is clamped to within one letter of the
+    dimension-derived grade to counter the LLM's systematic negativity bias
+    (44/45 disagreements with dimensions were more negative in production).
+    Verdict is derived directly from the final grade so they can never
+    contradict each other on the card.
+    """
     llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
     derived_grade = aggregate_dimension_grades(
         {
@@ -399,7 +408,19 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
             )
         }
     )
-    final_grade = llm_grade or derived_grade
+
+    if llm_grade and derived_grade:
+        final_grade = clamp_grade(llm_grade, derived_grade, max_delta=1)
+        if final_grade != llm_grade:
+            logger.info(
+                "Clamped overview grade from LLM %s to %s (dimension-derived: %s)",
+                llm_grade,
+                final_grade,
+                derived_grade,
+            )
+    else:
+        final_grade = llm_grade or derived_grade
+
     if final_grade is None:
         meta_summary.risk_score = None
         meta_summary.verdict = None
@@ -407,11 +428,8 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
         return
 
     meta_summary.grade = final_grade
-    base_risk = grade_to_risk_score(final_grade)
-    adjusted = _apply_positive_risk_adjustment(base_risk, meta_summary)
-    floored = _apply_signal_floors(adjusted, meta_summary.privacy_signals)
-    meta_summary.risk_score = floored
-    meta_summary.verdict = risk_score_to_verdict(floored)
+    meta_summary.verdict = grade_to_verdict(final_grade)
+    meta_summary.risk_score = grade_to_risk_score(final_grade)
 
 
 def _calculate_risk_score(scores: dict[str, DocumentAnalysisScores]) -> int | None:
@@ -490,25 +508,8 @@ def _apply_signal_floors(risk_score: int, signals: PrivacySignals | None) -> int
     return floor
 
 
-_TOPIC_WHY_IT_MATTERS: dict[str, str] = {
-    "data_collection": "This affects how much personal information the product can gather about you.",
-    "data_sharing": "This determines whether your data is disclosed to external partners.",
-    "retention": "This controls how long your data remains stored after use.",
-    "ai_training": "This decides whether your prompts/outputs may be used to train models.",
-    "data_sale": "Data sale provisions can expand commercial use of your information.",
-    "security": "Security disclosures indicate how well user data is protected in practice.",
-    "user_rights": "Rights disclosures determine how easily you can access or delete your data.",
-}
-
-_TOPIC_RECOMMENDED_ACTIONS: dict[str, str] = {
-    "data_collection": "Review settings and disable optional data collection where possible.",
-    "data_sharing": "Check privacy controls and opt out of third-party sharing when available.",
-    "retention": "Request deletion timelines in writing if retention windows are unclear.",
-    "ai_training": "Disable training/usage permissions for your prompts if an opt-out exists.",
-    "data_sale": "Use explicit opt-out mechanisms for sale/sharing and document your preference.",
-    "security": "Request security documentation for controls relevant to your deployment.",
-    "user_rights": "Test the product's access/deletion workflow before relying on it at scale.",
-}
+_TOPIC_WHY_IT_MATTERS: dict[str, str] = {}
+_TOPIC_RECOMMENDED_ACTIONS: dict[str, str] = {}
 
 
 def _truncate_text(value: str | None, limit: int = 220) -> str | None:
@@ -623,28 +624,11 @@ def _headline_finding_for_topic(topic: Any) -> Any | None:
 
 
 def _topic_why_it_matters(topic: str, status: str, stance: str, conflict_count: int) -> str:
-    if status in {"missing", "not_disclosed"}:
-        return "No explicit disclosure was found, which limits risk clarity for this topic."
-    if status == "ambiguous" or stance == "mixed":
-        return (
-            f"Documents disagree on this topic ({conflict_count} conflict(s)), "
-            "so commitments may vary by page or policy version."
-        )
-    return _TOPIC_WHY_IT_MATTERS.get(
-        topic,
-        "This topic materially influences user privacy expectations and legal risk.",
-    )
+    return why_it_matters_for(topic, status, stance, conflict_count)
 
 
 def _topic_recommended_action(topic: str, status: str, stance: str) -> str:
-    if status in {"missing", "not_disclosed"}:
-        return "Request written clarification from the vendor before relying on this area."
-    if status == "ambiguous" or stance == "mixed":
-        return "Treat this as unresolved and ask for a single controlling policy statement."
-    return _TOPIC_RECOMMENDED_ACTIONS.get(
-        topic,
-        "Capture this topic in your vendor checklist and verify it during onboarding.",
-    )
+    return recommended_action_for(topic, status, stance)
 
 
 # Doc types that must never influence the product risk score or deep analysis LLM prompt.
@@ -707,10 +691,12 @@ def _merge_legacy_dimension_justifications(
 
 def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
     """
-    Validate LLM dimension grades and derive optional headline risk and verdict.
+    Validate LLM dimension grades and derive grade, verdict, and deprecated risk_score.
 
-    The LLM overall ``grade`` and ``grade_justification`` are preserved when present.
-    ``risk_score`` is derived from grades for legacy consumers only.
+    The LLM overall ``grade`` is clamped to within one letter of the
+    dimension-derived grade to counter the negativity bias documented at
+    product-level.  ``verdict`` derives from the final ``grade`` so they
+    never contradict.  ``risk_score`` is kept for legacy consumers only.
     """
     cleaned: dict[str, DocumentAnalysisScores] = {}
     for score_name, score_obj in parsed.scores.items():
@@ -722,7 +708,12 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
 
     llm_grade = coerce_grade(parsed.grade) if parsed.grade else None
     derived_grade = aggregate_dimension_grades({key: value.grade for key, value in cleaned.items()})
-    final_grade = llm_grade or derived_grade
+
+    if llm_grade and derived_grade:
+        final_grade = clamp_grade(llm_grade, derived_grade, max_delta=1)
+    else:
+        final_grade = llm_grade or derived_grade
+
     if final_grade is None:
         parsed.risk_score = None
         parsed.verdict = None
@@ -730,8 +721,8 @@ def _ensure_required_scores(parsed: DocumentAnalysis) -> DocumentAnalysis:
         return parsed
 
     parsed.grade = final_grade
+    parsed.verdict = grade_to_verdict(final_grade)
     parsed.risk_score = grade_to_risk_score(final_grade)
-    parsed.verdict = risk_score_to_verdict(parsed.risk_score)
     return parsed
 
 
@@ -2254,6 +2245,19 @@ Per-document analyses and extractions:
             )
 
         _reconcile_meta_summary_risk(meta_summary)
+
+        from src.analyzers.overview_guards import validate_overview
+
+        overview_dict = meta_summary.model_dump(mode="json")
+        validation = validate_overview(overview_dict, has_adequate_evidence=len(core_docs) >= 3)
+        if validation.should_re_roll:
+            logger.warning(
+                "Overview validation failed for %s: %s",
+                product_slug,
+                "; ".join(validation.re_roll_reasons),
+            )
+        for warning in validation.warnings:
+            logger.info("Overview warning for %s: %s", product_slug, warning)
 
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(

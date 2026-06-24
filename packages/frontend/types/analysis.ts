@@ -81,7 +81,6 @@ export interface ProductOverview {
   company_name?: string | null;
   last_updated: string;
   verdict?: Verdict | null;
-  risk_score?: number | null;
   grade?: "A" | "B" | "C" | "D" | "E" | null;
   grade_justification?: string | null;
   one_line_summary: string;
@@ -191,6 +190,7 @@ export interface TopicCitation {
   quote: string;
   section_title?: string | null;
   verified: boolean;
+  stale?: boolean;
 }
 
 export interface TopicFinding {

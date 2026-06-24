@@ -125,7 +125,12 @@ class ProductService:
         """
         return await self._product_repo.create(db, product)
 
-    async def update_product_name(self, db: AgnosticDatabase, product_id: str, name: str) -> None:
+    async def update_product_name(
+        self,
+        db: AgnosticDatabase,
+        product_id: str,
+        name: str,
+    ) -> None:
         """Update the display name of a product.
 
         Replaces the domain-derived placeholder name (e.g. "Openai") with the canonical
@@ -572,6 +577,11 @@ class ProductService:
                     continue
             overview.compliance = parsed or None
 
+        from src.services.citation_filter import filter_topic_stance_citations
+
+        if overview.topic_stances:
+            overview.topic_stances = filter_topic_stance_citations(overview.topic_stances)
+
         return overview
 
     async def get_product_analysis(self, db: AgnosticDatabase, slug: str) -> ProductAnalysis | None:
@@ -686,7 +696,6 @@ class ProductService:
             company_name=None,  # Will be set from Product if available
             last_updated=updated_at if updated_at else datetime.now(),
             verdict=meta.verdict,
-            risk_score=meta.risk_score,
             grade=meta.grade,
             grade_justification=meta.grade_justification,
             one_line_summary=meta.summary,
@@ -717,18 +726,6 @@ class ProductService:
             return candidate
         return None
 
-    @staticmethod
-    def _grade_from_risk_score(risk_score: int) -> str:
-        if risk_score <= 2:
-            return "A"
-        if risk_score <= 4:
-            return "B"
-        if risk_score <= 6:
-            return "C"
-        if risk_score <= 8:
-            return "D"
-        return "E"
-
     async def _get_canonical_overview_grade(
         self, db: AgnosticDatabase, product_slug: str
     ) -> str | None:
@@ -736,19 +733,6 @@ class ProductService:
         overview = overview_data.get("overview") if overview_data else None
         if not isinstance(overview, dict):
             return None
-
-        risk_score = overview.get("risk_score")
-        stored_grade = self._coerce_grade(overview.get("grade"))
-        if stored_grade:
-            return stored_grade
-        if isinstance(risk_score, bool):
-            return None
-        if isinstance(risk_score, int):
-            clamped = max(0, min(10, risk_score))
-            return self._grade_from_risk_score(clamped)
-        if isinstance(risk_score, float):
-            clamped = max(0, min(10, round(risk_score)))
-            return self._grade_from_risk_score(clamped)
         return self._coerce_grade(overview.get("grade"))
 
     _GRADE_REASONS: ClassVar[dict[str, str]] = {
