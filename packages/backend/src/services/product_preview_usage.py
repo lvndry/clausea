@@ -25,6 +25,31 @@ class ProductPreviewUsageService:
             return 0
         return int(doc.get("count", 0))
 
+    def _identity_fields(
+        self,
+        *,
+        now: datetime,
+        month_key: str,
+        token: str | None,
+        ip: str,
+        count: int,
+    ) -> tuple[dict, dict]:
+        set_on_insert: dict = {
+            "first_seen": now,
+            "count": count,
+            "month_key": month_key,
+        }
+        if token:
+            set_on_insert["token"] = token
+        else:
+            set_on_insert["ip"] = ip
+
+        set_fields: dict = {"last_seen": now}
+        if token:
+            set_fields["ip"] = ip
+
+        return set_on_insert, set_fields
+
     async def check_and_increment(
         self,
         db: AgnosticDatabase,
@@ -48,35 +73,6 @@ class ProductPreviewUsageService:
             return current < ANONYMOUS_LIMIT, current
 
         now = datetime.now(tz=UTC)
-        set_on_insert: dict = {"first_seen": now, "count": 0, "month_key": month_key}
-        if token:
-            set_on_insert["token"] = token
-        else:
-            set_on_insert["ip"] = ip
-
-        set_fields: dict = {"last_seen": now}
-        if token:
-            set_fields["ip"] = ip
-
-        await collection.update_one(
-            key_filter,
-            {"$setOnInsert": set_on_insert, "$set": set_fields},
-            upsert=True,
-        )
-
-        doc = await collection.find_one(key_filter, {"count": 1, "month_key": 1})
-        current = self._effective_count(doc, month_key)
-
-        if doc and doc.get("month_key") == month_key and current >= ANONYMOUS_LIMIT:
-            return False, current
-
-        if doc and doc.get("month_key") != month_key:
-            updated = await collection.find_one_and_update(
-                key_filter,
-                {"$set": {"count": 1, "month_key": month_key, "last_seen": now}},
-                return_document=ReturnDocument.AFTER,
-            )
-            return True, int(updated["count"]) if updated else 1
 
         updated = await collection.find_one_and_update(
             {**key_filter, "month_key": month_key, "count": {"$lt": ANONYMOUS_LIMIT}},
@@ -87,5 +83,27 @@ class ProductPreviewUsageService:
             return True, int(updated["count"])
 
         doc = await collection.find_one(key_filter, {"count": 1, "month_key": 1})
-        current = self._effective_count(doc, month_key)
-        return False, current
+        if not doc:
+            set_on_insert, set_fields = self._identity_fields(
+                now=now,
+                month_key=month_key,
+                token=token,
+                ip=ip,
+                count=1,
+            )
+            await collection.update_one(
+                key_filter,
+                {"$setOnInsert": set_on_insert, "$set": set_fields},
+                upsert=True,
+            )
+            return True, 1
+
+        if doc.get("month_key") != month_key:
+            updated = await collection.find_one_and_update(
+                key_filter,
+                {"$set": {"count": 1, "month_key": month_key, "last_seen": now}},
+                return_document=ReturnDocument.AFTER,
+            )
+            return True, int(updated["count"]) if updated else 1
+
+        return False, self._effective_count(doc, month_key)

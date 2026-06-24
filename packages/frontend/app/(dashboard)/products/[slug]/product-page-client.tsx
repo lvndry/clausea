@@ -942,41 +942,6 @@ export default function CompanyPage({
       );
     }
 
-    if (indexationMode === "server_error") {
-      return (
-        <div className="space-y-8">
-          <div className="border-b border-border pb-8">
-            <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground mb-4">
-              Something went wrong
-            </p>
-            <h1 className="text-4xl md:text-5xl font-display font-medium tracking-tight text-foreground">
-              Couldn&apos;t load this report
-            </h1>
-            <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
-              We hit an error loading {limitReachedDisplayName}. This is usually
-              temporary — try again in a moment.
-            </p>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button
-              onClick={() => window.location.reload()}
-              className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
-            >
-              <RotateCcw className="mr-2 h-3.5 w-3.5" />
-              Try again
-            </Button>
-            <Link
-              href="/products"
-              className="inline-flex items-center justify-center gap-2 h-11 px-6 border border-border text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Browse Products
-            </Link>
-          </div>
-        </div>
-      );
-    }
-
     if (indexationMode === "not_found") {
       return (
         <div className="space-y-8">
@@ -1013,16 +978,26 @@ export default function CompanyPage({
             Couldn&apos;t load this report
           </h1>
           <p className="text-sm text-muted-foreground mt-4 max-w-2xl leading-relaxed">
-            We hit an error loading {limitReachedDisplayName}. Please try again.
+            We hit an error loading {limitReachedDisplayName}. This is usually
+            temporary — try again in a moment.
           </p>
         </div>
-        <Button
-          onClick={() => window.location.reload()}
-          className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
-        >
-          <RotateCcw className="mr-2 h-3.5 w-3.5" />
-          Try again
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button
+            onClick={() => window.location.reload()}
+            className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+          >
+            <RotateCcw className="mr-2 h-3.5 w-3.5" />
+            Try again
+          </Button>
+          <Link
+            href="/products"
+            className="inline-flex items-center justify-center gap-2 h-11 px-6 border border-border text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Browse Products
+          </Link>
+        </div>
       </div>
     );
   }
