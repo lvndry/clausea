@@ -8,10 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src import llm as llm_module
+from src.core.config import config
 from src.llm import (
-    CIRCUIT_BREAKER_THRESHOLD,
-    CIRCUIT_RESET_SECONDS,
     AllModelsFailedError,
     CircuitBreaker,
     CircuitBreakerError,
@@ -26,7 +24,7 @@ from src.llm import (
 @pytest.fixture(autouse=True)
 def _reset_breakers(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_circuit_breakers()
-    monkeypatch.setattr(llm_module, "LLM_CIRCUIT_BREAKER_ENABLED", True)
+    monkeypatch.setattr(config.llm, "circuit_breaker_enabled", True)
 
 
 def test_reset_half_open_allows_subsequent_probe() -> None:
@@ -44,11 +42,11 @@ def test_reset_half_open_allows_subsequent_probe() -> None:
 async def test_cancelled_probe_resets_half_open() -> None:
     cb = get_circuit_breaker("cancel-probe-test")
     cb.record_success()
-    for _ in range(CIRCUIT_BREAKER_THRESHOLD):
+    for _ in range(config.llm.circuit_breaker_threshold):
         cb.record_failure()
     assert cb.is_open is True
 
-    cb._last_failure_time = time.monotonic() - CIRCUIT_RESET_SECONDS - 1
+    cb._last_failure_time = time.monotonic() - config.llm.circuit_breaker_reset_seconds - 1
 
     with patch(
         "src.llm._completion_with_fallback_impl", AsyncMock(side_effect=asyncio.CancelledError())
@@ -92,14 +90,14 @@ def test_document_circuit_key_scopes_per_document() -> None:
 
 @pytest.mark.asyncio
 async def test_breaker_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llm_module, "LLM_CIRCUIT_BREAKER_ENABLED", False)
+    monkeypatch.setattr(config.llm, "circuit_breaker_enabled", False)
     reset_circuit_breakers()
 
     with patch(
         "src.llm._completion_with_fallback_impl",
         AsyncMock(side_effect=AllModelsFailedError("all failed")),
     ):
-        for _ in range(CIRCUIT_BREAKER_THRESHOLD + 2):
+        for _ in range(config.llm.circuit_breaker_threshold + 2):
             with pytest.raises(AllModelsFailedError):
                 await acompletion_with_fallback(
                     messages=[{"role": "user", "content": "hi"}],
@@ -143,7 +141,7 @@ async def test_product_circuit_keys_are_isolated() -> None:
         "src.llm._completion_with_fallback_impl",
         AsyncMock(side_effect=AllModelsFailedError("all failed")),
     ):
-        for _ in range(CIRCUIT_BREAKER_THRESHOLD - 1):
+        for _ in range(config.llm.circuit_breaker_threshold - 1):
             with pytest.raises(AllModelsFailedError):
                 await acompletion_with_fallback(
                     messages=[{"role": "user", "content": "hi"}],

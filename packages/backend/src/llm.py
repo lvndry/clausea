@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from src.core.config import config
 from src.core.logging import get_logger
 from src.utils.llm_usage import track_usage
 
@@ -28,49 +29,13 @@ class AllModelsFailedError(Exception):
     """Raised when every model in the priority list failed for one completion request."""
 
 
-def _read_bool_env(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _read_positive_int_env(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        return default
-    return value if value > 0 else default
-
-
-def _read_positive_float_env(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        return default
-    return value if value > 0 else default
-
-
-# Off by default — pipeline jobs already retry; a low threshold blocks whole products
-# after a few LLM errors (e.g. during redeploys or bulk regen).
-LLM_CIRCUIT_BREAKER_ENABLED: bool = _read_bool_env("LLM_CIRCUIT_BREAKER_ENABLED", False)
-CIRCUIT_BREAKER_THRESHOLD: int = _read_positive_int_env("LLM_CIRCUIT_BREAKER_THRESHOLD", 15)
-CIRCUIT_RESET_SECONDS: float = _read_positive_float_env("LLM_CIRCUIT_BREAKER_RESET_SECONDS", 60.0)
-
-
 class CircuitBreaker:
     """Per-key circuit breaker with time-based decay and half-open probe support.
 
     Tracks consecutive failures for a single scope (e.g. a product slug).  When the
-    failure count reaches ``CIRCUIT_BREAKER_THRESHOLD`` the circuit opens and rejects
-    all requests until ``CIRCUIT_RESET_SECONDS`` have elapsed, at which point it enters
-    a half-open state and allows exactly one probe.  A successful probe closes the
+    failure count reaches ``config.llm.circuit_breaker_threshold`` the circuit opens
+    and rejects all requests until ``config.llm.circuit_breaker_reset_seconds`` have
+    elapsed, at which point it enters a half-open state and allows exactly one probe.  A successful probe closes the
     circuit; a failed probe re-opens it.
     """
 
@@ -92,7 +57,7 @@ class CircuitBreaker:
         self._consecutive_failures += 1
         self._last_failure_time = time.monotonic()
         self._half_open = False
-        if self._consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD:
+        if self._consecutive_failures >= config.llm.circuit_breaker_threshold:
             self._is_open = True
 
     def record_success(self) -> None:
@@ -110,7 +75,7 @@ class CircuitBreaker:
         if self._half_open:
             return False
         now = time.monotonic()
-        if now - self._last_failure_time >= CIRCUIT_RESET_SECONDS:
+        if now - self._last_failure_time >= config.llm.circuit_breaker_reset_seconds:
             self._half_open = True
             return True
         return False
@@ -121,8 +86,8 @@ _circuit_breakers: dict[str, CircuitBreaker] = {}
 
 def product_circuit_key(product_slug: str, operation: str = "default") -> str:
     """Scope circuit-breaker state to one product operation (overview, consolidation, etc.)."""
-    slug = product_slug.strip() or "unknown"
-    op = operation.strip() or "default"
+    slug = str(product_slug or "").strip() or "unknown"
+    op = str(operation or "").strip() or "default"
     return f"product:{slug}:{op}"
 
 
@@ -160,17 +125,29 @@ def reset_circuit_breakers() -> None:
 
 
 def _resolve_circuit_breaker(circuit_key: str | None) -> CircuitBreaker | None:
-    if not LLM_CIRCUIT_BREAKER_ENABLED or circuit_key is None:
+    if not config.llm.circuit_breaker_enabled or circuit_key is None:
         return None
     return get_circuit_breaker(circuit_key)
+
+
+_NON_TRANSIENT_LLM_ERRORS = frozenset(
+    {
+        "UnsupportedParamsError",
+        "AuthenticationError",
+        "NotFoundError",
+        "BadRequestError",
+        "PermissionDeniedError",
+        "UnprocessableEntityError",
+        "InvalidRequestError",
+    }
+)
 
 
 def _failure_should_trip_breaker(exc: Exception | None) -> bool:
     """Config/client errors won't heal by opening the circuit — don't count them."""
     if exc is None:
         return True
-    name = type(exc).__name__
-    if name in {"UnsupportedParamsError", "AuthenticationError", "NotFoundError"}:
+    if type(exc).__name__ in _NON_TRANSIENT_LLM_ERRORS:
         return False
     message = str(exc).lower()
     if "reasoning_effort" in message or "does not support parameters" in message:
@@ -385,7 +362,7 @@ async def acompletion_with_fallback(
     output fails validation. Since the list runs cheapest-to-most-capable, a validation
     failure naturally escalates to a stronger model.
 
-    When ``LLM_CIRCUIT_BREAKER_ENABLED`` is true and ``circuit_key`` is set, consecutive
+    When ``config.llm.circuit_breaker_enabled`` is true and ``circuit_key`` is set,
     transient failures for that scope can open a breaker for the same key only.
     By default the breaker is disabled so pipeline retries are not short-circuited.
 

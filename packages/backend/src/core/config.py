@@ -16,6 +16,28 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _env_positive_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 _DISCOVERY_PAGE_CAP = 1000
 _DISCOVERY_DEPTH_CAP = 3
 
@@ -196,6 +218,19 @@ class CrawlerConfig:
         )
 
 
+class LlmConfig:
+    """LLM client settings (env-tunable)."""
+
+    def __init__(self) -> None:
+        # Off by default — pipeline jobs already retry; a low threshold blocks whole
+        # products after a few LLM errors (e.g. during redeploys or bulk regen).
+        self.circuit_breaker_enabled: bool = _env_bool("LLM_CIRCUIT_BREAKER_ENABLED", False)
+        self.circuit_breaker_threshold: int = _env_positive_int("LLM_CIRCUIT_BREAKER_THRESHOLD", 15)
+        self.circuit_breaker_reset_seconds: float = _env_positive_float(
+            "LLM_CIRCUIT_BREAKER_RESET_SECONDS", 60.0
+        )
+
+
 class Config:
     """Application configuration with nested configuration objects"""
 
@@ -208,6 +243,7 @@ class Config:
         self.tracking = TrackingConfig()
         self.paddle = PaddleConfig()
         self.crawler = CrawlerConfig()
+        self.llm = LlmConfig()
 
         logger.info(f"Tracking enabled: {self.tracking.tracking_enabled}")
 
