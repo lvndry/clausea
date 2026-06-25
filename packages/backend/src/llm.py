@@ -85,7 +85,24 @@ class CircuitBreaker:
 
 
 _circuit_breakers: dict[str, CircuitBreaker] = {}
-_GLOBAL_CIRCUIT_KEY = "__global__"
+
+
+def product_circuit_key(product_slug: str) -> str:
+    """Scope circuit-breaker state to one product (bulk pipeline jobs must not share one breaker)."""
+    return f"product:{product_slug}"
+
+
+def document_circuit_key(document: Any) -> str:
+    """Circuit key for a policy document row (prefers slug in metadata, else product_id)."""
+    meta = getattr(document, "metadata", None) or {}
+    slug = meta.get("product_slug") if isinstance(meta, dict) else None
+    if isinstance(slug, str) and slug.strip():
+        return product_circuit_key(slug.strip())
+    product_id = getattr(document, "product_id", None)
+    if isinstance(product_id, str) and product_id.strip():
+        return product_circuit_key(product_id.strip())
+    doc_id = getattr(document, "id", "unknown")
+    return product_circuit_key(str(doc_id))
 
 
 def get_circuit_breaker(key: str) -> CircuitBreaker:
@@ -290,7 +307,7 @@ async def acompletion_with_fallback(
     messages: list[dict[str, str]],
     model_priority: list[SupportedModel] | None = None,
     validator: EscalationValidator | None = None,
-    circuit_key: str = _GLOBAL_CIRCUIT_KEY,
+    circuit_key: str | None = None,
     heartbeat_callback: Callable[[], Awaitable[None] | None] | None = None,
     reasoning_effort: str | None = None,
     **kwargs: Any,
@@ -301,8 +318,9 @@ async def acompletion_with_fallback(
     output fails validation. Since the list runs cheapest-to-most-capable, a validation
     failure naturally escalates to a stronger model.
 
-    ``circuit_key`` scopes the circuit breaker so that failures for one product don't
-    block others.  Defaults to a global key for backward compatibility.
+    When ``circuit_key`` is set (e.g. :func:`product_circuit_key`), consecutive failures
+    for that scope open a breaker that blocks only the same key — not other products.
+    When ``circuit_key`` is omitted, no circuit breaker is applied.
 
     Args:
         heartbeat_callback: Optional async no-arg callable fired before each model attempt
@@ -311,9 +329,9 @@ async def acompletion_with_fallback(
         reasoning_effort: Optional reasoning effort level (e.g. "medium", "high").
             Defaults to "medium" for OpenRouter models if not specified.
     """
-    cb = get_circuit_breaker(circuit_key)
+    cb = get_circuit_breaker(circuit_key) if circuit_key is not None else None
 
-    if not cb.allow_request():
+    if cb is not None and not cb.allow_request():
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
 
     # Load the heavy litellm import off the event loop on first use; cached afterward.
@@ -331,18 +349,20 @@ async def acompletion_with_fallback(
             **kwargs,
         )
     except AllModelsFailedError:
-        cb.record_failure()
-        if not cb.allow_request():
-            raise CircuitBreakerError(
-                "LLM service unavailable: too many consecutive failures"
-            ) from None
+        if cb is not None:
+            cb.record_failure()
+            if not cb.allow_request():
+                raise CircuitBreakerError(
+                    "LLM service unavailable: too many consecutive failures"
+                ) from None
         raise
     except BaseException:
-        if cb.is_open:
+        if cb is not None and cb.is_open:
             cb.reset_half_open()
         raise
     else:
-        cb.record_success()
+        if cb is not None:
+            cb.record_success()
         return result
 
 

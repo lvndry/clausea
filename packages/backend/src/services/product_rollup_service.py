@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from motor.core import AgnosticDatabase
 
 from src.core.logging import get_logger
+from src.llm import product_circuit_key
 from src.models.document import (
     CoverageItem,
     CoverageStatus,
@@ -763,7 +764,9 @@ class ProductRollupService:
         )
         from src.services.topic_consolidation import consolidate_rollup_items
 
-        rollup.items = await consolidate_rollup_items(rollup.items)
+        rollup.items = await consolidate_rollup_items(
+            rollup.items, circuit_key=product_circuit_key(product_slug)
+        )
         source_hashes = await self._intelligence_service.compute_source_hashes(db, product_id)
         await self._intelligence_service.save_rollup(
             db,

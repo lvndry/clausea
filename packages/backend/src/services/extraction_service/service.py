@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Any
 
 from src.core.logging import get_logger
-from src.llm import MODEL_PRIORITY, SupportedModel, acompletion_with_fallback
+from src.llm import MODEL_PRIORITY, SupportedModel, acompletion_with_fallback, document_circuit_key
 from src.models.document import (
     Document,
     DocumentExtraction,
@@ -196,6 +196,7 @@ async def extract_document_facts(
             model_priority=_EXTRACTION_PRIMARY,
             validator=_extraction_validator(cluster_name),
             response_format={"type": "json_object"},
+            circuit_key=document_circuit_key(document),
         )
         logger.info(
             "Cluster '%s' for %s segment %d completed with model %s",
