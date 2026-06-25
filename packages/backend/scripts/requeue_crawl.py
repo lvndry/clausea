@@ -47,6 +47,7 @@ async def main(
     *,
     dry_run: bool,
     use_production: bool,
+    missing_overviews_only: bool = False,
 ) -> None:
     _resolve_production(use_production)
     if use_production:
@@ -65,6 +66,19 @@ async def main(
     async with db_session() as db:
         if slugs:
             target_slugs = slugs
+        elif missing_overviews_only:
+            with_overview: set[str] = set()
+            async for row in db.product_intelligence.find(
+                {"overview": {"$exists": True, "$ne": None}},
+                {"product_slug": 1},
+            ):
+                slug = row.get("product_slug")
+                if slug:
+                    with_overview.add(slug)
+            rows = await db.products.find({}, {"slug": 1}).to_list(length=None)
+            target_slugs = sorted(
+                row["slug"] for row in rows if row.get("slug") and row["slug"] not in with_overview
+            )
         else:
             rows = await db.products.find({}, {"slug": 1}).to_list(length=None)
             target_slugs = sorted(row["slug"] for row in rows if row.get("slug"))
@@ -126,5 +140,17 @@ if __name__ == "__main__":
     parser.add_argument("slugs", nargs="*", help="Product slugs (default: all products)")
     parser.add_argument("--dry-run", action="store_true", help="List targets without enqueueing")
     parser.add_argument("--production", action="store_true", help="Use PRODUCTION_MONGO_URI")
+    parser.add_argument(
+        "--missing-overviews",
+        action="store_true",
+        help="Only queue products with no product_intelligence overview",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.slugs or None, dry_run=args.dry_run, use_production=args.production))
+    asyncio.run(
+        main(
+            args.slugs or None,
+            dry_run=args.dry_run,
+            use_production=args.production,
+            missing_overviews_only=args.missing_overviews,
+        )
+    )

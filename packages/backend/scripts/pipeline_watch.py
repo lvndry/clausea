@@ -71,10 +71,12 @@ async def _snapshot(uri: str, db_name: str) -> dict[str, int]:
         client.close()
 
 
-def _run_requeue_crawl(use_production: bool) -> str:
+def _run_requeue_crawl(use_production: bool, *, missing_overviews_only: bool) -> str:
     cmd = [sys.executable, "scripts/requeue_crawl.py"]
     if use_production:
         cmd.append("--production")
+    if missing_overviews_only:
+        cmd.append("--missing-overviews")
     env = os.environ.copy()
     proc = subprocess.run(
         cmd,
@@ -90,7 +92,9 @@ def _run_requeue_crawl(use_production: bool) -> str:
     return summary
 
 
-async def _tick(use_production: bool, *, requeue_crawl_done: bool) -> bool:
+async def _tick(
+    use_production: bool, *, requeue_crawl_done: bool, missing_overviews_only: bool
+) -> bool:
     uri = _resolve_production(use_production)
     db_name = os.getenv("MONGODB_DATABASE", "clausea")
     stats = await _snapshot(uri, db_name)
@@ -109,20 +113,24 @@ async def _tick(use_production: bool, *, requeue_crawl_done: bool) -> bool:
         print(
             f"[{ts}] ACTION: analysis-only backlog drained — running requeue_crawl.py", flush=True
         )
-        summary = _run_requeue_crawl(use_production)
+        summary = _run_requeue_crawl(use_production, missing_overviews_only=missing_overviews_only)
         print(f"[{ts}] requeue_crawl: {summary}", flush=True)
         return True
 
     return requeue_crawl_done
 
 
-async def main(*, use_production: bool, interval: int) -> None:
+async def main(*, use_production: bool, interval: int, missing_overviews_only: bool) -> None:
     if use_production:
         print("Watching PRODUCTION pipeline (10-min updates)", flush=True)
     requeue_done = False
     while True:
         try:
-            requeue_done = await _tick(use_production, requeue_crawl_done=requeue_done)
+            requeue_done = await _tick(
+                use_production,
+                requeue_crawl_done=requeue_done,
+                missing_overviews_only=missing_overviews_only,
+            )
         except Exception as exc:
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
             print(f"[{ts}] ERROR: {exc}", flush=True)
@@ -135,5 +143,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--interval", type=int, default=600, help="Seconds between updates (default 600)"
     )
+    parser.add_argument(
+        "--missing-overviews-only",
+        action="store_true",
+        help="After analysis-only drains, requeue crawl only for products without overviews",
+    )
     args = parser.parse_args()
-    asyncio.run(main(use_production=args.production, interval=args.interval))
+    asyncio.run(
+        main(
+            use_production=args.production,
+            interval=args.interval,
+            missing_overviews_only=args.missing_overviews_only,
+        )
+    )
