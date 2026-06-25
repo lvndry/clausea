@@ -225,8 +225,11 @@ async def _completion_with_fallback_impl(
         logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
         call_kwargs = kwargs.copy()
-        if reasoning_effort:
-            call_kwargs["reasoning_effort"] = reasoning_effort
+        # All OpenRouter models in MODEL_PRIORITY support reasoning; default medium
+        # when the caller does not specify an effort level.
+        effort = reasoning_effort or ("medium" if model_name.startswith("openrouter/") else None)
+        if effort and "reasoning_effort" not in call_kwargs:
+            call_kwargs["reasoning_effort"] = effort
 
         try:
             start_time = time.time()
