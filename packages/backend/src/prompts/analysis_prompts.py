@@ -364,7 +364,7 @@ If you cannot name a specific reason, the overall grade MUST equal the base grad
 
 **Example:** Dimensions are transparency=B(7), data_collection_scope=D(3), user_control=C(5), third_party_sharing=C(5). Weighted: (7×2)+(3×4)+(5×3)+(5×4) = 14+12+15+20 = 61. Divide by 13 = 4.69. Round to 5. Base grade = C. You may output B or D only with a specific reason; otherwise output C.
 
-**Grade anchors (evidence only — no population targets):**
+**Grade anchors:**
 - A: Exceptional — minimal collection, no sale, strong controls, meaningful user rights.
 - B: Good — real protections with some gaps; no material user-hostile practice unmitigated.
 - C: Mixed — meaningful good and bad in balance; invasive elements partially offset by controls.
