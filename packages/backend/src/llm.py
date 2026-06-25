@@ -114,22 +114,11 @@ class Model:
 
 
 SupportedModel = str
-_OPENROUTER_ALIASES: dict[str, str] = {
-    "openrouter/owl-alpha": os.getenv(
-        "OPENROUTER_OWL_ALPHA_MODEL", "openrouter/openrouter/owl-alpha"
-    ),
-    "openrouter/gpt-oss-120b-free": os.getenv(
-        "OPENROUTER_GPT_OSS_FREE_MODEL", "openrouter/openai/gpt-oss-120b:free"
-    ),
-    "openrouter/gemma-free": os.getenv(
-        "OPENROUTER_GEMMA_FREE_MODEL", "openrouter/google/gemma-4-31b-it:free"
-    ),
-}
 
 MODEL_PRIORITY: list[SupportedModel] = [
-    "openrouter/owl-alpha",
-    "openrouter/gpt-oss-120b-free",
-    "openrouter/gemma-free",
+    "openrouter/openrouter/owl-alpha",
+    "openrouter/openai/gpt-oss-120b:free",
+    "openrouter/google/gemma-4-31b-it:free",
     "openrouter/openai/gpt-oss-120b",
     "openrouter/deepseek/deepseek-v4-flash",
     "openrouter/qwen/qwen3.5-flash-02-23",
@@ -159,9 +148,8 @@ def get_model(model_name: SupportedModel) -> Model:
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY is not set")
-        full_model = _OPENROUTER_ALIASES.get(model_name, model_name)
         return Model(
-            model=full_model,
+            model=model_name,
             api_key=api_key,
             extra_headers={
                 "HTTP-Referer": os.getenv("APP_URL", "https://clausea.co"),

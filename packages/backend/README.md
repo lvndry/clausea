@@ -214,11 +214,20 @@ uv run ruff format .
 uv run ruff check --select I --fix
 ```
 
-### Database Migrations
+### Pipeline Operations
+
+Operational scripts live in `scripts/`. Common examples:
 
 ```bash
-# Run migrations
-uv run python scripts/migrate_users.py
+# Queue snapshot (read-only)
+uv run python scripts/queue_status.py
+
+# Ship-readiness gates
+uv run python scripts/ship_health_check.py
+
+# Requeue analysis-only or full-crawl jobs (production)
+uv run python scripts/requeue_analysis.py --production --dry-run
+uv run python scripts/requeue_crawl.py --production --dry-run
 ```
 
 ### Dashboard Development
