@@ -413,12 +413,38 @@ _SEVERE_TOPIC_STANCES = frozenset({"harmful", "concerning", "conflicting"})
 _MANY_SEVERE_STANCES_THRESHOLD = 5
 
 
+_STANCE_WORST_WINS: dict[str, int] = {
+    "fair": 0,
+    "concerning": 1,
+    "conflicting": 2,
+    "harmful": 3,
+}
+
+
+def _worst_stance(a: str, b: str) -> str:
+    return a if _STANCE_WORST_WINS.get(a, -1) >= _STANCE_WORST_WINS.get(b, -1) else b
+
+
 def _topic_risk_from_stances(stances: list[TopicStanceBreakdown] | None) -> int | None:
     if not stances:
         return None
-    topic_rows: dict[InsightCategory, dict[str, Any]] = {
-        stance.topic: {"status": stance.status, "stance": stance.stance} for stance in stances
-    }
+    topic_rows: dict[InsightCategory, dict[str, Any]] = {}
+    for stance in stances:
+        row = {"status": stance.status, "stance": stance.stance}
+        existing = topic_rows.get(stance.topic)
+        if existing is None:
+            topic_rows[stance.topic] = row
+            continue
+        logger.warning(
+            "Duplicate topic stance for %s (%s -> %s); keeping worst",
+            stance.topic,
+            existing["stance"],
+            stance.stance,
+        )
+        topic_rows[stance.topic] = {
+            "status": "found" if "found" in {existing["status"], stance.status} else stance.status,
+            "stance": _worst_stance(str(existing["stance"]), str(stance.stance)),
+        }
     return compose_product_risk_from_topics(topic_rows)
 
 
@@ -463,7 +489,7 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
        dimension grade to counter systematic bias.
     2. Take the worst (highest) risk among dimensions, topics, and clamped LLM.
     3. Apply material floors for specific severe topics (retention, AI training).
-    4. Apply positive adjustments for documented protections and fair stances.
+    4. Apply positive adjustments for documented protections, then re-assert floors.
     """
     llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
     derived_grade = aggregate_dimension_grades(
@@ -494,24 +520,28 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
     topic_risk = _topic_risk_from_stances(meta_summary.topic_stances)
     if topic_risk is not None:
         risk_candidates.append(topic_risk)
-        # Floor for many severe stances (C or worse if many concerns found).
-        if _severe_stance_count(meta_summary.topic_stances) >= _MANY_SEVERE_STANCES_THRESHOLD:
-            risk_candidates.append(6)
 
-    # 3. Apply floors from context-aware topic stances.
+    # 3. Compute hard floors (re-applied after positive adjustments).
     topic_floor = _topic_specific_floors(meta_summary.topic_stances)
-    if topic_floor:
-        risk_candidates.append(topic_floor)
+    severe_stance_floor = (
+        6
+        if _severe_stance_count(meta_summary.topic_stances) >= _MANY_SEVERE_STANCES_THRESHOLD
+        else 0
+    )
 
-    if not risk_candidates:
+    if not risk_candidates and not topic_floor and not severe_stance_floor:
         meta_summary.risk_score = None
         meta_summary.verdict = None
         meta_summary.grade = None
         return
 
-    # 4. Blend and adjust.
-    blended_risk = max(risk_candidates)
+    # 4. Blend soft signals, then re-assert hard floors.
+    blended_risk = max(risk_candidates) if risk_candidates else 0
     blended_risk = _apply_positive_risk_adjustment(blended_risk, meta_summary)
+    if topic_floor:
+        blended_risk = max(blended_risk, topic_floor)
+    if severe_stance_floor:
+        blended_risk = max(blended_risk, severe_stance_floor)
     blended_risk = _apply_signal_floors(blended_risk, meta_summary.privacy_signals)
 
     final_grade = risk_score_to_grade(blended_risk)

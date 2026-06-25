@@ -225,9 +225,7 @@ async def _completion_with_fallback_impl(
         logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
         call_kwargs = kwargs.copy()
-        if model_name.startswith("openrouter/") and "reasoning_effort" not in call_kwargs:
-            call_kwargs["reasoning_effort"] = reasoning_effort or "medium"
-        elif reasoning_effort:
+        if reasoning_effort:
             call_kwargs["reasoning_effort"] = reasoning_effort
 
         try:

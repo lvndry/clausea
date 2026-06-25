@@ -210,3 +210,27 @@ def test_reconcile_topic_stances_and_dangers_raise_middling_dimensions() -> None
     assert meta.grade == "D"
     assert meta.verdict == "pervasive"
     assert meta.risk_score == 7
+
+
+def test_reconcile_topic_floors_survive_positive_adjustments() -> None:
+    """Benefits and fair stances must not wash out harmful retention floor."""
+    meta = MetaSummary(
+        summary="Indefinite retention with some documented protections.",
+        grade="C",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Readable policy"),
+            data_collection_scope=MetaSummaryScore(grade="C", justification="Broad collection"),
+            user_control=MetaSummaryScore(grade="B", justification="Some controls"),
+            third_party_sharing=MetaSummaryScore(grade="C", justification="Ad partners"),
+        ),
+        benefits=["encryption at rest", "self-service deletion"],
+        topic_stances=[
+            TopicStanceBreakdown(topic="retention", status="found", stance="harmful"),
+            TopicStanceBreakdown(topic="data_sale", status="found", stance="fair"),
+            TopicStanceBreakdown(topic="ai_training", status="found", stance="fair"),
+            TopicStanceBreakdown(topic="security", status="found", stance="fair"),
+        ],
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.grade == "D"
+    assert meta.risk_score == 7
