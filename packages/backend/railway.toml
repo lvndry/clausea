@@ -6,7 +6,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
-watchPatterns = ["packages/backend/**"]
+watchPatterns = ["**"]
 
 [deploy]
 # Do not set startCommand here — Railway passes it to uvicorn without shell

@@ -42,7 +42,7 @@ Only one `railway.toml` can live at the service root (`packages/backend`). **Eve
 | Start command  | *(empty — image CMD binds `${PORT}` via shell)* |
 | Health check   | `/health`                                       |
 
-`railway.toml` sets `watchPatterns = ["packages/backend/**"]` so monorepo pushes only redeploy when backend files change.
+`railway.toml` sets `watchPatterns = ["**"]` relative to the service root (`packages/backend`) so pushes redeploy when backend files change. Do not use `packages/backend/**` here — that breaks local `railway up` deploys where the snapshot root is already `packages/backend`.
 
 ### 2. Worker service
 
