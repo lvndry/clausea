@@ -1,7 +1,4 @@
-"""
-This module contains the PromotionManager class, which is used to promote data from the local database
-to the production database and download data from production to local.
-"""
+"""Dev-only bulk sync between local and production MongoDB (PromotionManager)."""
 
 import os
 from datetime import datetime

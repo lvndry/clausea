@@ -20,14 +20,11 @@ Usage:
     # Limit concurrency (default 3):
     uv run python scripts/regenerate_overviews.py --concurrency 1 --production
 """
-# ruff: noqa: E402
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import os
-import sys
 import time
 from dataclasses import dataclass, field
 
@@ -35,24 +32,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
-def _resolve_production() -> bool:
-    """Check --production flag and set MONGO_URI before database module imports."""
-    if "--production" in sys.argv:
-        prod_uri = os.getenv("PRODUCTION_MONGO_URI")
-        if not prod_uri:
-            print("ERROR: PRODUCTION_MONGO_URI not set in environment")
-            sys.exit(1)
-        os.environ["MONGO_URI"] = prod_uri
-        return True
-    return False
-
-
-_USE_PRODUCTION = _resolve_production()
-
 from src.analyser import generate_product_overview
 from src.core.database import db_session
 from src.core.logging import get_logger, setup_logging
+from src.ops.script_env import resolve_production
 from src.services.service_factory import create_document_service, create_product_service
 
 logger = get_logger(__name__)
@@ -134,10 +117,8 @@ async def main(
     concurrency: int,
     use_production: bool,
 ) -> None:
+    resolve_production(use_production=use_production)
     setup_logging()
-
-    if use_production:
-        print("Using PRODUCTION_MONGO_URI")
 
     product_svc = create_product_service()
     doc_svc = create_document_service()
@@ -219,5 +200,6 @@ if __name__ == "__main__":
         help="Use PRODUCTION_MONGO_URI instead of MONGO_URI",
     )
     args = parser.parse_args()
-
+    if args.production:
+        print("Using PRODUCTION_MONGO_URI")
     asyncio.run(main(args.slugs, args.dry_run, args.concurrency, args.production))

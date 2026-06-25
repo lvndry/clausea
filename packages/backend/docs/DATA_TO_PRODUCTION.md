@@ -124,7 +124,7 @@ Available dry run options:
 
 ## API Endpoints
 
-The promotion system provides use `/promotion`router (packages/backend/src/dashboard/components/promotion.py)
+The promotion system exposes `/promotion/*` API routes **in development only** (Streamlit dashboard: `src/dashboard/components/promotion.py`; core logic: `src/ops/promotion.py`).
 
 ## Troubleshooting
 
