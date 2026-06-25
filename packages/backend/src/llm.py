@@ -115,15 +115,18 @@ class Model:
 
 SupportedModel = str
 
+# Smallest context in this cascade: gemma-4-31b-it (262K). gpt-oss-120b (131K) was
+# removed — it blocked whole-document extraction and adaptive chunk sizing.
 MODEL_PRIORITY: list[SupportedModel] = [
     "openrouter/openrouter/owl-alpha",
-    "openrouter/openai/gpt-oss-120b:free",
     "openrouter/google/gemma-4-31b-it:free",
-    "openrouter/openai/gpt-oss-120b",
     "openrouter/deepseek/deepseek-v4-flash",
     "openrouter/qwen/qwen3.5-flash-02-23",
     "openrouter/google/gemini-2.5-flash-lite",
 ]
+
+# Conservative input budget for extraction (tokens). Used to choose whole-doc vs chunked.
+EXTRACTION_MIN_CONTEXT_TOKENS = 250_000
 EscalationValidator = Callable[[str], bool]
 
 
@@ -203,6 +206,7 @@ async def _completion_with_fallback_impl(
     model_priority: list[SupportedModel] | None = None,
     validator: EscalationValidator | None = None,
     heartbeat_callback: Callable[[], Awaitable[None] | None] | None = None,
+    reasoning_effort: str | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
     import litellm
@@ -220,6 +224,13 @@ async def _completion_with_fallback_impl(
         model = get_model(model_name)
         logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
+        call_kwargs = kwargs.copy()
+        # All OpenRouter models in MODEL_PRIORITY support reasoning; default medium
+        # when the caller does not specify an effort level.
+        effort = reasoning_effort or ("medium" if model_name.startswith("openrouter/") else None)
+        if effort and "reasoning_effort" not in call_kwargs:
+            call_kwargs["reasoning_effort"] = effort
+
         try:
             start_time = time.time()
             response = await completion_fn(
@@ -228,7 +239,7 @@ async def _completion_with_fallback_impl(
                 messages=messages,
                 **({"api_base": model.api_base} if model.api_base else {}),
                 **({"extra_headers": model.extra_headers} if model.extra_headers else {}),
-                **kwargs,
+                **call_kwargs,
             )
             duration = time.time() - start_time
             provider_model = getattr(response, "model", None) or model.model
@@ -281,6 +292,7 @@ async def acompletion_with_fallback(
     validator: EscalationValidator | None = None,
     circuit_key: str = _GLOBAL_CIRCUIT_KEY,
     heartbeat_callback: Callable[[], Awaitable[None] | None] | None = None,
+    reasoning_effort: str | None = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Execute LLM completion, walking ``model_priority`` (default MODEL_PRIORITY) on failure.
@@ -296,6 +308,8 @@ async def acompletion_with_fallback(
         heartbeat_callback: Optional async no-arg callable fired before each model attempt
             and before each rate-limit backoff sleep, so the caller can bump a pipeline
             job heartbeat and avoid stall-guard kills during long fallback sequences.
+        reasoning_effort: Optional reasoning effort level (e.g. "medium", "high").
+            Defaults to "medium" for OpenRouter models if not specified.
     """
     cb = get_circuit_breaker(circuit_key)
 
@@ -313,6 +327,7 @@ async def acompletion_with_fallback(
             model_priority=model_priority,
             validator=validator,
             heartbeat_callback=heartbeat_callback,
+            reasoning_effort=reasoning_effort,
             **kwargs,
         )
     except AllModelsFailedError:

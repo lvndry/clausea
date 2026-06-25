@@ -10,10 +10,10 @@ is reliable at categories and comparisons, not at absolute 0-10 scores.
 
 Per-document flow
 -----------------
-1. ``extract_document_facts()`` — structured, evidence-backed facts (chunked,
-   parallel). Neutral; carries no judgment.
+1. ``extract_document_facts()`` — structured, evidence-backed facts (adaptive
+   section chunks, parallel). Neutral; carries no judgment.
 2. ``analyse_document()`` — one LLM call turns the extracted facts into a deep
-   analysis: per-dimension letter grades (A–E) with justifications, key points,
+   analysis: per-dimension letter grades (A-E) with justifications, key points,
    and risk clauses. Grades are letters, not fabricated scores.
 
 Product-overview flow (powers the cached JSON on ``/products/{slug}``)
@@ -112,6 +112,7 @@ from src.utils.grading import (
     coerce_grade,
     grade_to_risk_score,
     grade_to_verdict,
+    risk_score_to_grade,
 )
 from src.utils.llm_usage import UsageTracker, log_usage_summary, usage_tracking
 from src.utils.topic_copy import recommended_action_for, why_it_matters_for
@@ -408,14 +409,87 @@ def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
     )
 
 
+_SEVERE_TOPIC_STANCES = frozenset({"harmful", "concerning", "conflicting"})
+_MANY_SEVERE_STANCES_THRESHOLD = 5
+
+
+_STANCE_WORST_WINS: dict[str, int] = {
+    "fair": 0,
+    "concerning": 1,
+    "conflicting": 2,
+    "harmful": 3,
+}
+
+
+def _worst_stance(a: str, b: str) -> str:
+    return a if _STANCE_WORST_WINS.get(a, -1) >= _STANCE_WORST_WINS.get(b, -1) else b
+
+
+def _topic_risk_from_stances(stances: list[TopicStanceBreakdown] | None) -> int | None:
+    if not stances:
+        return None
+    topic_rows: dict[InsightCategory, dict[str, Any]] = {}
+    for stance in stances:
+        row = {"status": stance.status, "stance": stance.stance}
+        existing = topic_rows.get(stance.topic)
+        if existing is None:
+            topic_rows[stance.topic] = row
+            continue
+        logger.warning(
+            "Duplicate topic stance for %s (%s -> %s); keeping worst",
+            stance.topic,
+            existing["stance"],
+            stance.stance,
+        )
+        topic_rows[stance.topic] = {
+            "status": "found" if "found" in {existing["status"], stance.status} else stance.status,
+            "stance": _worst_stance(str(existing["stance"]), str(stance.stance)),
+        }
+    return compose_product_risk_from_topics(topic_rows)
+
+
+def _severe_stance_count(stances: list[TopicStanceBreakdown] | None) -> int:
+    if not stances:
+        return 0
+    return sum(
+        1
+        for stance in stances
+        if stance.status == "found" and stance.stance in _SEVERE_TOPIC_STANCES
+    )
+
+
+def _topic_specific_floors(stances: list[TopicStanceBreakdown] | None) -> int:
+    """Minimum risk score implied by specific severe topic stances.
+
+    Replaces fragile regex-based danger detection with context-aware topic stances
+    derived from LLM-extracted facts.
+    """
+    if not stances:
+        return 0
+    floor = 0
+    for stance in stances:
+        if stance.status != "found":
+            continue
+        # Indefinite retention is a material D-level risk (7).
+        if stance.topic == "retention" and stance.stance == "harmful":
+            floor = max(floor, 7)
+        # AI training on user data is a material C-level risk (6).
+        if stance.topic == "ai_training" and stance.stance == "harmful":
+            floor = max(floor, 6)
+    return floor
+
+
 def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
     """Set headline grade, verdict, and deprecated risk_score from evidence.
 
-    The LLM overall grade is clamped to within one letter of the
-    dimension-derived grade to counter the LLM's systematic negativity bias
-    (44/45 disagreements with dimensions were more negative in production).
-    Verdict is derived directly from the final grade so they can never
-    contradict each other on the card.
+    Blends dimension grades, topic stance rollup, danger floors, privacy signal
+    floors, and the LLM overall grade. To ensure the "truest representation"
+    (not too harsh or too soft), we:
+    1. Clamp the holistic LLM grade to within one letter of the evidence-backed
+       dimension grade to counter systematic bias.
+    2. Take the worst (highest) risk among dimensions, topics, and clamped LLM.
+    3. Apply material floors for specific severe topics (retention, AI training).
+    4. Apply positive adjustments for documented protections, then re-assert floors.
     """
     llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
     derived_grade = aggregate_dimension_grades(
@@ -430,23 +504,59 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
         }
     )
 
+    # 1. Counter LLM bias by clamping to dimensions ±1.
     if llm_grade and derived_grade:
-        final_grade = clamp_grade(llm_grade, derived_grade, max_delta=1)
-        if final_grade != llm_grade:
-            logger.info(
-                "Clamped overview grade from LLM %s to %s (dimension-derived: %s)",
-                llm_grade,
-                final_grade,
-                derived_grade,
-            )
+        clamped_llm_grade = clamp_grade(llm_grade, derived_grade, max_delta=1)
     else:
-        final_grade = llm_grade or derived_grade
+        clamped_llm_grade = llm_grade
 
-    if final_grade is None:
+    risk_candidates: list[int] = []
+    if derived_grade:
+        risk_candidates.append(grade_to_risk_score(derived_grade))
+    if clamped_llm_grade:
+        risk_candidates.append(grade_to_risk_score(clamped_llm_grade))
+
+    # 2. Incorporate topic-level rollup.
+    topic_risk = _topic_risk_from_stances(meta_summary.topic_stances)
+    if topic_risk is not None:
+        risk_candidates.append(topic_risk)
+
+    # 3. Compute hard floors (re-applied after positive adjustments).
+    topic_floor = _topic_specific_floors(meta_summary.topic_stances)
+    severe_stance_floor = (
+        6
+        if _severe_stance_count(meta_summary.topic_stances) >= _MANY_SEVERE_STANCES_THRESHOLD
+        else 0
+    )
+
+    if not risk_candidates and not topic_floor and not severe_stance_floor:
         meta_summary.risk_score = None
         meta_summary.verdict = None
         meta_summary.grade = None
         return
+
+    # 4. Blend soft signals, then re-assert hard floors.
+    blended_risk = max(risk_candidates) if risk_candidates else 0
+    blended_risk = _apply_positive_risk_adjustment(blended_risk, meta_summary)
+    if topic_floor:
+        blended_risk = max(blended_risk, topic_floor)
+    if severe_stance_floor:
+        blended_risk = max(blended_risk, severe_stance_floor)
+    blended_risk = _apply_signal_floors(blended_risk, meta_summary.privacy_signals)
+
+    final_grade = risk_score_to_grade(blended_risk)
+
+    if llm_grade and final_grade != llm_grade:
+        logger.info(
+            "Reconciled overview grade from LLM %s to %s "
+            "(dimensions=%s topic_risk=%s topic_floor=%s blended_risk=%s)",
+            llm_grade,
+            final_grade,
+            derived_grade,
+            topic_risk,
+            topic_floor or None,
+            blended_risk,
+        )
 
     meta_summary.grade = final_grade
     meta_summary.verdict = grade_to_verdict(final_grade)

@@ -126,7 +126,7 @@ def test_reconcile_meta_summary_uses_llm_grade() -> None:
         ),
     )
     _reconcile_meta_summary_risk(meta)
-    assert meta.grade == "B"
+    assert meta.grade == "C"
     assert meta.risk_score is not None
 
 
@@ -174,6 +174,63 @@ def test_reconcile_derives_verdict_from_grade() -> None:
         ],
     )
     _reconcile_meta_summary_risk(meta)
-    assert meta.grade == "B"
-    assert meta.verdict == "user_friendly"
-    assert meta.risk_score == 3
+    assert meta.grade == "C"
+    assert meta.verdict == "moderate"
+    assert meta.risk_score == 5
+
+
+def test_reconcile_topic_stances_and_dangers_raise_middling_dimensions() -> None:
+    """Discord-like case: dimensions average to B but topic rollup and dangers warrant D."""
+    meta = MetaSummary(
+        summary="Messages kept indefinitely; AI training on public posts.",
+        grade="C",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Readable policy"),
+            data_collection_scope=MetaSummaryScore(grade="C", justification="Broad collection"),
+            user_control=MetaSummaryScore(grade="B", justification="Some controls"),
+            third_party_sharing=MetaSummaryScore(grade="C", justification="Ad partners"),
+        ),
+        dangers=[
+            "Discord keeps messages indefinitely unless you delete them",
+            "Uses public posts for AI and machine learning training",
+        ],
+        privacy_signals=PrivacySignals(ai_training_on_user_data="yes"),
+        topic_stances=[
+            TopicStanceBreakdown(topic="retention", status="found", stance="harmful"),
+            TopicStanceBreakdown(topic="ai_training", status="found", stance="harmful"),
+            TopicStanceBreakdown(topic="data_sale", status="found", stance="concerning"),
+            TopicStanceBreakdown(topic="data_sharing", status="found", stance="concerning"),
+            TopicStanceBreakdown(topic="cookies_tracking", status="found", stance="concerning"),
+            TopicStanceBreakdown(topic="profiling_ai", status="found", stance="concerning"),
+            TopicStanceBreakdown(topic="data_collection", status="found", stance="concerning"),
+            TopicStanceBreakdown(topic="security", status="found", stance="fair"),
+        ],
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.grade == "D"
+    assert meta.verdict == "pervasive"
+    assert meta.risk_score == 7
+
+
+def test_reconcile_topic_floors_survive_positive_adjustments() -> None:
+    """Benefits and fair stances must not wash out harmful retention floor."""
+    meta = MetaSummary(
+        summary="Indefinite retention with some documented protections.",
+        grade="C",
+        scores=MetaSummaryScores(
+            transparency=MetaSummaryScore(grade="B", justification="Readable policy"),
+            data_collection_scope=MetaSummaryScore(grade="C", justification="Broad collection"),
+            user_control=MetaSummaryScore(grade="B", justification="Some controls"),
+            third_party_sharing=MetaSummaryScore(grade="C", justification="Ad partners"),
+        ),
+        benefits=["encryption at rest", "self-service deletion"],
+        topic_stances=[
+            TopicStanceBreakdown(topic="retention", status="found", stance="harmful"),
+            TopicStanceBreakdown(topic="data_sale", status="found", stance="fair"),
+            TopicStanceBreakdown(topic="ai_training", status="found", stance="fair"),
+            TopicStanceBreakdown(topic="security", status="found", stance="fair"),
+        ],
+    )
+    _reconcile_meta_summary_risk(meta)
+    assert meta.grade == "D"
+    assert meta.risk_score == 7

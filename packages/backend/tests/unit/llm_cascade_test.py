@@ -19,6 +19,13 @@ def test_no_gpt5_or_native_paid_on_hot_path():
     assert not [model for model in MODEL_PRIORITY if model.startswith("gpt-5")]
 
 
+def test_no_short_context_models_on_hot_path():
+    for model in MODEL_PRIORITY:
+        assert "gpt-oss" not in model, (
+            f"{model} has 131K context — too short for whole-doc extraction"
+        )
+
+
 def test_free_models_use_free_slugs():
     free_models = [model for model in MODEL_PRIORITY if ":free" in model]
-    assert len(free_models) >= 2
+    assert len(free_models) >= 1

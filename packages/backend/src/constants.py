@@ -2,7 +2,7 @@ from src.models.user import UserTier
 
 # Monthly limits per tier (analyses per month)
 TIER_LIMITS = {
-    UserTier.FREE: 3,  # 3 analyses per month
+    UserTier.FREE: 15,  # 15 analyses per month
     UserTier.PRO: 999999,  # Effectively unlimited
 }
 
