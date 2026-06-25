@@ -75,10 +75,11 @@ async def main(
                 slug = row.get("product_slug")
                 if slug:
                     with_overview.add(slug)
-            rows = await db.products.find({}, {"slug": 1}).to_list(length=None)
-            target_slugs = sorted(
-                row["slug"] for row in rows if row.get("slug") and row["slug"] not in with_overview
-            )
+            rows = await db.products.find(
+                {"slug": {"$nin": list(with_overview)}},
+                {"slug": 1},
+            ).to_list(length=None)
+            target_slugs = sorted(row["slug"] for row in rows if row.get("slug"))
         else:
             rows = await db.products.find({}, {"slug": 1}).to_list(length=None)
             target_slugs = sorted(row["slug"] for row in rows if row.get("slug"))

@@ -15,6 +15,7 @@ from src.llm import (
     CircuitBreaker,
     CircuitBreakerError,
     acompletion_with_fallback,
+    document_circuit_key,
     get_circuit_breaker,
     product_circuit_key,
 )
@@ -70,6 +71,16 @@ async def test_all_models_failed_still_records_failure() -> None:
             )
 
     assert cb.consecutive_failures == 1
+
+
+def test_document_circuit_key_handles_dict_and_none() -> None:
+    assert document_circuit_key(None) == product_circuit_key("unknown")
+    assert document_circuit_key({"product_id": "pid-1", "id": "doc-1"}) == product_circuit_key(
+        "pid-1"
+    )
+    assert document_circuit_key(
+        {"metadata": {"product_slug": "discord"}, "product_id": "pid-1"}
+    ) == product_circuit_key("discord")
 
 
 @pytest.mark.asyncio

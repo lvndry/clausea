@@ -94,14 +94,21 @@ def product_circuit_key(product_slug: str) -> str:
 
 def document_circuit_key(document: Any) -> str:
     """Circuit key for a policy document row (prefers slug in metadata, else product_id)."""
-    meta = getattr(document, "metadata", None) or {}
+    if document is None:
+        return product_circuit_key("unknown")
+    if isinstance(document, dict):
+        meta = document.get("metadata") or {}
+        product_id = document.get("product_id")
+        doc_id = document.get("id") or document.get("_id", "unknown")
+    else:
+        meta = getattr(document, "metadata", None) or {}
+        product_id = getattr(document, "product_id", None)
+        doc_id = getattr(document, "id", "unknown")
     slug = meta.get("product_slug") if isinstance(meta, dict) else None
     if isinstance(slug, str) and slug.strip():
         return product_circuit_key(slug.strip())
-    product_id = getattr(document, "product_id", None)
     if isinstance(product_id, str) and product_id.strip():
         return product_circuit_key(product_id.strip())
-    doc_id = getattr(document, "id", "unknown")
     return product_circuit_key(str(doc_id))
 
 
