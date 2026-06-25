@@ -58,7 +58,7 @@ Assign each dimension an **A to E letter grade** with a **mandatory justificatio
   - data_retention_score B: General time limit stated ("kept for no longer than necessary") but no per-type specifics.
   - security_score B: Encryption mentioned but not specified (no algorithm, no key management). Certification claimed but not named.
 
-- **C**: Mixed/typical — some controls but material gaps, OR invasive practice with partial mitigation.
+- **C**: Mixed — some controls but material gaps, OR invasive practice with partial mitigation.
   - transparency C: Lists data categories but not specific types ("device information" not "device fingerprint"). Purposes stated but generic ("to improve our services").
   - data_collection_scope C: Broad collection including behavioral/usage inference, but no sensitive categories. Collection is opt-out not opt-in.
   - user_control C: Account deletion available but requires contact (no self-service). Opt-outs exist for some purposes but not all.
@@ -364,13 +364,14 @@ If you cannot name a specific reason, the overall grade MUST equal the base grad
 
 **Example:** Dimensions are transparency=B(7), data_collection_scope=D(3), user_control=C(5), third_party_sharing=C(5). Weighted: (7×2)+(3×4)+(5×3)+(5×4) = 14+12+15+20 = 61. Divide by 13 = 4.69. Round to 5. Base grade = C. You may output B or D only with a specific reason; otherwise output C.
 
-**Grade distribution guidance:**
-- A: Exceptional — minimal collection, no sale, strong controls, E2E encryption. ~5% of products.
-- B: Good — some concerns but real protections. ~15% of products.
-- C: Typical — mainstream practices, mix of good and bad. ~40% of products.
-- D: Concerning — invasive practices without meaningful mitigation. ~30% of products.
-- E: Alarming — worst-case on multiple dimensions. ~10% of products.
-If you find yourself assigning D to most products, you are grading too harshly. Most mainstream services should be C.
+**Grade anchors (evidence only — no population targets):**
+- A: Exceptional — minimal collection, no sale, strong controls, meaningful user rights.
+- B: Good — real protections with some gaps; no material user-hostile practice unmitigated.
+- C: Mixed — meaningful good and bad in balance; invasive elements partially offset by controls.
+- D: Concerning — one or more important user-hostile practices with weak or no mitigation.
+- E: Alarming — multiple severe harms (sale/brokers, sensitive data without consent, no deletion, perpetual irrevocable licenses, etc.).
+
+Grade from the rubric and dimension procedure only. **Do not grade leniently because a product is well-known, widely used, or "industry standard."** Popularity does not change what the documents permit. If the evidence supports D or E, assign D or E.
 
 ## DIMENSION GRADES
 Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for: transparency, data_collection_scope, user_control, third_party_sharing.
@@ -826,7 +827,7 @@ For each watch_out_for item, set materiality:
 - "standard_industry": routine legal mechanics (DMCA, assignment, governing law) — omit from watch_out_for when possible.
 
 =============== GRADE A–E + HARD CAP ================
-A = genuinely protective. B = mostly fair, minor concerns. C = typical/mixed. D = user-hostile in one important way. E = user-hostile in several ways.
+A = genuinely protective. B = mostly fair, minor concerns. C = mixed good and bad. D = user-hostile in one important way. E = user-hostile in several ways.
 MECHANICAL CAP: Count your "critical" findings across what_they_collect, who_gets_your_data, and watch_out_for. Put that number in `critical_findings_count`. If it is 1, grade may be at most D. If it is 2 or more, grade may be at most E. A single critical finding caps at D regardless of anything good. State the blocker in `grade_reason`.
 
 =============== THIN / PARTIAL EXTRACTION ================

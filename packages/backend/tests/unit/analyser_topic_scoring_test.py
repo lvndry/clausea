@@ -162,9 +162,9 @@ async def test_generate_product_overview_uses_llm_grades() -> None:
             document_svc=document_svc,
         )
 
-    # LLM grade C → risk 5 after reconciliation.
-    assert result.grade == "C"
-    assert result.risk_score == 5
+    # Topic rollup risk 9 overrides middling LLM grade C.
+    assert result.grade == "E"
+    assert result.risk_score == 9
     assert result.topic_stances
     assert result.topic_stances[0].rationale_key == "topic.findings_summary"
     assert result.topic_stances[0].headline_claim is not None
