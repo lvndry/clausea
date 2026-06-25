@@ -14,18 +14,18 @@ Every extracted fact is grounded in an exact substring of the source text (its
 evidence quote); items whose quote is not found verbatim are discarded, which is
 what prevents hallucination. Facts are organised into clusters (data practices;
 sharing & transfers; rights & AI; legal scope) so each LLM call carries a focused
-schema, and long documents are chunked so no single call overflows the context
-window.
+schema, and splits documents into section-aware segments sized to the context
+budget of our long-context model cascade.
 
 Steps
 -----
-1. Split the cleaned document text into overlapping chunks; the overlap preserves
-   facts that straddle a chunk boundary.
-2. For each chunk, send the applicable cluster schema(s) to the LLM and require
+1. Split the document into section-aware segments (markdown headers, then
+   paragraphs) sized to the available input token budget.
+2. For each segment, send the applicable cluster schema(s) to the LLM and require
    structured JSON in which every item carries an exact-substring evidence quote.
-3. Parse each chunk response into typed extraction items, discarding any item
-   whose quote does not appear verbatim in the chunk.
-4. Merge items across chunks (``merging.py``): deduplicate by normalised value,
+3. Parse each segment response into typed extraction items, discarding any item
+   whose quote does not appear verbatim in the segment text.
+4. Merge items across segments (``merging.py``): deduplicate by normalised value,
    union the evidence spans, and combine per-document attributes.
 5. Return an ``ExtractionResult`` of atomic facts with evidence and confidence,
    ready for the analysis stage to interpret.
@@ -95,9 +95,10 @@ from src.services.extraction_service.prompts import (
     _get_extraction_prompt,
 )
 from src.services.extraction_service.utils import (
-    _chunk_text,
     _compute_content_hash,
+    _document_input_token_budget,
     _extraction_validator,
+    _plan_extraction_segments,
 )
 from src.services.term_materiality_classifier import enrich_extraction_materiality
 from src.utils.cancellation import CancellationToken
@@ -131,10 +132,15 @@ async def extract_document_facts(
         return document.extraction
 
     text = document.markdown or ""
-    chunks = _chunk_text(text, chunk_size=8000, overlap=800)
-    logger.debug(f"Chunked document {document.id} into {len(chunks)} chunk(s)")
+    segments = _plan_extraction_segments(document, text)
+    logger.info(
+        "Extraction plan for %s: segments=%d chunk_budget=~%d tokens",
+        document.id,
+        len(segments),
+        _document_input_token_budget(document) if segments else 0,
+    )
 
-    if not chunks:
+    if not segments:
         extraction = DocumentExtraction(
             version="v4",
             generated_at=datetime.now(),
@@ -172,15 +178,17 @@ async def extract_document_facts(
 
     accumulated_signals = PrivacySignals()
 
-    async def _run_cluster(cluster_name: str, chunk_text: str, chunk_idx: int) -> dict[str, Any]:
+    async def _run_cluster(
+        cluster_name: str, segment_text: str, segment_idx: int
+    ) -> dict[str, Any]:
         logger.debug(
-            f"Running cluster '{cluster_name}' for {document.id} chunk {chunk_idx}/{len(chunks)}"
+            f"Running cluster '{cluster_name}' for {document.id} segment {segment_idx}/{len(segments)}"
         )
         messages = [
             {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": _get_extraction_prompt(document, chunk_text, cluster_name),
+                "content": _get_extraction_prompt(document, segment_text, cluster_name),
             },
         ]
         response = await acompletion_with_fallback(
@@ -190,10 +198,10 @@ async def extract_document_facts(
             response_format={"type": "json_object"},
         )
         logger.info(
-            "Cluster '%s' for %s chunk %d completed with model %s",
+            "Cluster '%s' for %s segment %d completed with model %s",
             cluster_name,
             document.id,
-            chunk_idx,
+            segment_idx,
             response.model,
         )
         choice = response.choices[0]
@@ -207,18 +215,19 @@ async def extract_document_facts(
             raise ValueError("Empty response from LLM")
         return json.loads(content)
 
-    chunk_semaphore = asyncio.Semaphore(5)
+    segment_semaphore = asyncio.Semaphore(5)
     merge_lock = asyncio.Lock()
 
-    async def _process_chunk(idx: int, chunk: str) -> None:
+    async def _process_segment(idx: int, segment: str) -> None:
         await token.check_cancellation()
-        async with chunk_semaphore:
+        async with segment_semaphore:
             logger.debug(
-                f"Extracting v4 facts for {document.id}: chunk {idx}/{len(chunks)} (4 parallel clusters)"
+                f"Extracting v4 facts for {document.id}: segment {idx}/{len(segments)} "
+                "(4 parallel clusters)"
             )
 
             results = await asyncio.gather(
-                *(_run_cluster(name, chunk, idx) for name in CLUSTER_NAMES),
+                *(_run_cluster(name, segment, idx) for name in CLUSTER_NAMES),
                 return_exceptions=True,
             )
 
@@ -226,7 +235,7 @@ async def extract_document_facts(
         for i, result in enumerate(results):
             if isinstance(result, BaseException):
                 logger.warning(
-                    f"Cluster '{CLUSTER_NAMES[i]}' failed for {document.id} chunk {idx}: {result}"
+                    f"Cluster '{CLUSTER_NAMES[i]}' failed for {document.id} segment {idx}: {result}"
                 )
                 safe.append({})
             else:
@@ -237,22 +246,22 @@ async def extract_document_facts(
         try:
             dp = _ClusterDataPractices.model_validate(dp_raw, strict=False)
         except Exception as e:
-            logger.warning(f"Validation failed for data_practices chunk {idx}: {e}")
+            logger.warning(f"Validation failed for data_practices segment {idx}: {e}")
             dp = _ClusterDataPractices()
         try:
             st = _ClusterSharingTransfers.model_validate(st_raw, strict=False)
         except Exception as e:
-            logger.warning(f"Validation failed for sharing_transfers chunk {idx}: {e}")
+            logger.warning(f"Validation failed for sharing_transfers segment {idx}: {e}")
             st = _ClusterSharingTransfers()
         try:
             ra = _ClusterRightsAI.model_validate(ra_raw, strict=False)
         except Exception as e:
-            logger.warning(f"Validation failed for rights_ai chunk {idx}: {e}")
+            logger.warning(f"Validation failed for rights_ai segment {idx}: {e}")
             ra = _ClusterRightsAI()
         try:
             ls = _ClusterLegalScope.model_validate(ls_raw, strict=False)
         except Exception as e:
-            logger.warning(f"Validation failed for legal_scope chunk {idx}: {e}")
+            logger.warning(f"Validation failed for legal_scope segment {idx}: {e}")
             ls = _ClusterLegalScope()
 
         nonlocal children_policy
@@ -368,17 +377,17 @@ async def extract_document_facts(
                 content_hash=content_hash,
             )
 
-    chunk_results = await asyncio.gather(
-        *(_process_chunk(idx, chunk) for idx, chunk in enumerate(chunks, 1)),
+    segment_results = await asyncio.gather(
+        *(_process_segment(idx, segment) for idx, segment in enumerate(segments, 1)),
         return_exceptions=True,
     )
-    failed_chunks = 0
-    for i, result in enumerate(chunk_results):
+    failed_segments = 0
+    for i, result in enumerate(segment_results):
         if isinstance(result, BaseException):
-            failed_chunks += 1
-            logger.warning(f"Chunk {i + 1}/{len(chunks)} failed for {document.id}: {result}")
-    if failed_chunks:
-        logger.warning(f"{failed_chunks}/{len(chunks)} chunks failed for {document.id}")
+            failed_segments += 1
+            logger.warning(f"Segment {i + 1}/{len(segments)} failed for {document.id}: {result}")
+    if failed_segments:
+        logger.warning(f"{failed_segments}/{len(segments)} segments failed for {document.id}")
 
     extraction = DocumentExtraction(
         version="v4",

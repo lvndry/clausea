@@ -10,10 +10,10 @@ is reliable at categories and comparisons, not at absolute 0-10 scores.
 
 Per-document flow
 -----------------
-1. ``extract_document_facts()`` — structured, evidence-backed facts (chunked,
-   parallel). Neutral; carries no judgment.
+1. ``extract_document_facts()`` — structured, evidence-backed facts (adaptive
+   section chunks, parallel). Neutral; carries no judgment.
 2. ``analyse_document()`` — one LLM call turns the extracted facts into a deep
-   analysis: per-dimension letter grades (A–E) with justifications, key points,
+   analysis: per-dimension letter grades (A-E) with justifications, key points,
    and risk clauses. Grades are letters, not fabricated scores.
 
 Product-overview flow (powers the cached JSON on ``/products/{slug}``)
@@ -411,17 +411,6 @@ def _calculate_overview_risk_score(scores: MetaSummaryScores) -> int | None:
 
 _SEVERE_TOPIC_STANCES = frozenset({"harmful", "concerning", "conflicting"})
 _MANY_SEVERE_STANCES_THRESHOLD = 5
-_INDEFINITE_RETENTION_RE = re.compile(
-    r"indefinite(?:ly)?|forever|permanent(?:ly)?(?:\s+retain|\s+storage)?|"
-    r"retained permanently|keep(?:s)?\s+(?:messages|data|content)\s+indefinitely",
-    re.IGNORECASE,
-)
-_AI_TRAINING_RE = re.compile(
-    r"\b(?:ai|machine learning|ml)\s+(?:training|train(?:ing|s)?)\b|"
-    r"\btrain(?:s|ing)?\s+(?:ai|ml|machine learning|models?)\s+on\b|"
-    r"\buses?\s+(?:your|user)\s+(?:content|data|messages)\s+to\s+train\b",
-    re.IGNORECASE,
-)
 
 
 def _topic_risk_from_stances(stances: list[TopicStanceBreakdown] | None) -> int | None:
@@ -443,16 +432,24 @@ def _severe_stance_count(stances: list[TopicStanceBreakdown] | None) -> int:
     )
 
 
-def _danger_risk_floor(dangers: list[str] | None) -> int:
-    """Minimum risk score implied by material danger strings."""
-    if not dangers:
+def _topic_specific_floors(stances: list[TopicStanceBreakdown] | None) -> int:
+    """Minimum risk score implied by specific severe topic stances.
+
+    Replaces fragile regex-based danger detection with context-aware topic stances
+    derived from LLM-extracted facts.
+    """
+    if not stances:
         return 0
-    text = " ".join(dangers)
     floor = 0
-    if _INDEFINITE_RETENTION_RE.search(text):
-        floor = max(floor, 7)
-    if _AI_TRAINING_RE.search(text):
-        floor = max(floor, 6)
+    for stance in stances:
+        if stance.status != "found":
+            continue
+        # Indefinite retention is a material D-level risk (7).
+        if stance.topic == "retention" and stance.stance == "harmful":
+            floor = max(floor, 7)
+        # AI training on user data is a material C-level risk (6).
+        if stance.topic == "ai_training" and stance.stance == "harmful":
+            floor = max(floor, 6)
     return floor
 
 
@@ -465,7 +462,7 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
     1. Clamp the holistic LLM grade to within one letter of the evidence-backed
        dimension grade to counter systematic bias.
     2. Take the worst (highest) risk among dimensions, topics, and clamped LLM.
-    3. Apply material floors for specific dangers (retention, AI training).
+    3. Apply material floors for specific severe topics (retention, AI training).
     4. Apply positive adjustments for documented protections and fair stances.
     """
     llm_grade = coerce_grade(meta_summary.grade) if meta_summary.grade else None
@@ -501,10 +498,10 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
         if _severe_stance_count(meta_summary.topic_stances) >= _MANY_SEVERE_STANCES_THRESHOLD:
             risk_candidates.append(6)
 
-    # 3. Apply danger floors from raw text findings.
-    danger_floor = _danger_risk_floor(meta_summary.dangers)
-    if danger_floor:
-        risk_candidates.append(danger_floor)
+    # 3. Apply floors from context-aware topic stances.
+    topic_floor = _topic_specific_floors(meta_summary.topic_stances)
+    if topic_floor:
+        risk_candidates.append(topic_floor)
 
     if not risk_candidates:
         meta_summary.risk_score = None
@@ -522,12 +519,12 @@ def _reconcile_meta_summary_risk(meta_summary: MetaSummary) -> None:
     if llm_grade and final_grade != llm_grade:
         logger.info(
             "Reconciled overview grade from LLM %s to %s "
-            "(dimensions=%s topic_risk=%s danger_floor=%s blended_risk=%s)",
+            "(dimensions=%s topic_risk=%s topic_floor=%s blended_risk=%s)",
             llm_grade,
             final_grade,
             derived_grade,
             topic_risk,
-            danger_floor or None,
+            topic_floor or None,
             blended_risk,
         )
 

@@ -38,7 +38,11 @@ from src.services.extraction_service.models import (
     _ThirdParty,
 )
 from src.services.extraction_service.service import _EXTRACTION_PRIMARY, extract_document_facts
-from src.services.extraction_service.utils import _chunk_text, _extraction_validator
+from src.services.extraction_service.utils import (
+    _chunk_text,
+    _extraction_validator,
+    _plan_extraction_segments,
+)
 
 __all__ = [
     "_AIUsage",
@@ -53,6 +57,7 @@ __all__ = [
     "_DataItem",
     "_Item",
     "_extraction_validator",
+    "_plan_extraction_segments",
     "_merge_ai_usage",
     "_merge_children_policy",
     "_merge_cookie_trackers",

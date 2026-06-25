@@ -28,11 +28,11 @@ from src.models.document import Document
 
 EXTRACTION_SYSTEM_PROMPT = """You are an expert legal-document information extractor.
 
-Your job is to extract structured facts ONLY from the provided text chunk.
+Your job is to extract structured facts ONLY from the provided document text.
 
 Critical rules:
-- Only extract items explicitly present in the text chunk.
-- For every extracted item, provide an evidence quote that is an EXACT substring of the provided chunk.
+- Only extract items explicitly present in the provided text.
+- For every extracted item, provide an evidence quote that is an EXACT substring of the provided text.
 - The evidence quote must DIRECTLY substantiate the extracted fact — what the company does with data, who receives it, retention, rights, AI use, liability, etc.
 - Do NOT use generic cookie definitions, browser mechanics, footer links, or "how to manage cookies" text as evidence unless the extracted item is specifically about cookies, trackers, or consent mechanics.
 - Prefer the shortest quote that still contains the substantive claim. Skip introductory boilerplate.
@@ -342,16 +342,16 @@ def _get_extraction_prompt(document: Document, chunk: str, cluster: str) -> str:
     schema_hint, notes = _CLUSTER_SPECS[cluster]
 
     header = f"""\
-Extract evidence-backed facts from this policy document chunk.
+Extract evidence-backed facts from this policy document.
 
 Document URL: {document.url}
 Document Type: {document.doc_type}
 
-Text chunk:
+Document text:
 {chunk}
 
 Return a JSON object with ONLY the keys listed below (all keys required).
-Evidence quotes must be EXACT substrings of the chunk above.
+Evidence quotes must be EXACT substrings of the document text above.
 Each quote must substantiate its extracted fact — not generic cookie definitions, browser instructions, or footer/manage-cookies UI text unless the fact is specifically about cookies, trackers, or consent controls.
 """
     return f"{header}\n{json.dumps(schema_hint, separators=(',', ':'))}\n\nNotes:\n{notes}"

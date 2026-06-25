@@ -39,8 +39,8 @@ OVERVIEW_CORE_DOC_TYPES: frozenset[str] = frozenset(
 
 # ─── 1. DOCUMENT ANALYSIS (deep by default) ────────────────────────────────────
 
-DIMENSION_GRADE_RUBRIC = """### Dimension grades (A–E — higher letter = better for the user)
-Assign each dimension an **A to E letter grade** with a **mandatory justification** (1–3 sentences). Do NOT output numeric scores or ranks.
+DIMENSION_GRADE_RUBRIC = """### Dimension grades (A-E — higher letter = better for the user)
+Assign each dimension an **A to E letter grade** with a **mandatory justification** (1-3 sentences).
 
 - **A**: Strong — multiple real protections or clearly minimal practice; minor caveats only.
   - transparency A: Lists every data type, every purpose, every recipient by name. No vague categories.
@@ -133,7 +133,7 @@ DOCUMENT_ANALYSIS_PROMPT = f"""You are a senior privacy analyst. Produce an evid
 ## HARD RULES (breaking any makes the output unusable)
 1. EVIDENCE ONLY. Use ONLY facts from the extraction below. If a fact is absent from the extraction, write "Not specified in document" — do not infer, assume, or use outside knowledge.
 2. EXACT QUOTES. Every `quote` field in critical_clauses MUST be copied character-for-character from the extraction evidence. Do not paraphrase, shorten, or fix typos.
-3. NO NUMERIC SCORES. Output letter grades A–E with justifications only. Never output `risk_score`, numeric dimension scores, or `verdict`.
+3. NO NUMERIC SCORES. Output letter grades A-E with justifications only. Never output `risk_score`, numeric dimension scores, or `verdict`.
 4. SILENCE ≠ E. If the document does not address a dimension, omit that key from `scores`. Silence is not a worst-case finding — never assign E for silence.
 5. THIN EXTRACTION. If the extraction has few items or is flagged partial, set analysis_completeness to "partial" and reduce keypoint/clause counts accordingly. Do not pad with invented findings.
 
@@ -144,12 +144,12 @@ Step 1 — Take the dimension grades you assigned (only the ones you filled in; 
 Step 2 — Convert each letter to a number: A=9, B=7, C=5, D=3, E=1.
 
 Step 3 — Apply these weights (only for dimensions you graded):
-- transparency: ×2
-- data_collection_scope: ×4
-- user_control: ×3
-- third_party_sharing: ×4
-- data_retention_score: ×2
-- security_score: ×1
+- transparency: x2
+- data_collection_scope: x4
+- user_control: x3
+- third_party_sharing: x4
+- data_retention_score: x2
+- security_score: x1
 
 Step 4 — Sum the weighted values. Divide by the total weight you used. Round to the nearest integer.
 
@@ -347,10 +347,10 @@ Step 1 — Count the dimension grades you assigned. There are 4 dimensions: tran
 Step 2 — Convert each letter to a number: A=9, B=7, C=5, D=3, E=1.
 
 Step 3 — Apply these weights:
-- transparency: ×2
-- data_collection_scope: ×4
-- user_control: ×3
-- third_party_sharing: ×4
+- transparency: x2
+- data_collection_scope: x4
+- user_control: x3
+- third_party_sharing: x4
 
 Step 4 — Sum the weighted values. Divide by 13 (the total weight). Round to the nearest integer.
 
@@ -362,7 +362,7 @@ Step 6 — You may adjust the base grade by at most one letter in either directi
 
 If you cannot name a specific reason, the overall grade MUST equal the base grade. Do not adjust "for tone" or "to be cautious."
 
-**Example:** Dimensions are transparency=B(7), data_collection_scope=D(3), user_control=C(5), third_party_sharing=C(5). Weighted: (7×2)+(3×4)+(5×3)+(5×4) = 14+12+15+20 = 61. Divide by 13 = 4.69. Round to 5. Base grade = C. You may output B or D only with a specific reason; otherwise output C.
+**Example:** Dimensions are transparency=B(7), data_collection_scope=D(3), user_control=C(5), third_party_sharing=C(5). Weighted: (7*2)+(3*4)+(5*3)+(5*4) = 14+12+15+20 = 61. Divide by 13 = 4.69. Round to 5. Base grade = C. You may output B or D only with a specific reason; otherwise output C.
 
 **Grade anchors:**
 - A: Exceptional — minimal collection, no sale, strong controls, meaningful user rights.
@@ -374,7 +374,7 @@ If you cannot name a specific reason, the overall grade MUST equal the base grad
 Grade from the rubric and dimension procedure only. **Do not grade leniently because a product is well-known, widely used, or "industry standard."** Popularity does not change what the documents permit. If the evidence supports D or E, assign D or E.
 
 ## DIMENSION GRADES
-Synthesize from all document analyses and extractions. Assign A–E per dimension with mandatory justifications for: transparency, data_collection_scope, user_control, third_party_sharing.
+Synthesize from all document analyses and extractions. Assign A-E per dimension with mandatory justifications for: transparency, data_collection_scope, user_control, third_party_sharing.
 
 {DIMENSION_GRADE_RUBRIC}
 
@@ -826,7 +826,7 @@ For each watch_out_for item, set materiality:
 - "notable": arbitration/class-action/jury-trial waivers and similar informational dispute terms.
 - "standard_industry": routine legal mechanics (DMCA, assignment, governing law) — omit from watch_out_for when possible.
 
-=============== GRADE A–E + HARD CAP ================
+=============== GRADE A-E + HARD CAP ================
 A = genuinely protective. B = mostly fair, minor concerns. C = mixed good and bad. D = user-hostile in one important way. E = user-hostile in several ways.
 MECHANICAL CAP: Count your "critical" findings across what_they_collect, who_gets_your_data, and watch_out_for. Put that number in `critical_findings_count`. If it is 1, grade may be at most D. If it is 2 or more, grade may be at most E. A single critical finding caps at D regardless of anything good. State the blocker in `grade_reason`.
 

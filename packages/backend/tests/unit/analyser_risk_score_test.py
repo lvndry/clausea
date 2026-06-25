@@ -196,7 +196,7 @@ def test_reconcile_topic_stances_and_dangers_raise_middling_dimensions() -> None
         ],
         privacy_signals=PrivacySignals(ai_training_on_user_data="yes"),
         topic_stances=[
-            TopicStanceBreakdown(topic="retention", status="found", stance="concerning"),
+            TopicStanceBreakdown(topic="retention", status="found", stance="harmful"),
             TopicStanceBreakdown(topic="ai_training", status="found", stance="harmful"),
             TopicStanceBreakdown(topic="data_sale", status="found", stance="concerning"),
             TopicStanceBreakdown(topic="data_sharing", status="found", stance="concerning"),

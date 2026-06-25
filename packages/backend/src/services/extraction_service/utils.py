@@ -1,9 +1,11 @@
-"""Utilities that support the chunked extraction pipeline: validation, chunking, evidence.
+"""Utilities that support the extraction pipeline: validation, chunking, evidence.
 
 **What it does**
 - ``_extraction_validator(result)``: validates the shape of an LLM extraction response
   (must be a dict with ``privacy_signals``, ``data_items``, etc.), returning the
   parsed ``ExtractionResult`` or raising a clear error.
+- ``_plan_extraction_segments(document, text)``: splits into section-aware segments
+  sized to the long-context model budget (prompt + output headroom).
 - ``_chunk_text(text, max_chunk_size, overlap)``: splits a long document into
   overlapping chunks that fit within the LLM context window, preserving sentence
   boundaries where possible.
@@ -28,6 +30,7 @@ import json
 import re
 
 from src.core.logging import get_logger
+from src.llm import EXTRACTION_MIN_CONTEXT_TOKENS
 from src.models.document import Document, EvidenceSpan
 from src.utils.quotes import resolve_quote_offsets
 
@@ -72,6 +75,52 @@ def _extraction_validator(cluster_name: str):
 def _compute_content_hash(document: Document) -> str:
     content = f"{document.markdown}{document.doc_type}"
     return hashlib.sha256(content.encode()).hexdigest()
+
+
+_CHARS_PER_TOKEN_ESTIMATE = 4
+_OUTPUT_TOKEN_RESERVE = 24_000
+_REASONING_TOKEN_RESERVE = 8_000
+_SYSTEM_TOKEN_RESERVE = 300
+
+
+def _estimate_text_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, len(text) // _CHARS_PER_TOKEN_ESTIMATE)
+
+
+def _extraction_prompt_overhead_tokens(document: Document) -> int:
+    from src.services.extraction_service.prompts import CLUSTER_NAMES, _get_extraction_prompt
+
+    return max(
+        _SYSTEM_TOKEN_RESERVE + _estimate_text_tokens(_get_extraction_prompt(document, "", cluster))
+        for cluster in CLUSTER_NAMES
+    )
+
+
+def _document_input_token_budget(document: Document) -> int:
+    """Tokens available for document text in a single extraction LLM call."""
+    return (
+        EXTRACTION_MIN_CONTEXT_TOKENS
+        - _extraction_prompt_overhead_tokens(document)
+        - _OUTPUT_TOKEN_RESERVE
+        - _REASONING_TOKEN_RESERVE
+    )
+
+
+def _plan_extraction_segments(document: Document, text: str) -> list[str]:
+    """Split document text into section-aware segments sized to the context budget.
+
+    Always chunks (never sends an arbitrary full document in one call). Short
+    documents may produce a single segment when one section fits the budget.
+    """
+    if not text:
+        return []
+
+    budget_tokens = _document_input_token_budget(document)
+    chunk_chars = max(4000, budget_tokens * _CHARS_PER_TOKEN_ESTIMATE)
+    overlap = max(400, chunk_chars // 10)
+    return _chunk_text(text, chunk_size=chunk_chars, overlap=overlap)
 
 
 def _split_on_sentence_boundary(text: str, max_len: int) -> int:
@@ -157,7 +206,10 @@ def _make_evidence(document: Document, content_hash: str, quote: str) -> Evidenc
 __all__ = [
     "_chunk_text",
     "_compute_content_hash",
+    "_document_input_token_budget",
+    "_estimate_text_tokens",
     "_extraction_validator",
     "_make_evidence",
+    "_plan_extraction_segments",
     "_split_on_sentence_boundary",
 ]
