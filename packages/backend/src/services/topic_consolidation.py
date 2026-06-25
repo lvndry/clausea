@@ -101,7 +101,12 @@ Return JSON only, covering every index exactly once, no index repeated:
 {"clusters": [[0], [1, 2, 4], [3]]}"""
 
 
-async def _llm_cluster(category: InsightCategory, values: list[str]) -> list[list[int]]:
+async def _llm_cluster(
+    category: InsightCategory,
+    values: list[str],
+    *,
+    circuit_key: str | None = None,
+) -> list[list[int]]:
     numbered = "\n".join(f"{index}. {value}" for index, value in enumerate(values))
     user_payload = f'Topic: "{category}"\n\nFindings:\n{numbered}'
     response = await acompletion_with_fallback(
@@ -112,6 +117,7 @@ async def _llm_cluster(category: InsightCategory, values: list[str]) -> list[lis
         response_format={"type": "json_object"},
         temperature=0,
         timeout=_JUDGE_TIMEOUT_SECONDS,
+        circuit_key=circuit_key,
     )
     choice = response.choices[0]
     message = getattr(choice, "message", None)
@@ -204,6 +210,7 @@ async def consolidate_rollup_items(
     items: list[RollupItem],
     *,
     judge: ClusterJudge | None = None,
+    circuit_key: str | None = None,
 ) -> list[RollupItem]:
     """Merge paraphrase-duplicate findings per category using an LLM judge.
 
@@ -211,7 +218,15 @@ async def consolidate_rollup_items(
     than two findings pass through untouched. Any judge failure degrades to the
     original items — consolidation never drops findings on error.
     """
-    judge = judge or _llm_cluster
+    if judge is None:
+        key = circuit_key
+
+        async def _default_judge(category: InsightCategory, values: list[str]) -> list[list[int]]:
+            return await _llm_cluster(category, values, circuit_key=key)
+
+        chosen_judge = _default_judge
+    else:
+        chosen_judge = judge
 
     by_category: defaultdict[InsightCategory, list[RollupItem]] = defaultdict(list)
     order: list[InsightCategory] = []
@@ -227,7 +242,7 @@ async def consolidate_rollup_items(
             result.extend(group)
             continue
         try:
-            clusters = await judge(category, [item.value for item in group])
+            clusters = await chosen_judge(category, [item.value for item in group])
             merged = merge_clusters(group, clusters)
         except Exception as exc:
             logger.warning(

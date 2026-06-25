@@ -48,6 +48,8 @@ from src.llm import (
     SupportedModel,
     _extract_json_from_response,
     acompletion_with_fallback,
+    document_circuit_key,
+    product_circuit_key,
 )
 from src.models.document import (
     BusinessImpact,
@@ -1205,6 +1207,7 @@ Document content:
                         response_format={"type": "json_object"},
                         temperature=0,
                         heartbeat_callback=heartbeat_callback,
+                        circuit_key=document_circuit_key(document),
                     )
                 )
 
@@ -1673,6 +1676,7 @@ async def generate_consumer_explainer(
                     response_format={"type": "json_object"},
                     temperature=0,
                     heartbeat_callback=heartbeat_callback,
+                    circuit_key=document_circuit_key(document),
                 )
             logger.info("generate_consumer_explainer %s used model %s", document.id, response.model)
 
@@ -1796,6 +1800,7 @@ async def generate_product_consumer_explainer(
                     response_format={"type": "json_object"},
                     temperature=0,
                     heartbeat_callback=heartbeat_callback,
+                    circuit_key=product_circuit_key(product_slug),
                 )
             logger.info(
                 "generate_product_consumer_explainer %s used model %s", product_slug, response.model
@@ -1924,6 +1929,7 @@ async def generate_product_compliance(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
+                    circuit_key=product_circuit_key(product_slug),
                 )
             logger.info(
                 "generate_product_compliance %s used model %s", product_slug, response.model
@@ -2269,6 +2275,7 @@ Per-document analyses and extractions:
                         response_format={"type": "json_object"},
                         temperature=0,
                         heartbeat_callback=on_progress,
+                        circuit_key=product_circuit_key(product_slug),
                     )
                 )
 
@@ -2787,6 +2794,7 @@ Per-document analyses and extractions:
                 ],
                 model_priority=_OVERVIEW_PRIORITY,
                 response_format={"type": "json_object"},
+                circuit_key=product_circuit_key(product_slug),
             )
 
         choice = response.choices[0]
