@@ -9,7 +9,7 @@
   <p>
     <a href="https://clausea.co">clausea.co</a>
     ·
-    <a href="https://clausea.co/products/slack">Example report</a>
+    <a href="https://clausea.co/products/github">Example report</a>
     ·
     <a href="https://github.com/lvndry/clausea/blob/main/LICENSE">AGPL-3.0</a>
   </p>
@@ -23,33 +23,23 @@
 
 ## About
 
-Clausea crawls and analyzes policy documents — privacy policies, terms of service, cookie policies, GDPR notices, DPAs, and more — for SaaS products. It extracts structured signals (data collected, third-party sharing, user rights, retention, consent model) and synthesizes them into a **0–10 risk score**, a qualitative verdict, and decision-ready summaries.
+Clausea crawls and analyzes policy documents (privacy policies, terms of service, cookie policies, GDPR notices, DPAs, and more) for SaaS products. It extracts structured signals (data collected, third-party sharing, user rights, retention, consent model) and synthesizes them into a qualitative verdict, and decision-ready summaries.
 
 Live product pages: `https://clausea.co/products/{slug}`
 Machine-readable summaries: `https://clausea.co/api/products/{slug}/summary.txt`
 
 ## Features
 
-| Area | What you get |
-| --- | --- |
-| **Whole-site coverage** | Crawls a vendor's full policy surface, not just a single pasted URL |
-| **Risk scoring** | 0–10 score with grade, verdict, and score breakdown |
-| **Plain-English summaries** | Consumer-friendly explainers plus detailed policy overviews |
-| **Topic intelligence** | Stance and evidence across key privacy topics |
-| **Compliance signals** | GDPR and CCPA-relevant clause detection |
-| **Source documents** | Linked, cited policy pages behind every finding |
-| **Browser extension** | Analyze policies from the toolbar ([`packages/extension`](packages/extension)) |
-| **Developer API** | FastAPI backend with OpenAPI docs at `/docs` |
-
-### Risk score scale
-
-| Score | Verdict |
-| --- | --- |
-| 0–2 | Very user-friendly |
-| 3–4 | User-friendly |
-| 5–6 | Moderate concerns |
-| 7–8 | Pervasive data collection |
-| 9–10 | Very pervasive |
+| Area                        | What you get                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| **Whole-site coverage**     | Crawls a vendor's full policy surface, not just a single pasted URL            |
+| **Risk scoring**            | 0–10 score with grade, verdict, and score breakdown                            |
+| **Plain-English summaries** | Consumer-friendly explainers plus detailed policy overviews                    |
+| **Topic intelligence**      | Stance and evidence across key privacy topics                                  |
+| **Compliance signals**      | GDPR and CCPA-relevant clause detection                                        |
+| **Source documents**        | Linked, cited policy pages behind every finding                                |
+| **Browser extension**       | Analyze policies from the toolbar ([`packages/extension`](packages/extension)) |
+| **Developer API**           | FastAPI backend with OpenAPI docs at `/docs`                                   |
 
 ## Who it's for
 
@@ -58,27 +48,6 @@ Machine-readable summaries: `https://clausea.co/api/products/{slug}/summary.txt`
 - **Compliance and legal teams** auditing third-party SaaS vendors
 - **Developers** building on the Clausea API or self-hosting the stack
 
-## Repository structure
-
-Monorepo with three packages:
-
-```
-clausea/
-├── packages/
-│   ├── backend/     # FastAPI API, crawler, analysis pipeline, Streamlit ops dashboard
-│   ├── frontend/    # Next.js web app (marketing site + product dashboard)
-│   └── extension/   # Browser extension (Chrome / Firefox via WXT)
-├── Makefile         # Dev workflow shortcuts
-├── dev.sh           # Starts frontend + backend together
-└── AGENTS.md        # Agent / contributor guidelines
-```
-
-| Package | Stack | Docs |
-| --- | --- | --- |
-| [`packages/backend`](packages/backend) | Python 3.11+, FastAPI, MongoDB, LiteLLM | [Backend README](packages/backend/README.md) |
-| [`packages/frontend`](packages/frontend) | Next.js, React, TypeScript, Tailwind | [Frontend README](packages/frontend/README.md) |
-| [`packages/extension`](packages/extension) | WXT, TypeScript | [Extension README](packages/extension/README.md) |
-
 ## Getting started
 
 ### Prerequisites
@@ -86,7 +55,7 @@ clausea/
 - **Python 3.11+** with [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - **Node.js 18+** with [bun](https://bun.sh/)
 - **MongoDB** (local or Atlas)
-- API keys as needed: OpenAI, Anthropic, Clerk, Pinecone (see env examples)
+- API keys as needed: Openrouter, Clerk, Pinecone (see env examples)
 
 ### Setup
 
@@ -122,12 +91,12 @@ make run-frontend   # http://localhost:3000
 make dashboard      # Streamlit ops dashboard (http://localhost:8501)
 ```
 
-| Service | URL |
-| --- | --- |
-| Web app | http://localhost:3000 |
-| API | http://localhost:8000 |
-| OpenAPI | http://localhost:8000/docs |
-| Ops dashboard | http://localhost:8501 |
+| Service       | URL                        |
+| ------------- | -------------------------- |
+| Web app       | http://localhost:3000      |
+| API           | http://localhost:8000      |
+| OpenAPI       | http://localhost:8000/docs |
+| Ops dashboard | http://localhost:8501      |
 
 ### Extension development
 
