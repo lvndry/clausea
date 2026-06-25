@@ -1800,7 +1800,7 @@ async def generate_product_consumer_explainer(
                     response_format={"type": "json_object"},
                     temperature=0,
                     heartbeat_callback=heartbeat_callback,
-                    circuit_key=product_circuit_key(product_slug),
+                    circuit_key=product_circuit_key(product_slug, "consumer_explainer"),
                 )
             logger.info(
                 "generate_product_consumer_explainer %s used model %s", product_slug, response.model
@@ -1929,7 +1929,7 @@ async def generate_product_compliance(
                     model_priority=_OVERVIEW_PRIORITY,
                     response_format={"type": "json_object"},
                     temperature=0,
-                    circuit_key=product_circuit_key(product_slug),
+                    circuit_key=product_circuit_key(product_slug, "compliance"),
                 )
             logger.info(
                 "generate_product_compliance %s used model %s", product_slug, response.model
@@ -2275,7 +2275,7 @@ Per-document analyses and extractions:
                         response_format={"type": "json_object"},
                         temperature=0,
                         heartbeat_callback=on_progress,
-                        circuit_key=product_circuit_key(product_slug),
+                        circuit_key=product_circuit_key(product_slug, "overview"),
                     )
                 )
 
@@ -2794,7 +2794,7 @@ Per-document analyses and extractions:
                 ],
                 model_priority=_OVERVIEW_PRIORITY,
                 response_format={"type": "json_object"},
-                circuit_key=product_circuit_key(product_slug),
+                circuit_key=product_circuit_key(product_slug, "deep_analysis"),
             )
 
         choice = response.choices[0]

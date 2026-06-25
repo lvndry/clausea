@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from src.core.config import config
 from src.core.logging import get_logger
 from src.utils.llm_usage import track_usage
 
@@ -28,17 +29,13 @@ class AllModelsFailedError(Exception):
     """Raised when every model in the priority list failed for one completion request."""
 
 
-CIRCUIT_BREAKER_THRESHOLD: int = 3
-CIRCUIT_RESET_SECONDS: float = 300.0
-
-
 class CircuitBreaker:
     """Per-key circuit breaker with time-based decay and half-open probe support.
 
     Tracks consecutive failures for a single scope (e.g. a product slug).  When the
-    failure count reaches ``CIRCUIT_BREAKER_THRESHOLD`` the circuit opens and rejects
-    all requests until ``CIRCUIT_RESET_SECONDS`` have elapsed, at which point it enters
-    a half-open state and allows exactly one probe.  A successful probe closes the
+    failure count reaches ``config.llm.circuit_breaker_threshold`` the circuit opens
+    and rejects all requests until ``config.llm.circuit_breaker_reset_seconds`` have
+    elapsed, at which point it enters a half-open state and allows exactly one probe.  A successful probe closes the
     circuit; a failed probe re-opens it.
     """
 
@@ -60,7 +57,7 @@ class CircuitBreaker:
         self._consecutive_failures += 1
         self._last_failure_time = time.monotonic()
         self._half_open = False
-        if self._consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD:
+        if self._consecutive_failures >= config.llm.circuit_breaker_threshold:
             self._is_open = True
 
     def record_success(self) -> None:
@@ -78,7 +75,7 @@ class CircuitBreaker:
         if self._half_open:
             return False
         now = time.monotonic()
-        if now - self._last_failure_time >= CIRCUIT_RESET_SECONDS:
+        if now - self._last_failure_time >= config.llm.circuit_breaker_reset_seconds:
             self._half_open = True
             return True
         return False
@@ -87,15 +84,17 @@ class CircuitBreaker:
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 
 
-def product_circuit_key(product_slug: str) -> str:
-    """Scope circuit-breaker state to one product (bulk pipeline jobs must not share one breaker)."""
-    return f"product:{product_slug}"
+def product_circuit_key(product_slug: str, operation: str = "default") -> str:
+    """Scope circuit-breaker state to one product operation (overview, consolidation, etc.)."""
+    slug = str(product_slug or "").strip() or "unknown"
+    op = str(operation or "").strip() or "default"
+    return f"product:{slug}:{op}"
 
 
 def document_circuit_key(document: Any) -> str:
-    """Circuit key for a policy document row (prefers slug in metadata, else product_id)."""
+    """Circuit key scoped to a single document — not the whole product."""
     if document is None:
-        return product_circuit_key("unknown")
+        return product_circuit_key("unknown", "document")
     if isinstance(document, dict):
         meta = document.get("metadata") or {}
         product_id = document.get("product_id")
@@ -106,16 +105,56 @@ def document_circuit_key(document: Any) -> str:
         doc_id = getattr(document, "id", "unknown")
     slug = meta.get("product_slug") if isinstance(meta, dict) else None
     if isinstance(slug, str) and slug.strip():
-        return product_circuit_key(slug.strip())
-    if isinstance(product_id, str) and product_id.strip():
-        return product_circuit_key(product_id.strip())
-    return product_circuit_key(str(doc_id))
+        product_scope = slug.strip()
+    elif isinstance(product_id, str) and product_id.strip():
+        product_scope = product_id.strip()
+    else:
+        product_scope = "unknown"
+    return product_circuit_key(product_scope, f"doc:{doc_id}")
 
 
 def get_circuit_breaker(key: str) -> CircuitBreaker:
     if key not in _circuit_breakers:
         _circuit_breakers[key] = CircuitBreaker()
     return _circuit_breakers[key]
+
+
+def reset_circuit_breakers() -> None:
+    """Clear in-process breaker state (e.g. on worker boot after redeploy)."""
+    _circuit_breakers.clear()
+
+
+def _resolve_circuit_breaker(circuit_key: str | None) -> CircuitBreaker | None:
+    if not config.llm.circuit_breaker_enabled or circuit_key is None:
+        return None
+    return get_circuit_breaker(circuit_key)
+
+
+_NON_TRANSIENT_LLM_ERRORS = frozenset(
+    {
+        "UnsupportedParamsError",
+        "AuthenticationError",
+        "NotFoundError",
+        "BadRequestError",
+        "PermissionDeniedError",
+        "UnprocessableEntityError",
+        "InvalidRequestError",
+    }
+)
+
+
+def _failure_should_trip_breaker(exc: Exception | None) -> bool:
+    """Config/client errors won't heal by opening the circuit — don't count them."""
+    if exc is None:
+        return True
+    if type(exc).__name__ in _NON_TRANSIENT_LLM_ERRORS:
+        return False
+    message = str(exc).lower()
+    if "reasoning_effort" in message or "does not support parameters" in message:
+        return False
+    if "api key" in message or "authentication" in message or "unauthorized" in message:
+        return False
+    return True
 
 
 class Model:
@@ -249,11 +288,9 @@ async def _completion_with_fallback_impl(
         logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
         call_kwargs = kwargs.copy()
-        # All OpenRouter models in MODEL_PRIORITY support reasoning; default medium
-        # when the caller does not specify an effort level.
-        effort = reasoning_effort or ("medium" if model_name.startswith("openrouter/") else None)
-        if effort and "reasoning_effort" not in call_kwargs:
-            call_kwargs["reasoning_effort"] = effort
+        if reasoning_effort and "reasoning_effort" not in call_kwargs:
+            call_kwargs["reasoning_effort"] = reasoning_effort
+        call_kwargs.setdefault("drop_params", True)
 
         try:
             start_time = time.time()
@@ -325,18 +362,18 @@ async def acompletion_with_fallback(
     output fails validation. Since the list runs cheapest-to-most-capable, a validation
     failure naturally escalates to a stronger model.
 
-    When ``circuit_key`` is set (e.g. :func:`product_circuit_key`), consecutive failures
-    for that scope open a breaker that blocks only the same key — not other products.
-    When ``circuit_key`` is omitted, no circuit breaker is applied.
+    When ``config.llm.circuit_breaker_enabled`` is true and ``circuit_key`` is set,
+    transient failures for that scope can open a breaker for the same key only.
+    By default the breaker is disabled so pipeline retries are not short-circuited.
 
     Args:
         heartbeat_callback: Optional async no-arg callable fired before each model attempt
             and before each rate-limit backoff sleep, so the caller can bump a pipeline
             job heartbeat and avoid stall-guard kills during long fallback sequences.
         reasoning_effort: Optional reasoning effort level (e.g. "medium", "high").
-            Defaults to "medium" for OpenRouter models if not specified.
+            Only passed when explicitly set by the caller.
     """
-    cb = get_circuit_breaker(circuit_key) if circuit_key is not None else None
+    cb = _resolve_circuit_breaker(circuit_key)
 
     if cb is not None and not cb.allow_request():
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
@@ -355,8 +392,9 @@ async def acompletion_with_fallback(
             reasoning_effort=reasoning_effort,
             **kwargs,
         )
-    except AllModelsFailedError:
-        if cb is not None:
+    except AllModelsFailedError as exc:
+        cause = exc.__cause__ if isinstance(exc.__cause__, Exception) else None
+        if cb is not None and _failure_should_trip_breaker(cause):
             cb.record_failure()
             if not cb.allow_request():
                 raise CircuitBreakerError(

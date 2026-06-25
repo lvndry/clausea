@@ -20,6 +20,7 @@ from aiohttp import web
 
 from src.core.database import close_motor_client, db_session
 from src.core.logging import get_logger, setup_logging
+from src.llm import reset_circuit_breakers
 from src.repositories.monitoring_schedule_repository import MonitoringScheduleRepository
 from src.repositories.pipeline_repository import (
     ORPHANABLE_PIPELINE_STATUSES,
@@ -253,6 +254,7 @@ async def _run_worker_loop(
     last_sweep = loop.time()
     last_monitoring_sweep = loop.time()
 
+    reset_circuit_breakers()
     logger.info("Pipeline worker started (concurrency=%d, poll=%.1fs)", _CONCURRENCY, _POLL_SECONDS)
     running: dict[asyncio.Task[None], str] = {}
 
