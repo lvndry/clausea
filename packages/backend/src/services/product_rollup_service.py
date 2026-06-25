@@ -765,7 +765,7 @@ class ProductRollupService:
         from src.services.topic_consolidation import consolidate_rollup_items
 
         rollup.items = await consolidate_rollup_items(
-            rollup.items, circuit_key=product_circuit_key(product_slug)
+            rollup.items, circuit_key=product_circuit_key(product_slug, "consolidation")
         )
         source_hashes = await self._intelligence_service.compute_source_hashes(db, product_id)
         await self._intelligence_service.save_rollup(

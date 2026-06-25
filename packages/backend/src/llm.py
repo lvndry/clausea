@@ -28,8 +28,40 @@ class AllModelsFailedError(Exception):
     """Raised when every model in the priority list failed for one completion request."""
 
 
-CIRCUIT_BREAKER_THRESHOLD: int = 3
-CIRCUIT_RESET_SECONDS: float = 300.0
+def _read_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _read_positive_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Off by default — pipeline jobs already retry; a low threshold blocks whole products
+# after a few LLM errors (e.g. during redeploys or bulk regen).
+LLM_CIRCUIT_BREAKER_ENABLED: bool = _read_bool_env("LLM_CIRCUIT_BREAKER_ENABLED", False)
+CIRCUIT_BREAKER_THRESHOLD: int = _read_positive_int_env("LLM_CIRCUIT_BREAKER_THRESHOLD", 15)
+CIRCUIT_RESET_SECONDS: float = _read_positive_float_env("LLM_CIRCUIT_BREAKER_RESET_SECONDS", 60.0)
 
 
 class CircuitBreaker:
@@ -87,15 +119,17 @@ class CircuitBreaker:
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 
 
-def product_circuit_key(product_slug: str) -> str:
-    """Scope circuit-breaker state to one product (bulk pipeline jobs must not share one breaker)."""
-    return f"product:{product_slug}"
+def product_circuit_key(product_slug: str, operation: str = "default") -> str:
+    """Scope circuit-breaker state to one product operation (overview, consolidation, etc.)."""
+    slug = product_slug.strip() or "unknown"
+    op = operation.strip() or "default"
+    return f"product:{slug}:{op}"
 
 
 def document_circuit_key(document: Any) -> str:
-    """Circuit key for a policy document row (prefers slug in metadata, else product_id)."""
+    """Circuit key scoped to a single document — not the whole product."""
     if document is None:
-        return product_circuit_key("unknown")
+        return product_circuit_key("unknown", "document")
     if isinstance(document, dict):
         meta = document.get("metadata") or {}
         product_id = document.get("product_id")
@@ -106,16 +140,44 @@ def document_circuit_key(document: Any) -> str:
         doc_id = getattr(document, "id", "unknown")
     slug = meta.get("product_slug") if isinstance(meta, dict) else None
     if isinstance(slug, str) and slug.strip():
-        return product_circuit_key(slug.strip())
-    if isinstance(product_id, str) and product_id.strip():
-        return product_circuit_key(product_id.strip())
-    return product_circuit_key(str(doc_id))
+        product_scope = slug.strip()
+    elif isinstance(product_id, str) and product_id.strip():
+        product_scope = product_id.strip()
+    else:
+        product_scope = "unknown"
+    return product_circuit_key(product_scope, f"doc:{doc_id}")
 
 
 def get_circuit_breaker(key: str) -> CircuitBreaker:
     if key not in _circuit_breakers:
         _circuit_breakers[key] = CircuitBreaker()
     return _circuit_breakers[key]
+
+
+def reset_circuit_breakers() -> None:
+    """Clear in-process breaker state (e.g. on worker boot after redeploy)."""
+    _circuit_breakers.clear()
+
+
+def _resolve_circuit_breaker(circuit_key: str | None) -> CircuitBreaker | None:
+    if not LLM_CIRCUIT_BREAKER_ENABLED or circuit_key is None:
+        return None
+    return get_circuit_breaker(circuit_key)
+
+
+def _failure_should_trip_breaker(exc: Exception | None) -> bool:
+    """Config/client errors won't heal by opening the circuit — don't count them."""
+    if exc is None:
+        return True
+    name = type(exc).__name__
+    if name in {"UnsupportedParamsError", "AuthenticationError", "NotFoundError"}:
+        return False
+    message = str(exc).lower()
+    if "reasoning_effort" in message or "does not support parameters" in message:
+        return False
+    if "api key" in message or "authentication" in message or "unauthorized" in message:
+        return False
+    return True
 
 
 class Model:
@@ -249,11 +311,9 @@ async def _completion_with_fallback_impl(
         logger.debug("Attempting completion with model: %s (%s)", model_name, model.model)
 
         call_kwargs = kwargs.copy()
-        # All OpenRouter models in MODEL_PRIORITY support reasoning; default medium
-        # when the caller does not specify an effort level.
-        effort = reasoning_effort or ("medium" if model_name.startswith("openrouter/") else None)
-        if effort and "reasoning_effort" not in call_kwargs:
-            call_kwargs["reasoning_effort"] = effort
+        if reasoning_effort and "reasoning_effort" not in call_kwargs:
+            call_kwargs["reasoning_effort"] = reasoning_effort
+        call_kwargs.setdefault("drop_params", True)
 
         try:
             start_time = time.time()
@@ -325,18 +385,18 @@ async def acompletion_with_fallback(
     output fails validation. Since the list runs cheapest-to-most-capable, a validation
     failure naturally escalates to a stronger model.
 
-    When ``circuit_key`` is set (e.g. :func:`product_circuit_key`), consecutive failures
-    for that scope open a breaker that blocks only the same key — not other products.
-    When ``circuit_key`` is omitted, no circuit breaker is applied.
+    When ``LLM_CIRCUIT_BREAKER_ENABLED`` is true and ``circuit_key`` is set, consecutive
+    transient failures for that scope can open a breaker for the same key only.
+    By default the breaker is disabled so pipeline retries are not short-circuited.
 
     Args:
         heartbeat_callback: Optional async no-arg callable fired before each model attempt
             and before each rate-limit backoff sleep, so the caller can bump a pipeline
             job heartbeat and avoid stall-guard kills during long fallback sequences.
         reasoning_effort: Optional reasoning effort level (e.g. "medium", "high").
-            Defaults to "medium" for OpenRouter models if not specified.
+            Only passed when explicitly set by the caller.
     """
-    cb = get_circuit_breaker(circuit_key) if circuit_key is not None else None
+    cb = _resolve_circuit_breaker(circuit_key)
 
     if cb is not None and not cb.allow_request():
         raise CircuitBreakerError("LLM service unavailable: too many consecutive failures")
@@ -355,8 +415,9 @@ async def acompletion_with_fallback(
             reasoning_effort=reasoning_effort,
             **kwargs,
         )
-    except AllModelsFailedError:
-        if cb is not None:
+    except AllModelsFailedError as exc:
+        cause = exc.__cause__ if isinstance(exc.__cause__, Exception) else None
+        if cb is not None and _failure_should_trip_breaker(cause):
             cb.record_failure()
             if not cb.allow_request():
                 raise CircuitBreakerError(
