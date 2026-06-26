@@ -20,7 +20,7 @@ function toHostname(raw: string): string {
 export function enrichLogos<T extends MinimalItem>(
   data: MinimalPage<T>,
 ): MinimalPage<T> {
-  const token = process.env.LOGO_DEV_API_KEY;
+  const token = process.env.LOGO_DEV_API_KEY ?? process.env.LOGO_DEV_PUBLIC_KEY;
   if (!token) return data;
   return {
     ...data,

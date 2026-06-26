@@ -1,5 +1,5 @@
 import CompanyPage from "./product-page-client";
-import { fetchProductPageShell } from "./product-page-server";
+import { fetchProductPageData } from "./product-page-server";
 
 export default async function ProductPage({
   params,
@@ -7,7 +7,8 @@ export default async function ProductPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { product, overview, explainer } = await fetchProductPageShell(slug);
+  const { product, overview, explainer, documents, topics } =
+    await fetchProductPageData(slug);
 
   return (
     <CompanyPage
@@ -15,6 +16,8 @@ export default async function ProductPage({
       initialProduct={product}
       initialData={overview}
       initialExplainer={explainer}
+      initialDocuments={documents}
+      initialTopics={topics}
     />
   );
 }

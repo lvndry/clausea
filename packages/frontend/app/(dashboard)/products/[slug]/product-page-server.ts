@@ -7,7 +7,12 @@ import {
   PREVIEW_TOKEN_COOKIE,
   PREVIEW_TOKEN_HEADER,
 } from "@/lib/preview-token";
-import type { Product, ProductOverview } from "@/types";
+import type {
+  DocumentSummary,
+  Product,
+  ProductOverview,
+  ProductTopicReport,
+} from "@/types";
 import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
 
@@ -132,6 +137,40 @@ export const fetchProductPageShell = cache(async (slug: string) => {
     overview,
     explainer,
   };
+});
+
+/** Direct backend fetch — avoids the browser → Next API → backend double hop. */
+export const fetchProductEvidence = cache(async (slug: string) => {
+  const headers = await getProductRequestHeaders();
+  const tag = `product-${slug}`;
+  const [documentsResult, topicsResult] = await Promise.all([
+    fetchBackendJson<DocumentSummary[]>(
+      `/products/${slug}/documents`,
+      headers,
+      tag,
+      PAGE_REVALIDATE_SECONDS,
+    ),
+    fetchBackendJson<ProductTopicReport>(
+      `/products/${slug}/topics`,
+      headers,
+      tag,
+      PAGE_REVALIDATE_SECONDS,
+    ),
+  ]);
+
+  return {
+    documents: documentsResult.data ?? [],
+    topics: topicsResult.data,
+  };
+});
+
+export const fetchProductPageData = cache(async (slug: string) => {
+  const [shell, evidence] = await Promise.all([
+    fetchProductPageShell(slug),
+    fetchProductEvidence(slug),
+  ]);
+
+  return { ...shell, ...evidence };
 });
 
 /** Shared across layout metadata and page SSR — dedupes product + overview fetches. */
