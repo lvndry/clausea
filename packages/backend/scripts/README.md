@@ -9,9 +9,10 @@ Run from `packages/backend` with `uv run python scripts/<name>.py`.
 | `pipeline_monitor.py` | **Primary monitor.** Modes: `regen` (5-min PIPELINE_UPDATE), `watch` (regen + auto requeue crawl), `down` (SERVICE_DOWN_ALERT), `status` (one-shot) |
 | `queue_status.py` | One-shot queue snapshot (same as `pipeline_monitor.py status`) |
 | `crawler_monitor.py` | Deep production watchdog: Railway logs, memory, auto-fix, redeploy |
-| `requeue_analysis.py` | Queue analysis-only jobs (`skip_crawl`) for products with stored docs |
+| `requeue_analysis.py` | Queue analysis-only jobs (`skip_crawl`); default: products **missing** overviews; `--stale-hours N` for regen |
 | `requeue_crawl.py` | Queue full crawls — **default: only products with zero policy docs** |
 | `cancel_wasteful_crawls.py` | Interrupt full crawls when docs already exist |
+| `quiesce_jobs.py` | Mark in-flight/interrupted/retryable-failed jobs non-retryable (stop worker auto-refill) |
 
 ### Typical production workflow
 
@@ -22,9 +23,13 @@ uv run python scripts/pipeline_monitor.py --production
 # One-shot queue check
 uv run python scripts/queue_status.py --production
 
-# After regen: queue analysis-only for all products with overviews
+# Queue analysis-only for products missing overviews (e.g. stripe)
 uv run python scripts/requeue_analysis.py --production --dry-run
-uv run python scripts/requeue_analysis.py --production
+uv run python scripts/requeue_analysis.py --production stripe
+
+# Stop all work and prevent worker sweeps from requeueing
+uv run python scripts/quiesce_jobs.py --production --dry-run
+uv run python scripts/quiesce_jobs.py --production
 
 # Only crawl products with no stored documents (e.g. openai)
 uv run python scripts/requeue_crawl.py --production --dry-run
