@@ -40,17 +40,20 @@ async function fetchBackendJson<T>(
   headers: HeadersInit,
   tag: string,
 ): Promise<{ status: number; data: T | null }> {
+  let status = 0;
   try {
     const res = await fetch(getBackendUrl(path), {
       headers,
       next: { tags: [tag], revalidate: REVALIDATE_SECONDS },
     });
+    status = res.status;
     if (!res.ok) {
-      return { status: res.status, data: null };
+      return { status, data: null };
     }
-    return { status: res.status, data: (await res.json()) as T };
+    const data = (await res.json()) as T;
+    return { status, data };
   } catch {
-    return { status: 0, data: null };
+    return { status, data: null };
   }
 }
 

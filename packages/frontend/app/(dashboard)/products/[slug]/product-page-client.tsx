@@ -180,10 +180,18 @@ export default function CompanyPage({
         }
 
         if (docsRes.ok) {
-          setDocuments((await docsRes.json()) as DocumentSummary[]);
+          try {
+            setDocuments((await docsRes.json()) as DocumentSummary[]);
+          } catch (err) {
+            console.error("Failed to parse documents JSON", err);
+          }
         }
         if (topicsRes.ok) {
-          setTopics((await topicsRes.json()) as ProductTopicReport);
+          try {
+            setTopics((await topicsRes.json()) as ProductTopicReport);
+          } catch (err) {
+            console.error("Failed to parse topics JSON", err);
+          }
         }
       } catch (error) {
         console.error("Failed to fetch product evidence", error);
