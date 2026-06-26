@@ -19,9 +19,8 @@ IN_FLIGHT = ("pending", "crawling", "synthesising", "generating_overview")
 
 
 async def main(*, dry_run: bool, use_production: bool) -> None:
-    from src.core.database import db_session
     from src.core.logging import get_logger, setup_logging
-    from src.ops.script_env import resolve_production
+    from src.ops.script_env import open_db, resolve_production
     from src.services.pipeline_eligibility import count_policy_documents, product_needs_full_crawl
     from src.services.service_factory import create_product_service
 
@@ -33,7 +32,8 @@ async def main(*, dry_run: bool, use_production: bool) -> None:
     logger = get_logger(__name__)
     product_svc = create_product_service()
 
-    async with db_session() as db:
+    client, db = open_db(prefer_production=use_production)
+    try:
         jobs = await db.pipeline_jobs.find(
             {
                 "active": True,
@@ -80,6 +80,8 @@ async def main(*, dry_run: bool, use_production: bool) -> None:
             print(f"  [cancel]  {slug} status={job['status']} docs={doc_count} job={job['id']}")
 
         print(f"\nDone: cancelled={cancelled}, kept={kept}")
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
