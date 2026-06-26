@@ -1,10 +1,12 @@
 import asyncio
 import os
+import random
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pymongo import UpdateOne
 
 # Add the packages/backend directory to sys.path to import src
 backend_dir = Path(__file__).resolve().parent.parent
@@ -20,39 +22,55 @@ async def stagger_monitoring(batch_size: int = 20, start_days_offset: int = 1):
     One-time script to stagger existing monitoring schedules.
     Spreads them into batches of `batch_size`, starting `start_days_offset` from now.
     """
-    async with db_session() as db:
-        schedules = await db.monitoring_schedules.find({"enabled": True}).to_list(None)
+    try:
+        async with db_session() as db:
+            schedules = await db.monitoring_schedules.find({"enabled": True}).to_list(None)
 
-        # Sort by current due date to preserve some order
-        schedules.sort(key=lambda x: x.get("next_crawl_due_at", datetime.max))
+            # Sort by current due date to preserve some order.
+            # Use 'or datetime.max' to handle cases where next_crawl_due_at is None.
+            schedules.sort(key=lambda x: x.get("next_crawl_due_at") or datetime.max)
 
-        total = len(schedules)
-        if total == 0:
-            print("No enabled schedules found.")
-            return
+            total = len(schedules)
+            if total == 0:
+                print("No enabled schedules found.")
+                return
 
-        print(f"Staggering {total} products into batches of {batch_size}...")
+            print(f"Staggering {total} products into batches of {batch_size}...")
 
-        now = datetime.now()
-        updated_count = 0
-
-        for i, schedule in enumerate(schedules):
-            batch_num = i // batch_size
-            # Set next_due to (start_days_offset + batch_num) days from now
-            # Plus some random minutes to spread within the day
-            new_due = now + timedelta(days=start_days_offset + batch_num)
-
-            await db.monitoring_schedules.update_one(
-                {"product_slug": schedule["product_slug"]},
-                {"$set": {"next_crawl_due_at": new_due}},
+            now = datetime.now()
+            # Start from the beginning of tomorrow to have clean daily batches
+            base_date = (now + timedelta(days=start_days_offset)).replace(
+                hour=0, minute=0, second=0, microsecond=0
             )
-            updated_count += 1
 
-        print(f"Successfully staggered {updated_count} products.")
-        print(f"First batch due: {(now + timedelta(days=start_days_offset)).date()}")
-        print(
-            f"Last batch due:  {(now + timedelta(days=start_days_offset + (total - 1) // batch_size)).date()}"
-        )
+            requests = []
+            for i, schedule in enumerate(schedules):
+                batch_num = i // batch_size
+                # Set next_due to (batch_num) days from base_date
+                # Plus random hours/minutes to spread within that day
+                random_offset = timedelta(
+                    hours=random.randint(0, 23),
+                    minutes=random.randint(0, 59),
+                    seconds=random.randint(0, 59),
+                )
+                new_due = base_date + timedelta(days=batch_num) + random_offset
+
+                requests.append(
+                    UpdateOne(
+                        {"product_slug": schedule["product_slug"]},
+                        {"$set": {"next_crawl_due_at": new_due}},
+                    )
+                )
+
+            if requests:
+                result = await db.monitoring_schedules.bulk_write(requests)
+                print(f"Successfully staggered {result.modified_count} products.")
+                print(f"First batch starts: {base_date.date()}")
+                print(
+                    f"Last batch starts:  {(base_date + timedelta(days=(total - 1) // batch_size)).date()}"
+                )
+    finally:
+        close_motor_client()
 
 
 if __name__ == "__main__":
@@ -82,4 +100,3 @@ if __name__ == "__main__":
         print("Running against LOCAL database (use --production for prod)")
 
     asyncio.run(stagger_monitoring(batch_size=args.batch_size, start_days_offset=args.start_offset))
-    close_motor_client()
