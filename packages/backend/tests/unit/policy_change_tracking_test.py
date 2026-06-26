@@ -164,6 +164,7 @@ class TestMonitoringScheduleRepository:
         db = MagicMock()
         db.monitoring_schedules = MagicMock()
         mock_cursor = MagicMock()
+        mock_cursor.sort = MagicMock(return_value=mock_cursor)
         mock_cursor.limit = MagicMock(return_value=mock_cursor)
         mock_cursor.to_list = AsyncMock(
             return_value=[
