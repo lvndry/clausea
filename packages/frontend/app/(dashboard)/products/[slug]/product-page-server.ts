@@ -11,7 +11,10 @@ import type { Product, ProductOverview } from "@/types";
 import { auth } from "@clerk/nextjs/server";
 import { getBackendUrl } from "@lib/config";
 
-const REVALIDATE_SECONDS = 3600;
+/** Shared by layout metadata + page — keeps OG/JSON-LD freshness (was 60s in layout). */
+const METADATA_REVALIDATE_SECONDS = 60;
+/** Page-only endpoints can use a longer cache window. */
+const PAGE_REVALIDATE_SECONDS = 3600;
 
 export interface ProductMetadata {
   name: string;
@@ -39,12 +42,13 @@ async function fetchBackendJson<T>(
   path: string,
   headers: HeadersInit,
   tag: string,
+  revalidateSeconds: number,
 ): Promise<{ status: number; data: T | null }> {
   let status = 0;
   try {
     const res = await fetch(getBackendUrl(path), {
       headers,
-      next: { tags: [tag], revalidate: REVALIDATE_SECONDS },
+      next: { tags: [tag], revalidate: revalidateSeconds },
     });
     status = res.status;
     if (!res.ok) {
@@ -52,7 +56,8 @@ async function fetchBackendJson<T>(
     }
     const data = (await res.json()) as T;
     return { status, data };
-  } catch {
+  } catch (err) {
+    console.error(`fetchBackendJson: error for ${path}`, err);
     return { status, data: null };
   }
 }
@@ -80,6 +85,7 @@ export const fetchProductRecord = cache(async (slug: string) => {
     `/products/${slug}`,
     headers,
     `product-${slug}`,
+    METADATA_REVALIDATE_SECONDS,
   );
 });
 
@@ -90,6 +96,7 @@ export const fetchProductOverviewData = cache(
       `/products/${slug}/overview`,
       headers,
       `product-${slug}`,
+      METADATA_REVALIDATE_SECONDS,
     );
     return result.data;
   },
@@ -102,12 +109,18 @@ export const fetchProductExplainerData = cache(
       `/products/${slug}/explainer`,
       headers,
       `product-${slug}`,
+      PAGE_REVALIDATE_SECONDS,
     );
     return result.data;
   },
 );
 
 export const fetchProductPageShell = cache(async (slug: string) => {
+  const headers = await getProductRequestHeaders();
+  if (!Object.keys(headers).length) {
+    console.warn(`fetchProductPageShell: no auth headers for slug=${slug}`);
+  }
+
   const [productResult, overview, explainer] = await Promise.all([
     fetchProductRecord(slug),
     fetchProductOverviewData(slug),
