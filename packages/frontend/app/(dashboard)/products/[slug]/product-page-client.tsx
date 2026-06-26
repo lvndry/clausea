@@ -125,7 +125,13 @@ export default function CompanyPage({
     initialTopics ?? null,
   );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
-  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsLoading, setDocumentsLoading] = useState(
+    Boolean(initialProduct && initialOverview),
+  );
+  const [evidenceError, setEvidenceError] = useState<number | "network" | null>(
+    null,
+  );
+  const [evidenceFetchKey, setEvidenceFetchKey] = useState(0);
   const [thinEvidence, setThinEvidence] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
     | "ready"
@@ -159,7 +165,73 @@ export default function CompanyPage({
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
   useEffect(() => {
-    // If SSR pre-loaded both product and overview, skip client-side fetch entirely
+    if (!initialProduct || !initialOverview) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchEvidence() {
+      setDocumentsLoading(true);
+      setEvidenceError(null);
+      try {
+        const [docsRes, topicsRes] = await Promise.all([
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/topics`),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        let nextError: number | "network" | null = null;
+
+        if (docsRes.ok) {
+          try {
+            setDocuments((await docsRes.json()) as DocumentSummary[]);
+          } catch (err) {
+            console.error("Failed to parse documents JSON", err);
+            nextError = docsRes.status;
+          }
+        } else if (docsRes.status !== 425) {
+          nextError = docsRes.status;
+        }
+
+        if (topicsRes.ok) {
+          try {
+            setTopics((await topicsRes.json()) as ProductTopicReport);
+          } catch (err) {
+            console.error("Failed to parse topics JSON", err);
+            nextError = nextError ?? topicsRes.status;
+          }
+        } else if (topicsRes.status !== 425) {
+          nextError = nextError ?? topicsRes.status;
+        }
+
+        if (!cancelled) {
+          setEvidenceError(nextError);
+        }
+      } catch (error) {
+        console.error("Failed to fetch product evidence", error);
+        if (!cancelled) {
+          setEvidenceError("network");
+        }
+      } finally {
+        if (!cancelled) {
+          setDocumentsLoading(false);
+        }
+      }
+    }
+
+    void fetchEvidence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, initialProduct, initialOverview, evidenceFetchKey]);
+
+  useEffect(() => {
+    // SSR pre-loaded the overview shell — evidence loads in a separate effect.
     if (initialProduct && initialOverview) {
       setLoading(false);
       return;
@@ -1195,6 +1267,26 @@ export default function CompanyPage({
               <Skeleton className="h-32 rounded-2xl" />
               <Skeleton className="h-32 rounded-2xl" />
               <Skeleton className="h-32 rounded-2xl" />
+            </div>
+          ) : evidenceError ? (
+            <div className="border border-border bg-background p-6 space-y-4">
+              <h3 className="text-xl font-display font-medium text-foreground">
+                Couldn&apos;t load evidence
+              </h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {evidenceError === 429
+                  ? "You've hit the usage limit for evidence details. Sign in or upgrade for full access."
+                  : evidenceError === "network"
+                    ? "We couldn't reach the server. Check your connection and try again."
+                    : "Something went wrong loading source documents and topic findings."}
+              </p>
+              <Button
+                onClick={() => setEvidenceFetchKey((key) => key + 1)}
+                className="h-11 px-6 bg-foreground text-background hover:bg-foreground/90 rounded-none text-[10px] uppercase tracking-[0.2em] font-bold"
+              >
+                <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                Try again
+              </Button>
             </div>
           ) : (
             <EvidenceList
