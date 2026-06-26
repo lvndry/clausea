@@ -125,7 +125,9 @@ export default function CompanyPage({
     initialTopics ?? null,
   );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
-  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsLoading, setDocumentsLoading] = useState(
+    Boolean(initialProduct && initialOverview),
+  );
   const [thinEvidence, setThinEvidence] = useState(false);
   const [indexationMode, setIndexationMode] = useState<
     | "ready"
@@ -159,7 +161,48 @@ export default function CompanyPage({
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
   useEffect(() => {
-    // If SSR pre-loaded both product and overview, skip client-side fetch entirely
+    if (!initialProduct || !initialOverview) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchEvidence() {
+      setDocumentsLoading(true);
+      try {
+        const [docsRes, topicsRes] = await Promise.all([
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/topics`),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (docsRes.ok) {
+          setDocuments((await docsRes.json()) as DocumentSummary[]);
+        }
+        if (topicsRes.ok) {
+          setTopics((await topicsRes.json()) as ProductTopicReport);
+        }
+      } catch (error) {
+        console.error("Failed to fetch product evidence", error);
+      } finally {
+        if (!cancelled) {
+          setDocumentsLoading(false);
+        }
+      }
+    }
+
+    void fetchEvidence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, initialProduct, initialOverview]);
+
+  useEffect(() => {
+    // SSR pre-loaded the overview shell — evidence loads in a separate effect.
     if (initialProduct && initialOverview) {
       setLoading(false);
       return;

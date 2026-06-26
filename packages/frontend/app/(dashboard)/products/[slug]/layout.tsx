@@ -1,27 +1,16 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
-
-import { cache } from "react";
 
 import { ProductStructuredData } from "@/components/seo/structured-data";
+
+import {
+  type ProductMetadata,
+  fetchProductForMetadata,
+  humanizeSlug,
+} from "./product-page-server";
 
 const siteUrl = (
   process.env.NEXT_PUBLIC_APP_URL || "https://clausea.co"
 ).replace(/\/$/, "");
-
-interface ProductMetadata {
-  name: string;
-  slug: string;
-  company_name?: string | null;
-  one_line_summary?: string;
-  grade?: "A" | "B" | "C" | "D" | "E" | null;
-  verdict?:
-    | "very_user_friendly"
-    | "user_friendly"
-    | "moderate"
-    | "pervasive"
-    | "very_pervasive";
-}
 
 function buildOgUrl(
   base: string,
@@ -34,95 +23,6 @@ function buildOgUrl(
   if (verdict) params.set("verdict", verdict);
   return `${base}/og?${params.toString()}`;
 }
-
-function humanizeSlug(slug: string): string {
-  return slug
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
-}
-
-function resolveOriginFromHeaders(headerList: Headers): string | null {
-  const explicit = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
-  if (explicit) {
-    return explicit;
-  }
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
-  if (!host) {
-    return null;
-  }
-  const proto = headerList.get("x-forwarded-proto") ?? "http";
-  return `${proto}://${host}`;
-}
-
-type ProductMetadataFetch =
-  | { kind: "ok"; product: ProductMetadata }
-  | { kind: "not_found" }
-  | { kind: "uncertain"; displayName: string };
-
-/**
- * Load product for SEO metadata via the same Next.js API route the client uses,
- * forwarding the request cookies so Clerk auth matches. A direct backend fetch
- * returns 401 (no Bearer token) and was incorrectly shown as "Product Not Found".
- */
-const fetchProductForMetadata = cache(async function (
-  slug: string,
-): Promise<ProductMetadataFetch> {
-  try {
-    const headerList = await headers();
-    const origin = resolveOriginFromHeaders(headerList);
-    if (!origin) {
-      console.error(
-        "Product metadata: could not resolve app origin (set NEXT_PUBLIC_APP_URL).",
-      );
-      return { kind: "uncertain", displayName: humanizeSlug(slug) };
-    }
-
-    const cookie = headerList.get("cookie");
-    const reqHeaders: HeadersInit = cookie ? { Cookie: cookie } : {};
-
-    const [productRes, overviewRes] = await Promise.all([
-      fetch(`${origin}/api/products/${slug}`, {
-        headers: reqHeaders,
-        next: { revalidate: 60 },
-      }),
-      fetch(`${origin}/api/products/${slug}/overview`, {
-        headers: reqHeaders,
-        next: { revalidate: 60 },
-      }).catch(() => null),
-    ]);
-
-    if (productRes.status === 404) {
-      return { kind: "not_found" };
-    }
-
-    if (!productRes.ok) {
-      console.error("Product metadata: API error", productRes.status, slug);
-      return { kind: "uncertain", displayName: humanizeSlug(slug) };
-    }
-
-    const product = (await productRes.json()) as ProductMetadata;
-
-    if (overviewRes?.ok) {
-      try {
-        const overview = (await overviewRes.json()) as {
-          grade?: ProductMetadata["grade"];
-          verdict?: ProductMetadata["verdict"];
-        };
-        if (overview.grade) product.grade = overview.grade;
-        if (overview.verdict) product.verdict = overview.verdict;
-      } catch {
-        // Overview unavailable or malformed — OG card shows name only
-      }
-    }
-
-    return { kind: "ok", product };
-  } catch (error) {
-    console.error("Error fetching product data for metadata:", error);
-    return { kind: "uncertain", displayName: humanizeSlug(slug) };
-  }
-});
 
 function neutralProductMetadata(displayName: string, slug: string): Metadata {
   const description = `Policy overview for ${displayName} — data practices, terms, and risks from crawled documents.`;
