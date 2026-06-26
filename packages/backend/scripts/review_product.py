@@ -2,28 +2,23 @@
 
 Usage:
     uv run python scripts/review_product.py <slug> [<slug> ...]
-    uv run python scripts/review_product.py --completed   # all completed jobs
-
-Read-only. Connects to PRODUCTION_MONGO_URI (falls back to MONGO_URI). For each
-product it prints a crawl summary, a per-document analysis line, and a single
-✅/⚠️ verdict that flags the obvious errors worth acting on: documents stored but
-never analysed, region mislabels, empty detector output, and a missing grade.
+    uv run python scripts/review_product.py --completed
+    uv run python scripts/review_product.py --production discord
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
-import os
-import sys
 
-_prod = os.getenv("PRODUCTION_MONGO_URI")
-if _prod:
-    os.environ["MONGO_URI"] = _prod
+from dotenv import load_dotenv
 
-from src.core.database import db_session  # noqa: E402
-from src.core.logging import setup_logging  # noqa: E402
-from src.services.service_factory import (  # noqa: E402
-    create_document_service,
-    create_product_service,
-)
+load_dotenv()
+
+from src.core.database import db_session
+from src.core.logging import setup_logging
+from src.ops.script_env import resolve_production
+from src.services.service_factory import create_document_service, create_product_service
 
 _ROW_HINTS = ("row", "outside", "non-eea", "rest of world", "rest-of-world", "global)")
 
@@ -119,7 +114,8 @@ async def review(db, product_svc, doc_svc, slug: str) -> None:
         print("  ✅ VERDICT: clean (coverage + analysis + overview all present)")
 
 
-async def main(slugs: list[str]) -> None:
+async def main(slugs: list[str], *, use_production: bool) -> None:
+    resolve_production(use_production=use_production)
     setup_logging()
     product_svc = create_product_service()
     doc_svc = create_document_service()
@@ -133,7 +129,10 @@ async def main(slugs: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: review_product.py <slug> [<slug> ...] | --completed")
-        sys.exit(1)
-    asyncio.run(main(sys.argv[1:]))
+    parser = argparse.ArgumentParser(description="Review pipeline output for product(s)")
+    parser.add_argument("slugs", nargs="*", help="Slugs or --completed")
+    parser.add_argument("--production", action="store_true", help="Use PRODUCTION_MONGO_URI")
+    args = parser.parse_args()
+    if not args.slugs:
+        parser.error("provide at least one slug or --completed")
+    asyncio.run(main(args.slugs, use_production=args.production))

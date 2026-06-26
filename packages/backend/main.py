@@ -151,7 +151,6 @@ async def readiness_check() -> JSONResponse:
 
 routes = [
     products.router,
-    promotion.router,
     users.router,
     paddle.router,
     subscription.router,
@@ -160,6 +159,9 @@ routes = [
     pipeline.router,
     history.router,
 ]
+
+if config.app.is_development:
+    routes.append(promotion.router)
 
 for route in routes:
     app.include_router(route)

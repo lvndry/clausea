@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.core.logging import get_logger
-from src.promotion import PromotionManager
+from src.ops.promotion import PromotionManager
 
 logger = get_logger(__name__)
 

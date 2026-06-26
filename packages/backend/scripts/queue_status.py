@@ -1,65 +1,61 @@
-"""Read-only snapshot of the pipeline_jobs queue. Usage: uv run python scripts/queue_status.py
+"""Read-only snapshot of the pipeline_jobs queue.
 
-Aggregates job counts by status and lists currently-crawling products and recent
-failures. Connects to PRODUCTION_MONGO_URI when set, else MONGO_URI. Never writes.
+Usage:
+    uv run python scripts/queue_status.py
+    uv run python scripts/queue_status.py --production
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
-import os
 
 from dotenv import load_dotenv
-from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
 
 
-async def main() -> None:
-    uri = os.getenv("PRODUCTION_MONGO_URI") or os.getenv("MONGO_URI")
-    if not uri:
-        raise SystemExit("No PRODUCTION_MONGO_URI or MONGO_URI set")
-    db_name = os.getenv("MONGODB_DATABASE", "clausea")
-    client = AsyncIOMotorClient(uri)
-    db = client[db_name]
+async def main(*, use_production: bool) -> None:
+    from src.ops.script_env import open_db, resolve_production
+    from src.services.pipeline_snapshot import full_queue_snapshot
 
-    by_status: dict[str, int] = {}
-    async for row in db.pipeline_jobs.aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
-        by_status[row["_id"]] = row["n"]
-
-    overviews = await db.product_intelligence.count_documents(
-        {"overview": {"$exists": True, "$ne": None}}
-    )
-    total = sum(by_status.values())
-
-    order = [
-        "pending",
-        "crawling",
-        "synthesising",
-        "generating_overview",
-        "completed",
-        "no_documents",
-        "failed",
-    ]
-    parts = [f"{s}={by_status.get(s, 0)}" for s in order if s in by_status]
-    extra = [f"{s}={n}" for s, n in by_status.items() if s not in order]
-    print(f"jobs={total} " + " ".join(parts + extra) + f" overviews={overviews}")
-
-    crawling = await db.pipeline_jobs.find(
-        {"status": {"$in": ["crawling", "synthesising", "generating_overview"]}}
-    ).to_list(length=20)
-    if crawling:
-        active = [
-            f"{j['product_slug']}({j['status']},att={j.get('attempts', 0)})" for j in crawling
+    resolve_production(use_production=use_production)
+    client, db = open_db(prefer_production=use_production)
+    try:
+        snap = await full_queue_snapshot(db)
+        by_status = snap["by_status"]
+        order = [
+            "pending",
+            "crawling",
+            "synthesising",
+            "generating_overview",
+            "completed",
+            "no_documents",
+            "failed",
         ]
-        print("in-progress: " + ", ".join(active))
-
-    failed = await db.pipeline_jobs.find({"status": "failed"}).sort("updated_at", -1).to_list(20)
-    if failed:
-        print(f"failed (top {min(len(failed), 20)} by recency):")
-        for j in failed:
-            print(f"  {j['product_slug']:24} att={j.get('attempts', 0)} err={j.get('error')}")
-
-    client.close()
+        parts = [f"{s}={by_status.get(s, 0)}" for s in order if s in by_status]
+        extra = [f"{s}={n}" for s, n in by_status.items() if s not in order]
+        print(
+            f"jobs={snap['total']} " + " ".join(parts + extra) + f" overviews={snap['overviews']}"
+        )
+        if snap["in_progress"]:
+            print(
+                "in-progress: "
+                + ", ".join(
+                    f"{j['product_slug']}({j['status']},att={j.get('attempts', 0)})"
+                    for j in snap["in_progress"]
+                )
+            )
+        if snap["failed"]:
+            print(f"failed (top {min(len(snap['failed']), 20)} by recency):")
+            for j in snap["failed"]:
+                print(f"  {j['product_slug']:24} att={j.get('attempts', 0)} err={j.get('error')}")
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Pipeline queue snapshot (read-only)")
+    parser.add_argument("--production", action="store_true", help="Use PRODUCTION_MONGO_URI")
+    args = parser.parse_args()
+    asyncio.run(main(use_production=args.production))

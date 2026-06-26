@@ -216,18 +216,22 @@ uv run ruff check --select I --fix
 
 ### Pipeline Operations
 
-Operational scripts live in `scripts/`. Common examples:
+See [`scripts/README.md`](scripts/README.md) for the full catalog. Common commands:
 
 ```bash
-# Queue snapshot (read-only)
-uv run python scripts/queue_status.py
+# 5-min regen monitor (PIPELINE_UPDATE lines)
+uv run python scripts/pipeline_monitor.py --production
+
+# One-shot queue snapshot
+uv run python scripts/queue_status.py --production
 
 # Ship-readiness gates
 uv run python scripts/ship_health_check.py
 
-# Requeue analysis-only or full-crawl jobs (production)
+# Requeue jobs (production)
 uv run python scripts/requeue_analysis.py --production --dry-run
-uv run python scripts/requeue_crawl.py --production --dry-run
+uv run python scripts/requeue_crawl.py --production --dry-run      # default: no-docs only
+uv run python scripts/cancel_wasteful_crawls.py --production --dry-run
 ```
 
 ### Dashboard Development
