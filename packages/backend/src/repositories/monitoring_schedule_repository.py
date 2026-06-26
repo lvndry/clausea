@@ -40,9 +40,11 @@ class MonitoringScheduleRepository:
 
     async def find_due(self, db: AgnosticDatabase, limit: int = 50) -> list[MonitoringSchedule]:
         now = datetime.now()
-        cursor = db.monitoring_schedules.find(
-            {"next_crawl_due_at": {"$lte": now}, "enabled": True}
-        ).limit(limit)
+        cursor = (
+            db.monitoring_schedules.find({"next_crawl_due_at": {"$lte": now}, "enabled": True})
+            .sort("next_crawl_due_at", 1)
+            .limit(limit)
+        )
         rows = await cursor.to_list(length=limit)
         return [MonitoringSchedule(**row) for row in rows]
 

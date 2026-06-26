@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+from datetime import datetime, timedelta
 
 from aiohttp import web
 
@@ -42,6 +43,7 @@ _CONCURRENCY = max(
 _POLL_SECONDS = float(os.getenv("PIPELINE_WORKER_POLL_SECONDS", "3"))
 _STALE_SWEEP_SECONDS = float(os.getenv("PIPELINE_WORKER_STALE_SWEEP_SECONDS", "300"))
 _MONITORING_SWEEP_SECONDS = float(os.getenv("PIPELINE_MONITORING_SWEEP_SECONDS", "3600"))
+_MONITORING_MAX_PER_DAY = int(os.getenv("PIPELINE_MONITORING_MAX_PER_DAY", "20"))
 _SHUTDOWN_GRACE_SECONDS = float(os.getenv("PIPELINE_WORKER_SHUTDOWN_GRACE", "20"))
 _PORT_ENV = os.getenv("PORT", "8000")
 _HEALTH_PORT = int(_PORT_ENV) if _PORT_ENV.isdigit() else 8000
@@ -148,7 +150,23 @@ async def _sweep_monitoring() -> None:
         pipeline_svc = create_pipeline_service()
         triggered = 0
         async with db_session() as db:
-            due = await monitoring_repo.find_due(db)
+            # Enforce rolling window quota: how many triggered in the last 24h?
+            day_ago = datetime.now() - timedelta(days=1)
+            triggered_last_24h = await db.monitoring_schedules.count_documents(
+                {"last_crawl_triggered_at": {"$gte": day_ago}}
+            )
+
+            if triggered_last_24h >= _MONITORING_MAX_PER_DAY:
+                logger.debug(
+                    "Monitoring quota reached (%d/%d triggered in last 24h)",
+                    triggered_last_24h,
+                    _MONITORING_MAX_PER_DAY,
+                )
+                return
+
+            limit = min(50, _MONITORING_MAX_PER_DAY - triggered_last_24h)
+            due = await monitoring_repo.find_due(db, limit=limit)
+
         for schedule in due:
             try:
                 async with db_session() as db:
