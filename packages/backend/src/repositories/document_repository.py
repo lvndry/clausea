@@ -267,6 +267,25 @@ class DocumentRepository(BaseRepository):
             for document in documents
         ]
 
+    async def find_by_ids_with_extraction(
+        self, db: AgnosticDatabase, product_id: str, document_ids: list[str]
+    ) -> list[Document]:
+        """Load rollup-cited documents with extraction only (no markdown bodies)."""
+        if not document_ids:
+            return []
+        unique_ids = list(dict.fromkeys(document_ids))
+        projection = {"markdown": 0, "analysis": 0, "consumer_explainer": 0}
+        query = _product_scoped_query(product_id, {"id": {"$in": unique_ids}})
+        documents: list[dict[str, Any]] = await db.documents.find(query, projection).to_list(
+            length=None
+        )
+        for document in documents:
+            document.setdefault("markdown", "")
+        return [
+            Document(**_contextualize_document_for_product(document, product_id))
+            for document in documents
+        ]
+
     async def find_by_product_id_full(
         self, db: AgnosticDatabase, product_id: str
     ) -> list[Document]:

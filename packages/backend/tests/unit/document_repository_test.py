@@ -228,3 +228,49 @@ async def test_find_by_product_id_full_contextualizes_product_id() -> None:
     assert len(docs) == 1
     assert docs[0].product_id == "prod-2"
     assert docs[0].url == "https://example.com/policy"
+
+
+@pytest.mark.asyncio
+async def test_find_by_ids_with_extraction_returns_early_when_no_ids() -> None:
+    repo = DocumentRepository()
+    documents_collection = MagicMock()
+    documents_collection.find = MagicMock()
+    db = AsyncMock()
+    db.documents = documents_collection
+
+    docs = await repo.find_by_ids_with_extraction(db, "prod-1", [])
+
+    assert docs == []
+    documents_collection.find.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_by_ids_with_extraction_fills_missing_markdown() -> None:
+    """Projection drops markdown, so the loader must backfill it before model validation."""
+    repo = DocumentRepository()
+    record = {
+        "id": "doc-1",
+        "url": "https://example.com/policy",
+        "product_id": "prod-1",
+        "product_ids": ["prod-1"],
+        "doc_type": "privacy_policy",
+    }
+    cursor = AsyncMock()
+    cursor.to_list = AsyncMock(return_value=[record])
+    documents_collection = MagicMock()
+    documents_collection.find = MagicMock(return_value=cursor)
+    db = AsyncMock()
+    db.documents = documents_collection
+
+    docs = await repo.find_by_ids_with_extraction(db, "prod-1", ["doc-1", "doc-1"])
+
+    args, _kwargs = documents_collection.find.call_args
+    assert args[0] == {
+        "$and": [
+            {"id": {"$in": ["doc-1"]}},
+            {"$or": [{"product_id": "prod-1"}, {"product_ids": "prod-1"}]},
+        ]
+    }
+    assert args[1] == {"markdown": 0, "analysis": 0, "consumer_explainer": 0}
+    assert len(docs) == 1
+    assert docs[0].markdown == ""

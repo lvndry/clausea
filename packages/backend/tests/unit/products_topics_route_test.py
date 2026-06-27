@@ -126,7 +126,7 @@ async def test_get_product_topics_returns_topic_report() -> None:
             AsyncMock(return_value=_intelligence()),
         ),
         patch(
-            "src.routes.products.DocumentRepository.find_by_product_id_full",
+            "src.routes.products.DocumentRepository.find_by_ids_with_extraction",
             AsyncMock(return_value=[doc]),
         ),
     ):

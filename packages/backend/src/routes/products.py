@@ -187,11 +187,12 @@ async def get_product_topics(
         )
 
     doc_repo = DocumentRepository()
-    full_docs = await doc_repo.find_by_product_id_full(db, product.id)
     referenced_ids = {
         doc_id for item in intelligence.rollup.items for doc_id in item.document_ids
     } | {doc_id for conflict in intelligence.rollup.conflicts for doc_id in conflict.document_ids}
-    documents_for_hydration = [doc for doc in full_docs if doc.id in referenced_ids]
+    documents_for_hydration = await doc_repo.find_by_ids_with_extraction(
+        db, product.id, sorted(referenced_ids)
+    )
     hydrated_rollup = rollup_to_hydrated(
         product_id=product.id,
         product_slug=slug,
