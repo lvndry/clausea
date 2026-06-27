@@ -9,7 +9,6 @@ import { useEffect, useState } from "react";
 
 import { completeOnboarding, upsertUser } from "@/app/actions/users";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -203,10 +202,7 @@ export default function OnboardingPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.1 }}
         >
-          <Card
-            variant="glass"
-            className="p-8 md:p-10 rounded-3xl border-border/50"
-          >
+          <div className="p-8 md:p-10">
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Name Fields */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -359,7 +355,7 @@ export default function OnboardingPage() {
                 <span>AI-Powered</span>
               </div>
             </div>
-          </Card>
+          </div>
         </motion.div>
       </div>
     </div>
