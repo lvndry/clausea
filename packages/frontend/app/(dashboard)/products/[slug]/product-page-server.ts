@@ -158,6 +158,13 @@ export const fetchProductEvidence = cache(async (slug: string) => {
     ),
   ]);
 
+  if (!topicsResult.data && topicsResult.status !== 425) {
+    console.warn(
+      `fetchProductEvidence: topics unavailable status=${topicsResult.status}`,
+      slug,
+    );
+  }
+
   return {
     documents: documentsResult.data ?? [],
     topics: topicsResult.data,
