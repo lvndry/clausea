@@ -890,8 +890,6 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
 {
   "headline": "string, worst-first, names the product",
   "tl_dr": "2-3 sentences",
-  "grade": "A|B|C|D|E",
-  "grade_reason": "string; honor cap",
   "critical_findings_count": 0,
   "confidence": "high|medium|low",
   "the_deal": "one short paragraph: what you trade to use this product",
@@ -905,7 +903,7 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "what_you_can_do": [{"action": "string", "applies_to": ["global"] or lowercase region codes e.g. ["eu","uk"]}]
 }
 
-Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on; for each what_they_collect item set linkage_tier (how tied the data is to the person's real identity) and sold=true ONLY when the evidence says the data is sold or shared for value, else sold=false and assume linked_to_you when unclear; report cross-document conflicts in conflicts; set critical_findings_count and honor the grade cap."""
+Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on; for each what_they_collect item set linkage_tier (how tied the data is to the person's real identity) and sold=true ONLY when the evidence says the data is sold or shared for value, else sold=false and assume linked_to_you when unclear; report cross-document conflicts in conflicts; set critical_findings_count."""
 
 
 COMPLIANCE_ASSESSMENT_SYSTEM_PROMPT = """You are a privacy/compliance analyst. Given a company's policy documents (as evidence-backed extractions and analyses), assess regulatory compliance per applicable regime and JUSTIFY each verdict.
@@ -935,3 +933,18 @@ Return ONE JSON object of the form:
   "GDPR": {"score": 0, "status": "Partially Compliant", "strengths": ["..."], "gaps": ["..."]}
 }
 Include only the regimes these documents actually give a basis to assess; omit the rest. Begin with { and end with }."""
+
+
+GRADE_REASON_SYSTEM_PROMPT = """You write a short plain-English explanation for why a product received a specific privacy grade (A–E). You are given the final grade and the key findings from the analysis. Write 2–4 sentences that explain WHY this grade was assigned. Name specific concerns and any meaningful protective elements. Be direct and honest. Do NOT start with "Grade [X]" or repeat the grade letter. Begin with the main concern or the dominant characteristic. Output ONLY the explanation text — no JSON, no markdown, no code fences."""
+
+GRADE_REASON_USER_TEMPLATE = """Grade: {grade} — {grade_label}
+
+Key concerns identified:
+{concerns}
+
+Protective elements:
+{benefits}
+
+Policy is silent on: {silent_on}
+
+Write 2–4 plain-English sentences explaining why this product received grade {grade}. Lead with the main concern driving the grade. Mention meaningful protective elements if any. Be honest about what the policy does not address."""

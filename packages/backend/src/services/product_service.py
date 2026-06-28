@@ -439,7 +439,6 @@ class ProductService:
                 payload = explainer.model_copy(
                     update={"grade": canonical_grade, "grade_reason": canonical_reason}
                 )
-
         return await self._product_repo.save_product_explainer(db, product_slug, payload)
 
     async def get_product_compliance(

@@ -853,12 +853,19 @@ class ConsumerRegionVerdict(BaseModel):
 class ConsumerExplainer(BaseModel):
     """Plain-English explainer of one document, or a product roll-up, for end users.
 
-    Finding lists are ordered worst-first. ``grade`` is advisory as emitted by
-    the model and is re-clamped server-side from ``critical_findings_count`` by
-    the validator in analyser.py. For product pages, the service layer further
-    reconciles both ``grade`` and ``grade_reason`` to the canonical overview
-    grade, so the explainer's grade always matches the overview's deterministic
-    risk scoring.
+    Finding lists are ordered worst-first.
+
+    For **single-document** explainers the LLM assigns ``grade`` and
+    ``grade_reason`` directly; ``_validate_consumer_explainer_quotes`` then
+    applies the critical-findings cap / good-to-know boost in-process.
+
+    For **product roll-up** explainers (``is_product_rollup=True``) the LLM
+    does NOT grade — grading is a separate concern owned by the overview
+    pipeline.  After the roll-up is parsed and validated,
+    ``generate_product_consumer_explainer`` injects the canonical overview grade
+    and a matching ``grade_reason`` produced by ``generate_grade_reason``.  This
+    ensures grade and explanation are always written in the correct order (grade
+    first, explanation second) and can never diverge.
     """
 
     model_config = ConfigDict(populate_by_name=True)

@@ -145,6 +145,23 @@ _VERDICT_FROM_GRADE: dict[
 }
 
 
+GRADE_LABELS: dict[str, str] = {
+    "A": "very protective",
+    "B": "mostly fair",
+    "C": "mixed",
+    "D": "user-hostile in one important way",
+    "E": "user-hostile in several ways",
+}
+
+GRADE_FALLBACK_REASONS: dict[str, str] = {
+    "A": "Very user-friendly: minimal data collection, strong user controls, no major concerns.",
+    "B": "Generally user-friendly: some concerns but good transparency and user rights overall.",
+    "C": "Moderate risk: notable concerns around data sharing, limited user controls, or vague language.",
+    "D": "Pervasive risk: significant issues with data practices, limited user rights, or broad data sharing.",
+    "E": "Very pervasive risk: critical concerns such as forced arbitration, broad data selling, or severe opacity.",
+}
+
+
 def grade_to_verdict(
     grade: str,
 ) -> Literal[

@@ -93,6 +93,8 @@ from src.prompts.analysis_prompts import (
     CONSUMER_EXPLAINER_SYSTEM_PROMPT,
     CONSUMER_EXPLAINER_USER_TEMPLATE,
     DOCUMENT_ANALYSIS_PROMPT,
+    GRADE_REASON_SYSTEM_PROMPT,
+    GRADE_REASON_USER_TEMPLATE,
     OVERVIEW_CORE_DOC_TYPES,
     PRODUCT_DEEP_ANALYSIS_PROMPT,
     PRODUCT_OVERVIEW_PROMPT,
@@ -109,6 +111,8 @@ from src.services.topic_stance_service import compose_product_risk_from_topics
 from src.services.watch_out_calibration import calibrate_consumer_explainer
 from src.utils.cancellation import CancellationToken
 from src.utils.grading import (
+    GRADE_FALLBACK_REASONS,
+    GRADE_LABELS,
     aggregate_dimension_grades,
     clamp_grade,
     coerce_grade,
@@ -1579,42 +1583,49 @@ def _validate_consumer_explainer_quotes(
     )
     explainer.critical_findings_count = critical_count
 
-    grade_order = ["A", "B", "C", "D", "E"]
-    if critical_count >= 2:
-        floor = "E"
-    elif critical_count == 1:
-        floor = "D"
-    else:
-        floor = None
+    # Grade cap/boost only applies to single-document explainers.
+    # Product rollups receive their grade from the overview's deterministic scoring;
+    # grade and grade_reason are injected after this function returns.
+    if not explainer.is_product_rollup:
+        grade_order = ["A", "B", "C", "D", "E"]
+        if critical_count >= 2:
+            floor = "E"
+        elif critical_count == 1:
+            floor = "D"
+        else:
+            floor = None
 
-    if floor is not None:
-        current_index = grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
-        floor_index = grade_order.index(floor)
-        if current_index < floor_index:
-            logger.info(
-                "ConsumerExplainer grade clamp: %s -> %s (%d critical findings)",
-                explainer.grade,
-                floor,
-                critical_count,
+        if floor is not None:
+            current_index = (
+                grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
             )
-            explainer.grade = floor
-            explainer.grade_reason = (
-                f"Grade adjusted to {floor}: {critical_count} critical "
-                f"finding{'s' if critical_count != 1 else ''}."
+            floor_index = grade_order.index(floor)
+            if current_index < floor_index:
+                logger.info(
+                    "ConsumerExplainer grade clamp: %s -> %s (%d critical findings)",
+                    explainer.grade,
+                    floor,
+                    critical_count,
+                )
+                explainer.grade = floor
+                explainer.grade_reason = (
+                    f"Grade adjusted to {floor}: {critical_count} critical "
+                    f"finding{'s' if critical_count != 1 else ''}."
+                )
+        elif critical_count == 0 and len(explainer.good_to_know or []) >= 2:
+            current_index = (
+                grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
             )
-    elif critical_count == 0 and len(explainer.good_to_know or []) >= 2:
-        current_index = grade_order.index(explainer.grade) if explainer.grade in grade_order else 2
-        boost_index = max(0, current_index - 1)
-        if boost_index < current_index:
-            improved = grade_order[boost_index]
-            logger.info(
-                "ConsumerExplainer grade boost: %s -> %s (%d good_to_know items)",
-                explainer.grade,
-                improved,
-                len(explainer.good_to_know or []),
-            )
-            explainer.grade = improved
-            if not explainer.grade_reason:
+            boost_index = max(0, current_index - 1)
+            if boost_index < current_index:
+                improved = grade_order[boost_index]
+                logger.info(
+                    "ConsumerExplainer grade boost: %s -> %s (%d good_to_know items)",
+                    explainer.grade,
+                    improved,
+                    len(explainer.good_to_know or []),
+                )
+                explainer.grade = improved
                 explainer.grade_reason = (
                     "Grade reflects documented protections described in the policies."
                 )
@@ -1721,6 +1732,62 @@ async def generate_consumer_explainer(
     return None
 
 
+async def generate_grade_reason(
+    grade: str,
+    explainer: ConsumerExplainer,
+    *,
+    cancellation_token: CancellationToken | None = None,
+) -> str:
+    """Generate a grade_reason that is consistent with the finalized grade.
+
+    Uses the explainer's factual findings as context so the explanation is
+    specific to the product rather than generic. Falls back to a canned string
+    if the LLM call fails so the caller is never blocked.
+    """
+    concerns_lines = [
+        f"- {case.title}: {case.means_for_you}"
+        for case in (explainer.watch_out_for or [])
+        if case.severity in ("critical", "high")
+    ][:4]
+    if not concerns_lines:
+        concerns_lines = [f"- {case.title}" for case in (explainer.watch_out_for or [])[:2]]
+    concerns = "\n".join(concerns_lines) or "None identified in the analysis."
+
+    benefits = (
+        "\n".join(f"- {item}" for item in (explainer.good_to_know or [])[:3])
+        or "None identified in the analysis."
+    )
+
+    silent_on = ", ".join(s.topic for s in (explainer.silent_on or [])[:3]) or "none"
+
+    user_prompt = GRADE_REASON_USER_TEMPLATE.format(
+        grade=grade,
+        grade_label=GRADE_LABELS.get(grade, "unknown"),
+        concerns=concerns,
+        benefits=benefits,
+        silent_on=silent_on,
+    )
+
+    try:
+        token = cancellation_token or CancellationToken()
+        await token.check_cancellation()
+        response = await acompletion_with_fallback(
+            messages=[
+                {"role": "system", "content": GRADE_REASON_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            model_priority=_OVERVIEW_PRIORITY,
+            temperature=0,
+        )
+        reason = (response.choices[0].message.content or "").strip()
+        if reason:
+            return reason
+    except Exception as exc:
+        logger.warning("generate_grade_reason failed for grade %s: %s", grade, exc)
+
+    return GRADE_FALLBACK_REASONS.get(grade, "Risk assessment based on structured policy analysis.")
+
+
 async def generate_product_consumer_explainer(
     db: AgnosticDatabase,
     product_slug: str,
@@ -1782,6 +1849,12 @@ async def generate_product_consumer_explainer(
         .replace("{extraction_json}", json.dumps(doc_inputs, default=str))
     )
 
+    # Fetch the canonical grade once — outside the retry loop so a failed parse
+    # attempt doesn't trigger a redundant DB round-trip on the next attempt.
+    overview_data = await product_svc.get_product_overview_data(db, product_slug)
+    raw_grade = (overview_data.get("overview") or {}).get("grade") if overview_data else None
+    canonical_grade = coerce_grade(raw_grade) if raw_grade else None
+
     usage_tracker = UsageTracker()
     tracker_callback = usage_tracker.create_tracker("generate_product_consumer_explainer")
     last_exception: Exception | None = None
@@ -1812,6 +1885,17 @@ async def generate_product_consumer_explainer(
             explainer = ConsumerExplainer.model_validate(parsed_dict, strict=False)
             explainer.is_product_rollup = True
             explainer = _validate_consumer_explainer_quotes(explainer, allowed_citations)
+
+            # Inject the canonical grade — the explainer does not grade itself.
+            # generate_grade_reason writes the explanation AFTER the grade is
+            # finalized so they are always consistent.
+            if canonical_grade:
+                grade_reason = await generate_grade_reason(
+                    canonical_grade, explainer, cancellation_token=token
+                )
+                explainer.grade = canonical_grade
+                explainer.grade_reason = grade_reason
+                logger.info("Grade injected for %s: %s", product_slug, canonical_grade)
 
             summary, records = usage_tracker.consume_summary()
             log_usage_summary(
