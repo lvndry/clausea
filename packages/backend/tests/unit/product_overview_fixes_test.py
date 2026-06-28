@@ -18,6 +18,7 @@ from src.models.document import (
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.product_service import ProductService
+from src.services.thin_evidence_gate import ThinEvidenceSkipped
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -458,9 +459,10 @@ async def test_generate_product_overview_raises_after_max_validation_retries() -
 
 
 @pytest.mark.asyncio
-async def test_generate_product_overview_withholds_grade_when_thin_evidence() -> None:
-    """Non-core-only evidence must not produce a consumer-facing grade."""
+async def test_generate_product_overview_skips_llm_when_thin_evidence() -> None:
+    """Non-core-only evidence must skip overview LLM work and mark thin evidence."""
     product_svc, document_svc = _services()
+    product_svc.mark_thin_evidence = AsyncMock(return_value=None)
     document_svc.get_product_documents_by_slug = AsyncMock(
         return_value=[_community_guidelines_doc()]
     )
@@ -474,21 +476,14 @@ async def test_generate_product_overview_withholds_grade_when_thin_evidence() ->
             product_slug="example",
         )
     )
-    llm_payload = _base_llm_payload(
-        grade="D",
-        grade_justification="Overclaims from transparency report",
-        verdict="pervasive",
-        risk_score=7,
-    )
+    llm_mock = AsyncMock()
 
     with (
         patch("src.analyser.ProductRollupService", return_value=rollup_service),
-        patch(
-            "src.analyser.acompletion_with_fallback",
-            AsyncMock(return_value=_llm_response(llm_payload)),
-        ),
+        patch("src.analyser.acompletion_with_fallback", llm_mock),
+        pytest.raises(ThinEvidenceSkipped),
     ):
-        result = await generate_product_overview(
+        await generate_product_overview(
             MagicMock(),
             "example",
             force_regenerate=True,
@@ -496,14 +491,9 @@ async def test_generate_product_overview_withholds_grade_when_thin_evidence() ->
             document_svc=document_svc,
         )
 
-    assert result.grade is None
-    assert result.verdict is None
-    assert result.risk_score is None
-    product_svc.save_product_overview.assert_awaited_once()
-    save_kwargs = product_svc.save_product_overview.call_args.kwargs
-    assert save_kwargs["thin_evidence"] is True
-    assert save_kwargs["thin_evidence_reason"] is not None
-    assert "No core" in save_kwargs["thin_evidence_reason"]
-    saved_meta = save_kwargs["meta_summary"]
-    assert saved_meta.grade is None
-    assert saved_meta.verdict is None
+    llm_mock.assert_not_awaited()
+    rollup_service.build_product_rollup.assert_not_awaited()
+    product_svc.mark_thin_evidence.assert_awaited_once()
+    mark_kwargs = product_svc.mark_thin_evidence.call_args.kwargs
+    assert "No core" in mark_kwargs["reason"]
+    product_svc.save_product_overview.assert_not_awaited()

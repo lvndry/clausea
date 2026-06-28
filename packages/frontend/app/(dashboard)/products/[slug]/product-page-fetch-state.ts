@@ -1,8 +1,14 @@
+import {
+  extractIndexationErrorCode,
+  isThinEvidenceError,
+} from "@/lib/pipeline-errors";
+
 export type ProductPageOverviewState =
   | "ready"
   | "unauthorized"
   | "limit_reached"
   | "server_error"
+  | "thin_evidence"
   | "indexing";
 
 interface ProductPageOverviewStateInput {
@@ -12,6 +18,7 @@ interface ProductPageOverviewStateInput {
   topicsStatus: number;
   productStatus?: number;
   documentsStatus?: number;
+  overviewPayload?: unknown;
 }
 
 const OVERVIEW_UNAUTHORIZED_HTTP_STATUS = 401;
@@ -33,6 +40,7 @@ export function deriveProductPageOverviewState({
   topicsStatus,
   productStatus,
   documentsStatus,
+  overviewPayload,
 }: ProductPageOverviewStateInput): ProductPageOverviewState {
   if (overviewOk) {
     return "ready";
@@ -40,6 +48,13 @@ export function deriveProductPageOverviewState({
 
   if (overviewStatus === OVERVIEW_UNAUTHORIZED_HTTP_STATUS) {
     return "unauthorized";
+  }
+
+  if (
+    overviewPayload !== undefined &&
+    isThinEvidenceError(extractIndexationErrorCode(overviewPayload))
+  ) {
+    return "thin_evidence";
   }
 
   const statuses = [

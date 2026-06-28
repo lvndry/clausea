@@ -22,6 +22,7 @@ import { ConsumerExplainerView } from "@/components/dashboard/explainer/consumer
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
 import { ComplianceBadges } from "@/components/dashboard/overview/compliance-badges";
 import { DataStory } from "@/components/dashboard/overview/data-story";
+import { IncompleteAnalysis } from "@/components/dashboard/overview/incomplete-analysis";
 import { PrivacySignals } from "@/components/dashboard/overview/privacy-signals";
 import { ScoreBreakdown } from "@/components/dashboard/overview/score-breakdown";
 import { SharingMap } from "@/components/dashboard/overview/sharing-map";
@@ -35,7 +36,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { subscriptionApi } from "@/lib/api/subscriptions";
-import { PIPELINE_ERROR_CODE_MESSAGES } from "@/lib/pipeline-errors";
+import {
+  PIPELINE_ERROR_CODE_MESSAGES,
+  PIPELINE_ERROR_THIN_EVIDENCE,
+  isThinEvidenceError,
+} from "@/lib/pipeline-errors";
 import type {
   DocumentSummary,
   FailedCrawlJob,
@@ -49,6 +54,13 @@ import {
   deriveProductPageOverviewState,
   isProductNotFound,
 } from "./product-page-fetch-state";
+
+function productHasThinEvidence(product: Product | null | undefined): boolean {
+  return (
+    isThinEvidenceError(product?.indexation_error) ||
+    product?.thin_evidence === true
+  );
+}
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
@@ -126,7 +138,9 @@ export default function CompanyPage({
   );
   const [loading, setLoading] = useState(!initialProduct || !initialOverview);
   const [documentsLoading, setDocumentsLoading] = useState(false);
-  const [thinEvidence, setThinEvidence] = useState(false);
+  const [thinEvidence, setThinEvidence] = useState(
+    productHasThinEvidence(initialProduct),
+  );
   const [indexationMode, setIndexationMode] = useState<
     | "ready"
     | "indexing"
@@ -189,6 +203,14 @@ export default function CompanyPage({
           setTopics((await topicsRes.json()) as ProductTopicReport);
         }
 
+        const prodJson = prodRes.ok
+          ? ((await prodRes.json()) as Product)
+          : null;
+
+        const overviewPayload = overviewRes.ok
+          ? undefined
+          : await overviewRes.json().catch(() => null);
+
         const overviewState = deriveProductPageOverviewState({
           overviewOk: overviewRes.ok,
           overviewStatus: overviewRes.status,
@@ -196,11 +218,8 @@ export default function CompanyPage({
           topicsStatus: topicsRes.status,
           productStatus: prodRes.status,
           documentsStatus: docsRes.status,
+          overviewPayload,
         });
-
-        const prodJson = prodRes.ok
-          ? ((await prodRes.json()) as Product)
-          : null;
         setProduct(prodJson);
 
         const docsJson = docsRes.ok
@@ -209,7 +228,10 @@ export default function CompanyPage({
         setDocuments(docsJson);
         setDocumentsLoading(false);
 
-        if (prodJson?.thin_evidence) {
+        if (
+          productHasThinEvidence(prodJson) ||
+          overviewState === "thin_evidence"
+        ) {
           setThinEvidence(true);
           setData(null);
           return;
@@ -273,6 +295,12 @@ export default function CompanyPage({
           // re-kicks the backend if it isn't currently executing the job).
           setActiveJobId(latestJob.id);
           await ensurePipelineRunning(slug, prodJson);
+          return;
+        }
+
+        if (latestJob?.status === "thin_evidence") {
+          setThinEvidence(true);
+          setActiveJobId(null);
           return;
         }
 
@@ -604,7 +632,7 @@ export default function CompanyPage({
       );
     }
 
-    // Thin evidence: overview blocked because too few core documents analyzed.
+    // Thin evidence: not enough core policy documents for a reliable analysis.
     if (product && thinEvidence) {
       return (
         <div className="space-y-8">
@@ -613,10 +641,13 @@ export default function CompanyPage({
               {product.name}
             </h1>
             <p className="text-muted-foreground mt-4 max-w-2xl text-sm leading-relaxed">
-              Policy overview in progress
+              {PIPELINE_ERROR_CODE_MESSAGES[PIPELINE_ERROR_THIN_EVIDENCE]}
             </p>
           </div>
-          <StillAnalyzing />
+          <IncompleteAnalysis
+            documentCount={documents.length}
+            reason={product.thin_evidence_reason}
+          />
         </div>
       );
     }
@@ -932,7 +963,14 @@ export default function CompanyPage({
                     <div className="mb-4 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
                       Analysis Pipeline Status
                     </div>
-                    <PipelineProgress jobId={activeJobId} />
+                    <PipelineProgress
+                      jobId={activeJobId}
+                      onThinEvidence={() => {
+                        setThinEvidence(true);
+                        setActiveJobId(null);
+                        setData(null);
+                      }}
+                    />
                   </div>
                 )}
               </div>

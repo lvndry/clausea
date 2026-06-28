@@ -2145,16 +2145,6 @@ async def generate_product_overview(
     await token.check_cancellation()
     if on_progress is not None:
         await _maybe_await(on_progress())
-    rollup_service = ProductRollupService(DocumentRepository())
-    hydrated_rollup = await rollup_service.build_product_rollup(
-        db, product_id=product.id, product_slug=product_slug
-    )
-    document_summaries = [DocumentSummary.from_document(doc) for doc in documents]
-    topic_report = build_product_topic_report(
-        product_slug=product_slug,
-        rollup=hydrated_rollup,
-        documents=document_summaries,
-    )
 
     # Filter to core documents only for the synthesis.
     # Non-core docs (community_guidelines, copyright_policy, etc.) are analysed
@@ -2173,6 +2163,38 @@ async def generate_product_overview(
             f"No core documents found for {product_slug}. Using all {len(documents)} documents."
         )
         core_docs = documents
+
+    from src.services.thin_evidence_gate import ThinEvidenceSkipped, check_thin_evidence
+
+    core_types_for_gate = [
+        doc.doc_type for doc in core_docs if doc.doc_type in OVERVIEW_CORE_DOC_TYPES
+    ]
+    is_thin, thin_reason = check_thin_evidence(core_types_for_gate)
+    if is_thin:
+        logger.warning(
+            "Thin evidence for %s: %s — skipping overview synthesis",
+            product_slug,
+            thin_reason,
+        )
+        await product_svc.mark_thin_evidence(
+            db,
+            product_slug=product_slug,
+            reason=thin_reason or "Insufficient core policy documents",
+            product_id=product.id,
+            job_id=job_id,
+        )
+        raise ThinEvidenceSkipped(thin_reason)
+
+    rollup_service = ProductRollupService(DocumentRepository())
+    hydrated_rollup = await rollup_service.build_product_rollup(
+        db, product_id=product.id, product_slug=product_slug
+    )
+    document_summaries = [DocumentSummary.from_document(doc) for doc in documents]
+    topic_report = build_product_topic_report(
+        product_slug=product_slug,
+        rollup=hydrated_rollup,
+        documents=document_summaries,
+    )
 
     # Build rich per-document input: extraction + analysis for each core doc.
     # This gives the model concrete evidence rather than just aggregated findings.
@@ -2312,18 +2334,7 @@ Per-document analyses and extractions:
         merge_llm_review,
         validate_overview,
     )
-    from src.services.thin_evidence_gate import check_thin_evidence, strip_overview_grading
     from src.services.topic_evidence_fallback import attach_fallback_evidence
-
-    is_thin, thin_reason = check_thin_evidence(
-        [d.doc_type for d in core_docs if d.doc_type in OVERVIEW_CORE_DOC_TYPES]
-    )
-    if is_thin:
-        logger.warning(
-            "Thin evidence for %s: %s — overview may be incomplete",
-            product_slug,
-            thin_reason,
-        )
 
     try:
         async with usage_tracking(tracker_callback):
@@ -2529,11 +2540,8 @@ Per-document analyses and extractions:
                     if attached:
                         logger.info("Attached %d fallback citations to %s", attached, product_slug)
 
-                if is_thin:
-                    strip_overview_grading(meta_summary)
-
                 overview_dict = meta_summary.model_dump(mode="json")
-                deterministic = validate_overview(overview_dict, has_adequate_evidence=not is_thin)
+                deterministic = validate_overview(overview_dict, has_adequate_evidence=True)
 
                 if deterministic.should_re_roll:
                     validation = deterministic
@@ -2571,13 +2579,6 @@ Per-document analyses and extractions:
             for warning in validation.warnings:
                 logger.info("Overview warning for %s: %s", product_slug, warning)
 
-        if is_thin:
-            logger.info(
-                "Withholding overview grade for %s due to thin evidence: %s",
-                product_slug,
-                thin_reason,
-            )
-
         # Save to database (simple single-cache entry)
         await product_svc.save_product_overview(
             db,
@@ -2585,8 +2586,8 @@ Per-document analyses and extractions:
             meta_summary=meta_summary,
             job_id=job_id,
             product_id=product.id,
-            thin_evidence=is_thin,
-            thin_evidence_reason=thin_reason,
+            thin_evidence=False,
+            thin_evidence_reason=None,
         )
         logger.info(f"✓ Saved product overview for {product_slug}")
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from src.models.document import MetaSummary
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 
@@ -9,7 +11,15 @@ MIN_DISTINCT_CORE_TYPES = 2
 MIN_TOTAL_CORE_DOCS = 3
 
 
-def check_thin_evidence(analyzed_core_docs: list[str]) -> tuple[bool, str | None]:
+class ThinEvidenceSkipped(Exception):
+    """Overview synthesis skipped because core policy document evidence is insufficient."""
+
+    def __init__(self, reason: str | None = None) -> None:
+        self.reason = reason
+        super().__init__(reason or "Thin evidence")
+
+
+def check_thin_evidence(analyzed_core_docs: Sequence[str]) -> tuple[bool, str | None]:
     """Returns (is_thin, reason). Thin when <2 core doc types or <3 analyzed core docs total."""
 
     core_doc_types = [

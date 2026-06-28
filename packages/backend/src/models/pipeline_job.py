@@ -33,6 +33,7 @@ class PipelineErrorCode(StrEnum):
     no_policy_found = "no_policy_found"  # crawled OK, no policy pages found
     site_unavailable = "site_unavailable"  # DNS / SSL / connection failure
     analysis_failed = "analysis_failed"  # LLM step failed after docs stored
+    thin_evidence = "thin_evidence"  # too few core policy documents for a reliable overview
 
 
 PipelineJobStatus = Literal[
@@ -48,6 +49,7 @@ PipelineJobStatus = Literal[
     "no_policy_found",
     "site_unavailable",
     "analysis_failed",
+    "thin_evidence",
     "interrupted",
 ]
 
@@ -76,6 +78,7 @@ TERMINAL_PIPELINE_STATUSES: tuple[PipelineJobStatus, ...] = (
     "no_policy_found",
     "site_unavailable",
     "analysis_failed",
+    "thin_evidence",
     "interrupted",
 )
 

@@ -16,6 +16,7 @@ from src.models.document import (
     MetaSummary,
     ProductDeepAnalysis,
 )
+from src.models.pipeline_job import PipelineErrorCode
 from src.models.product_intelligence import OverviewSnapshot, ProductIntelligence, ProductRollup
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
@@ -97,6 +98,41 @@ class ProductIntelligenceService:
             source_hashes=hashes,
         )
 
+    async def mark_thin_evidence(
+        self,
+        db: AgnosticDatabase,
+        *,
+        product_id: str,
+        product_slug: str,
+        reason: str,
+        job_id: str | None = None,
+    ) -> None:
+        """Record insufficient evidence and clear stale overview/explainer outputs."""
+        await self.ensure_shell(db, product_id=product_id, product_slug=product_slug)
+        await self._intelligence_repo.upsert_fields(
+            db,
+            product_id,
+            {
+                "product_slug": product_slug,
+                "thin_evidence": True,
+                "thin_evidence_reason": reason,
+                "indexation_error": PipelineErrorCode.thin_evidence,
+                "overview": None,
+                "explainer": None,
+                "overview_generated_at": None,
+            },
+        )
+        if job_id is not None:
+            logger.info(
+                "Marked thin evidence for %s (job %s): %s",
+                product_slug,
+                job_id,
+                reason,
+            )
+        else:
+            logger.info("Marked thin evidence for %s: %s", product_slug, reason)
+        await self.update_product_stats(db, product_id=product_id, product_slug=product_slug)
+
     async def save_overview(
         self,
         db: AgnosticDatabase,
@@ -155,6 +191,7 @@ class ProductIntelligenceService:
                 "overview_generated_at": now,
                 "thin_evidence": thin_evidence,
                 "thin_evidence_reason": (thin_evidence_reason or None) if thin_evidence else None,
+                "indexation_error": (PipelineErrorCode.thin_evidence if thin_evidence else None),
             },
         )
         await self.update_product_stats(db, product_id=product_id, product_slug=product_slug)

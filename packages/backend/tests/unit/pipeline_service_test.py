@@ -16,6 +16,7 @@ from src.services.pipeline_service import PipelineService
 def mock_repo():
     repo = MagicMock(spec=PipelineRepository)
     repo.update_fields = AsyncMock()
+    repo.update = AsyncMock()
     repo.find_by_id = AsyncMock()
     return repo
 
@@ -28,6 +29,52 @@ def pipeline_service(mock_repo):
 @pytest.fixture
 def mock_db():
     return MagicMock()
+
+
+@pytest.mark.asyncio
+async def test_finish_thin_evidence_skips_analysis_steps(pipeline_service, mock_repo, mock_db):
+    job = PipelineJob(
+        id="job-thin",
+        product_slug="starlink",
+        product_name="Starlink",
+        url="https://starlink.com",
+        status="crawling",
+        product_id="prod-1",
+        documents_stored=1,
+        steps=[
+            PipelineStep(name="crawling", status="completed"),
+            PipelineStep(name="synthesising", status="pending"),
+            PipelineStep(name="generating_overview", status="pending"),
+        ],
+    )
+    product = MagicMock()
+    product.id = "prod-1"
+    product.name = "Starlink"
+
+    product_svc = MagicMock()
+    product_svc.mark_thin_evidence = AsyncMock(return_value=None)
+    stats_svc = MagicMock()
+    stats_svc.update_product_stats = AsyncMock(return_value=None)
+
+    with (
+        patch.object(ps, "create_product_service", return_value=product_svc),
+        patch.object(ps, "ProductIntelligenceService", return_value=stats_svc),
+    ):
+        await pipeline_service._finish_thin_evidence(
+            mock_db,
+            job,
+            product,
+            "Only 1 distinct core document type(s) across 1 document(s) analyzed",
+        )
+
+    product_svc.mark_thin_evidence.assert_awaited_once()
+    assert job.status == "thin_evidence"
+    assert job.error == PipelineErrorCode.thin_evidence
+    assert job.steps[1].status == "completed"
+    assert job.steps[2].status == "completed"
+    assert "Skipped" in job.steps[1].message
+    mock_repo.update.assert_awaited_once()
+    stats_svc.update_product_stats.assert_awaited_once()
 
 
 @pytest.mark.asyncio

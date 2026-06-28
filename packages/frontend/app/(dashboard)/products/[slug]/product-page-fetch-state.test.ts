@@ -62,6 +62,23 @@ describe("deriveProductPageOverviewState", () => {
     expect(result).toBe("server_error");
   });
 
+  it("returns thin_evidence when overview returns 424 with thin_evidence code", () => {
+    const result = deriveProductPageOverviewState({
+      overviewOk: false,
+      overviewStatus: 424,
+      explainerStatus: 425,
+      topicsStatus: 425,
+      overviewPayload: {
+        detail: {
+          code: "thin_evidence",
+          message: "Not enough policy documents",
+        },
+      },
+    });
+
+    expect(result).toBe("thin_evidence");
+  });
+
   it("returns indexing for non-limit overview misses like 425", () => {
     const result = deriveProductPageOverviewState({
       overviewOk: false,

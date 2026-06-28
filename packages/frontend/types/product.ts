@@ -12,4 +12,5 @@ export interface Product {
   crawl_base_urls?: string[];
   thin_evidence?: boolean;
   thin_evidence_reason?: string | null;
+  indexation_error?: string | null;
 }

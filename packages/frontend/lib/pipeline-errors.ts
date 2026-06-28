@@ -1,6 +1,9 @@
 // Maps a backend PipelineErrorCode to user-facing copy. The API returns a
-// stable machine code in `job.error`; the frontend owns the phrasing. Unknown
-// codes fall back to `error_detail` and then a generic message.
+// stable machine code in `job.error` (or `product.indexation_error`); the
+// frontend owns the phrasing. Unknown codes fall back to `error_detail` and
+// then a generic message.
+
+export const PIPELINE_ERROR_THIN_EVIDENCE = "thin_evidence";
 
 export const PIPELINE_ERROR_CODE_MESSAGES: Record<string, string> = {
   product_not_found:
@@ -34,7 +37,32 @@ export const PIPELINE_ERROR_CODE_MESSAGES: Record<string, string> = {
     "We couldn't reach this site — it may be temporarily down, the domain may have moved, or a network issue prevented access. Please try again later.",
   analysis_failed:
     "We retrieved the policy documents but encountered an error during AI analysis. This is temporary — please try again.",
+  thin_evidence:
+    "We couldn't read enough policy documents to produce a reliable analysis. Privacy policy, terms of service, and cookie policy pages may be missing or blocked.",
 };
+
+export function isThinEvidenceError(code: string | null | undefined): boolean {
+  return code === PIPELINE_ERROR_THIN_EVIDENCE;
+}
+
+/** Extract a pipeline/indexation error code from API error JSON shapes. */
+export function extractIndexationErrorCode(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  if (typeof record.code === "string") {
+    return record.code;
+  }
+  const detail = record.detail;
+  if (detail && typeof detail === "object") {
+    const nested = (detail as { code?: string }).code;
+    if (typeof nested === "string") {
+      return nested;
+    }
+  }
+  return null;
+}
 
 export function resolvePipelineErrorMessage(
   error: string | null | undefined,

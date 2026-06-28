@@ -18,6 +18,7 @@ type PipelineJobStatus =
   | "no_policy_found"
   | "site_unavailable"
   | "analysis_failed"
+  | "thin_evidence"
   | "interrupted";
 
 interface PipelineStep {
