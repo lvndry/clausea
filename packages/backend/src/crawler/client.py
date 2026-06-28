@@ -1286,6 +1286,20 @@ class ClauseaCrawler:
                 return ""
         return raw.decode("utf-8", errors="replace")
 
+    def _looks_like_sitemap_xml(self, body: str) -> bool:
+        """Reject SPA/HTML responses masquerading as sitemaps (e.g. starlink.com/sitemap.xml)."""
+        stripped = body.lstrip()
+        if not stripped:
+            return False
+        head = stripped[:512].lower()
+        if head.startswith("<!doctype html") or head.startswith("<html"):
+            return False
+        if re.search(r"<urlset\b", stripped, re.IGNORECASE):
+            return True
+        if re.search(r"<sitemapindex\b", stripped, re.IGNORECASE):
+            return True
+        return stripped.startswith("<?xml")
+
     def _parse_sitemap_xml(self, content: str) -> list[str]:
         urls: list[str] = []
         try:
@@ -1355,6 +1369,14 @@ class ClauseaCrawler:
                 async with session.get(sitemap_url, headers=headers, timeout=fetch_timeout) as resp:
                     if resp.status != 200:
                         return []
+                    content_type = (resp.headers.get("Content-Type") or "").lower()
+                    if "html" in content_type and "xml" not in content_type:
+                        logger.info(
+                            "Ignoring non-XML sitemap response at %s (content-type=%s)",
+                            sitemap_url,
+                            content_type,
+                        )
+                        return []
                     declared = resp.headers.get("Content-Length")
                     if declared and declared.isdigit() and int(declared) > max_sitemap_bytes:
                         return []
@@ -1362,7 +1384,14 @@ class ClauseaCrawler:
                     if len(raw) > max_sitemap_bytes:
                         return []
                     body = self._decode_sitemap_bytes(raw, sitemap_url)
-                    return self._parse_sitemap_xml(body) if body else []
+                    if not body or not self._looks_like_sitemap_xml(body):
+                        if body:
+                            logger.info(
+                                "Ignoring non-XML sitemap body at %s (HTML or unknown format)",
+                                sitemap_url,
+                            )
+                        return []
+                    return self._parse_sitemap_xml(body)
             except Exception as e:
                 logger.debug(f"Failed to fetch sitemap {sitemap_url}: {e}")
                 return []
@@ -1800,10 +1829,9 @@ class ClauseaCrawler:
                         page = stealth_page
                         static_unusable = False
 
-            is_speculative = self.normalize_url(url) in self._speculative_urls
             force_browser_render = raw.status_code == 200 and static_response_body_too_small(raw)
 
-            if static_unusable and self.use_browser and not is_speculative:
+            if static_unusable and self.use_browser:
                 relevance = max(
                     self._url_scores.get(self.normalize_url(url), 0.0),
                     self.url_scorer.score_url(effective_url),

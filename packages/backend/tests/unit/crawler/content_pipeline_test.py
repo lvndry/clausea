@@ -491,6 +491,65 @@ class TestFetchPageInternalOrchestration:
         assert "privacy policy" in (result.content or result.markdown).lower()
 
     @pytest.mark.asyncio
+    async def test_speculative_legal_documents_url_uses_browser(self):
+        """Speculative /legal/documents probes must get browser rendering like other policy URLs."""
+        from yarl import URL as YarlURL
+
+        spa_shell = (
+            "<!DOCTYPE html><html><head><title>Legal</title></head>"
+            "<body><app-root></app-root></body></html>"
+        )
+
+        class FakeResponse:
+            def __init__(self):
+                self.status = 200
+                self.headers = {"content-type": "text/html; charset=utf-8"}
+                self.url = YarlURL("https://starlink.com/legal/documents")
+                self.charset = "utf-8"
+                self.content = _FakeContent(spa_shell.encode())
+
+            async def read(self) -> bytes:
+                return await self.content.read()
+
+            async def text(self):
+                return spa_shell
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        class FakeSession:
+            def get(self, url, **kwargs):
+                return FakeResponse()
+
+        crawler = ClauseaCrawler(
+            respect_robots_txt=False,
+            use_browser=True,
+            min_legal_score=2.0,
+        )
+        crawler._speculative_urls.add(crawler.normalize_url("https://starlink.com/legal/documents"))
+
+        browser_called = False
+
+        async def good_browser_fetch(url: str) -> PageContent | None:
+            nonlocal browser_called
+            browser_called = True
+            body = "Terms of Service. " + ("You agree to our terms and conditions. " * 80)
+            return PageContent(text=body, markdown=body, title="Terms of Service", metadata={})
+
+        crawler._browser_fetch = good_browser_fetch  # type: ignore[method-assign]
+
+        result = await crawler._fetch_page_internal(
+            cast(aiohttp.ClientSession, FakeSession()),
+            "https://starlink.com/legal/documents",
+        )
+        assert browser_called is True
+        assert result.success is True
+        assert "terms of service" in (result.content or result.markdown).lower()
+
+    @pytest.mark.asyncio
     async def test_no_browser_when_disabled(self):
         """When use_browser=False, even thin content doesn't trigger browser."""
         thin_html = "<html><head><title>Page</title></head><body>Hi</body></html>"

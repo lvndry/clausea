@@ -1,23 +1,26 @@
 """Heuristic URL scorer that ranks candidate URLs by policy-document relevance.
 
 **What it does**
-Assigns a score (0–1) to each URL the crawler discovers based on path tokens,
-domain suffix, query parameters, and sitemap membership.  URLs containing tokens
-like ``privacy``, ``terms``, ``gdpr``, ``legal``, or ``cookie`` score higher.
-Redirect query params (``?return_to=…``, ``?redirect=…``) boost score because they
-often point to a login wall masking the real policy page.
+Assigns a cumulative relevance score to each *candidate URL* before the crawler
+fetches it. Signals come only from the URL string and optional link anchor text —
+never from fetched page HTML, titles, or body content. (Post-fetch classification
+uses separate content pipelines.)
+
+Scores path segments, query parameters (excluding redirect params), URL fragments,
+and ``anchor_text`` when the crawler is following a discovered link.
 
 **What it contains**
-- ``URLScorer`` class with ``score_url`` and ``score_urls`` methods.
-- ``_POLICY_PATH_RE``: compiled regex matching known policy-path tokens.
-- ``_policy_domain_suffixes``: domain TLD/subdomain heuristics (``/legal``, ``/privacy``, …).
-- LRU-cached helpers (``_domain_score``, ``_path_score``, ``_query_score``) so
-  repeated scoring of the same URL is O(1).
+- ``URLScorer`` with ``score_url`` / ``score_urls``.
+- ``compiled_high_value_patterns``: multi-word policy phrases in URL text.
+- ``compiled_path_patterns``: weighted path-segment regexes.
+- ``legal_keywords``: per-token weights applied to URL path/query/fragment words
+  and anchor-text words (see ``score_url``). Not used on page content.
+- ``is_strong_policy_path`` / ``is_non_policy_section``: hard frontier rules.
 
 **What it allows/prevents**
-Allows the crawl frontier to prioritise high-value URLs when the page budget is
-exhausted.  Prevents the crawler from wasting requests on unlikely pages (login,
-admin, CDN assets) before the content-classifier gets to see them.
+Prioritises high-value URLs on the crawl frontier when the page budget is tight.
+Prevents wasting browser renders on login walls, gallery templates, and glossary
+``/terms/`` paths before the content classifier runs.
 """
 
 import re
@@ -30,7 +33,7 @@ from src.crawler.constants import (
 
 
 class URLScorer:
-    """Scores URLs based on policy document relevance."""
+    """Scores candidate URLs for policy-document relevance (pre-fetch only)."""
 
     def __init__(self) -> None:
         self.compiled_high_value_patterns = {
@@ -56,33 +59,38 @@ class URLScorer:
         self.compiled_path_patterns = {
             re.compile(pattern): weight
             for pattern, weight in {
-                r"/legal/?": 4.0,
-                r"/terms/?": 4.5,
-                r"/tos/?": 4.5,
+                # Direct policy slugs — terminal paths like /privacy, /tos
                 r"/privacy/?": 5.0,
+                r"/terms/?": 4.5,
+                r"/tos/?": 5.0,
+                r"/dpa/?": 5.0,
+                r"/data-processing-addendum/?": 5.0,
+                # Regulatory and addendum segments
+                r"/gdpr/?": 4.5,
+                r"/ccpa/?": 4.5,
+                r"/addendum/?": 4.5,
+                # Policy section hubs (listing pages, not a specific doc type)
+                r"/legal/?": 4.0,
                 r"/policy/?": 4.0,
                 r"/policies/?": 4.0,
                 r"/agreement/?": 3.5,
                 r"/compliance/?": 3.5,
                 r"/cookie/?": 4.0,
-                r"/gdpr/?": 4.5,
-                r"/ccpa/?": 4.5,
                 r"/data-processing/?": 4.0,
+                r"/subprocessors/?": 4.0,
+                # Weak contextual signals
                 r"/security/?": 3.0,
                 r"/disclaimer/?": 3.0,
                 r"/company/?": 3.0,
-                r"/data-processing-addendum/?": 5.0,
-                r"/dpa/?": 5.0,
-                r"/addendum/?": 4.5,
-                r"/subprocessors/?": 4.0,
                 r"/vendors/?": 3.0,
                 r"/suppliers/?": 3.0,
                 r"/transparency/?": 3.5,
                 r"/[a-f0-9-]{32,}": 2.0,
-                r"/company/legal/?": 5.0,
-                r"/company/privacy/?": 5.0,
-                r"/company/terms/?": 5.0,
-                r"/company/tos/?": 5.0,
+                # Known site-section + policy-type layouts (stack with slugs above)
+                r"/company/legal/?": 4.5,
+                r"/company/privacy/?": 4.5,
+                r"/company/terms/?": 4.5,
+                r"/company/tos/?": 4.5,
                 r"/about/legal/?": 4.5,
                 r"/about/privacy/?": 4.5,
                 r"/about/terms/?": 4.5,
@@ -93,19 +101,19 @@ class URLScorer:
                 r"/help/legal/?": 4.0,
                 r"/help/privacy/?": 4.0,
                 r"/help/terms/?": 4.0,
-                r"/policies/privacy/?": 5.0,
-                r"/policies/terms/?": 5.0,
+                r"/policies/privacy/?": 4.5,
+                r"/policies/terms/?": 4.5,
                 r"/policies/cookies/?": 4.5,
-                r"/legal/policies/?": 5.0,
-                r"/legal/policies/privacy/?": 5.0,
-                r"/legal/policies/terms/?": 5.0,
+                r"/legal/policies/?": 4.0,
+                r"/legal/policies/privacy/?": 4.5,
+                r"/legal/policies/terms/?": 4.5,
                 r"/legal/policies/cookies/?": 4.5,
-                r"/policy/privacy/?": 5.0,
-                r"/policy/terms/?": 5.0,
+                r"/policy/privacy/?": 4.5,
+                r"/policy/terms/?": 4.5,
                 r"/policy/cookies/?": 4.5,
                 r"/policy/cookie/?": 4.5,
-                r"/policy/terms-of-service/?": 5.0,
-                r"/policy/terms-of-use/?": 5.0,
+                r"/policy/terms-of-service/?": 4.5,
+                r"/policy/terms-of-use/?": 4.5,
                 r"/policy/data/?": 4.0,
                 r"/policy/gdpr/?": 4.5,
                 r"/policy/ccpa/?": 4.5,
@@ -144,57 +152,75 @@ class URLScorer:
         )
 
         self.legal_keywords = {
-            "legal": 3.5,
-            "terms": 4.0,
+            # Token weights for URL surfaces only (path, query, fragment, anchor text).
+            # Applied in score_url — not on fetched page title/body/markdown.
+            # Direct policy tokens (align with 5.0 path slugs: /privacy, /tos, /dpa)
             "privacy": 5.0,
-            "policy": 4.0,
-            "agreement": 3.5,
-            "conditions": 3.5,
-            "disclaimer": 3.0,
-            "notice": 2.5,
-            "consent": 3.0,
-            "rights": 2.5,
-            "compliance": 3.0,
-            "trust": 2.0,
-            "rules": 2.5,
-            "license": 3.0,
+            "dpa": 5.0,
             "privacy-policy": 5.0,
             "terms-of-service": 5.0,
             "terms-and-conditions": 5.0,
             "terms-of-use": 5.0,
+            # Strong regulatory / addendum (align with 4.5 path segments)
+            "terms": 4.0,
+            "addendum": 4.5,
             "cookie-policy": 4.5,
-            "cookie": 3.5,
-            "cookies": 3.5,
-            "data": 3.0,
+            "gdpr": 4.5,
+            "ccpa": 4.5,
+            "hipaa": 4.5,
+            "coppa": 4.5,
+            "pipeda": 4.5,
+            # Section / hub tokens (align with 4.0 path hubs: /legal, /policy, /cookie)
+            "policy": 4.0,
+            "cookie": 4.0,
+            "cookies": 4.0,
+            "subprocessors": 4.0,
+            # Medium contextual (align with 3.5 path segments)
+            "legal": 3.5,
+            "agreement": 3.5,
+            "conditions": 3.5,
+            "compliance": 3.5,
             "processor": 3.5,
             "subprocessor": 3.5,
-            "partners": 2.0,
-            "processing": 3.0,
             "protection": 3.5,
-            "addendum": 4.5,
-            "dpa": 5.0,
-            "subprocessors": 3.5,
-            "gdpr": 4.0,
-            "ccpa": 4.0,
-            "hipaa": 4.0,
-            "coppa": 4.0,
-            "pipeda": 4.0,
+            "dmca": 3.5,
+            "transparency": 3.5,
+            # Weak contextual (align with 3.0 path segments)
+            "disclaimer": 3.0,
             "security": 3.0,
             "safety": 3.0,
             "copyright": 3.0,
-            "dmca": 3.5,
+            "consent": 3.0,
+            "license": 3.0,
+            "data": 2.5,
+            "processing": 2.5,
+            # Loose / noisy tokens — kept low to avoid inflating unrelated URLs
+            "notice": 2.5,
+            "rights": 2.5,
+            "rules": 2.5,
+            "trust": 2.0,
+            "partners": 2.0,
             "vendor": 2.5,
             "suppliers": 2.5,
             "associate": 2.0,
-            "transparency": 3.0,
             "report": 2.0,
             "company": 1.0,
+            # Penalties — not policy documents
             "contact": -1.0,
             "news": -1.0,
         }
 
     @lru_cache(maxsize=10000)  # noqa: B019 - Cache is bounded and per-instance
     def score_url(self, url: str, anchor_text: str | None = None) -> float:
+        """Score a candidate URL from its string and optional link anchor text.
+
+        Uses only URL components (path, non-redirect query params, fragment) and
+        ``anchor_text`` when scoring a discovered link. Does not read page content.
+
+        ``legal_keywords`` contribute when tokens appear as URL/anchor words (full
+        weight), as substrings in the raw path (0.8×), or embedded in hyphenated
+        path segments (0.8×). Anchor-text keyword hits use 2.0× the listed weight.
+        """
         url_lower = url.lower()
         parsed = urlparse(url_lower)
         path = parsed.path

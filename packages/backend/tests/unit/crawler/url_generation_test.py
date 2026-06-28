@@ -15,6 +15,8 @@ class TestGeneratePotentialLegalUrls:
         assert "https://example.com/legal" in urls
         assert "https://example.com/terms" in urls
         assert "https://example.com/cookie-policy" in urls
+        assert "https://example.com/legal/documents" in urls
+        assert "https://example.com/legal/docs" in urls
 
     def test_root_url_generates_hub_paths(self) -> None:
         """A plain domain seed should produce hub / listing page URLs."""

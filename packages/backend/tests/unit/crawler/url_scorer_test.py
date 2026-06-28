@@ -69,6 +69,8 @@ class TestURLScorerNonPolicyGalleries:
         assert scorer.score_url("https://www.airtable.com/company/subprocessors") >= 4.0
         assert scorer.score_url("https://support.airtable.com/docs/gdpr-at-airtable") >= 4.0
         assert scorer.score_url("https://example.com/legal/privacy") >= 5.0
+        assert scorer.score_url("https://starlink.com/legal/documents") >= 5.0
+        assert scorer.score_url("https://example.com/legal/docs") >= 5.0
 
 
 class TestURLScorerAnchorTextBoost:
