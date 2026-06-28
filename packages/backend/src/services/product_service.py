@@ -8,6 +8,7 @@ and instead accepts database instances as parameters.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 from typing import Any, ClassVar
 from urllib.parse import urlparse
@@ -355,16 +356,31 @@ class ProductService:
             return explainer
 
         current_grade = self._coerce_grade(explainer.get("grade"))
-        if current_grade == canonical_grade:
+        current_reason = explainer.get("grade_reason") or ""
+        grade_mismatch = current_grade != canonical_grade
+        reason_stale = self._is_grade_reason_stale(current_reason, canonical_grade)
+
+        if not grade_mismatch and not reason_stale:
             return explainer
 
-        logger.info(
-            "Canonicalizing product explainer grade for %s: %s -> %s",
-            product_slug,
-            current_grade or "unknown",
-            canonical_grade,
-        )
-        canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
+        if grade_mismatch:
+            logger.info(
+                "Canonicalizing product explainer grade for %s: %s -> %s",
+                product_slug,
+                current_grade or "unknown",
+                canonical_grade,
+            )
+            canonical_reason = self._grade_reason_from_overview(canonical_grade, explainer)
+        else:
+            logger.info(
+                "Repairing stale grade_reason for %s (grade=%s)",
+                product_slug,
+                canonical_grade,
+            )
+            canonical_reason = self._GRADE_REASONS.get(
+                canonical_grade, "Risk assessment based on structured policy analysis."
+            )
+
         repaired = dict(explainer)
         repaired["grade"] = canonical_grade
         repaired["grade_reason"] = canonical_reason
@@ -439,6 +455,16 @@ class ProductService:
                 payload = explainer.model_copy(
                     update={"grade": canonical_grade, "grade_reason": canonical_reason}
                 )
+            elif self._is_grade_reason_stale(explainer.grade_reason or "", canonical_grade):
+                canonical_reason = self._GRADE_REASONS.get(
+                    canonical_grade, "Risk assessment based on structured policy analysis."
+                )
+                logger.info(
+                    "Clearing stale grade_reason for %s (grade=%s)",
+                    product_slug,
+                    canonical_grade,
+                )
+                payload = explainer.model_copy(update={"grade_reason": canonical_reason})
 
         return await self._product_repo.save_product_explainer(db, product_slug, payload)
 
@@ -754,6 +780,19 @@ class ProductService:
         "D": "Pervasive risk: significant issues with data practices, limited user rights, or broad data sharing.",
         "E": "Very pervasive risk: critical concerns such as forced arbitration, broad data selling, or severe opacity.",
     }
+
+    # Matches phrases like "base grade is C" or "base grade is D" in grade_reason text.
+    _STALE_GRADE_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"\bbase grade is ([A-E])\b", re.IGNORECASE
+    )
+
+    @classmethod
+    def _is_grade_reason_stale(cls, grade_reason: str, expected_grade: str) -> bool:
+        """Return True when grade_reason references a different base grade than expected."""
+        match = cls._STALE_GRADE_RE.search(grade_reason)
+        if match:
+            return match.group(1).upper() != expected_grade.upper()
+        return False
 
     @classmethod
     def _grade_reason_from_overview(

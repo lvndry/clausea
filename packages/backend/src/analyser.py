@@ -1614,10 +1614,9 @@ def _validate_consumer_explainer_quotes(
                 len(explainer.good_to_know or []),
             )
             explainer.grade = improved
-            if not explainer.grade_reason:
-                explainer.grade_reason = (
-                    "Grade reflects documented protections described in the policies."
-                )
+            explainer.grade_reason = (
+                "Grade reflects documented protections described in the policies."
+            )
 
     return explainer
 
