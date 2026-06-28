@@ -903,8 +903,6 @@ Return ONE JSON object with EXACTLY these fields, in this order (worst-first ins
   "what_you_can_do": [{"action": "string", "applies_to": ["global"] or lowercase region codes e.g. ["eu","uk"]}]
 }
 
-Note: do NOT include a "grade" or "grade_reason" field — the grade is assigned by a dedicated grading step that runs after this output and uses the overview's structured dimension scores.
-
 Reminders: worst-first everywhere; every risk/data/clause has a means_for_you; quotes are exact copies from the extraction or null; silence goes in silent_on; for each what_they_collect item set linkage_tier (how tied the data is to the person's real identity) and sold=true ONLY when the evidence says the data is sold or shared for value, else sold=false and assume linked_to_you when unclear; report cross-document conflicts in conflicts; set critical_findings_count."""
 
 
