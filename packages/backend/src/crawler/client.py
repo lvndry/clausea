@@ -2023,6 +2023,8 @@ class ClauseaCrawler:
             "/trust",
             "/trust/legal",
             "/trust/privacy",
+            "/legal/documents",
+            "/legal/docs",
         ]
 
         hub_paths = [
