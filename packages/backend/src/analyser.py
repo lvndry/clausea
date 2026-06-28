@@ -1849,6 +1849,12 @@ async def generate_product_consumer_explainer(
         .replace("{extraction_json}", json.dumps(doc_inputs, default=str))
     )
 
+    # Fetch the canonical grade once — outside the retry loop so a failed parse
+    # attempt doesn't trigger a redundant DB round-trip on the next attempt.
+    overview_data = await product_svc.get_product_overview_data(db, product_slug)
+    raw_grade = (overview_data.get("overview") or {}).get("grade") if overview_data else None
+    canonical_grade = coerce_grade(raw_grade) if raw_grade else None
+
     usage_tracker = UsageTracker()
     tracker_callback = usage_tracker.create_tracker("generate_product_consumer_explainer")
     last_exception: Exception | None = None
@@ -1880,14 +1886,9 @@ async def generate_product_consumer_explainer(
             explainer.is_product_rollup = True
             explainer = _validate_consumer_explainer_quotes(explainer, allowed_citations)
 
-            # Inject the canonical grade from the overview — the explainer does not
-            # grade itself. generate_grade_reason writes the explanation AFTER the
-            # grade is finalized, so they are always consistent.
-            overview_data = await product_svc.get_product_overview_data(db, product_slug)
-            raw_grade = (
-                (overview_data.get("overview") or {}).get("grade") if overview_data else None
-            )
-            canonical_grade = coerce_grade(raw_grade) if raw_grade else None
+            # Inject the canonical grade — the explainer does not grade itself.
+            # generate_grade_reason writes the explanation AFTER the grade is
+            # finalized so they are always consistent.
             if canonical_grade:
                 grade_reason = await generate_grade_reason(
                     canonical_grade, explainer, cancellation_token=token
