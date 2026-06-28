@@ -11,7 +11,7 @@ from src.repositories.pipeline_repository import PipelineRepository
 from src.services import pipeline_service as ps
 from src.services.pipeline_service import PipelineService
 
-from .pipeline_thin_evidence_fixtures import make_doc_svc_passing_thin_gate
+from .pipeline_thin_evidence_fixtures_test import make_doc_svc_passing_thin_gate
 
 
 @pytest.fixture
