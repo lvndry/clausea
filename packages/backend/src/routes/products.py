@@ -299,6 +299,7 @@ async def get_product_analysis(
             detail={
                 "message": "Not enough policy documents were found to produce a reliable analysis.",
                 "code": PipelineErrorCode.thin_evidence,
+                "reason": thin_exc.reason,
             },
         ) from thin_exc
     except HTTPException:

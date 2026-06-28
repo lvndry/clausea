@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import posthog from "posthog-js";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { triggerPipeline } from "@/app/actions/pipeline";
 import { subscribeIndexationNotify } from "@/app/actions/products";
@@ -171,6 +171,12 @@ export default function CompanyPage({
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  const handlePipelineThinEvidence = useCallback(() => {
+    setThinEvidence(true);
+    setActiveJobId(null);
+    setData(null);
+  }, []);
 
   useEffect(() => {
     // SSR pre-loaded the overview shell — evidence loads in a separate effect.
@@ -644,10 +650,7 @@ export default function CompanyPage({
               {PIPELINE_ERROR_CODE_MESSAGES[PIPELINE_ERROR_THIN_EVIDENCE]}
             </p>
           </div>
-          <IncompleteAnalysis
-            documentCount={documents.length}
-            reason={product.thin_evidence_reason}
-          />
+          <IncompleteAnalysis documentCount={documents.length} />
         </div>
       );
     }
@@ -965,11 +968,7 @@ export default function CompanyPage({
                     </div>
                     <PipelineProgress
                       jobId={activeJobId}
-                      onThinEvidence={() => {
-                        setThinEvidence(true);
-                        setActiveJobId(null);
-                        setData(null);
-                      }}
+                      onThinEvidence={handlePipelineThinEvidence}
                     />
                   </div>
                 )}

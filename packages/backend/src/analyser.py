@@ -1744,21 +1744,25 @@ async def generate_grade_reason(
     specific to the product rather than generic. Falls back to a canned string
     if the LLM call fails so the caller is never blocked.
     """
+    max_reason_chars = 500
     concerns_lines = [
-        f"- {case.title}: {case.means_for_you}"
+        f"- {case.title or 'Concern'}: {case.means_for_you or ''}"
         for case in (explainer.watch_out_for or [])
         if case.severity in ("critical", "high")
     ][:4]
     if not concerns_lines:
-        concerns_lines = [f"- {case.title}" for case in (explainer.watch_out_for or [])[:2]]
+        concerns_lines = [
+            f"- {case.title or 'Concern'}" for case in (explainer.watch_out_for or [])[:2]
+        ]
     concerns = "\n".join(concerns_lines) or "None identified in the analysis."
 
+    good_to_know = [item for item in (explainer.good_to_know or []) if item]
     benefits = (
-        "\n".join(f"- {item}" for item in (explainer.good_to_know or [])[:3])
-        or "None identified in the analysis."
+        "\n".join(f"- {item}" for item in good_to_know[:3]) or "None identified in the analysis."
     )
 
-    silent_on = ", ".join(s.topic for s in (explainer.silent_on or [])[:3]) or "none"
+    silent_topics = [s.topic for s in (explainer.silent_on or [])[:3] if getattr(s, "topic", None)]
+    silent_on = ", ".join(silent_topics) or "none"
 
     user_prompt = GRADE_REASON_USER_TEMPLATE.format(
         grade=grade,
@@ -1781,7 +1785,7 @@ async def generate_grade_reason(
         )
         reason = (response.choices[0].message.content or "").strip()
         if reason:
-            return reason
+            return reason[:max_reason_chars]
     except Exception as exc:
         logger.warning("generate_grade_reason failed for grade %s: %s", grade, exc)
 

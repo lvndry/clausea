@@ -21,31 +21,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { resolvePipelineErrorMessage } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
 import type { CrawlError } from "@/types";
+import {
+  type PipelineJobStatus,
+  TERMINAL_PIPELINE_STATUSES,
+} from "@/types/pipeline";
 
-interface PipelineStep {
+type PipelineStep = {
   name: string;
   status: "pending" | "running" | "completed" | "failed";
   message: string | null;
   progress_current?: number | null;
   progress_total?: number | null;
   progress_percent?: number | null;
-}
-
-type PipelineJobStatus =
-  | "pending"
-  | "crawling"
-  | "synthesising"
-  | "summarizing"
-  | "generating_overview"
-  | "completed"
-  | "failed"
-  | "no_documents"
-  | "robots_blocked"
-  | "access_denied"
-  | "no_policy_found"
-  | "site_unavailable"
-  | "analysis_failed"
-  | "thin_evidence";
+};
 
 interface PipelineJobData {
   id: string;
@@ -256,17 +244,7 @@ function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
   );
 }
 
-const TERMINAL_STATUSES: PipelineJobStatus[] = [
-  "completed",
-  "failed",
-  "no_documents",
-  "robots_blocked",
-  "access_denied",
-  "no_policy_found",
-  "site_unavailable",
-  "analysis_failed",
-  "thin_evidence",
-];
+const TERMINAL_STATUSES = TERMINAL_PIPELINE_STATUSES;
 
 export function PipelineProgress({
   jobId,

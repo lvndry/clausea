@@ -108,11 +108,13 @@ class ProductIntelligenceService:
         job_id: str | None = None,
     ) -> None:
         """Record insufficient evidence and clear stale overview/explainer outputs."""
-        await self.ensure_shell(db, product_id=product_id, product_slug=product_slug)
+        now = datetime.now()
+        shell = ProductIntelligence(product_id=product_id, product_slug=product_slug)
         await self._intelligence_repo.upsert_fields(
             db,
             product_id,
             {
+                "id": shell.id,
                 "product_slug": product_slug,
                 "thin_evidence": True,
                 "thin_evidence_reason": reason,
@@ -120,6 +122,7 @@ class ProductIntelligenceService:
                 "overview": None,
                 "explainer": None,
                 "overview_generated_at": None,
+                "generated_at": now,
             },
         )
         if job_id is not None:
@@ -181,19 +184,17 @@ class ProductIntelligenceService:
             history = history[:_OVERVIEW_HISTORY_CAP]
 
         now = datetime.now()
-        await self._intelligence_repo.upsert_fields(
-            db,
-            product_id,
-            {
-                "product_slug": product_slug,
-                "overview": meta_summary.model_dump(mode="json"),
-                "overview_history": [snapshot.model_dump(mode="json") for snapshot in history],
-                "overview_generated_at": now,
-                "thin_evidence": thin_evidence,
-                "thin_evidence_reason": (thin_evidence_reason or None) if thin_evidence else None,
-                "indexation_error": (PipelineErrorCode.thin_evidence if thin_evidence else None),
-            },
-        )
+        fields: dict[str, object] = {
+            "product_slug": product_slug,
+            "overview": meta_summary.model_dump(mode="json"),
+            "overview_history": [snapshot.model_dump(mode="json") for snapshot in history],
+            "overview_generated_at": now,
+            "thin_evidence": thin_evidence,
+            "thin_evidence_reason": (thin_evidence_reason or None) if thin_evidence else None,
+        }
+        if thin_evidence:
+            fields["indexation_error"] = PipelineErrorCode.thin_evidence
+        await self._intelligence_repo.upsert_fields(db, product_id, fields)
         await self.update_product_stats(db, product_id=product_id, product_slug=product_slug)
 
     async def save_explainer(

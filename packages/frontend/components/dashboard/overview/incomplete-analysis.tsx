@@ -1,5 +1,3 @@
-"use client";
-
 import { FileWarning } from "lucide-react";
 
 const MIN_DOCS_FOR_ANALYSIS = 3;
@@ -7,13 +5,11 @@ const MIN_DOCS_FOR_ANALYSIS = 3;
 interface IncompleteAnalysisProps {
   documentCount?: number;
   minDocs?: number;
-  reason?: string | null;
 }
 
 export function IncompleteAnalysis({
   documentCount,
   minDocs = MIN_DOCS_FOR_ANALYSIS,
-  reason,
 }: IncompleteAnalysisProps) {
   const hasZeroDocs = documentCount === 0;
 
@@ -29,6 +25,7 @@ export function IncompleteAnalysis({
             <FileWarning
               className="h-7 w-7 text-amber-600 dark:text-amber-500"
               strokeWidth={1.5}
+              aria-hidden="true"
             />
           </div>
         </div>
@@ -40,12 +37,6 @@ export function IncompleteAnalysis({
         <p className="text-sm text-muted-foreground leading-relaxed max-w-md">
           {body}
         </p>
-
-        {reason && !hasZeroDocs && (
-          <p className="mt-4 text-xs text-muted-foreground/60 max-w-sm font-mono">
-            {reason}
-          </p>
-        )}
       </div>
     </div>
   );

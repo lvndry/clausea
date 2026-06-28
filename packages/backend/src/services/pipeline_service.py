@@ -38,7 +38,7 @@ from src.repositories.pipeline_repository import PipelineRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.product_intelligence_service import ProductIntelligenceService
 from src.services.service_factory import create_document_service, create_product_service
-from src.services.thin_evidence_gate import check_thin_evidence
+from src.services.thin_evidence_gate import ThinEvidenceSkipped, check_thin_evidence
 from src.utils.domain import extract_domain as _extract_domain
 
 logger = get_logger(__name__)
@@ -407,12 +407,6 @@ class PipelineService:
         await self._update_step(db, job, "synthesising", "completed", skip_message)
         await self._update_step(db, job, "generating_overview", "completed", skip_message)
         await self._pipeline_repo.update(db, job)
-        if job.product_id:
-            await ProductIntelligenceService().update_product_stats(
-                db,
-                product_id=job.product_id,
-                product_slug=job.product_slug,
-            )
         logger.info(
             "Pipeline job %s completed with thin evidence for %s (%s)",
             job.id,
@@ -1083,6 +1077,14 @@ class PipelineService:
                         )
                     except (asyncio.CancelledError, _PipelineStalled):
                         raise
+                    except ThinEvidenceSkipped as thin_exc:
+                        await self._finish_thin_evidence(
+                            db,
+                            job,
+                            product,
+                            thin_exc.reason or "Insufficient core policy documents",
+                        )
+                        return
                     except Exception as overview_exc:
                         job.status = "analysis_failed"
                         job.error = PipelineErrorCode.analysis_failed

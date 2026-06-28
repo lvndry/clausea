@@ -122,6 +122,21 @@ def _base_llm_payload(**extra: object) -> dict:
     return payload
 
 
+def _terms_core_doc() -> Document:
+    doc = _core_doc()
+    doc.id = "doc_2"
+    doc.doc_type = "terms_of_service"  # type: ignore[arg-type]
+    doc.url = "https://example.com/terms"
+    doc.title = "Terms of Service"
+    return doc
+
+
+def _sufficient_core_docs() -> list[Document]:
+    third = _core_doc()
+    third.id = "doc_3"
+    return [_core_doc(), _terms_core_doc(), third]
+
+
 def _services(product_id: str = "p1") -> tuple[MagicMock, MagicMock]:
     product = MagicMock()
     product.id = product_id
@@ -129,8 +144,9 @@ def _services(product_id: str = "p1") -> tuple[MagicMock, MagicMock]:
     product_svc = MagicMock()
     product_svc.get_product_by_slug = AsyncMock(return_value=product)
     product_svc.save_product_overview = AsyncMock(return_value=None)
+    product_svc.mark_thin_evidence = AsyncMock(return_value=None)
     document_svc = MagicMock()
-    document_svc.get_product_documents_by_slug = AsyncMock(return_value=[_core_doc()])
+    document_svc.get_product_documents_by_slug = AsyncMock(return_value=_sufficient_core_docs())
     return product_svc, document_svc
 
 
@@ -159,6 +175,10 @@ async def test_generate_product_overview_passes_product_id_to_save() -> None:
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),
+        ),
+        patch(
+            "src.analyzers.overview_guards.validate_overview",
+            return_value=_validation_result(should_re_roll=False),
         ),
     ):
         await generate_product_overview(
@@ -312,6 +332,10 @@ async def test_generate_product_overview_parses_headline_claim_from_llm() -> Non
     with (
         patch("src.analyser.ProductRollupService", return_value=rollup_service),
         patch(
+            "src.analyzers.overview_guards.validate_overview",
+            return_value=_validation_result(should_re_roll=False),
+        ),
+        patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(payload)),
         ),
@@ -346,6 +370,10 @@ async def test_generate_product_overview_headline_claim_none_when_llm_omits_it()
 
     with (
         patch("src.analyser.ProductRollupService", return_value=rollup_service),
+        patch(
+            "src.analyzers.overview_guards.validate_overview",
+            return_value=_validation_result(should_re_roll=False),
+        ),
         patch(
             "src.analyser.acompletion_with_fallback",
             AsyncMock(return_value=_llm_response(_base_llm_payload())),
@@ -387,7 +415,11 @@ async def test_generate_product_overview_retries_after_validation_failure() -> N
             product_slug="example",
         )
     )
-    llm_mock = AsyncMock(return_value=_llm_response(_base_llm_payload()))
+    llm_mock = AsyncMock(
+        return_value=_llm_response(
+            _base_llm_payload(headline_claim="Example collects data for core analysis.")
+        )
+    )
     merge_mock = MagicMock(
         side_effect=[
             _validation_result(
@@ -400,6 +432,10 @@ async def test_generate_product_overview_retries_after_validation_failure() -> N
 
     with (
         patch("src.analyser.ProductRollupService", return_value=rollup_service),
+        patch(
+            "src.analyzers.overview_guards.validate_overview",
+            return_value=_validation_result(should_re_roll=False),
+        ),
         patch("src.analyser.acompletion_with_fallback", llm_mock),
         patch("src.analyzers.overview_guards.merge_llm_review", merge_mock),
     ):
@@ -432,7 +468,11 @@ async def test_generate_product_overview_raises_after_max_validation_retries() -
             product_slug="example",
         )
     )
-    llm_mock = AsyncMock(return_value=_llm_response(_base_llm_payload()))
+    llm_mock = AsyncMock(
+        return_value=_llm_response(
+            _base_llm_payload(headline_claim="Example collects data for core analysis.")
+        )
+    )
     merge_mock = MagicMock(
         return_value=_validation_result(
             should_re_roll=True,
@@ -442,6 +482,10 @@ async def test_generate_product_overview_raises_after_max_validation_retries() -
 
     with (
         patch("src.analyser.ProductRollupService", return_value=rollup_service),
+        patch(
+            "src.analyzers.overview_guards.validate_overview",
+            return_value=_validation_result(should_re_roll=False),
+        ),
         patch("src.analyser.acompletion_with_fallback", llm_mock),
         patch("src.analyzers.overview_guards.merge_llm_review", merge_mock),
         pytest.raises(RuntimeError, match="Overview validation failed for example"),
