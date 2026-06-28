@@ -28,6 +28,7 @@ from src.models.product import Product
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.product_repository import ProductRepository
+from src.services.product_intelligence_service import ProductIntelligenceService
 
 logger = get_logger(__name__)
 
@@ -297,6 +298,28 @@ class ProductService:
             db, product_slug
         )
         return overview_data
+
+    async def mark_thin_evidence(
+        self,
+        db: AgnosticDatabase,
+        product_slug: str,
+        reason: str,
+        job_id: str | None = None,
+        product_id: str | None = None,
+    ) -> None:
+        """Mark a product as thin-evidence and clear stale graded outputs."""
+        if product_id is None:
+            product = await self.get_product_by_slug(db, product_slug)
+            if not product:
+                raise ValueError(f"Product not found for slug {product_slug}")
+            product_id = product.id
+        await ProductIntelligenceService().mark_thin_evidence(
+            db,
+            product_id=product_id,
+            product_slug=product_slug,
+            reason=reason,
+            job_id=job_id,
+        )
 
     async def save_product_overview(
         self,

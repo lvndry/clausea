@@ -1,24 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import type { CrawlError } from "@/types";
+import type { PipelineJobStatus } from "@/types/pipeline";
 import { getBackendUrl } from "@lib/config";
 import { httpJson } from "@lib/http";
-
-type PipelineJobStatus =
-  | "pending"
-  | "crawling"
-  | "synthesising"
-  | "summarizing"
-  | "generating_overview"
-  | "completed"
-  | "failed"
-  | "no_documents"
-  | "robots_blocked"
-  | "access_denied"
-  | "no_policy_found"
-  | "site_unavailable"
-  | "analysis_failed"
-  | "interrupted";
 
 interface PipelineStep {
   name: string;

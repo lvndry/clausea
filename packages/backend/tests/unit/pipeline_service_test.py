@@ -11,11 +11,14 @@ from src.repositories.pipeline_repository import PipelineRepository
 from src.services import pipeline_service as ps
 from src.services.pipeline_service import PipelineService
 
+from .pipeline_thin_evidence_fixtures_test import make_doc_svc_passing_thin_gate
+
 
 @pytest.fixture
 def mock_repo():
     repo = MagicMock(spec=PipelineRepository)
     repo.update_fields = AsyncMock()
+    repo.update = AsyncMock()
     repo.find_by_id = AsyncMock()
     return repo
 
@@ -28,6 +31,46 @@ def pipeline_service(mock_repo):
 @pytest.fixture
 def mock_db():
     return MagicMock()
+
+
+@pytest.mark.asyncio
+async def test_finish_thin_evidence_skips_analysis_steps(pipeline_service, mock_repo, mock_db):
+    job = PipelineJob(
+        id="job-thin",
+        product_slug="starlink",
+        product_name="Starlink",
+        url="https://starlink.com",
+        status="crawling",
+        product_id="prod-1",
+        documents_stored=1,
+        steps=[
+            PipelineStep(name="crawling", status="completed"),
+            PipelineStep(name="synthesising", status="pending"),
+            PipelineStep(name="generating_overview", status="pending"),
+        ],
+    )
+    product = MagicMock()
+    product.id = "prod-1"
+    product.name = "Starlink"
+
+    product_svc = MagicMock()
+    product_svc.mark_thin_evidence = AsyncMock(return_value=None)
+
+    with patch.object(ps, "create_product_service", return_value=product_svc):
+        await pipeline_service._finish_thin_evidence(
+            mock_db,
+            job,
+            product,
+            "Only 1 distinct core document type(s) across 1 document(s) analyzed",
+        )
+
+    product_svc.mark_thin_evidence.assert_awaited_once()
+    assert job.status == "thin_evidence"
+    assert job.error == PipelineErrorCode.thin_evidence
+    assert job.steps[1].status == "completed"
+    assert job.steps[2].status == "completed"
+    assert "Skipped" in job.steps[1].message
+    mock_repo.update.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -222,14 +265,21 @@ async def test_run_pipeline_skip_crawl_never_runs_crawler(mock_db):
     product_svc.save_product_compliance = AsyncMock(return_value=True)
 
     existing_doc = SimpleNamespace(id="doc-1", doc_type="privacy_policy", analysis=object())
+    existing_doc_2 = SimpleNamespace(id="doc-2", doc_type="privacy_policy", analysis=object())
+    existing_doc_3 = SimpleNamespace(id="doc-3", doc_type="terms_of_service", analysis=object())
     doc_svc = MagicMock()
-    doc_svc.get_product_documents_by_slug = AsyncMock(return_value=[existing_doc])
+    doc_svc.get_product_documents_by_slug = AsyncMock(
+        return_value=[existing_doc, existing_doc_2, existing_doc_3]
+    )
 
     fake_pipeline = MagicMock()
     fake_pipeline.run = AsyncMock()
 
     analyse_mock = AsyncMock(
-        return_value=AnalysisResult(documents=[existing_doc], analyses_skipped=0)  # ty: ignore[invalid-argument-type]
+        return_value=AnalysisResult(
+            documents=[existing_doc, existing_doc_2, existing_doc_3],
+            analyses_skipped=0,
+        )  # ty: ignore[invalid-argument-type]
     )
     overview_mock = AsyncMock(return_value=SimpleNamespace(grade="C"))
 
@@ -256,7 +306,7 @@ async def test_run_pipeline_skip_crawl_never_runs_crawler(mock_db):
         await service.run_pipeline("job-skip-crawl")
 
     fake_pipeline.run.assert_not_called()
-    assert job.documents_stored == 1
+    assert job.documents_stored == 3
     assert job.steps[0].status == "completed"
     assert "Skipped crawl" in (job.steps[0].message or "")
     analyse_mock.assert_awaited_once()
@@ -303,7 +353,11 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
     fake_pipeline.run = AsyncMock(return_value=crawl_stats)
 
     # Analysis returns the documents, but none got an `.analysis` (all failed).
-    unanalysed_docs = [SimpleNamespace(analysis=None, doc_type="privacy_policy") for _ in range(3)]
+    unanalysed_docs = [
+        SimpleNamespace(analysis=None, doc_type="privacy_policy"),
+        SimpleNamespace(analysis=None, doc_type="privacy_policy"),
+        SimpleNamespace(analysis=None, doc_type="terms_of_service"),
+    ]
     analyse_mock = AsyncMock(
         return_value=AnalysisResult(documents=unanalysed_docs, analyses_skipped=0)  # ty: ignore[invalid-argument-type]
     )
@@ -319,11 +373,11 @@ async def test_run_pipeline_all_documents_fail_analysis_is_truthful(mock_db):
             "src.services.pipeline_service.create_product_service",
             return_value=product_svc,
         ),
-        patch("src.services.pipeline_service.create_document_service", return_value=MagicMock()),
         patch(
-            "src.services.pipeline_service.PolicyDocumentPipeline",
-            return_value=fake_pipeline,
+            "src.services.pipeline_service.create_document_service",
+            return_value=make_doc_svc_passing_thin_gate(),
         ),
+        patch("src.services.pipeline_service.PolicyDocumentPipeline", return_value=fake_pipeline),
         patch("src.services.pipeline_service.analyse_product_documents", analyse_mock),
         patch("src.services.pipeline_service.generate_product_overview", overview_mock),
     ):
@@ -546,7 +600,10 @@ async def test_overview_stage_heartbeats_during_synthesis(mock_db):
     with (
         patch("src.services.pipeline_service.db_session", fake_db_session),
         patch("src.services.pipeline_service.create_product_service", return_value=product_svc),
-        patch("src.services.pipeline_service.create_document_service", return_value=MagicMock()),
+        patch(
+            "src.services.pipeline_service.create_document_service",
+            return_value=make_doc_svc_passing_thin_gate(),
+        ),
         patch("src.services.pipeline_service.PolicyDocumentPipeline", return_value=fake_pipeline),
         patch("src.services.pipeline_service.analyse_product_documents", analyse_mock),
         patch("src.services.pipeline_service.generate_product_overview", overview_mock),

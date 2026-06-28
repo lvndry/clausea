@@ -44,4 +44,5 @@ class Product(BaseModel):
     stats: ProductStats = Field(default_factory=ProductStats)
     thin_evidence: bool = False
     thin_evidence_reason: str | None = None
+    indexation_error: str | None = None
     name_source: str | None = None

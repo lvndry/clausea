@@ -171,6 +171,73 @@ def test_parse_sitemap_xml_index():
     assert "https://example.com/sitemap-pages.xml" in urls
 
 
+def test_looks_like_sitemap_xml_rejects_html_shell():
+    crawler = ClauseaCrawler()
+    html_shell = (
+        "<!DOCTYPE html><html><head><title>App</title></head>"
+        "<body><div id='root'></div></body></html>"
+    )
+    assert crawler._looks_like_sitemap_xml(html_shell) is False
+
+
+def test_looks_like_sitemap_xml_accepts_urlset():
+    crawler = ClauseaCrawler()
+    xml = (
+        "<?xml version='1.0'?>"
+        "<urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
+        "<url><loc>https://example.com/privacy</loc></url></urlset>"
+    )
+    assert crawler._looks_like_sitemap_xml(xml) is True
+
+
+def test_parse_sitemap_xml_ignores_html_body():
+    crawler = ClauseaCrawler()
+    html_shell = (
+        "<!DOCTYPE html><html><head><title>App</title></head>"
+        "<body><div id='root'></div></body></html>"
+    )
+    assert crawler._parse_sitemap_xml(html_shell) == []
+
+
+@pytest.mark.asyncio
+async def test_fake_html_sitemap_does_not_seed_discovery():
+    """SPA HTML at /sitemap.xml must not count as sitemap success — discovery stays empty."""
+    origin = "https://starlink.com"
+    html_shell = (
+        "<!DOCTYPE html><html><head><title>Starlink</title></head>"
+        "<body><div id='root'></div></body></html>"
+    )
+
+    class HtmlSitemapResponse:
+        def __init__(self, url: str, body: str) -> None:
+            self.url = url
+            self.status = 200
+            self.headers = {"Content-Type": "text/html; charset=utf-8"}
+            self.content = _FakeContent(body.encode())
+
+        async def read(self) -> bytes:
+            return await self.content.read()
+
+        async def text(self) -> str:
+            return (await self.content.read()).decode()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+    class HtmlSitemapSession:
+        def get(self, url, **kwargs):
+            return HtmlSitemapResponse(url, html_shell)
+
+    crawler = ClauseaCrawler(respect_robots_txt=False)
+    discovered = await crawler._discover_sitemap_urls(
+        cast(aiohttp.ClientSession, HtmlSitemapSession()), origin
+    )
+    assert discovered == []
+
+
 def test_parse_robots_txt_sitemaps():
     crawler = ClauseaCrawler()
     robots = """

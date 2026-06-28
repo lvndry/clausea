@@ -38,6 +38,7 @@ from src.repositories.pipeline_repository import PipelineRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.product_intelligence_service import ProductIntelligenceService
 from src.services.service_factory import create_document_service, create_product_service
+from src.services.thin_evidence_gate import ThinEvidenceSkipped, check_thin_evidence
 from src.utils.domain import extract_domain as _extract_domain
 
 logger = get_logger(__name__)
@@ -375,6 +376,43 @@ class PipelineService:
             return
 
         await self._pipeline_repo.update_fields(db, job.id, update_data)
+
+    async def _finish_thin_evidence(
+        self,
+        db: AgnosticDatabase,
+        job: PipelineJob,
+        product: Product,
+        reason: str,
+    ) -> None:
+        """Skip analysis/overview LLM work when core document evidence is insufficient."""
+        from src.services.thin_evidence_gate import MIN_TOTAL_CORE_DOCS
+
+        product_svc = create_product_service()
+        await product_svc.mark_thin_evidence(
+            db,
+            job.product_slug,
+            reason,
+            job_id=job.id,
+            product_id=product.id,
+        )
+
+        skip_message = (
+            f"Skipped — need at least {MIN_TOTAL_CORE_DOCS} core policy documents ({reason})"
+        )
+        job.status = "thin_evidence"
+        job.error = PipelineErrorCode.thin_evidence
+        job.error_detail = reason
+        job.completed_at = datetime.now()
+        job.updated_at = datetime.now()
+        await self._update_step(db, job, "synthesising", "completed", skip_message)
+        await self._update_step(db, job, "generating_overview", "completed", skip_message)
+        await self._pipeline_repo.update(db, job)
+        logger.info(
+            "Pipeline job %s completed with thin evidence for %s (%s)",
+            job.id,
+            job.product_slug,
+            reason,
+        )
 
     async def run_pipeline(self, job_id: str) -> None:
         """Execute the full pipeline for a job in the background.
@@ -804,13 +842,29 @@ class PipelineService:
                                 )
                             return
 
+                    doc_svc = create_document_service()
+                    policy_docs = await doc_svc.get_product_documents_by_slug(db, job.product_slug)
+                    core_doc_types = [
+                        doc.doc_type
+                        for doc in policy_docs
+                        if doc.doc_type in OVERVIEW_CORE_DOC_TYPES
+                    ]
+                    is_thin, thin_reason = check_thin_evidence(core_doc_types)
+                    if is_thin:
+                        await self._finish_thin_evidence(
+                            db,
+                            job,
+                            product,
+                            thin_reason or "Insufficient core policy documents",
+                        )
+                        return
+
                     # === Step 2: Summarize ===
                     job.status = "synthesising"
                     await self._update_step(
                         db, job, "synthesising", "running", "Analyzing document contents..."
                     )
 
-                    doc_svc = create_document_service()
                     expected_total = int(job.documents_stored or job.documents_found or 0)
                     if expected_total > 0:
                         await self._update_step_progress(
@@ -1023,6 +1077,14 @@ class PipelineService:
                         )
                     except (asyncio.CancelledError, _PipelineStalled):
                         raise
+                    except ThinEvidenceSkipped as thin_exc:
+                        await self._finish_thin_evidence(
+                            db,
+                            job,
+                            product,
+                            thin_exc.reason or "Insufficient core policy documents",
+                        )
+                        return
                     except Exception as overview_exc:
                         job.status = "analysis_failed"
                         job.error = PipelineErrorCode.analysis_failed

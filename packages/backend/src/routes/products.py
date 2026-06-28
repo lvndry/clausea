@@ -27,6 +27,7 @@ from src.models.document import (
     ProductDeepAnalysis,
     ProductOverview,
 )
+from src.models.pipeline_job import PipelineErrorCode
 from src.models.product import Product
 from src.models.topic_report import ProductTopicReport
 from src.models.user import UserTier
@@ -41,6 +42,7 @@ from src.services.service_factory import (
     create_product_service,
     create_services,
 )
+from src.services.thin_evidence_gate import ThinEvidenceSkipped
 from src.services.topic_report_service import build_product_topic_report
 
 logger = get_logger(__name__)
@@ -146,6 +148,17 @@ async def get_product_overview(
     product = await service.get_product_by_slug(db, slug)
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+
+    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    if intelligence and intelligence.thin_evidence:
+        raise HTTPException(
+            status_code=HTTP_424_FAILED_DEPENDENCY,
+            detail={
+                "message": "Not enough policy documents were found to produce a reliable analysis.",
+                "code": PipelineErrorCode.thin_evidence,
+                "reason": intelligence.thin_evidence_reason,
+            },
+        )
 
     overview = await service.get_product_overview(db, slug, product=product)
     if overview:
@@ -279,6 +292,16 @@ async def get_product_analysis(
             status_code=500,
             detail="Failed to generate product analysis. Please try again later.",
         )
+    except ThinEvidenceSkipped as thin_exc:
+        logger.info("Analysis unavailable for %s due to thin evidence: %s", slug, thin_exc.reason)
+        raise HTTPException(
+            status_code=HTTP_424_FAILED_DEPENDENCY,
+            detail={
+                "message": "Not enough policy documents were found to produce a reliable analysis.",
+                "code": PipelineErrorCode.thin_evidence,
+                "reason": thin_exc.reason,
+            },
+        ) from thin_exc
     except HTTPException:
         raise
     except Exception as e:
@@ -447,6 +470,7 @@ async def get_product_by_slug(
     if intelligence and intelligence.thin_evidence:
         product.thin_evidence = True
         product.thin_evidence_reason = intelligence.thin_evidence_reason
+        product.indexation_error = intelligence.indexation_error or PipelineErrorCode.thin_evidence
 
     return product
 

@@ -103,6 +103,7 @@ class ProductIntelligence(BaseModel):
 
     thin_evidence: bool = False
     thin_evidence_reason: str | None = None
+    indexation_error: str | None = None
 
     generated_at: datetime = Field(default_factory=datetime.now)
     rollup_generated_at: datetime | None = None

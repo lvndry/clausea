@@ -21,30 +21,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { resolvePipelineErrorMessage } from "@/lib/pipeline-errors";
 import { cn } from "@/lib/utils";
 import type { CrawlError } from "@/types";
+import {
+  type PipelineJobStatus,
+  TERMINAL_PIPELINE_STATUSES,
+} from "@/types/pipeline";
 
-interface PipelineStep {
+type PipelineStep = {
   name: string;
   status: "pending" | "running" | "completed" | "failed";
   message: string | null;
   progress_current?: number | null;
   progress_total?: number | null;
   progress_percent?: number | null;
-}
-
-type PipelineJobStatus =
-  | "pending"
-  | "crawling"
-  | "synthesising"
-  | "summarizing"
-  | "generating_overview"
-  | "completed"
-  | "failed"
-  | "no_documents"
-  | "robots_blocked"
-  | "access_denied"
-  | "no_policy_found"
-  | "site_unavailable"
-  | "analysis_failed";
+};
 
 interface PipelineJobData {
   id: string;
@@ -63,6 +52,7 @@ interface PipelineJobData {
 interface PipelineProgressProps {
   jobId: string;
   onComplete?: (productSlug: string) => void;
+  onThinEvidence?: (job: PipelineJobData) => void;
   onDismiss?: () => void;
 }
 
@@ -254,20 +244,12 @@ function CrawlErrorsDisplay({ errors }: { errors: CrawlError[] }) {
   );
 }
 
-const TERMINAL_STATUSES: PipelineJobStatus[] = [
-  "completed",
-  "failed",
-  "no_documents",
-  "robots_blocked",
-  "access_denied",
-  "no_policy_found",
-  "site_unavailable",
-  "analysis_failed",
-];
+const TERMINAL_STATUSES = TERMINAL_PIPELINE_STATUSES;
 
 export function PipelineProgress({
   jobId,
   onComplete,
+  onThinEvidence,
   onDismiss,
 }: PipelineProgressProps) {
   const router = useRouter();
@@ -334,6 +316,9 @@ export function PipelineProgress({
         if (data.status === "completed" && onComplete) {
           onComplete(data.product_slug);
         }
+        if (data.status === "thin_evidence" && onThinEvidence) {
+          onThinEvidence(data);
+        }
         return;
       }
 
@@ -354,7 +339,13 @@ export function PipelineProgress({
     } finally {
       inFlightRef.current = false;
     }
-  }, [jobId, onComplete, clearScheduledPoll, computePollDelayMs]);
+  }, [
+    jobId,
+    onComplete,
+    onThinEvidence,
+    clearScheduledPoll,
+    computePollDelayMs,
+  ]);
 
   useEffect(() => {
     startedAtRef.current = null;
@@ -452,7 +443,8 @@ export function PipelineProgress({
               job.status === "no_policy_found" ||
               job.status === "robots_blocked" ||
               job.status === "access_denied" ||
-              job.status === "site_unavailable") &&
+              job.status === "site_unavailable" ||
+              job.status === "thin_evidence") &&
               "border-amber-500/50",
           )}
         >
@@ -472,10 +464,12 @@ export function PipelineProgress({
                           ? `${job.product_name} blocked our access`
                           : job.status === "site_unavailable"
                             ? `${job.product_name} is unreachable`
-                            : job.status === "failed" ||
-                                job.status === "analysis_failed"
-                              ? `Analysis failed for ${job.product_name}`
-                              : `Analyzing ${job.product_name}...`}
+                            : job.status === "thin_evidence"
+                              ? `Not enough policy documents for ${job.product_name}`
+                              : job.status === "failed" ||
+                                  job.status === "analysis_failed"
+                                ? `Analysis failed for ${job.product_name}`
+                                : `Analyzing ${job.product_name}...`}
                 </h3>
                 <p className="text-xs text-muted-foreground truncate max-w-xs">
                   {job.url}
@@ -507,7 +501,8 @@ export function PipelineProgress({
                         job.status === "no_policy_found" ||
                         job.status === "robots_blocked" ||
                         job.status === "access_denied" ||
-                        job.status === "site_unavailable"
+                        job.status === "site_unavailable" ||
+                        job.status === "thin_evidence"
                       ? "bg-amber-500"
                       : job.status === "completed"
                         ? "bg-green-500"
@@ -531,7 +526,14 @@ export function PipelineProgress({
             {/* Error message (only if no crawl errors already shown) */}
             {job.error &&
               !(job.crawl_errors && job.crawl_errors.length > 0) && (
-                <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+                <p
+                  className={cn(
+                    "text-xs rounded-lg px-3 py-2",
+                    job.status === "thin_evidence"
+                      ? "text-amber-700 bg-amber-500/10 dark:text-amber-400"
+                      : "text-destructive bg-destructive/10",
+                  )}
+                >
                   {resolvePipelineErrorMessage(job.error, job.error_detail)}
                 </p>
               )}

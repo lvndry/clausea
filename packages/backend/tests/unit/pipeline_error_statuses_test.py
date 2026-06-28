@@ -19,6 +19,8 @@ from src.models.pipeline_job import PipelineErrorCode, PipelineJob
 from src.repositories.pipeline_repository import PipelineRepository
 from src.services.pipeline_service import PipelineService
 
+from .pipeline_thin_evidence_fixtures_test import passing_thin_evidence_stored_docs
+
 
 @pytest.fixture
 def mock_db():
@@ -299,7 +301,9 @@ async def test_analysis_failed_when_synthesise_raises(mock_db):
     fake_pipeline.run = AsyncMock(return_value=crawl_stats)
 
     doc_svc = MagicMock()
-    doc_svc.get_product_documents_by_slug = AsyncMock(return_value=[])
+    doc_svc.get_product_documents_by_slug = AsyncMock(
+        return_value=passing_thin_evidence_stored_docs()
+    )
 
     analyse_mock = AsyncMock(side_effect=RuntimeError("Unexpected LLM SDK error"))
     overview_mock = AsyncMock()
@@ -346,7 +350,9 @@ async def test_analysis_failed_when_overview_raises(mock_db):
     fake_pipeline.run = AsyncMock(return_value=crawl_stats)
 
     doc_svc = MagicMock()
-    doc_svc.get_product_documents_by_slug = AsyncMock(return_value=[])
+    doc_svc.get_product_documents_by_slug = AsyncMock(
+        return_value=passing_thin_evidence_stored_docs()
+    )
 
     analysed_doc = create_autospec(Document, instance=True)
     analysed_doc.analysis = object()
