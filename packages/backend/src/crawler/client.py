@@ -1294,9 +1294,10 @@ class ClauseaCrawler:
         head = stripped[:512].lower()
         if head.startswith("<!doctype html") or head.startswith("<html"):
             return False
-        if re.search(r"<urlset\b", stripped, re.IGNORECASE):
+        prefix = stripped[:4096]
+        if re.search(r"<urlset\b", prefix, re.IGNORECASE):
             return True
-        if re.search(r"<sitemapindex\b", stripped, re.IGNORECASE):
+        if re.search(r"<sitemapindex\b", prefix, re.IGNORECASE):
             return True
         return stripped.startswith("<?xml")
 

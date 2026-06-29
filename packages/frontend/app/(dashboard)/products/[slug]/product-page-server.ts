@@ -3,11 +3,11 @@ import { cookies } from "next/headers";
 import { cache } from "react";
 
 import type { ConsumerExplainer } from "@/components/dashboard/explainer/types";
-import { isThinEvidenceError } from "@/lib/pipeline-errors";
 import {
   PREVIEW_TOKEN_COOKIE,
   PREVIEW_TOKEN_HEADER,
 } from "@/lib/preview-token";
+import { productHasThinEvidence } from "@/lib/product-thin-evidence";
 import type {
   DocumentSummary,
   Product,
@@ -42,13 +42,6 @@ export function humanizeSlug(slug: string): string {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
-}
-
-function productHasThinEvidence(product: Product | null | undefined): boolean {
-  return (
-    product?.thin_evidence === true ||
-    isThinEvidenceError(product?.indexation_error)
-  );
 }
 
 async function fetchBackendJson<T>(
@@ -134,18 +127,17 @@ export const fetchProductPageShell = cache(async (slug: string) => {
     console.warn(`fetchProductPageShell: no auth headers for slug=${slug}`);
   }
 
-  const productResult = await fetchProductRecord(slug);
-  const product = productResult.data;
-  const skipOverview = productHasThinEvidence(product);
-
-  const [overview, explainer] = await Promise.all([
-    skipOverview ? Promise.resolve(null) : fetchProductOverviewData(slug),
+  const [productResult, overview, explainer] = await Promise.all([
+    fetchProductRecord(slug),
+    fetchProductOverviewData(slug),
     fetchProductExplainerData(slug),
   ]);
 
+  const product = productResult.data;
+
   return {
     product,
-    overview,
+    overview: productHasThinEvidence(product) ? null : overview,
     explainer,
   };
 });
@@ -194,7 +186,10 @@ export const fetchProductPageData = cache(async (slug: string) => {
 /** Shared across layout metadata and page SSR — dedupes product + overview fetches. */
 export const fetchProductForMetadata = cache(
   async (slug: string): Promise<ProductMetadataFetch> => {
-    const productResult = await fetchProductRecord(slug);
+    const [productResult, overview] = await Promise.all([
+      fetchProductRecord(slug),
+      fetchProductOverviewData(slug),
+    ]);
 
     if (productResult.status === 404) {
       return { kind: "not_found" };
@@ -212,10 +207,7 @@ export const fetchProductForMetadata = cache(
     }
 
     const product = productResult.data;
-
-    const overview = productHasThinEvidence(product)
-      ? null
-      : await fetchProductOverviewData(slug);
+    const resolvedOverview = productHasThinEvidence(product) ? null : overview;
 
     return {
       kind: "ok",
@@ -223,9 +215,9 @@ export const fetchProductForMetadata = cache(
         name: product.name,
         slug: product.slug,
         company_name: product.company_name,
-        one_line_summary: overview?.one_line_summary,
-        grade: overview?.grade,
-        verdict: overview?.verdict,
+        one_line_summary: resolvedOverview?.one_line_summary,
+        grade: resolvedOverview?.grade,
+        verdict: resolvedOverview?.verdict,
       },
     };
   },

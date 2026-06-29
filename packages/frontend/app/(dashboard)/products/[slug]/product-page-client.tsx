@@ -39,8 +39,8 @@ import { subscriptionApi } from "@/lib/api/subscriptions";
 import {
   PIPELINE_ERROR_CODE_MESSAGES,
   PIPELINE_ERROR_THIN_EVIDENCE,
-  isThinEvidenceError,
 } from "@/lib/pipeline-errors";
+import { productHasThinEvidence } from "@/lib/product-thin-evidence";
 import type {
   DocumentSummary,
   FailedCrawlJob,
@@ -54,13 +54,6 @@ import {
   deriveProductPageOverviewState,
   isProductNotFound,
 } from "./product-page-fetch-state";
-
-function productHasThinEvidence(product: Product | null | undefined): boolean {
-  return (
-    isThinEvidenceError(product?.indexation_error) ||
-    product?.thin_evidence === true
-  );
-}
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
@@ -201,12 +194,14 @@ export default function CompanyPage({
       try {
         setDocumentsLoading(true);
 
-        const [prodRes, docsRes, explainerRes, topicsRes] = await Promise.all([
-          fetch(`/api/products/${slug}`),
-          fetch(`/api/products/${slug}/documents`),
-          fetch(`/api/products/${slug}/explainer`),
-          fetch(`/api/products/${slug}/topics`),
-        ]);
+        const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
+          await Promise.all([
+            fetch(`/api/products/${slug}`),
+            fetch(`/api/products/${slug}/documents`),
+            fetch(`/api/products/${slug}/overview`),
+            fetch(`/api/products/${slug}/explainer`),
+            fetch(`/api/products/${slug}/topics`),
+          ]);
 
         if (explainerRes.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
@@ -218,21 +213,6 @@ export default function CompanyPage({
         const prodJson = prodRes.ok
           ? ((await prodRes.json()) as Product)
           : null;
-
-        const docsJson = docsRes.ok
-          ? ((await docsRes.json()) as DocumentSummary[])
-          : [];
-        setDocuments(docsJson);
-        setDocumentsLoading(false);
-        setProduct(prodJson);
-
-        if (productHasThinEvidence(prodJson)) {
-          setThinEvidence(true);
-          setData(null);
-          return;
-        }
-
-        const overviewRes = await fetch(`/api/products/${slug}/overview`);
 
         const overviewPayload = overviewRes.ok
           ? undefined
@@ -248,7 +228,18 @@ export default function CompanyPage({
           overviewPayload,
         });
 
-        if (overviewState === "thin_evidence") {
+        setProduct(prodJson);
+
+        const docsJson = docsRes.ok
+          ? ((await docsRes.json()) as DocumentSummary[])
+          : [];
+        setDocuments(docsJson);
+        setDocumentsLoading(false);
+
+        if (
+          productHasThinEvidence(prodJson) ||
+          overviewState === "thin_evidence"
+        ) {
           setThinEvidence(true);
           setData(null);
           return;
