@@ -144,4 +144,95 @@ describe("CompanyPage limit reached state", () => {
       screen.queryByRole("heading", { name: "Product Not Found" }),
     ).not.toBeInTheDocument();
   });
+
+  it("skips client fetch when SSR product is thin evidence", async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      return createJsonResponse(500, {
+        error: `Unexpected URL: ${getRequestUrl(input)}`,
+      });
+    });
+
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(
+      <CompanyPage
+        initialProduct={{
+          id: "prod-1",
+          name: "Starlink",
+          slug: "acme-inc",
+          thin_evidence: true,
+        }}
+        initialDocuments={[
+          {
+            id: "doc-1",
+            title: "Privacy Policy",
+            url: "https://example.com/privacy",
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Not enough policy documents to analyze",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows incomplete analysis when product fetch returns thin_evidence", async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = getRequestUrl(input);
+
+      if (url.endsWith("/api/products/acme-inc")) {
+        return createJsonResponse(200, {
+          id: "prod-1",
+          name: "Starlink",
+          slug: "acme-inc",
+          thin_evidence: true,
+        });
+      }
+      if (url.endsWith("/api/products/acme-inc/documents")) {
+        return createJsonResponse(200, [
+          {
+            id: "doc-1",
+            title: "Privacy Policy",
+            url: "https://example.com/privacy",
+          },
+        ]);
+      }
+      if (url.endsWith("/api/products/acme-inc/overview")) {
+        return createJsonResponse(424, {
+          detail: { code: "thin_evidence", message: "Insufficient docs" },
+        });
+      }
+      if (url.endsWith("/api/products/acme-inc/explainer")) {
+        return createJsonResponse(404, { error: "not found" });
+      }
+      if (url.endsWith("/api/products/acme-inc/topics")) {
+        return createJsonResponse(404, { error: "not found" });
+      }
+
+      return createJsonResponse(500, { error: `Unexpected URL: ${url}` });
+    });
+
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(<CompanyPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: "Not enough policy documents to analyze",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      screen.queryByRole("heading", { name: "Couldn't load this report" }),
+    ).not.toBeInTheDocument();
+  });
 });

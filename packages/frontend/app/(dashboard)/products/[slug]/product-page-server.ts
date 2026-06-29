@@ -7,6 +7,7 @@ import {
   PREVIEW_TOKEN_COOKIE,
   PREVIEW_TOKEN_HEADER,
 } from "@/lib/preview-token";
+import { productHasThinEvidence } from "@/lib/product-thin-evidence";
 import type {
   DocumentSummary,
   Product,
@@ -132,9 +133,11 @@ export const fetchProductPageShell = cache(async (slug: string) => {
     fetchProductExplainerData(slug),
   ]);
 
+  const product = productResult.data;
+
   return {
-    product: productResult.data,
-    overview,
+    product,
+    overview: productHasThinEvidence(product) ? null : overview,
     explainer,
   };
 });
@@ -204,6 +207,7 @@ export const fetchProductForMetadata = cache(
     }
 
     const product = productResult.data;
+    const resolvedOverview = productHasThinEvidence(product) ? null : overview;
 
     return {
       kind: "ok",
@@ -211,9 +215,9 @@ export const fetchProductForMetadata = cache(
         name: product.name,
         slug: product.slug,
         company_name: product.company_name,
-        one_line_summary: overview?.one_line_summary,
-        grade: overview?.grade,
-        verdict: overview?.verdict,
+        one_line_summary: resolvedOverview?.one_line_summary,
+        grade: resolvedOverview?.grade,
+        verdict: resolvedOverview?.verdict,
       },
     };
   },

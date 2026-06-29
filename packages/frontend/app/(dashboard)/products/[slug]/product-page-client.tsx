@@ -39,8 +39,8 @@ import { subscriptionApi } from "@/lib/api/subscriptions";
 import {
   PIPELINE_ERROR_CODE_MESSAGES,
   PIPELINE_ERROR_THIN_EVIDENCE,
-  isThinEvidenceError,
 } from "@/lib/pipeline-errors";
+import { productHasThinEvidence } from "@/lib/product-thin-evidence";
 import type {
   DocumentSummary,
   FailedCrawlJob,
@@ -54,13 +54,6 @@ import {
   deriveProductPageOverviewState,
   isProductNotFound,
 } from "./product-page-fetch-state";
-
-function productHasThinEvidence(product: Product | null | undefined): boolean {
-  return (
-    isThinEvidenceError(product?.indexation_error) ||
-    product?.thin_evidence === true
-  );
-}
 
 function derivePipelineUrl(product: Product): string | null {
   const fromWebsite = product.website?.trim();
@@ -136,7 +129,11 @@ export default function CompanyPage({
   const [topics, setTopics] = useState<ProductTopicReport | null>(
     initialTopics ?? null,
   );
-  const [loading, setLoading] = useState(!initialProduct || !initialOverview);
+  const [loading, setLoading] = useState(
+    () =>
+      !initialProduct ||
+      (!initialOverview && !productHasThinEvidence(initialProduct)),
+  );
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [thinEvidence, setThinEvidence] = useState(
     productHasThinEvidence(initialProduct),
@@ -185,12 +182,18 @@ export default function CompanyPage({
       return;
     }
 
+    // Thin evidence: overview endpoint returns 424 by design — do not fetch it.
+    if (initialProduct && productHasThinEvidence(initialProduct)) {
+      setThinEvidence(true);
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
     async function fetchData() {
       try {
         setDocumentsLoading(true);
 
-        // Fire all requests in parallel — product, documents, overview, and the
-        // consumer explainer arrive together instead of in a sequential chain.
         const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
           await Promise.all([
             fetch(`/api/products/${slug}`),
@@ -200,8 +203,6 @@ export default function CompanyPage({
             fetch(`/api/products/${slug}/topics`),
           ]);
 
-        // The explainer may 404/425 while the product is still indexing — a
-        // missing explainer is non-fatal, the overview sections still render.
         if (explainerRes.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
         }
@@ -226,6 +227,7 @@ export default function CompanyPage({
           documentsStatus: docsRes.status,
           overviewPayload,
         });
+
         setProduct(prodJson);
 
         const docsJson = docsRes.ok
@@ -489,7 +491,7 @@ export default function CompanyPage({
     }
   }
 
-  if (loading || (!data && indexationMode === "unknown")) {
+  if (loading || (!data && indexationMode === "unknown" && !thinEvidence)) {
     return (
       <div className="space-y-8">
         <div className="flex items-center gap-4">
