@@ -136,7 +136,11 @@ export default function CompanyPage({
   const [topics, setTopics] = useState<ProductTopicReport | null>(
     initialTopics ?? null,
   );
-  const [loading, setLoading] = useState(!initialProduct || !initialOverview);
+  const [loading, setLoading] = useState(
+    () =>
+      !initialProduct ||
+      (!initialOverview && !productHasThinEvidence(initialProduct)),
+  );
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [thinEvidence, setThinEvidence] = useState(
     productHasThinEvidence(initialProduct),
@@ -185,23 +189,25 @@ export default function CompanyPage({
       return;
     }
 
+    // Thin evidence: overview endpoint returns 424 by design — do not fetch it.
+    if (initialProduct && productHasThinEvidence(initialProduct)) {
+      setThinEvidence(true);
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
     async function fetchData() {
       try {
         setDocumentsLoading(true);
 
-        // Fire all requests in parallel — product, documents, overview, and the
-        // consumer explainer arrive together instead of in a sequential chain.
-        const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
-          await Promise.all([
-            fetch(`/api/products/${slug}`),
-            fetch(`/api/products/${slug}/documents`),
-            fetch(`/api/products/${slug}/overview`),
-            fetch(`/api/products/${slug}/explainer`),
-            fetch(`/api/products/${slug}/topics`),
-          ]);
+        const [prodRes, docsRes, explainerRes, topicsRes] = await Promise.all([
+          fetch(`/api/products/${slug}`),
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/explainer`),
+          fetch(`/api/products/${slug}/topics`),
+        ]);
 
-        // The explainer may 404/425 while the product is still indexing — a
-        // missing explainer is non-fatal, the overview sections still render.
         if (explainerRes.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
         }
@@ -212,6 +218,21 @@ export default function CompanyPage({
         const prodJson = prodRes.ok
           ? ((await prodRes.json()) as Product)
           : null;
+
+        const docsJson = docsRes.ok
+          ? ((await docsRes.json()) as DocumentSummary[])
+          : [];
+        setDocuments(docsJson);
+        setDocumentsLoading(false);
+        setProduct(prodJson);
+
+        if (productHasThinEvidence(prodJson)) {
+          setThinEvidence(true);
+          setData(null);
+          return;
+        }
+
+        const overviewRes = await fetch(`/api/products/${slug}/overview`);
 
         const overviewPayload = overviewRes.ok
           ? undefined
@@ -226,18 +247,8 @@ export default function CompanyPage({
           documentsStatus: docsRes.status,
           overviewPayload,
         });
-        setProduct(prodJson);
 
-        const docsJson = docsRes.ok
-          ? ((await docsRes.json()) as DocumentSummary[])
-          : [];
-        setDocuments(docsJson);
-        setDocumentsLoading(false);
-
-        if (
-          productHasThinEvidence(prodJson) ||
-          overviewState === "thin_evidence"
-        ) {
+        if (overviewState === "thin_evidence") {
           setThinEvidence(true);
           setData(null);
           return;
@@ -489,7 +500,7 @@ export default function CompanyPage({
     }
   }
 
-  if (loading || (!data && indexationMode === "unknown")) {
+  if (loading || (!data && indexationMode === "unknown" && !thinEvidence)) {
     return (
       <div className="space-y-8">
         <div className="flex items-center gap-4">
