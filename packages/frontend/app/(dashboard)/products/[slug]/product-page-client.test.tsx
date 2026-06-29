@@ -166,7 +166,13 @@ describe("CompanyPage limit reached state", () => {
           slug: "acme-inc",
           thin_evidence: true,
         }}
-        initialDocuments={[{ id: "doc-1", title: "Privacy Policy" }]}
+        initialDocuments={[
+          {
+            id: "doc-1",
+            title: "Privacy Policy",
+            url: "https://example.com/privacy",
+          },
+        ]}
       />,
     );
 
