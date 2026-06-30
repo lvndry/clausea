@@ -183,6 +183,19 @@ export const fetchProductPageData = cache(async (slug: string) => {
   return { ...shell, ...evidence };
 });
 
+/** SSR-only: fetches the minimum data needed to render the page shell.
+ *  Explainer, documents, and topics are deferred to client-side fetches. */
+export const fetchProductPageCore = cache(async (slug: string) => {
+  const [productResult, overview] = await Promise.all([
+    fetchProductRecord(slug),
+    fetchProductOverviewData(slug),
+  ]);
+  return {
+    product: productResult.data,
+    overview,
+  };
+});
+
 /** Shared across layout metadata and page SSR — dedupes product + overview fetches. */
 export const fetchProductForMetadata = cache(
   async (slug: string): Promise<ProductMetadataFetch> => {

@@ -199,6 +199,9 @@ async def get_product_topics(
             },
         )
 
+    if intelligence.topic_report is not None:
+        return intelligence.topic_report
+
     doc_repo = DocumentRepository()
     referenced_ids = {
         doc_id for item in intelligence.rollup.items for doc_id in item.document_ids
@@ -214,11 +217,18 @@ async def get_product_topics(
     )
 
     documents = await service.get_product_documents(db, slug)
-    return build_product_topic_report(
+    report = build_product_topic_report(
         product_slug=slug,
         rollup=hydrated_rollup,
         documents=documents,
     )
+
+    try:
+        await ProductIntelligenceRepository().store_topic_report(db, product.id, report)
+    except Exception:
+        pass
+
+    return report
 
 
 @router.get("/{slug}/explainer", response_model=ConsumerExplainer)

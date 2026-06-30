@@ -391,6 +391,64 @@ export default function CompanyPage({
     fetchData();
   }, [slug, initialProduct, initialOverview]);
 
+  // Lazy-load explainer, documents, and topics after page renders with shell data.
+  // Fires when SSR only provided the core shell (no explainer/topics/documents).
+  useEffect(() => {
+    if (!initialProduct || !initialOverview) {
+      // Full fetch is handled by the main useEffect above — don't double-fetch
+      return;
+    }
+    if (
+      initialExplainer !== null ||
+      (initialDocs?.length ?? 0) > 0 ||
+      initialTopics !== null
+    ) {
+      // Already provided by SSR (e.g. future cached path) — nothing to do
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchDeferredData() {
+      try {
+        setDocumentsLoading(true);
+        const [docsRes, explainerRes, topicsRes] = await Promise.all([
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/explainer`),
+          fetch(`/api/products/${slug}/topics`),
+        ]);
+
+        if (cancelled) return;
+
+        if (docsRes.ok) {
+          setDocuments((await docsRes.json()) as DocumentSummary[]);
+        }
+        if (explainerRes.ok) {
+          setExplainer((await explainerRes.json()) as ConsumerExplainer);
+        }
+        if (topicsRes.ok) {
+          setTopics((await topicsRes.json()) as ProductTopicReport);
+        }
+      } catch (err) {
+        console.error("Failed to fetch deferred product data", err);
+      } finally {
+        if (!cancelled) setDocumentsLoading(false);
+      }
+    }
+
+    fetchDeferredData();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    slug,
+    initialProduct,
+    initialOverview,
+    initialExplainer,
+    initialDocs,
+    initialTopics,
+  ]);
+
   /**
    * Ensures a pipeline job is running for the product.
    * First checks for an existing active job (avoids a duplicate POST).
