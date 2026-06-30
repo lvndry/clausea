@@ -28,6 +28,7 @@ from src.models.product import Product
 from src.models.product_intelligence import ProductIntelligence
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.document_repository import DocumentRepository
+from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.product_intelligence_service import ProductIntelligenceService
 
@@ -811,11 +812,8 @@ class ProductService:
     async def _get_canonical_overview_grade(
         self, db: AgnosticDatabase, product_slug: str
     ) -> str | None:
-        overview_data = await self._product_repo.get_product_overview(db, product_slug)
-        overview = overview_data.get("overview") if overview_data else None
-        if not isinstance(overview, dict):
-            return None
-        return self._coerce_grade(overview.get("grade"))
+        grade = await ProductIntelligenceRepository().get_overview_grade(db, product_slug)
+        return self._coerce_grade(grade) if grade is not None else None
 
     _GRADE_REASONS: ClassVar[dict[str, str]] = {
         "A": "Very user-friendly: minimal data collection, strong user controls, no major concerns.",

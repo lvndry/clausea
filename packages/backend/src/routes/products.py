@@ -194,7 +194,12 @@ async def get_product_topics(
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
-    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    intel_repo = ProductIntelligenceRepository()
+    cached_report = await intel_repo.get_topic_report_cached(db, product.id)
+    if cached_report is not None:
+        return cached_report
+
+    intelligence = await intel_repo.get_rollup_for_topics(db, product.id)
     if not intelligence or not intelligence.rollup:
         raise HTTPException(
             status_code=HTTP_425_TOO_EARLY,
@@ -204,9 +209,6 @@ async def get_product_topics(
                 "product_slug": slug,
             },
         )
-
-    if intelligence.topic_report is not None:
-        return intelligence.topic_report
 
     doc_repo = DocumentRepository()
     referenced_ids = {
