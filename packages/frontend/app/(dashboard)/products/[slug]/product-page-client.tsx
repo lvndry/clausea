@@ -194,43 +194,61 @@ export default function CompanyPage({
       try {
         setDocumentsLoading(true);
 
-        const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
-          await Promise.all([
-            fetch(`/api/products/${slug}`),
-            fetch(`/api/products/${slug}/documents`),
-            fetch(`/api/products/${slug}/overview`),
-            fetch(`/api/products/${slug}/explainer`),
-            fetch(`/api/products/${slug}/topics`),
-          ]);
+        const [
+          prodResult,
+          docsResult,
+          overviewResult,
+          explainerResult,
+          topicsResult,
+        ] = await Promise.allSettled([
+          fetch(`/api/products/${slug}`),
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/overview`),
+          fetch(`/api/products/${slug}/explainer`),
+          fetch(`/api/products/${slug}/topics`),
+        ]);
 
-        if (explainerRes.ok) {
+        const prodRes =
+          prodResult.status === "fulfilled" ? prodResult.value : null;
+        const docsRes =
+          docsResult.status === "fulfilled" ? docsResult.value : null;
+        const overviewRes =
+          overviewResult.status === "fulfilled" ? overviewResult.value : null;
+        const explainerRes =
+          explainerResult.status === "fulfilled" ? explainerResult.value : null;
+        const topicsRes =
+          topicsResult.status === "fulfilled" ? topicsResult.value : null;
+
+        if (explainerRes?.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
         }
-        if (topicsRes.ok) {
+        if (topicsRes?.ok) {
           setTopics((await topicsRes.json()) as ProductTopicReport);
         }
 
-        const prodJson = prodRes.ok
+        const prodJson = prodRes?.ok
           ? ((await prodRes.json()) as Product)
           : null;
 
-        const overviewPayload = overviewRes.ok
+        const overviewPayload = overviewRes?.ok
           ? undefined
-          : await overviewRes.json().catch(() => null);
+          : overviewRes
+            ? await overviewRes.json().catch(() => null)
+            : null;
 
         const overviewState = deriveProductPageOverviewState({
-          overviewOk: overviewRes.ok,
-          overviewStatus: overviewRes.status,
-          explainerStatus: explainerRes.status,
-          topicsStatus: topicsRes.status,
-          productStatus: prodRes.status,
-          documentsStatus: docsRes.status,
+          overviewOk: overviewRes?.ok ?? false,
+          overviewStatus: overviewRes?.status ?? 0,
+          explainerStatus: explainerRes?.status ?? 0,
+          topicsStatus: topicsRes?.status ?? 0,
+          productStatus: prodRes?.status ?? 0,
+          documentsStatus: docsRes?.status ?? 0,
           overviewPayload,
         });
 
         setProduct(prodJson);
 
-        const docsJson = docsRes.ok
+        const docsJson = docsRes?.ok
           ? ((await docsRes.json()) as DocumentSummary[])
           : [];
         setDocuments(docsJson);
@@ -254,13 +272,13 @@ export default function CompanyPage({
           return;
         }
 
-        if (overviewState === "server_error" || prodRes.status >= 500) {
+        if (overviewState === "server_error" || (prodRes?.status ?? 0) >= 500) {
           setData(null);
           setIndexationMode("server_error");
           return;
         }
 
-        if (isProductNotFound(prodRes.status)) {
+        if (isProductNotFound(prodRes?.status ?? 0)) {
           setData(null);
           setIndexationMode("not_found");
           return;
@@ -273,7 +291,7 @@ export default function CompanyPage({
         }
 
         // Overview was fetched in parallel — use the result immediately.
-        if (overviewState === "ready") {
+        if (overviewState === "ready" && overviewRes) {
           setData((await overviewRes.json()) as ProductOverview);
           setIndexationMode("ready");
           return;
@@ -390,6 +408,65 @@ export default function CompanyPage({
     }
     fetchData();
   }, [slug, initialProduct, initialOverview]);
+
+  // Lazy-load explainer, documents, and topics after page renders with shell data.
+  // Fires when SSR only provided the core shell (no explainer/topics/documents).
+  useEffect(() => {
+    if (!initialProduct || !initialOverview) {
+      // Full fetch is handled by the main useEffect above — don't double-fetch
+      return;
+    }
+    if (
+      initialExplainer !== null ||
+      (initialDocs?.length ?? 0) > 0 ||
+      initialTopics !== null
+    ) {
+      // Already provided by SSR (e.g. future cached path) — nothing to do
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchDeferredData() {
+      setDocumentsLoading(true);
+
+      const [docsResult, explainerResult, topicsResult] =
+        await Promise.allSettled([
+          fetch(`/api/products/${slug}/documents`).then((res) =>
+            res.ok ? (res.json() as Promise<DocumentSummary[]>) : null,
+          ),
+          fetch(`/api/products/${slug}/explainer`).then((res) =>
+            res.ok ? (res.json() as Promise<ConsumerExplainer>) : null,
+          ),
+          fetch(`/api/products/${slug}/topics`).then((res) =>
+            res.ok ? (res.json() as Promise<ProductTopicReport>) : null,
+          ),
+        ]);
+
+      if (cancelled) return;
+
+      if (docsResult.status === "fulfilled" && docsResult.value)
+        setDocuments(docsResult.value);
+      if (explainerResult.status === "fulfilled" && explainerResult.value)
+        setExplainer(explainerResult.value);
+      if (topicsResult.status === "fulfilled" && topicsResult.value)
+        setTopics(topicsResult.value);
+
+      setDocumentsLoading(false);
+    }
+
+    fetchDeferredData();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    slug,
+    initialProduct,
+    initialOverview,
+    initialExplainer,
+    initialDocs,
+    initialTopics,
+  ]);
 
   /**
    * Ensures a pipeline job is running for the product.
@@ -1127,7 +1204,7 @@ export default function CompanyPage({
 
         <TabsContent value="overview" className="space-y-6 mt-0">
           {/* PRIMARY: Consumer TOS-explainer — the free-funnel hero */}
-          {explainer && (
+          {explainer ? (
             <>
               <ConsumerExplainerView explainer={explainer} />
 
@@ -1140,7 +1217,14 @@ export default function CompanyPage({
                 <div className="h-px flex-1 bg-border" />
               </div>
             </>
-          )}
+          ) : documentsLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : null}
 
           {/* Verdict Hero */}
           <VerdictHero

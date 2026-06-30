@@ -16,6 +16,7 @@ from src.models.document import (
     MetaSummary,
     ProductDeepAnalysis,
 )
+from src.models.topic_report import ProductTopicReport
 
 ConflictSeverity = Literal["low", "medium", "high", "critical"]
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
@@ -100,6 +101,8 @@ class ProductIntelligence(BaseModel):
     deep_analysis_document_signature: str | None = None
 
     overview_history: list[OverviewSnapshot] = Field(default_factory=list)
+
+    topic_report: ProductTopicReport | None = None
 
     thin_evidence: bool = False
     thin_evidence_reason: str | None = None

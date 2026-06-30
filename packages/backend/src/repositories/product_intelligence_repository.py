@@ -8,6 +8,7 @@ from typing import Any
 from motor.core import AgnosticDatabase
 
 from src.models.product_intelligence import OverviewSnapshot, ProductIntelligence, ProductRollup
+from src.models.topic_report import ProductTopicReport
 from src.repositories.base_repository import BaseRepository
 
 
@@ -95,6 +96,7 @@ class ProductIntelligenceRepository(BaseRepository):
                     "source_hashes": source_hashes,
                     "rollup_generated_at": now,
                     "updated_at": now,
+                    "topic_report": None,
                 },
                 "$setOnInsert": {
                     "id": ProductIntelligence(product_id=product_id, product_slug=product_slug).id,
@@ -102,6 +104,20 @@ class ProductIntelligenceRepository(BaseRepository):
                 },
             },
             upsert=True,
+        )
+
+    async def store_topic_report(
+        self, db: AgnosticDatabase, product_id: str, report: ProductTopicReport
+    ) -> None:
+        """Persist a pre-computed topic report so subsequent reads skip recomputation."""
+        await db[self.COLLECTION].update_one(
+            {"product_id": product_id},
+            {
+                "$set": {
+                    "topic_report": report.model_dump(mode="json"),
+                    "updated_at": datetime.now(),
+                }
+            },
         )
 
     async def delete_for_product(self, db: AgnosticDatabase, product_id: str) -> int:

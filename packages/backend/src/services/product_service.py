@@ -371,7 +371,28 @@ class ProductService:
         if not explainer:
             return None
 
-        explainer = await self._enrich_product_explainer_citations(db, product_slug, explainer)
+        all_items = (
+            (explainer.get("watch_out_for") or [])
+            + (explainer.get("who_gets_your_data") or [])
+            + (explainer.get("what_they_collect") or [])
+        )
+        already_enriched = any(
+            item.get("citations") or item.get("citation")
+            for item in all_items
+            if isinstance(item, dict)
+        )
+        if not already_enriched:
+            try:
+                enriched = await self._enrich_product_explainer_citations(
+                    db, product_slug, explainer
+                )
+                validated = ConsumerExplainer.model_validate(enriched)
+                await self._product_repo.save_product_explainer(db, product_slug, validated)
+                explainer = enriched
+            except Exception as exc:  # noqa: BLE001 - best-effort enrichment
+                logger.warning(
+                    "Failed to enrich or persist explainer citations for %s: %s", product_slug, exc
+                )
 
         canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
         if canonical_grade is None:
@@ -446,6 +467,14 @@ class ProductService:
         The grade is always derived from the canonical overview score when an
         overview exists, so explainer-owned grading cannot diverge.
         """
+        enriched_dict = await self._enrich_product_explainer_citations(
+            db, product_slug, explainer.model_dump(mode="json")
+        )
+        try:
+            explainer = ConsumerExplainer.model_validate(enriched_dict)
+        except Exception as exc:  # noqa: BLE001 - enrichment failure is non-fatal
+            logger.warning("Failed to validate enriched explainer for %s: %s", product_slug, exc)
+
         canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
         payload = explainer
 
