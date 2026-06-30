@@ -20,6 +20,29 @@ def _row_to_intelligence(row: dict[str, Any] | None) -> ProductIntelligence | No
     return ProductIntelligence.model_validate(data)
 
 
+# Fields needed for overview computation — excludes the large rollup, topic_report,
+# explainer, and deep_analysis blobs which can be several MB each.
+_OVERVIEW_PROJECTION = {
+    "_id": 0,
+    "product_id": 1,
+    "product_slug": 1,
+    "thin_evidence": 1,
+    "thin_evidence_reason": 1,
+    "indexation_error": 1,
+    "overview": 1,
+    "overview_generated_at": 1,
+    "compliance": 1,
+}
+
+# Minimal projection for the thin-evidence flag check only.
+_THIN_EVIDENCE_PROJECTION = {
+    "_id": 0,
+    "thin_evidence": 1,
+    "thin_evidence_reason": 1,
+    "indexation_error": 1,
+}
+
+
 class ProductIntelligenceRepository(BaseRepository):
     COLLECTION = "product_intelligence"
 
@@ -33,6 +56,36 @@ class ProductIntelligenceRepository(BaseRepository):
         self, db: AgnosticDatabase, product_slug: str
     ) -> ProductIntelligence | None:
         row = await db[self.COLLECTION].find_one({"product_slug": product_slug})
+        return _row_to_intelligence(row)
+
+    async def get_thin_evidence_flags(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> ProductIntelligence | None:
+        """Fetch only thin_evidence flags — avoids transferring large rollup/overview blobs."""
+        row = await db[self.COLLECTION].find_one(
+            {"product_id": product_id}, _THIN_EVIDENCE_PROJECTION
+        )
+        return _row_to_intelligence(row)
+
+    async def get_for_overview(
+        self,
+        db: AgnosticDatabase,
+        *,
+        product_id: str | None = None,
+        product_slug: str | None = None,
+    ) -> ProductIntelligence | None:
+        """Fetch only the fields needed for overview computation.
+
+        Excludes rollup, topic_report, explainer, and deep_analysis to avoid
+        transferring several MB of data when only overview fields are required.
+        """
+        if product_id:
+            query: dict[str, Any] = {"product_id": product_id}
+        elif product_slug:
+            query = {"product_slug": product_slug}
+        else:
+            return None
+        row = await db[self.COLLECTION].find_one(query, _OVERVIEW_PROJECTION)
         return _row_to_intelligence(row)
 
     async def ensure_shell(

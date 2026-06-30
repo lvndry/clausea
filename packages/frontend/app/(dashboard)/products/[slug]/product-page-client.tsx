@@ -1203,30 +1203,7 @@ export default function CompanyPage({
         </div>
 
         <TabsContent value="overview" className="space-y-6 mt-0">
-          {/* PRIMARY: Consumer TOS-explainer — the free-funnel hero */}
-          {explainer ? (
-            <>
-              <ConsumerExplainerView explainer={explainer} />
-
-              {/* Divider into the secondary, detailed policy overview */}
-              <div className="flex items-center gap-4 pt-8 pb-2">
-                <div className="h-px flex-1 bg-border" />
-                <span className="text-[10px] uppercase tracking-[0.3em] font-medium text-muted-foreground whitespace-nowrap">
-                  Full Policy Overview
-                </span>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-            </>
-          ) : documentsLoading ? (
-            <div className="space-y-4">
-              <Skeleton className="h-8 w-48" />
-              <Skeleton className="h-32 w-full" />
-              <Skeleton className="h-32 w-full" />
-              <Skeleton className="h-32 w-full" />
-            </div>
-          ) : null}
-
-          {/* Verdict Hero */}
+          {/* Verdict Hero — immediately available from SSR */}
           <VerdictHero
             productName={data.product_name}
             companyName={data.company_name}
@@ -1236,6 +1213,18 @@ export default function CompanyPage({
             summary={data.one_line_summary}
             keypoints={data.keypoints}
           />
+
+          {/* Consumer explainer — deferred; loads after VerdictHero is visible */}
+          {explainer ? (
+            <ConsumerExplainerView explainer={explainer} />
+          ) : documentsLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : null}
 
           {/* Privacy Signals - Quick facts right after verdict */}
           {data.privacy_signals && (
