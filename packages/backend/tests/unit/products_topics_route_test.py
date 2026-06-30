@@ -60,9 +60,15 @@ async def test_get_product_topics_425_when_rollup_missing() -> None:
     service = MagicMock()
     service.get_product_by_slug = AsyncMock(return_value=_product())
 
-    with patch(
-        "src.routes.products.ProductIntelligenceRepository.get_by_product_id",
-        AsyncMock(return_value=None),
+    with (
+        patch(
+            "src.routes.products.ProductIntelligenceRepository.get_topic_report_cached",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.routes.products.ProductIntelligenceRepository.get_rollup_for_topics",
+            AsyncMock(return_value=None),
+        ),
     ):
         with pytest.raises(HTTPException) as exc_info:
             await get_product_topics(
@@ -122,7 +128,11 @@ async def test_get_product_topics_returns_topic_report() -> None:
 
     with (
         patch(
-            "src.routes.products.ProductIntelligenceRepository.get_by_product_id",
+            "src.routes.products.ProductIntelligenceRepository.get_topic_report_cached",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.routes.products.ProductIntelligenceRepository.get_rollup_for_topics",
             AsyncMock(return_value=_intelligence()),
         ),
         patch(
