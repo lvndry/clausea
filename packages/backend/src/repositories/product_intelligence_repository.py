@@ -20,6 +20,50 @@ def _row_to_intelligence(row: dict[str, Any] | None) -> ProductIntelligence | No
     return ProductIntelligence.model_validate(data)
 
 
+# Fields needed for overview computation — excludes the large rollup, topic_report,
+# explainer, and deep_analysis blobs which can be several MB each.
+_OVERVIEW_PROJECTION = {
+    "_id": 0,
+    "product_id": 1,
+    "product_slug": 1,
+    "thin_evidence": 1,
+    "thin_evidence_reason": 1,
+    "indexation_error": 1,
+    "overview": 1,
+    "overview_generated_at": 1,
+    "compliance": 1,
+}
+
+# Minimal projection for the thin-evidence flag check only.
+_THIN_EVIDENCE_PROJECTION = {
+    "_id": 0,
+    "thin_evidence": 1,
+    "thin_evidence_reason": 1,
+    "indexation_error": 1,
+}
+
+# Cached topic report only — smallest possible read on warm cache hits.
+_TOPIC_REPORT_PROJECTION = {
+    "_id": 0,
+    "topic_report": 1,
+}
+
+# Rollup fields needed when topic_report must be computed.
+_TOPICS_ROLLUP_PROJECTION = {
+    "_id": 0,
+    "product_id": 1,
+    "product_slug": 1,
+    "rollup": 1,
+}
+
+# Explainer blob only — avoids loading rollup/topic_report/overview on read.
+_EXPLAINER_PROJECTION = {
+    "_id": 0,
+    "product_slug": 1,
+    "explainer": 1,
+}
+
+
 class ProductIntelligenceRepository(BaseRepository):
     COLLECTION = "product_intelligence"
 
@@ -34,6 +78,79 @@ class ProductIntelligenceRepository(BaseRepository):
     ) -> ProductIntelligence | None:
         row = await db[self.COLLECTION].find_one({"product_slug": product_slug})
         return _row_to_intelligence(row)
+
+    async def get_thin_evidence_flags(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> ProductIntelligence | None:
+        """Fetch only thin_evidence flags — avoids transferring large rollup/overview blobs."""
+        row = await db[self.COLLECTION].find_one(
+            {"product_id": product_id}, _THIN_EVIDENCE_PROJECTION
+        )
+        return _row_to_intelligence(row)
+
+    async def get_for_overview(
+        self,
+        db: AgnosticDatabase,
+        *,
+        product_id: str | None = None,
+        product_slug: str | None = None,
+    ) -> ProductIntelligence | None:
+        """Fetch only the fields needed for overview computation.
+
+        Excludes rollup, topic_report, explainer, and deep_analysis to avoid
+        transferring several MB of data when only overview fields are required.
+        """
+        if product_id:
+            query: dict[str, Any] = {"product_id": product_id}
+        elif product_slug:
+            query = {"product_slug": product_slug}
+        else:
+            return None
+        row = await db[self.COLLECTION].find_one(query, _OVERVIEW_PROJECTION)
+        return _row_to_intelligence(row)
+
+    async def get_topic_report_cached(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> ProductTopicReport | None:
+        """Return a stored topic report without loading rollup/overview/explainer blobs."""
+        row = await db[self.COLLECTION].find_one(
+            {"product_id": product_id}, _TOPIC_REPORT_PROJECTION
+        )
+        if not row or not row.get("topic_report"):
+            return None
+        return ProductTopicReport.model_validate(row["topic_report"])
+
+    async def get_rollup_for_topics(
+        self, db: AgnosticDatabase, product_id: str
+    ) -> ProductIntelligence | None:
+        """Fetch rollup (and ids) needed to compute a topic report on cache miss."""
+        row = await db[self.COLLECTION].find_one(
+            {"product_id": product_id}, _TOPICS_ROLLUP_PROJECTION
+        )
+        return _row_to_intelligence(row)
+
+    async def get_for_explainer(
+        self, db: AgnosticDatabase, product_slug: str
+    ) -> ProductIntelligence | None:
+        """Fetch explainer and overview grade without loading rollup/topic_report blobs."""
+        row = await db[self.COLLECTION].find_one(
+            {"product_slug": product_slug}, _EXPLAINER_PROJECTION
+        )
+        return _row_to_intelligence(row)
+
+    async def get_overview_grade(self, db: AgnosticDatabase, product_slug: str) -> str | None:
+        """Fetch only the canonical overview grade — used by explainer reconciliation."""
+        row = await db[self.COLLECTION].find_one(
+            {"product_slug": product_slug},
+            {"_id": 0, "overview.grade": 1},
+        )
+        if not row:
+            return None
+        overview = row.get("overview")
+        if not isinstance(overview, dict):
+            return None
+        grade = overview.get("grade")
+        return str(grade) if grade is not None else None
 
     async def ensure_shell(
         self, db: AgnosticDatabase, *, product_id: str, product_slug: str

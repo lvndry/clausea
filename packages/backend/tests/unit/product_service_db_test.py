@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -163,13 +163,14 @@ async def test_get_product_explainer_uses_canonical_overview_grade(
     mock_product_repo.get_product_explainer = AsyncMock(
         return_value={"product_slug": "test-product", "headline": "h", "grade": "D"}
     )
-    mock_product_repo.get_product_overview = AsyncMock(
-        return_value={"overview": {"risk_score": 5, "grade": "C"}}
-    )
     mock_product_repo.update_product_explainer_grade = AsyncMock()
     mock_product_repo.find_by_slug = AsyncMock(return_value=None)
 
-    explainer = await product_service.get_product_explainer(mock_db, "test-product")
+    with patch(
+        "src.services.product_service.ProductIntelligenceRepository.get_overview_grade",
+        AsyncMock(return_value="C"),
+    ):
+        explainer = await product_service.get_product_explainer(mock_db, "test-product")
 
     assert explainer is not None
     assert explainer["grade"] == "C"
@@ -188,11 +189,14 @@ async def test_get_product_explainer_keeps_grade_when_overview_grade_missing(
     mock_product_repo.get_product_explainer = AsyncMock(
         return_value={"product_slug": "test-product", "headline": "h", "grade": "B"}
     )
-    mock_product_repo.get_product_overview = AsyncMock(return_value={"overview": {"risk_score": 8}})
     mock_product_repo.update_product_explainer_grade = AsyncMock()
     mock_product_repo.find_by_slug = AsyncMock(return_value=None)
 
-    explainer = await product_service.get_product_explainer(mock_db, "test-product")
+    with patch(
+        "src.services.product_service.ProductIntelligenceRepository.get_overview_grade",
+        AsyncMock(return_value=None),
+    ):
+        explainer = await product_service.get_product_explainer(mock_db, "test-product")
 
     assert explainer is not None
     assert explainer["grade"] == "B"
@@ -203,16 +207,17 @@ async def test_get_product_explainer_keeps_grade_when_overview_grade_missing(
 async def test_save_product_explainer_overrides_grade_with_canonical_overview(
     product_service: ProductService, mock_product_repo: MagicMock, mock_db: MagicMock
 ) -> None:
-    mock_product_repo.get_product_overview = AsyncMock(
-        return_value={"overview": {"risk_score": 5, "grade": "C"}}
-    )
     mock_product_repo.save_product_explainer = AsyncMock(return_value=True)
 
-    saved = await product_service.save_product_explainer(
-        mock_db,
-        "test-product",
-        ConsumerExplainer(headline="h", grade="D"),
-    )
+    with patch(
+        "src.services.product_service.ProductIntelligenceRepository.get_overview_grade",
+        AsyncMock(return_value="C"),
+    ):
+        saved = await product_service.save_product_explainer(
+            mock_db,
+            "test-product",
+            ConsumerExplainer(headline="h", grade="D"),
+        )
 
     assert saved is True
     mock_product_repo.save_product_explainer.assert_awaited_once()
@@ -246,7 +251,6 @@ async def test_get_product_explainer_backfills_missing_source_citations(
             ],
         }
     )
-    mock_product_repo.get_product_overview = AsyncMock(return_value=None)
     mock_product_repo.find_by_slug = AsyncMock(
         return_value=Product(
             id="prod-1",
@@ -293,7 +297,11 @@ async def test_get_product_explainer_backfills_missing_source_citations(
         ]
     )
 
-    explainer = await product_service.get_product_explainer(mock_db, "test-product")
+    with patch(
+        "src.services.product_service.ProductIntelligenceRepository.get_overview_grade",
+        AsyncMock(return_value=None),
+    ):
+        explainer = await product_service.get_product_explainer(mock_db, "test-product")
 
     assert explainer is not None
     citation = explainer["watch_out_for"][0]["citation"]

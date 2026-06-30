@@ -25,8 +25,10 @@ from src.models.document import (
     ProductOverview,
 )
 from src.models.product import Product
+from src.models.product_intelligence import ProductIntelligence
 from src.prompts.analysis_prompts import OVERVIEW_CORE_DOC_TYPES
 from src.repositories.document_repository import DocumentRepository
+from src.repositories.product_intelligence_repository import ProductIntelligenceRepository
 from src.repositories.product_repository import ProductRepository
 from src.services.product_intelligence_service import ProductIntelligenceService
 
@@ -557,6 +559,7 @@ class ProductService:
         db: AgnosticDatabase,
         slug: str,
         product: Product | None = None,
+        intelligence: ProductIntelligence | None = None,
     ) -> ProductOverview | None:
         """Get the Level 1 overview for a product.
 
@@ -566,14 +569,30 @@ class ProductService:
             db: Database instance
             slug: Product slug
             product: Pre-fetched product to avoid a duplicate lookup (optional)
+            intelligence: Pre-fetched intelligence document (overview fields only) to
+                avoid redundant DB loads when the caller already holds it.
 
         Returns:
             ProductOverview or None if not available
         """
-        overview_data = await self._product_repo.get_product_overview(db, slug)
-        if not overview_data:
-            return None
-        meta_summary = MetaSummary(**overview_data["overview"])
+        # Resolve overview MetaSummary — use pre-loaded intelligence when available
+        # to avoid a second full (multi-MB) intelligence document load.
+        if intelligence is not None:
+            if not intelligence.overview:
+                return None
+            meta_summary = intelligence.overview
+            updated_at = intelligence.overview_generated_at
+        else:
+            overview_data = await self._product_repo.get_product_overview(db, slug)
+            if not overview_data:
+                return None
+            meta_summary = MetaSummary(**overview_data["overview"])
+            updated_at = None
+            if "updated_at" in overview_data["overview"]:
+                try:
+                    updated_at = datetime.fromisoformat(overview_data["overview"]["updated_at"])
+                except Exception:
+                    pass
 
         # Fetch product info if not provided by caller
         if product is None:
@@ -587,14 +606,6 @@ class ProductService:
                 self._product_repo.get_document_counts(db, product.id),
                 self._product_repo.get_document_types(db, product.id),
             )
-
-        # Extract updated_at from overview payload if present
-        updated_at = None
-        if "updated_at" in overview_data["overview"]:
-            try:
-                updated_at = datetime.fromisoformat(overview_data["overview"]["updated_at"])
-            except Exception:
-                pass
 
         overview = self._transform_to_overview(meta_summary, slug, updated_at)
 
@@ -628,17 +639,26 @@ class ProductService:
                     for reg, scores in aggregated_compliance.items()
                 }
 
-        stored_compliance = await self._product_repo.get_product_compliance(db, slug)
-        if stored_compliance:
-            parsed: dict[str, ComplianceBreakdown] = {}
-            for regime, payload in stored_compliance.items():
-                if not isinstance(payload, dict):
-                    continue
-                try:
-                    parsed[str(regime)] = ComplianceBreakdown.model_validate(payload, strict=False)
-                except Exception:
-                    continue
-            overview.compliance = parsed or None
+        # Resolve stored compliance — use pre-loaded intelligence.compliance when available
+        # to avoid a third full intelligence document load via get_product_compliance.
+        if intelligence is not None:
+            stored_compliance_map = intelligence.compliance
+            if stored_compliance_map:
+                overview.compliance = stored_compliance_map
+        else:
+            stored_compliance = await self._product_repo.get_product_compliance(db, slug)
+            if stored_compliance:
+                parsed: dict[str, ComplianceBreakdown] = {}
+                for regime, payload in stored_compliance.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    try:
+                        parsed[str(regime)] = ComplianceBreakdown.model_validate(
+                            payload, strict=False
+                        )
+                    except Exception:
+                        continue
+                overview.compliance = parsed or None
 
         from src.services.citation_filter import filter_topic_stance_citations
 
@@ -792,11 +812,8 @@ class ProductService:
     async def _get_canonical_overview_grade(
         self, db: AgnosticDatabase, product_slug: str
     ) -> str | None:
-        overview_data = await self._product_repo.get_product_overview(db, product_slug)
-        overview = overview_data.get("overview") if overview_data else None
-        if not isinstance(overview, dict):
-            return None
-        return self._coerce_grade(overview.get("grade"))
+        grade = await ProductIntelligenceRepository().get_overview_grade(db, product_slug)
+        return self._coerce_grade(grade) if grade is not None else None
 
     _GRADE_REASONS: ClassVar[dict[str, str]] = {
         "A": "Very user-friendly: minimal data collection, strong user controls, no major concerns.",

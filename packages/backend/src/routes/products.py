@@ -149,7 +149,11 @@ async def get_product_overview(
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
-    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    # Load intelligence once with a targeted projection (overview + compliance fields only,
+    # no rollup/topic_report/explainer).  Passing it to get_product_overview avoids two more
+    # full document fetches that previously happened inside product_repo.get_product_overview
+    # and product_repo.get_product_compliance.
+    intelligence = await ProductIntelligenceRepository().get_for_overview(db, product_id=product.id)
     if intelligence and intelligence.thin_evidence:
         raise HTTPException(
             status_code=HTTP_424_FAILED_DEPENDENCY,
@@ -160,7 +164,9 @@ async def get_product_overview(
             },
         )
 
-    overview = await service.get_product_overview(db, slug, product=product)
+    overview = await service.get_product_overview(
+        db, slug, product=product, intelligence=intelligence
+    )
     if overview:
         return overview
 
@@ -188,7 +194,12 @@ async def get_product_topics(
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
-    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    intel_repo = ProductIntelligenceRepository()
+    cached_report = await intel_repo.get_topic_report_cached(db, product.id)
+    if cached_report is not None:
+        return cached_report
+
+    intelligence = await intel_repo.get_rollup_for_topics(db, product.id)
     if not intelligence or not intelligence.rollup:
         raise HTTPException(
             status_code=HTTP_425_TOO_EARLY,
@@ -198,9 +209,6 @@ async def get_product_topics(
                 "product_slug": slug,
             },
         )
-
-    if intelligence.topic_report is not None:
-        return intelligence.topic_report
 
     doc_repo = DocumentRepository()
     referenced_ids = {
@@ -476,7 +484,9 @@ async def get_product_by_slug(
     if not product:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
-    intelligence = await ProductIntelligenceRepository().get_by_product_id(db, product.id)
+    # Use a 3-field projection — avoids loading the full intelligence document
+    # (rollup, topic_report, explainer) just to check a single boolean.
+    intelligence = await ProductIntelligenceRepository().get_thin_evidence_flags(db, product.id)
     if intelligence and intelligence.thin_evidence:
         product.thin_evidence = True
         product.thin_evidence_reason = intelligence.thin_evidence_reason
