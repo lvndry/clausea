@@ -225,8 +225,8 @@ async def get_product_topics(
 
     try:
         await ProductIntelligenceRepository().store_topic_report(db, product.id, report)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to store cached topic report for %s: %s", product.id, exc)
 
     return report
 

@@ -382,13 +382,17 @@ class ProductService:
             if isinstance(item, dict)
         )
         if not already_enriched:
-            explainer = await self._enrich_product_explainer_citations(db, product_slug, explainer)
             try:
-                await self._product_repo.save_product_explainer(
-                    db, product_slug, ConsumerExplainer.model_validate(explainer)
+                enriched = await self._enrich_product_explainer_citations(
+                    db, product_slug, explainer
                 )
-            except Exception:  # noqa: BLE001 - best-effort persist
-                pass
+                validated = ConsumerExplainer.model_validate(enriched)
+                await self._product_repo.save_product_explainer(db, product_slug, validated)
+                explainer = enriched
+            except Exception as exc:  # noqa: BLE001 - best-effort enrichment
+                logger.warning(
+                    "Failed to enrich or persist explainer citations for %s: %s", product_slug, exc
+                )
 
         canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
         if canonical_grade is None:
@@ -468,8 +472,8 @@ class ProductService:
         )
         try:
             explainer = ConsumerExplainer.model_validate(enriched_dict)
-        except Exception:  # noqa: BLE001 - enrichment failure is non-fatal
-            pass
+        except Exception as exc:  # noqa: BLE001 - enrichment failure is non-fatal
+            logger.warning("Failed to validate enriched explainer for %s: %s", product_slug, exc)
 
         canonical_grade = await self._get_canonical_overview_grade(db, product_slug)
         payload = explainer

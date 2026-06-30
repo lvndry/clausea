@@ -410,30 +410,49 @@ export default function CompanyPage({
     let cancelled = false;
 
     async function fetchDeferredData() {
-      try {
-        setDocumentsLoading(true);
-        const [docsRes, explainerRes, topicsRes] = await Promise.all([
-          fetch(`/api/products/${slug}/documents`),
-          fetch(`/api/products/${slug}/explainer`),
-          fetch(`/api/products/${slug}/topics`),
-        ]);
+      setDocumentsLoading(true);
 
-        if (cancelled) return;
+      // Each fetch handles its own errors so a single failure doesn't block the others.
+      const fetchDocs = fetch(`/api/products/${slug}/documents`)
+        .then((res) =>
+          res.ok ? (res.json() as Promise<DocumentSummary[]>) : null,
+        )
+        .catch((err) => {
+          console.error("Failed to fetch documents", err);
+          return null;
+        });
 
-        if (docsRes.ok) {
-          setDocuments((await docsRes.json()) as DocumentSummary[]);
-        }
-        if (explainerRes.ok) {
-          setExplainer((await explainerRes.json()) as ConsumerExplainer);
-        }
-        if (topicsRes.ok) {
-          setTopics((await topicsRes.json()) as ProductTopicReport);
-        }
-      } catch (err) {
-        console.error("Failed to fetch deferred product data", err);
-      } finally {
-        if (!cancelled) setDocumentsLoading(false);
-      }
+      const fetchExplainer = fetch(`/api/products/${slug}/explainer`)
+        .then((res) =>
+          res.ok ? (res.json() as Promise<ConsumerExplainer>) : null,
+        )
+        .catch((err) => {
+          console.error("Failed to fetch explainer", err);
+          return null;
+        });
+
+      const fetchTopics = fetch(`/api/products/${slug}/topics`)
+        .then((res) =>
+          res.ok ? (res.json() as Promise<ProductTopicReport>) : null,
+        )
+        .catch((err) => {
+          console.error("Failed to fetch topics", err);
+          return null;
+        });
+
+      const [docs, explainerData, topicsData] = await Promise.all([
+        fetchDocs,
+        fetchExplainer,
+        fetchTopics,
+      ]);
+
+      if (cancelled) return;
+
+      if (docs) setDocuments(docs);
+      if (explainerData) setExplainer(explainerData);
+      if (topicsData) setTopics(topicsData);
+
+      setDocumentsLoading(false);
     }
 
     fetchDeferredData();
@@ -1185,7 +1204,7 @@ export default function CompanyPage({
 
         <TabsContent value="overview" className="space-y-6 mt-0">
           {/* PRIMARY: Consumer TOS-explainer — the free-funnel hero */}
-          {explainer && (
+          {explainer ? (
             <>
               <ConsumerExplainerView explainer={explainer} />
 
@@ -1198,7 +1217,14 @@ export default function CompanyPage({
                 <div className="h-px flex-1 bg-border" />
               </div>
             </>
-          )}
+          ) : documentsLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : null}
 
           {/* Verdict Hero */}
           <VerdictHero
