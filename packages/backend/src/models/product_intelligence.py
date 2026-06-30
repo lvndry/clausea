@@ -85,6 +85,14 @@ class OverviewSnapshot(BaseModel):
     job_id: str | None = None
 
 
+class ThinEvidenceFlags(BaseModel):
+    """Slim read of product_intelligence thin-evidence fields only."""
+
+    thin_evidence: bool = False
+    thin_evidence_reason: str | None = None
+    indexation_error: str | None = None
+
+
 class ProductIntelligence(BaseModel):
     """One document per product: rollup cache + LLM-generated outputs."""
 

@@ -51,3 +51,34 @@ async def test_get_for_explainer_validates_explainer_blob_only() -> None:
         {"product_slug": "spectacles"},
         {"_id": 0, "explainer": 1},
     )
+
+
+@pytest.mark.asyncio
+async def test_get_thin_evidence_flags_validates_flags_only() -> None:
+    repo = ProductIntelligenceRepository()
+    mock_db = MagicMock()
+    mock_collection = MagicMock()
+    mock_db.__getitem__.return_value = mock_collection
+    mock_collection.find_one = AsyncMock(
+        return_value={
+            "thin_evidence": True,
+            "thin_evidence_reason": "Only one short policy page found",
+            "indexation_error": "thin_evidence",
+        }
+    )
+
+    flags = await repo.get_thin_evidence_flags(mock_db, "prod-1")
+
+    assert flags is not None
+    assert flags.thin_evidence is True
+    assert flags.thin_evidence_reason == "Only one short policy page found"
+    assert flags.indexation_error == "thin_evidence"
+    mock_collection.find_one.assert_awaited_once_with(
+        {"product_id": "prod-1"},
+        {
+            "_id": 0,
+            "thin_evidence": 1,
+            "thin_evidence_reason": 1,
+            "indexation_error": 1,
+        },
+    )

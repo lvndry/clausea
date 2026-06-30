@@ -8,7 +8,12 @@ from typing import Any
 from motor.core import AgnosticDatabase
 
 from src.models.document import ConsumerExplainer
-from src.models.product_intelligence import OverviewSnapshot, ProductIntelligence, ProductRollup
+from src.models.product_intelligence import (
+    OverviewSnapshot,
+    ProductIntelligence,
+    ProductRollup,
+    ThinEvidenceFlags,
+)
 from src.models.topic_report import ProductTopicReport
 from src.repositories.base_repository import BaseRepository
 
@@ -75,12 +80,14 @@ class ProductIntelligenceRepository(BaseRepository):
 
     async def get_thin_evidence_flags(
         self, db: AgnosticDatabase, product_id: str
-    ) -> ProductIntelligence | None:
+    ) -> ThinEvidenceFlags | None:
         """Fetch only thin_evidence flags — avoids transferring large rollup/overview blobs."""
         row = await db[self.COLLECTION].find_one(
             {"product_id": product_id}, _THIN_EVIDENCE_PROJECTION
         )
-        return _row_to_intelligence(row)
+        if not row:
+            return None
+        return ThinEvidenceFlags.model_validate(row)
 
     async def get_for_overview(
         self,

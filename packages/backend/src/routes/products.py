@@ -486,11 +486,11 @@ async def get_product_by_slug(
 
     # Use a 3-field projection — avoids loading the full intelligence document
     # (rollup, topic_report, explainer) just to check a single boolean.
-    intelligence = await ProductIntelligenceRepository().get_thin_evidence_flags(db, product.id)
-    if intelligence and intelligence.thin_evidence:
+    flags = await ProductIntelligenceRepository().get_thin_evidence_flags(db, product.id)
+    if flags and flags.thin_evidence:
         product.thin_evidence = True
-        product.thin_evidence_reason = intelligence.thin_evidence_reason
-        product.indexation_error = intelligence.indexation_error or PipelineErrorCode.thin_evidence
+        product.thin_evidence_reason = flags.thin_evidence_reason
+        product.indexation_error = flags.indexation_error or PipelineErrorCode.thin_evidence
 
     return product
 
