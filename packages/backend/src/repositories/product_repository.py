@@ -319,10 +319,10 @@ class ProductRepository(BaseRepository):
     async def get_product_explainer(
         self, db: AgnosticDatabase, product_slug: str
     ) -> dict[str, Any] | None:
-        intelligence = await ProductIntelligenceRepository().get_for_explainer(db, product_slug)
-        if not intelligence or not intelligence.explainer:
+        explainer = await ProductIntelligenceRepository().get_for_explainer(db, product_slug)
+        if not explainer:
             return None
-        data = intelligence.explainer.model_dump(mode="json")
+        data = explainer.model_dump(mode="json")
         data["product_slug"] = product_slug
         return data
 

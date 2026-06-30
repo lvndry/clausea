@@ -7,7 +7,13 @@ from typing import Any
 
 from motor.core import AgnosticDatabase
 
-from src.models.product_intelligence import OverviewSnapshot, ProductIntelligence, ProductRollup
+from src.models.document import ConsumerExplainer
+from src.models.product_intelligence import (
+    OverviewSnapshot,
+    ProductIntelligence,
+    ProductRollup,
+    ThinEvidenceFlags,
+)
 from src.models.topic_report import ProductTopicReport
 from src.repositories.base_repository import BaseRepository
 
@@ -56,13 +62,6 @@ _TOPICS_ROLLUP_PROJECTION = {
     "rollup": 1,
 }
 
-# Explainer blob only — avoids loading rollup/topic_report/overview on read.
-_EXPLAINER_PROJECTION = {
-    "_id": 0,
-    "product_slug": 1,
-    "explainer": 1,
-}
-
 
 class ProductIntelligenceRepository(BaseRepository):
     COLLECTION = "product_intelligence"
@@ -81,12 +80,14 @@ class ProductIntelligenceRepository(BaseRepository):
 
     async def get_thin_evidence_flags(
         self, db: AgnosticDatabase, product_id: str
-    ) -> ProductIntelligence | None:
+    ) -> ThinEvidenceFlags | None:
         """Fetch only thin_evidence flags — avoids transferring large rollup/overview blobs."""
         row = await db[self.COLLECTION].find_one(
             {"product_id": product_id}, _THIN_EVIDENCE_PROJECTION
         )
-        return _row_to_intelligence(row)
+        if not row:
+            return None
+        return ThinEvidenceFlags.model_validate(row)
 
     async def get_for_overview(
         self,
@@ -131,12 +132,15 @@ class ProductIntelligenceRepository(BaseRepository):
 
     async def get_for_explainer(
         self, db: AgnosticDatabase, product_slug: str
-    ) -> ProductIntelligence | None:
-        """Fetch explainer and overview grade without loading rollup/topic_report blobs."""
+    ) -> ConsumerExplainer | None:
+        """Fetch the stored explainer blob without loading rollup/topic_report/overview."""
         row = await db[self.COLLECTION].find_one(
-            {"product_slug": product_slug}, _EXPLAINER_PROJECTION
+            {"product_slug": product_slug},
+            {"_id": 0, "explainer": 1},
         )
-        return _row_to_intelligence(row)
+        if not row or not row.get("explainer"):
+            return None
+        return ConsumerExplainer.model_validate(row["explainer"])
 
     async def get_overview_grade(self, db: AgnosticDatabase, product_slug: str) -> str | None:
         """Fetch only the canonical overview grade — used by explainer reconciliation."""
