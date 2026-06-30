@@ -194,43 +194,61 @@ export default function CompanyPage({
       try {
         setDocumentsLoading(true);
 
-        const [prodRes, docsRes, overviewRes, explainerRes, topicsRes] =
-          await Promise.all([
-            fetch(`/api/products/${slug}`),
-            fetch(`/api/products/${slug}/documents`),
-            fetch(`/api/products/${slug}/overview`),
-            fetch(`/api/products/${slug}/explainer`),
-            fetch(`/api/products/${slug}/topics`),
-          ]);
+        const [
+          prodResult,
+          docsResult,
+          overviewResult,
+          explainerResult,
+          topicsResult,
+        ] = await Promise.allSettled([
+          fetch(`/api/products/${slug}`),
+          fetch(`/api/products/${slug}/documents`),
+          fetch(`/api/products/${slug}/overview`),
+          fetch(`/api/products/${slug}/explainer`),
+          fetch(`/api/products/${slug}/topics`),
+        ]);
 
-        if (explainerRes.ok) {
+        const prodRes =
+          prodResult.status === "fulfilled" ? prodResult.value : null;
+        const docsRes =
+          docsResult.status === "fulfilled" ? docsResult.value : null;
+        const overviewRes =
+          overviewResult.status === "fulfilled" ? overviewResult.value : null;
+        const explainerRes =
+          explainerResult.status === "fulfilled" ? explainerResult.value : null;
+        const topicsRes =
+          topicsResult.status === "fulfilled" ? topicsResult.value : null;
+
+        if (explainerRes?.ok) {
           setExplainer((await explainerRes.json()) as ConsumerExplainer);
         }
-        if (topicsRes.ok) {
+        if (topicsRes?.ok) {
           setTopics((await topicsRes.json()) as ProductTopicReport);
         }
 
-        const prodJson = prodRes.ok
+        const prodJson = prodRes?.ok
           ? ((await prodRes.json()) as Product)
           : null;
 
-        const overviewPayload = overviewRes.ok
+        const overviewPayload = overviewRes?.ok
           ? undefined
-          : await overviewRes.json().catch(() => null);
+          : overviewRes
+            ? await overviewRes.json().catch(() => null)
+            : null;
 
         const overviewState = deriveProductPageOverviewState({
-          overviewOk: overviewRes.ok,
-          overviewStatus: overviewRes.status,
-          explainerStatus: explainerRes.status,
-          topicsStatus: topicsRes.status,
-          productStatus: prodRes.status,
-          documentsStatus: docsRes.status,
+          overviewOk: overviewRes?.ok ?? false,
+          overviewStatus: overviewRes?.status ?? 0,
+          explainerStatus: explainerRes?.status ?? 0,
+          topicsStatus: topicsRes?.status ?? 0,
+          productStatus: prodRes?.status ?? 0,
+          documentsStatus: docsRes?.status ?? 0,
           overviewPayload,
         });
 
         setProduct(prodJson);
 
-        const docsJson = docsRes.ok
+        const docsJson = docsRes?.ok
           ? ((await docsRes.json()) as DocumentSummary[])
           : [];
         setDocuments(docsJson);
@@ -254,13 +272,13 @@ export default function CompanyPage({
           return;
         }
 
-        if (overviewState === "server_error" || prodRes.status >= 500) {
+        if (overviewState === "server_error" || (prodRes?.status ?? 0) >= 500) {
           setData(null);
           setIndexationMode("server_error");
           return;
         }
 
-        if (isProductNotFound(prodRes.status)) {
+        if (isProductNotFound(prodRes?.status ?? 0)) {
           setData(null);
           setIndexationMode("not_found");
           return;
@@ -273,7 +291,7 @@ export default function CompanyPage({
         }
 
         // Overview was fetched in parallel — use the result immediately.
-        if (overviewState === "ready") {
+        if (overviewState === "ready" && overviewRes) {
           setData((await overviewRes.json()) as ProductOverview);
           setIndexationMode("ready");
           return;
