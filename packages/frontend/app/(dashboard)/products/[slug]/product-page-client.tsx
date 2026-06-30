@@ -412,45 +412,27 @@ export default function CompanyPage({
     async function fetchDeferredData() {
       setDocumentsLoading(true);
 
-      // Each fetch handles its own errors so a single failure doesn't block the others.
-      const fetchDocs = fetch(`/api/products/${slug}/documents`)
-        .then((res) =>
-          res.ok ? (res.json() as Promise<DocumentSummary[]>) : null,
-        )
-        .catch((err) => {
-          console.error("Failed to fetch documents", err);
-          return null;
-        });
-
-      const fetchExplainer = fetch(`/api/products/${slug}/explainer`)
-        .then((res) =>
-          res.ok ? (res.json() as Promise<ConsumerExplainer>) : null,
-        )
-        .catch((err) => {
-          console.error("Failed to fetch explainer", err);
-          return null;
-        });
-
-      const fetchTopics = fetch(`/api/products/${slug}/topics`)
-        .then((res) =>
-          res.ok ? (res.json() as Promise<ProductTopicReport>) : null,
-        )
-        .catch((err) => {
-          console.error("Failed to fetch topics", err);
-          return null;
-        });
-
-      const [docs, explainerData, topicsData] = await Promise.all([
-        fetchDocs,
-        fetchExplainer,
-        fetchTopics,
-      ]);
+      const [docsResult, explainerResult, topicsResult] =
+        await Promise.allSettled([
+          fetch(`/api/products/${slug}/documents`).then((res) =>
+            res.ok ? (res.json() as Promise<DocumentSummary[]>) : null,
+          ),
+          fetch(`/api/products/${slug}/explainer`).then((res) =>
+            res.ok ? (res.json() as Promise<ConsumerExplainer>) : null,
+          ),
+          fetch(`/api/products/${slug}/topics`).then((res) =>
+            res.ok ? (res.json() as Promise<ProductTopicReport>) : null,
+          ),
+        ]);
 
       if (cancelled) return;
 
-      if (docs) setDocuments(docs);
-      if (explainerData) setExplainer(explainerData);
-      if (topicsData) setTopics(topicsData);
+      if (docsResult.status === "fulfilled" && docsResult.value)
+        setDocuments(docsResult.value);
+      if (explainerResult.status === "fulfilled" && explainerResult.value)
+        setExplainer(explainerResult.value);
+      if (topicsResult.status === "fulfilled" && topicsResult.value)
+        setTopics(topicsResult.value);
 
       setDocumentsLoading(false);
     }
