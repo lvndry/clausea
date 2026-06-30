@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from motor.core import AgnosticDatabase
 
 from src.models.product_intelligence import OverviewSnapshot, ProductIntelligence, ProductRollup
+from src.models.topic_report import ProductTopicReport
 from src.repositories.base_repository import BaseRepository
-
-if TYPE_CHECKING:
-    from src.models.topic_report import ProductTopicReport
 
 
 def _row_to_intelligence(row: dict[str, Any] | None) -> ProductIntelligence | None:
