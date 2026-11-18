@@ -105,6 +105,7 @@ export const metadata = {
 };
 
 export default function Layout(props: { children: React.ReactNode }) {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
   return (
@@ -118,19 +119,19 @@ export default function Layout(props: { children: React.ReactNode }) {
         <link
           rel="apple-touch-icon"
           sizes="76x76"
-          href="/static/favicons/apple-touch-icon.png"
+          href={`${basePath}/static/favicons/apple-touch-icon.png`}
         />
         <link
           rel="icon"
           type="image/png"
           sizes="32x32"
-          href="/static/favicons/favicon-32x32.png"
+          href={`${basePath}/static/favicons/favicon-32x32.png`}
         />
         <link
           rel="icon"
           type="image/png"
           sizes="16x16"
-          href="/static/favicons/favicon-16x16.png"
+          href={`${basePath}/static/favicons/favicon-16x16.png`}
         />
         {/* Verification tags - Add these in your environment variables */}
         {process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION && (

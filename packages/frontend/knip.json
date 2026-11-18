@@ -15,5 +15,6 @@
     "baseline-browser-mapping",
     "tailwindcss",
     "tailwindcss-animate"
-  ]
+  ],
+  "ignore": ["pages-build/**"]
 }

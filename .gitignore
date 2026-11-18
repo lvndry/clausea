@@ -64,3 +64,4 @@ data/
 superpowers/
 .planning
 docs/plans
+.pages-build/
