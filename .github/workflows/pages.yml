@@ -1,0 +1,72 @@
+name: Pages
+
+on:
+  pull_request:
+    paths:
+      - "packages/frontend/**"
+      - ".github/workflows/pages.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/frontend/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and one in progress is never cancelled halfway, so
+# the published site is always one whole build. Pull request runs replace each other.
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build the static landing page
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+      - name: Build
+        run: node packages/frontend/pages-build/build.mjs
+      - name: Check that every link stays under /clausea
+        run: |
+          test -f .pages-build/out/index.html
+          stray=$(grep -rhoE '(href|src)="/[^"]*"' .pages-build/out --include='*.html' | grep -vE '="/clausea(/|")' || true)
+          if [ -n "$stray" ]; then
+            echo "Links that leave /clausea:"
+            echo "$stray"
+            exit 1
+          fi
+      - name: Configure Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+      - name: Upload the site
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: .pages-build/out
+
+  deploy:
+    name: Deploy to GitHub Pages
+    # Only main publishes. A pull request or a manual run on another branch builds and checks it, and stops there.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
